@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Painel Central - Moto Conchal</title>
+<link rel="stylesheet" href="admin.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <h1>🏍️ Central Moto Conchal</h1>
+  <div id="login-info" hidden>
+    <span id="atendente-nome-display"></span>
+    <button id="btn-sair">Sair</button>
+  </div>
+</header>
+
+<!-- Tela de login simples com token do operador -->
+<section id="tela-login" class="login-card">
+  <h2>Acesso da Central</h2>
+  <label>Seu nome (para auditoria)
+    <input type="text" id="atendente-nome" placeholder="Ex: Rafael" />
+  </label>
+  <label>Token de acesso
+    <input type="password" id="admin-token" placeholder="Token da central" />
+  </label>
+  <button id="btn-entrar">Entrar</button>
+  <p id="login-erro" class="erro" hidden>Token inválido.</p>
+</section>
+
+<main id="painel" class="container" hidden>
+  <nav class="tabs">
+    <button class="tab-btn ativo" data-tab="fila">Fila de Validação</button>
+    <button class="tab-btn" data-tab="todas">Todas as Corridas</button>
+    <button class="tab-btn" data-tab="repasses">Repasses</button>
+  </nav>
+
+  <!-- ===== FILA DE VALIDAÇÃO (o coração do sistema anti-fraude) ===== -->
+  <section id="tab-fila" class="tab-content">
+    <div class="topo-secao">
+      <h2>Corridas pagas aguardando validação</h2>
+      <button id="btn-atualizar-fila" class="btn-secundario">Atualizar</button>
+    </div>
+    <p class="ajuda">Confira se o endereço/distância bate com o valor pago antes de aprovar.</p>
+    <div id="lista-fila" class="lista-corridas"></div>
+  </section>
+
+  <!-- ===== TODAS AS CORRIDAS ===== -->
+  <section id="tab-todas" class="tab-content" hidden>
+    <div class="topo-secao">
+      <h2>Todas as corridas</h2>
+      <select id="filtro-status">
+        <option value="">Todos os status</option>
+        <option value="PENDING">Pendente (não pago)</option>
+        <option value="PAID">Pago (na fila)</option>
+        <option value="APPROVED">Aprovado</option>
+        <option value="DISPATCHED">Despachado</option>
+        <option value="ACCEPTED">Aceito</option>
+        <option value="REJECTED">Rejeitado</option>
+        <option value="COMPLETED">Concluído</option>
+      </select>
+    </div>
+    <div id="lista-todas" class="lista-corridas"></div>
+  </section>
+
+  <!-- ===== REPASSES AOS MOTOBOYS ===== -->
+  <section id="tab-repasses" class="tab-content" hidden>
+    <h2>Repasses (comissão x motoboy)</h2>
+    <div id="lista-repasses" class="lista-corridas"></div>
+  </section>
+</main>
+
+<!-- Modal de rejeição -->
+<div id="modal-rejeitar" class="modal" hidden>
+  <div class="modal-conteudo">
+    <h3>Rejeitar corrida</h3>
+    <label>Motivo da rejeição
+      <textarea id="motivo-rejeicao" placeholder="Ex: cliente informou 2km mas o endereço fica a 9km de distância."></textarea>
+    </label>
+    <div class="modal-acoes">
+      <button id="btn-cancelar-rejeicao" class="btn-secundario">Cancelar</button>
+      <button id="btn-confirmar-rejeicao" class="btn-perigo">Confirmar rejeição</button>
+    </div>
+  </div>
+</div>
+
+<script src="admin.js"></script>
+</body>
+</html>
