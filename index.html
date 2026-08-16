@@ -1,52 +1,598 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-<title>Moto Conchal</title>
-<meta name="mobile-web-app-capable" content="yes">
-<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
-<link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png">
-<link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-192.png">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Moto Conchal – Entrega Rápida na Sua Cidade</title>
+  <meta name="description" content="Serviço de mototáxi e entrega rápida em Conchal. Peça agora pelo WhatsApp e receba no menor tempo possível!" />
+  <meta name="theme-color" content="#FF6B00" />
+
+  <!-- ===== PWA: ícones para tela inicial do celular ===== -->
+  <!-- Os ícones são gerados dinamicamente por JavaScript logo abaixo -->
+  <link rel="apple-mobile-web-app-capable" content="yes" />
+  <link rel="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="apple-mobile-web-app-title" content="Moto Conchal" />
+  <link id="apple-touch-icon" rel="apple-touch-icon" sizes="180x180" />
+  <link id="icon-192" rel="icon" type="image/png" sizes="192x192" />
+  <link id="icon-512" rel="icon" type="image/png" sizes="512x512" />
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;900&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ========================================================
+       RESET & BASE
+    ======================================================== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --orange:    #FF6B00;
+      --orange2:   #FF9A00;
+      --yellow:    #FFD700;
+      --dark:      #0A0A0F;
+      --dark2:     #12121A;
+      --card:      rgba(255,255,255,0.04);
+      --border:    rgba(255,165,0,0.18);
+      --text:      #F5F5F5;
+      --sub:       #AAA;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: 'Outfit', sans-serif;
+      background: var(--dark);
+      color: var(--text);
+      overflow-x: hidden;
+    }
+
+    /* ========================================================
+       PARTÍCULAS DE FUNDO
+    ======================================================== */
+    #particles-canvas {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    /* ========================================================
+       LAYOUT PRINCIPAL
+    ======================================================== */
+    .tela {
+      position: relative;
+      z-index: 1;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1.25rem 3rem;
+      gap: 2rem;
+    }
+
+    /* ========================================================
+       TOPO / LOGO
+    ======================================================== */
+    .topo {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+      animation: fadeDown 0.8s ease both;
+    }
+
+    .logo-wrap {
+      width: 130px;
+      height: 130px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 30% 30%, #FF9A00, #FF3D00);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow:
+        0 0 0 6px rgba(255,107,0,0.15),
+        0 0 30px rgba(255,107,0,0.5),
+        0 0 80px rgba(255,107,0,0.2);
+      animation: logoPulse 3s ease-in-out infinite;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .logo-wrap::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 60%);
+    }
+
+    .logo-svg {
+      width: 75px;
+      height: 75px;
+      filter: drop-shadow(0 2px 8px rgba(0,0,0,0.5));
+    }
+
+    .badge {
+      display: inline-block;
+      background: linear-gradient(90deg, var(--orange), var(--orange2));
+      color: #fff;
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 0.25rem 0.8rem;
+      border-radius: 50px;
+      box-shadow: 0 2px 12px rgba(255,107,0,0.4);
+      animation: fadeDown 0.8s 0.1s ease both;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 8vw, 3rem);
+      font-weight: 900;
+      background: linear-gradient(135deg, #FFD700, #FF6B00);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      text-align: center;
+      line-height: 1.1;
+      animation: fadeDown 0.8s 0.15s ease both;
+    }
+
+    .subtitulo {
+      font-size: clamp(0.9rem, 3.5vw, 1.1rem);
+      color: var(--sub);
+      text-align: center;
+      max-width: 300px;
+      animation: fadeDown 0.8s 0.25s ease both;
+    }
+
+    /* ========================================================
+       CARD DE INFO
+    ======================================================== */
+    .info-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      width: 100%;
+      max-width: 360px;
+      backdrop-filter: blur(10px);
+      animation: fadeUp 0.8s 0.35s ease both;
+    }
+
+    .info-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-size: 0.9rem;
+      color: #ccc;
+    }
+
+    .info-icon {
+      font-size: 1.3rem;
+      min-width: 28px;
+      text-align: center;
+    }
+
+    /* ========================================================
+       BOTÃO PRINCIPAL – BRILHANTE
+    ======================================================== */
+    .botao-pedir {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.6rem;
+      width: 100%;
+      max-width: 360px;
+      padding: 1.1rem 2rem;
+      font-family: 'Outfit', sans-serif;
+      font-size: clamp(1rem, 4vw, 1.2rem);
+      font-weight: 700;
+      color: #fff;
+      border: none;
+      border-radius: 50px;
+      cursor: pointer;
+      overflow: hidden;
+      outline: none;
+      -webkit-tap-highlight-color: transparent;
+
+      /* Gradiente laranja vibrante */
+      background: linear-gradient(135deg, #FF6B00 0%, #FF9A00 50%, #FFD700 100%);
+      background-size: 200% 200%;
+
+      /* Sombra com brilho laranja */
+      box-shadow:
+        0 0 0 0 rgba(255, 107, 0, 0.7),
+        0 8px 30px rgba(255, 107, 0, 0.5),
+        0 2px 6px rgba(0,0,0,0.4);
+
+      animation:
+        fadeUp 0.8s 0.5s ease both,
+        btnGradMove 3s ease infinite,
+        btnGlow 2.5s ease-in-out infinite;
+
+      transition: transform 0.15s ease, box-shadow 0.2s ease;
+    }
+
+    /* Efeito SHIMMER (brilho passando) */
+    .botao-pedir::before {
+      content: '';
+      position: absolute;
+      top: 0; left: -100%;
+      width: 60%;
+      height: 100%;
+      background: linear-gradient(
+        120deg,
+        transparent 0%,
+        rgba(255,255,255,0.35) 50%,
+        transparent 100%
+      );
+      animation: shimmer 2.2s ease-in-out infinite;
+    }
+
+    /* Borda brilhante giratória */
+    .botao-pedir::after {
+      content: '';
+      position: absolute;
+      inset: -2px;
+      border-radius: 52px;
+      background: conic-gradient(
+        from 0deg,
+        #FFD700, #FF6B00, #FF3D00, #FF9A00, #FFD700
+      );
+      z-index: -1;
+      animation: borderSpin 3s linear infinite;
+      opacity: 0.8;
+    }
+
+    .botao-pedir:hover {
+      transform: translateY(-3px) scale(1.03);
+      box-shadow:
+        0 0 0 8px rgba(255,107,0,0.15),
+        0 12px 40px rgba(255, 107, 0, 0.7),
+        0 4px 10px rgba(0,0,0,0.4);
+    }
+
+    .botao-pedir:active {
+      transform: scale(0.97);
+    }
+
+    .btn-icone {
+      font-size: 1.4rem;
+    }
+
+    /* RIPPLE ao clicar */
+    .ripple {
+      position: absolute;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.35);
+      transform: scale(0);
+      animation: rippleAnim 0.55s linear;
+      pointer-events: none;
+    }
+
+    /* ========================================================
+       EXPLICAÇÃO
+    ======================================================== */
+    .explicacao {
+      font-size: 0.8rem;
+      color: var(--sub);
+      text-align: center;
+      max-width: 300px;
+      line-height: 1.6;
+      animation: fadeUp 0.8s 0.65s ease both;
+    }
+
+    /* Rodapé */
+    footer {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      padding: 0.6rem;
+      text-align: center;
+      font-size: 0.7rem;
+      color: rgba(255,255,255,0.2);
+      z-index: 2;
+    }
+
+    /* ========================================================
+       KEYFRAMES
+    ======================================================== */
+    @keyframes fadeDown {
+      from { opacity: 0; transform: translateY(-20px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes logoPulse {
+      0%, 100% { box-shadow: 0 0 0 6px rgba(255,107,0,0.15), 0 0 30px rgba(255,107,0,0.5), 0 0 80px rgba(255,107,0,0.2); }
+      50%       { box-shadow: 0 0 0 10px rgba(255,107,0,0.25), 0 0 50px rgba(255,154,0,0.7), 0 0 100px rgba(255,107,0,0.35); }
+    }
+    @keyframes shimmer {
+      0%   { left: -100%; }
+      60%, 100% { left: 140%; }
+    }
+    @keyframes btnGlow {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255,107,0,0.5), 0 8px 30px rgba(255,107,0,0.5), 0 2px 6px rgba(0,0,0,0.4); }
+      50%       { box-shadow: 0 0 0 10px rgba(255,107,0,0.1), 0 12px 45px rgba(255,154,0,0.7), 0 2px 6px rgba(0,0,0,0.4); }
+    }
+    @keyframes btnGradMove {
+      0%   { background-position: 0% 50%; }
+      50%  { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    @keyframes borderSpin {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+    @keyframes rippleAnim {
+      to { transform: scale(4); opacity: 0; }
+    }
+  </style>
 </head>
 <body>
 
+<!-- Canvas para partículas de fundo -->
+<canvas id="particles-canvas"></canvas>
+
 <div class="tela">
 
+  <!-- TOPO -->
   <div class="topo">
-    <div class="logo">🏍️</div>
+    <div class="logo-wrap" id="logo-wrap">
+      <!-- Logo SVG de moto profissional -->
+      <svg class="logo-svg" viewBox="0 0 80 60" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Logo Moto Conchal">
+        <!-- Corpo da moto -->
+        <ellipse cx="40" cy="38" rx="32" ry="10" fill="rgba(0,0,0,0.2)"/>
+        <!-- Roda traseira -->
+        <circle cx="18" cy="40" r="10" fill="none" stroke="white" stroke-width="3.5"/>
+        <circle cx="18" cy="40" r="4" fill="white" opacity="0.6"/>
+        <!-- Roda dianteira -->
+        <circle cx="62" cy="40" r="10" fill="none" stroke="white" stroke-width="3.5"/>
+        <circle cx="62" cy="40" r="4" fill="white" opacity="0.6"/>
+        <!-- Garfo dianteiro -->
+        <line x1="56" y1="28" x2="62" y2="40" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+        <line x1="58" y1="28" x2="64" y2="40" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+        <!-- Quadro principal -->
+        <path d="M22 38 L28 22 L44 18 L56 28 L36 35 Z" fill="white" opacity="0.95"/>
+        <!-- Farol -->
+        <ellipse cx="65" cy="27" rx="5" ry="4" fill="#FFD700" opacity="0.9"/>
+        <ellipse cx="65" cy="27" rx="3" ry="2.5" fill="white"/>
+        <!-- Guidão -->
+        <line x1="55" y1="20" x2="62" y2="22" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+        <!-- Selim / assento -->
+        <path d="M30 22 Q37 18 44 18 Q44 21 37 22 Z" fill="#FF9A00"/>
+        <!-- Escape -->
+        <path d="M22 38 Q14 38 10 41" stroke="white" stroke-width="2" stroke-linecap="round" fill="none"/>
+        <!-- Velocidade (linhas) -->
+        <line x1="4" y1="25" x2="14" y2="25" stroke="white" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
+        <line x1="2" y1="30" x2="12" y2="30" stroke="white" stroke-width="1.5" stroke-linecap="round" opacity="0.3"/>
+        <line x1="5" y1="35" x2="13" y2="35" stroke="white" stroke-width="1.5" stroke-linecap="round" opacity="0.2"/>
+      </svg>
+    </div>
+
+    <span class="badge">⚡ Entrega Rápida</span>
     <h1>Moto Conchal</h1>
     <p class="subtitulo">Sua moto em Conchal, rápido e direto</p>
   </div>
 
-  <button id="btn-pedir" class="botao-pedir">
-    <span class="icone">🏍️</span>
-    <span>Pedir Moto</span>
+  <!-- CARD DE INFORMAÇÕES -->
+  <div class="info-card">
+    <div class="info-row">
+      <span class="info-icon">🏙️</span>
+      <span>Atendemos toda a cidade de <strong>Conchal</strong></span>
+    </div>
+    <div class="info-row">
+      <span class="info-icon">⚡</span>
+      <span>Resposta <strong>imediata</strong> pelo WhatsApp</span>
+    </div>
+    <div class="info-row">
+      <span class="info-icon">📦</span>
+      <span>Encomendas, documentos e mais</span>
+    </div>
+  </div>
+
+  <!-- BOTÃO PRINCIPAL BRILHANTE -->
+  <button id="btn-pedir" class="botao-pedir" aria-label="Pedir moto via WhatsApp">
+    <span class="btn-icone">🏍️</span>
+    <span>Pedir Moto Agora</span>
   </button>
 
-  <p class="explicacao">Ao tocar, o WhatsApp vai abrir com uma mensagem pronta.
-  É só preencher onde te pegar e pra onde vai.</p>
-
-  <div class="tabela-precos">
-    <h2>Tabela de preços</h2>
-    <div class="linha-preco"><span>Até 2 km</span><strong>R$ 7,00</strong></div>
-    <div class="linha-preco"><span>Até 4 km</span><strong>R$ 13,00</strong></div>
-    <div class="linha-preco"><span>Até 6 km</span><strong>R$ 16,00</strong></div>
-    <div class="linha-preco"><span>Acima de 6 km</span><strong>Calculado via GPS</strong></div>
-    <p class="obs-preco">* Acima de 6 km, o valor é calculado pelo atendente com base na rota real.</p>
-  </div>
-
-  <div class="rodape">
-    <p>📲 Dica: toque no menu do navegador e escolha <strong>"Adicionar à tela inicial"</strong> para instalar o Moto Conchal como app.</p>
-  </div>
+  <p class="explicacao">
+    Ao tocar, o WhatsApp vai abrir com uma mensagem<br>
+    pronta — é só enviar! 📲
+  </p>
 
 </div>
 
-<script src="app.js"></script>
+<footer>© 2025 Moto Conchal · Conchal, SP</footer>
+
 <script>
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
+  /* ============================================================
+     1) GERA ÍCONES PWA VIA CANVAS (sem precisar de arquivo externo)
+  ============================================================ */
+  function generateIcon(size) {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const s = size;
+
+    // Fundo gradiente laranja
+    const grad = ctx.createRadialGradient(s*0.35, s*0.3, 0, s*0.5, s*0.5, s*0.6);
+    grad.addColorStop(0, '#FF9A00');
+    grad.addColorStop(1, '#FF3D00');
+    ctx.beginPath();
+    ctx.roundRect(0, 0, s, s, s * 0.22);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Borda sutil
+    ctx.strokeStyle = 'rgba(255,215,0,0.4)';
+    ctx.lineWidth = s * 0.025;
+    ctx.stroke();
+
+    // Roda traseira
+    ctx.beginPath();
+    ctx.arc(s*0.28, s*0.65, s*0.15, 0, Math.PI*2);
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = s*0.055;
+    ctx.stroke();
+
+    // Roda dianteira
+    ctx.beginPath();
+    ctx.arc(s*0.72, s*0.65, s*0.15, 0, Math.PI*2);
+    ctx.stroke();
+
+    // Corpo da moto (simplificado)
+    ctx.beginPath();
+    ctx.moveTo(s*0.3, s*0.62);
+    ctx.lineTo(s*0.38, s*0.38);
+    ctx.lineTo(s*0.55, s*0.32);
+    ctx.lineTo(s*0.68, s*0.46);
+    ctx.lineTo(s*0.48, s*0.58);
+    ctx.closePath();
+    ctx.fillStyle = 'white';
+    ctx.fill();
+
+    // Farol amarelo
+    ctx.beginPath();
+    ctx.ellipse(s*0.76, s*0.44, s*0.07, s*0.055, 0, 0, Math.PI*2);
+    ctx.fillStyle = '#FFD700';
+    ctx.fill();
+
+    // "MC" texto pequeno
+    ctx.font = `bold ${s*0.13}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fillText('MC', s*0.5, s*0.9);
+
+    return canvas.toDataURL('image/png');
   }
+
+  // Aplica ícones nos links do head
+  function applyIcons() {
+    const icon192 = generateIcon(192);
+    const icon512 = generateIcon(512);
+
+    document.getElementById('icon-192').href = icon192;
+    document.getElementById('icon-512').href = icon512;
+    document.getElementById('apple-touch-icon').href = icon192;
+
+    // Cria e injeta o Web App Manifest dinamicamente
+    const manifest = {
+      name: 'Moto Conchal',
+      short_name: 'MotoConchal',
+      description: 'Serviço de mototáxi e entrega rápida em Conchal',
+      start_url: '.',
+      display: 'standalone',
+      background_color: '#0A0A0F',
+      theme_color: '#FF6B00',
+      orientation: 'portrait',
+      icons: [
+        { src: icon192, sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
+        { src: icon512, sizes: '512x512', type: 'image/png', purpose: 'any maskable' }
+      ]
+    };
+
+    const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+    const manifestURL = URL.createObjectURL(blob);
+    const link = document.createElement('link');
+    link.rel = 'manifest';
+    link.href = manifestURL;
+    document.head.appendChild(link);
+  }
+
+  applyIcons();
+
+  /* ============================================================
+     2) BOTÃO WHATSAPP COM RIPPLE
+  ============================================================ */
+  const btn = document.getElementById('btn-pedir');
+  const telefone = '5519992306488';
+  const mensagem = encodeURIComponent('Olá! Preciso de uma moto. Pode me atender?');
+
+  btn.addEventListener('click', function (e) {
+    // Ripple
+    const ripple = document.createElement('span');
+    ripple.classList.add('ripple');
+    const rect = btn.getBoundingClientRect();
+    const size = Math.max(rect.width, rect.height);
+    ripple.style.width = ripple.style.height = size + 'px';
+    ripple.style.left = (e.clientX - rect.left - size / 2) + 'px';
+    ripple.style.top  = (e.clientY - rect.top  - size / 2) + 'px';
+    btn.appendChild(ripple);
+    ripple.addEventListener('animationend', () => ripple.remove());
+
+    // Abre WhatsApp após pequeno delay visual
+    setTimeout(() => {
+      window.open(`https://wa.me/${telefone}?text=${mensagem}`, '_blank');
+    }, 200);
+  });
+
+  /* ============================================================
+     3) PARTÍCULAS FLUTUANTES DE FUNDO
+  ============================================================ */
+  const canvas = document.getElementById('particles-canvas');
+  const ctx2 = canvas.getContext('2d');
+
+  let particles = [];
+  const PARTICLE_COUNT = 40;
+
+  function resize() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  class Particle {
+    constructor() { this.reset(true); }
+    reset(init) {
+      this.x  = Math.random() * canvas.width;
+      this.y  = init ? Math.random() * canvas.height : canvas.height + 10;
+      this.r  = Math.random() * 2.5 + 0.5;
+      this.vy = -(Math.random() * 0.5 + 0.2);
+      this.vx = (Math.random() - 0.5) * 0.3;
+      this.a  = Math.random() * 0.5 + 0.1;
+      this.color = Math.random() > 0.5 ? '#FF6B00' : '#FFD700';
+    }
+    update() {
+      this.x += this.vx;
+      this.y += this.vy;
+      if (this.y < -10) this.reset(false);
+    }
+    draw() {
+      ctx2.save();
+      ctx2.globalAlpha = this.a;
+      ctx2.beginPath();
+      ctx2.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+      ctx2.fillStyle = this.color;
+      ctx2.shadowColor = this.color;
+      ctx2.shadowBlur = 6;
+      ctx2.fill();
+      ctx2.restore();
+    }
+  }
+
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    particles.push(new Particle());
+  }
+
+  function animateParticles() {
+    ctx2.clearRect(0, 0, canvas.width, canvas.height);
+    particles.forEach(p => { p.update(); p.draw(); });
+    requestAnimationFrame(animateParticles);
+  }
+  animateParticles();
 </script>
+
 </body>
 </html>
