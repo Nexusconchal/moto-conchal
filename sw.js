@@ -1,4 +1,4 @@
-const CACHE_NAME = 'moto-conchal-v9-paineis-repasse';
+const CACHE_NAME = 'moto-conchal-v10-cpf-motoboy';
 const ARQUIVOS = ['./', './index.html'];
 
 self.addEventListener('install', (event) => {
