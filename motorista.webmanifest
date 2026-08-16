@@ -1,0 +1,18 @@
+{
+  "name": "Motorista Conchal",
+  "short_name": "Motorista Conchal",
+  "description": "Painel dos motoboys da Moto Conchal",
+  "start_url": "./motoboy.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#090911",
+  "theme_color": "#ff6b00",
+  "icons": [
+    {
+      "src": "./motorista-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
