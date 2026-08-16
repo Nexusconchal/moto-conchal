@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="g" x1="80" y1="60" x2="430" y2="450" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffd700"/>
+      <stop offset="0.5" stop-color="#ff8a00"/>
+      <stop offset="1" stop-color="#ff3d00"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#090911"/>
+  <circle cx="256" cy="216" r="154" fill="url(#g)"/>
+  <circle cx="157" cy="294" r="50" fill="none" stroke="#fff" stroke-width="24"/>
+  <circle cx="359" cy="294" r="50" fill="none" stroke="#fff" stroke-width="24"/>
+  <path d="M168 285l35-104 89-25 73 34 32 88-43 11-26-62-54 55H188z" fill="#fff"/>
+  <path d="M211 183c42-36 86-35 115-16l-21 31c-27-12-53-7-82 13z" fill="#ff8a00"/>
+  <path d="M337 188c17-51 62-41 65-13 4 34-22 59-60 54z" fill="#fff"/>
+  <text x="256" y="424" text-anchor="middle" font-family="Arial, sans-serif" font-weight="900" font-size="52" fill="#fff">Motorista</text>
+  <text x="256" y="468" text-anchor="middle" font-family="Arial, sans-serif" font-weight="900" font-size="42" fill="#ffd700">Conchal</text>
+</svg>
