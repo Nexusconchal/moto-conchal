@@ -19,7 +19,7 @@
   <section id="login" class="login">
     <label>Senha do dono<input id="senha" type="password" placeholder="Senha do painel do dono"></label>
     <button id="entrar" type="button">Entrar</button>
-    <p class="muted">Senha inicial: <strong>dono123</strong>. Use este painel so para conferencia interna.</p>
+    <p class="muted">Use este painel so para conferencia interna do dono.</p>
   </section>
 
   <section id="painel" class="hidden grid">
@@ -61,7 +61,7 @@ function dataTxt(ts){return data(ts).toLocaleString('pt-BR')}
 function noPeriodo(c){const p=$('periodo').value;if(p==='todos')return true;const dia=data(c.finalizadaEm||c.aceitaEm||c.criadaEm).getDate();if(p==='1-10')return dia>=1&&dia<=10;if(p==='11-20')return dia>=11&&dia<=20;return dia>=21&&dia<=31}
 function filtrar(){const st=$('status').value;return corridas.filter(c=>(st==='todos'||c.status===st)&&noPeriodo(c)).sort((a,b)=>data(b.finalizadaEm||b.aceitaEm||b.criadaEm)-data(a.finalizadaEm||a.aceitaEm||a.criadaEm))}
 function render(){const itens=filtrar();const bruto=itens.reduce((s,c)=>s+Number(c.valor||0),0);$('totalCorridas').textContent=itens.length;$('totalBruto').textContent=moeda(bruto);$('totalMotoboys').textContent=moeda(bruto*.7);$('totalApp').textContent=moeda(bruto*.3);const porMoto={};itens.forEach(c=>{const nome=c.motoboy||'Sem motoboy';porMoto[nome]??={qtd:0,bruto:0};porMoto[nome].qtd++;porMoto[nome].bruto+=Number(c.valor||0)});$('resumoMotoboys').innerHTML='<table><thead><tr><th>Motoboy</th><th>Corridas</th><th>Total</th><th>Recebe 70%</th><th>App 30%</th></tr></thead><tbody>'+Object.entries(porMoto).map(([m,r])=>`<tr><td>${m}</td><td>${r.qtd}</td><td>${moeda(r.bruto)}</td><td class="ok">${moeda(r.bruto*.7)}</td><td>${moeda(r.bruto*.3)}</td></tr>`).join('')+'</tbody></table>';$('lista').innerHTML='<table><thead><tr><th>Data</th><th>Status</th><th>Cliente</th><th>Motoboy</th><th>Km</th><th>Valor</th><th>Motoboy</th><th>App</th></tr></thead><tbody>'+itens.map(c=>`<tr><td>${dataTxt(c.finalizadaEm||c.aceitaEm||c.criadaEm)}</td><td class="${c.status==='finalizada'?'ok':'warn'}">${c.status||'-'}</td><td>${c.nome||'-'}</td><td>${c.motoboy||'-'}</td><td>${String(c.km||'-').replace('.',',')}</td><td>${moeda(c.valor)}</td><td>${moeda(Number(c.valor||0)*.7)}</td><td>${moeda(Number(c.valor||0)*.3)}</td></tr>`).join('')+'</tbody></table>'}
-$('periodo').onchange=render;$('status').onchange=render;$('entrar').onclick=()=>{if($('senha').value.trim()!=='dono123'){alert('Senha incorreta');return}$('login').classList.add('hidden');$('painel').classList.remove('hidden');onSnapshot(collection(db,'corridas'),snap=>{corridas=snap.docs.map(d=>({id:d.id,...d.data()}));render()},err=>{$('lista').innerHTML=`Erro ao carregar: ${err.message}`})};
+$('periodo').onchange=render;$('status').onchange=render;$('entrar').onclick=()=>{if($('senha').value.trim()!=='dono9480'){alert('Senha incorreta');return}$('login').classList.add('hidden');$('painel').classList.remove('hidden');onSnapshot(collection(db,'corridas'),snap=>{corridas=snap.docs.map(d=>({id:d.id,...d.data()}));render()},err=>{$('lista').innerHTML=`Erro ao carregar: ${err.message}`})};
 </script>
 </body>
 </html>
