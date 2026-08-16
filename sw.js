@@ -1,5 +1,5 @@
-const CACHE_NAME = 'moto-conchal-v11-telefone-motoboy';
-const ARQUIVOS = ['./', './index.html'];
+const CACHE_NAME = 'moto-conchal-v12-app-motorista';
+const ARQUIVOS = ['./', './index.html', './motoboy.html', './motorista.webmanifest', './motorista-icon.svg'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ARQUIVOS)));
