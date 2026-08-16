@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;900&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    :root { --orange:#ff6b00; --orange2:#ff9a00; --yellow:#ffd700; --dark:#0c0c14; --panel:#151520; --muted:#9a9aa4; --line:rgba(255,150,0,.2); --green:#25d366; --blue:#4fc3f7; }
+    :root { --orange:#ff6b00; --orange2:#ff9a00; --yellow:#ffd700; --dark:#0c0c14; --muted:#9a9aa4; --line:rgba(255,150,0,.2); --green:#25d366; --blue:#4fc3f7; }
     html, body { min-height: 100%; font-family: Outfit, system-ui, sans-serif; background: var(--dark); color: #f4f4f4; overflow-x: hidden; }
     body::before { content: ''; position: fixed; inset: 0; background: radial-gradient(ellipse 90% 50% at 50% -5%, rgba(255,107,0,.16), transparent 70%), radial-gradient(ellipse 60% 40% at 85% 105%, rgba(255,154,0,.09), transparent 60%); pointer-events: none; }
     #cv { position: fixed; inset: 0; pointer-events: none; }
@@ -60,6 +60,8 @@
     label { display: grid; gap: .38rem; font-size: .78rem; font-weight: 800; }
     input { width: 100%; padding: .88rem .95rem; border-radius: 14px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); color: #fff; font: inherit; outline: none; }
     input:focus { border-color: rgba(255,154,0,.85); box-shadow: 0 0 0 3px rgba(255,154,0,.12); }
+    .origin-row { display: grid; gap: .55rem; }
+    .location-ok { border-color: rgba(79,195,247,.5); background: rgba(79,195,247,.08); }
     .status, .result { display: none; border-radius: 14px; padding: .85rem .95rem; line-height: 1.4; font-size: .88rem; }
     .status.show, .result.show { display: block; }
     .status { background: rgba(79,195,247,.1); border: 1px solid rgba(79,195,247,.25); color: #c9efff; }
@@ -121,14 +123,17 @@
     <div class="panel-head">
       <div>
         <div id="modal-title" class="panel-title">Calcular corrida</div>
-        <p class="panel-sub">Preencha os enderecos. O site calcula os km, escolhe o valor e so depois manda o Pix no WhatsApp.</p>
+        <p class="panel-sub">Use sua localizacao atual ou digite o endereco. O site calcula os km em Conchal e so depois manda o Pix no WhatsApp.</p>
       </div>
       <button id="btn-fechar" class="close" type="button" aria-label="Fechar">x</button>
     </div>
     <form id="form-corrida">
       <label>Seu nome<input id="nome" autocomplete="name" placeholder="Ex: Rafael" required /></label>
-      <label>Onde voce esta<input id="origem" autocomplete="street-address" placeholder="Rua, numero, bairro" required /></label>
-      <label>Para onde voce vai<input id="destino" autocomplete="street-address" placeholder="Rua, numero, bairro" required /></label>
+      <div class="origin-row">
+        <label>Onde voce esta<input id="origem" autocomplete="street-address" placeholder="Rua, numero, bairro" required /></label>
+        <button id="btn-localizacao" class="btn-secondary" type="button">Usar minha localizacao atual</button>
+      </div>
+      <label>Para onde voce vai<input id="destino" autocomplete="street-address" placeholder="Rua, numero, bairro ou ponto conhecido" required /></label>
       <div id="status" class="status"></div>
       <div id="resultado" class="result"></div>
       <div class="actions">
@@ -144,6 +149,7 @@
 const CONFIG = {
   telefone: '5519992306488',
   cidade: 'Conchal, SP, Brasil',
+  geoapifyKey: '1361a528dcbe484e8143a19929527781',
   pix: '94bff0ce-3c37-4e5e-a911-4512651e3d55'
 };
 const TABELA = [
@@ -155,6 +161,7 @@ const $ = id => document.getElementById(id);
 const modal = $('modal');
 const statusBox = $('status');
 const resultadoBox = $('resultado');
+let origemGps = null;
 function abrirModal(){ modal.classList.add('open'); modal.setAttribute('aria-hidden','false'); setTimeout(()=>$('nome').focus(),80); }
 function fecharModal(){ modal.classList.remove('open'); modal.setAttribute('aria-hidden','true'); }
 function mostrarStatus(texto, erro=false){ statusBox.textContent = texto; statusBox.className = `status show${erro ? ' error' : ''}`; }
@@ -162,25 +169,40 @@ function limparStatus(){ statusBox.className = 'status'; statusBox.textContent =
 function formatarValor(valor){ return valor.toLocaleString('pt-BR', { style:'currency', currency:'BRL' }); }
 function completarEndereco(valor){ return `${valor.trim()}, ${CONFIG.cidade}`; }
 function escolherPreco(km){ return TABELA.find(faixa => km <= faixa.limite) || { gps:true, valor:null, label:'Acima de 6 km' }; }
+function enc(valor){ return encodeURIComponent(valor); }
 async function geocodificar(endereco){
-  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=${encodeURIComponent(completarEndereco(endereco))}`;
-  const resposta = await fetch(url, { headers:{ Accept:'application/json' } });
-  if(!resposta.ok) throw new Error('Nao consegui localizar o endereco.');
+  const texto = completarEndereco(endereco);
+  const url = `https://api.geoapify.com/v1/geocode/search?text=${enc(texto)}&lang=pt&limit=1&filter=rect:-47.25,-22.40,-46.85,-22.20&bias=proximity:-47.172,-22.330&apiKey=${CONFIG.geoapifyKey}`;
+  const resposta = await fetch(url);
+  if(!resposta.ok) throw new Error('Nao consegui localizar o endereco agora.');
   const dados = await resposta.json();
-  if(!dados.length) throw new Error(`Endereco nao encontrado: ${endereco}`);
-  return { lat:Number(dados[0].lat), lon:Number(dados[0].lon) };
+  if(!dados.features || !dados.features.length) throw new Error(`Endereco nao encontrado: ${endereco}`);
+  const [lon, lat] = dados.features[0].geometry.coordinates;
+  return { lat:Number(lat), lon:Number(lon), texto:dados.features[0].properties.formatted || texto };
+}
+function pegarGps(){
+  return new Promise((resolve, reject) => {
+    if(!navigator.geolocation){ reject(new Error('Seu celular nao liberou GPS para o navegador.')); return; }
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({ lat:pos.coords.latitude, lon:pos.coords.longitude, texto:'Localizacao atual pelo GPS' }),
+      () => reject(new Error('Nao consegui pegar sua localizacao. Libere a permissao do GPS e tente de novo.')),
+      { enableHighAccuracy:true, timeout:12000, maximumAge:60000 }
+    );
+  });
 }
 async function calcularRota(origem, destino){
-  const url = `https://router.project-osrm.org/route/v1/driving/${origem.lon},${origem.lat};${destino.lon},${destino.lat}?overview=false`;
+  const waypoints = `${origem.lat},${origem.lon}|${destino.lat},${destino.lon}`;
+  const url = `https://api.geoapify.com/v1/routing?waypoints=${enc(waypoints)}&mode=drive&apiKey=${CONFIG.geoapifyKey}`;
   const resposta = await fetch(url);
   if(!resposta.ok) throw new Error('Nao consegui calcular a rota agora.');
   const dados = await resposta.json();
-  if(!dados.routes || !dados.routes.length) throw new Error('Rota nao encontrada para esses enderecos.');
-  return dados.routes[0].distance / 1000;
+  const distancia = dados.features?.[0]?.properties?.distance;
+  if(!distancia) throw new Error('Rota nao encontrada para esses enderecos.');
+  return distancia / 1000;
 }
-function montarMensagem({ nome, origem, destino, km, preco }){
+function montarMensagem({ nome, origemTexto, destinoTexto, km, preco }){
   const distancia = km ? `${km.toFixed(2).replace('.', ',')} km` : 'Nao calculada';
-  let texto = `Ola! Quero pedir uma corrida.\n\nNome: ${nome}\nEstou em: ${origem}\nDestino: ${destino}\nDistancia calculada: ${distancia}\n`;
+  let texto = `Ola! Quero pedir uma corrida.\n\nNome: ${nome}\nEstou em: ${origemTexto}\nDestino: ${destinoTexto}\nDistancia calculada: ${distancia}\n`;
   if(preco.gps){
     texto += 'Valor: acima de 6 km, calcular pelo GPS.\n';
   } else {
@@ -193,11 +215,24 @@ function abrirWhatsApp(mensagem){ window.open(`https://wa.me/${CONFIG.telefone}?
 $('btn-pedir').addEventListener('click', abrirModal);
 $('btn-fechar').addEventListener('click', fecharModal);
 modal.addEventListener('click', e => { if(e.target === modal) fecharModal(); });
+$('btn-localizacao').addEventListener('click', async () => {
+  try{
+    mostrarStatus('Pegando sua localizacao atual...');
+    origemGps = await pegarGps();
+    $('origem').value = 'Minha localizacao atual';
+    $('origem').classList.add('location-ok');
+    limparStatus();
+  }catch(err){
+    origemGps = null;
+    mostrarStatus(err.message, true);
+  }
+});
+$('origem').addEventListener('input', () => { origemGps = null; $('origem').classList.remove('location-ok'); });
 $('btn-whats-manual').addEventListener('click', () => {
   abrirWhatsApp(montarMensagem({
     nome: $('nome').value.trim() || 'Nao informado',
-    origem: $('origem').value.trim() || 'Nao informado',
-    destino: $('destino').value.trim() || 'Nao informado',
+    origemTexto: $('origem').value.trim() || 'Nao informado',
+    destinoTexto: $('destino').value.trim() || 'Nao informado',
     km: null,
     preco: { gps:true }
   }));
@@ -212,12 +247,13 @@ $('form-corrida').addEventListener('submit', async e => {
   const destinoTxt = $('destino').value.trim();
   if(!nome || !origemTxt || !destinoTxt){ mostrarStatus('Preencha nome, origem e destino.', true); return; }
   try{
-    mostrarStatus('Localizando os enderecos...');
-    const origem = await geocodificar(origemTxt);
+    mostrarStatus(origemGps ? 'Localizacao atual pronta. Buscando o destino...' : 'Localizando os enderecos em Conchal...');
+    const origem = origemGps || await geocodificar(origemTxt);
     const destino = await geocodificar(destinoTxt);
     mostrarStatus('Calculando a distancia da rota...');
     const km = await calcularRota(origem, destino);
     const preco = escolherPreco(km);
+    const origemTexto = origemGps ? 'Minha localizacao atual pelo GPS' : origemTxt;
     if(preco.gps){
       resultadoBox.innerHTML = `Distancia: <strong>${km.toFixed(2).replace('.', ',')} km</strong><br>Valor: <strong>acima de 6 km, calcular pelo GPS</strong>.`;
     } else {
@@ -225,7 +261,7 @@ $('form-corrida').addEventListener('submit', async e => {
     }
     resultadoBox.className = 'result show';
     limparStatus();
-    setTimeout(() => abrirWhatsApp(montarMensagem({ nome, origem:origemTxt, destino:destinoTxt, km, preco })), 600);
+    setTimeout(() => abrirWhatsApp(montarMensagem({ nome, origemTexto, destinoTexto:destinoTxt, km, preco })), 600);
   }catch(err){
     mostrarStatus(`${err.message} Voce ainda pode mandar o pedido pelo WhatsApp sem calculo automatico.`, true);
   }
