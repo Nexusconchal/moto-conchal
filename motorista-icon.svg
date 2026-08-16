@@ -13,6 +13,6 @@
   <path d="M168 285l35-104 89-25 73 34 32 88-43 11-26-62-54 55H188z" fill="#fff"/>
   <path d="M211 183c42-36 86-35 115-16l-21 31c-27-12-53-7-82 13z" fill="#ff8a00"/>
   <path d="M337 188c17-51 62-41 65-13 4 34-22 59-60 54z" fill="#fff"/>
-  <text x="256" y="424" text-anchor="middle" font-family="Arial, sans-serif" font-weight="900" font-size="52" fill="#fff">Motorista</text>
+  <text x="256" y="424" text-anchor="middle" font-family="Arial, sans-serif" font-weight="900" font-size="56" fill="#fff">MotoJa</text>
   <text x="256" y="468" text-anchor="middle" font-family="Arial, sans-serif" font-weight="900" font-size="42" fill="#ffd700">Conchal</text>
 </svg>

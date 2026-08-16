@@ -1,4 +1,4 @@
-const CACHE_NAME = 'moto-conchal-v16-origem-gps-endereco';
+const CACHE_NAME = 'motoja-conchal-v17-nome-novo';
 const ARQUIVOS = ['./', './index.html', './motoboy.html', './dono.html', './motorista.webmanifest', './motorista-icon.svg'];
 
 self.addEventListener('install', (event) => {

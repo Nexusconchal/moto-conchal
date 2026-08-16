@@ -1,9 +1,9 @@
 {
-  "id": "./motoboy.html?app=motorista-conchal-v2",
-  "name": "Motorista Conchal",
-  "short_name": "Motorista Conchal",
-  "description": "Painel dos motoboys da Moto Conchal",
-  "start_url": "./motoboy.html?app=motorista-conchal-v2",
+  "id": "./motoboy.html?app=motorista-motoja-v3",
+  "name": "Motorista MotoJa Conchal",
+  "short_name": "Motorista MotoJa",
+  "description": "Painel dos motoboys da MotoJa Conchal",
+  "start_url": "./motoboy.html?app=motorista-motoja-v3",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
@@ -11,13 +11,13 @@
   "theme_color": "#ff6b00",
   "icons": [
     {
-      "src": "./motorista-icon.svg?v=2",
+      "src": "./motorista-icon.svg?v=3",
       "sizes": "512x512",
       "type": "image/svg+xml",
       "purpose": "any"
     },
     {
-      "src": "./motorista-icon.svg?v=2",
+      "src": "./motorista-icon.svg?v=3",
       "sizes": "512x512",
       "type": "image/svg+xml",
       "purpose": "maskable"
