@@ -1,4 +1,4 @@
-const CACHE_NAME = 'moto-conchal-v12-app-motorista';
+const CACHE_NAME = 'moto-conchal-v13-cliente-salvo';
 const ARQUIVOS = ['./', './index.html', './motoboy.html', './motorista.webmanifest', './motorista-icon.svg'];
 
 self.addEventListener('install', (event) => {
