@@ -1,0 +1,26 @@
+{
+  "id": "./?app=motoja-cliente-v1",
+  "name": "MotoJa Conchal",
+  "short_name": "MotoJa Conchal",
+  "description": "App de corridas da MotoJa Conchal",
+  "start_url": "./?app=motoja-cliente-v1",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#090911",
+  "theme_color": "#ff6b00",
+  "icons": [
+    {
+      "src": "./motorista-icon.svg?v=3",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "./motorista-icon.svg?v=3",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

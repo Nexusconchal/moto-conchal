@@ -1,5 +1,5 @@
-const CACHE_NAME = 'motoja-conchal-v24-instrucoes-motoboy';
-const ARQUIVOS = ['./', './index.html', './motoboy.html', './dono.html', './motorista.webmanifest', './motorista-icon.svg'];
+const CACHE_NAME = 'motoja-conchal-v25-instalar-app';
+const ARQUIVOS = ['./', './index.html', './motoboy.html', './dono.html', './cliente.webmanifest', './motorista.webmanifest', './motorista-icon.svg'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ARQUIVOS)));
