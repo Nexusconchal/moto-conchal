@@ -1,4 +1,4 @@
-const CACHE_NAME = 'moto-conchal-v6-precos-endereco';
+const CACHE_NAME = 'moto-conchal-v8-firebase-motoboy';
 const ARQUIVOS = ['./', './index.html'];
 
 self.addEventListener('install', (event) => {
