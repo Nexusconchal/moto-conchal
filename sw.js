@@ -1,4 +1,4 @@
-const CACHE_NAME = 'motoja-conchal-v22-cancelamentos';
+const CACHE_NAME = 'motoja-conchal-v23-cache-motoboy';
 const ARQUIVOS = ['./', './index.html', './motoboy.html', './dono.html', './motorista.webmanifest', './motorista-icon.svg'];
 
 self.addEventListener('install', (event) => {
