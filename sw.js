@@ -1,4 +1,4 @@
-const CACHE_NAME = 'motoja-conchal-v26-reabre-sem-aviso';
+const CACHE_NAME = 'motoja-conchal-v27-contagem-aviso';
 const ARQUIVOS = ['./', './index.html', './motoboy.html', './dono.html', './cliente.webmanifest', './motorista.webmanifest', './motorista-icon.svg'];
 
 self.addEventListener('install', (event) => {
