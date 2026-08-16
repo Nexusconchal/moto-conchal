@@ -1,4 +1,4 @@
-const CACHE_NAME = 'motoja-conchal-v23-cache-motoboy';
+const CACHE_NAME = 'motoja-conchal-v24-instrucoes-motoboy';
 const ARQUIVOS = ['./', './index.html', './motoboy.html', './dono.html', './motorista.webmanifest', './motorista-icon.svg'];
 
 self.addEventListener('install', (event) => {
