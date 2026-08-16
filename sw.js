@@ -1,4 +1,4 @@
-const CACHE_NAME = 'moto-conchal-v4-geoapify';
+const CACHE_NAME = 'moto-conchal-v6-precos-endereco';
 const ARQUIVOS = ['./', './index.html'];
 
 self.addEventListener('install', (event) => {
