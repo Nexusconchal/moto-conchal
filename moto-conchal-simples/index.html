@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Moto Conchal</title>
+<meta name="theme-color" content="#f97316" />
+<link rel="manifest" href="/manifest.json" />
+<link rel="apple-touch-icon" href="/icons/icon-192.png" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="tela">
+
+  <div class="topo">
+    <div class="logo">🏍️</div>
+    <h1>Moto Conchal</h1>
+    <p class="subtitulo">Sua moto em Conchal, rápido e direto</p>
+  </div>
+
+  <button id="btn-pedir" class="botao-pedir">
+    <span class="icone">🏍️</span>
+    <span>Pedir Moto</span>
+  </button>
+
+  <p class="explicacao">Ao tocar, o WhatsApp vai abrir com uma mensagem pronta.
+  É só preencher onde te pegar e pra onde vai.</p>
+
+  <div class="tabela-precos">
+    <h2>Tabela de preços</h2>
+    <div class="linha-preco"><span>Até 2 km</span><strong>R$ 6,00</strong></div>
+    <div class="linha-preco"><span>Até 4 km</span><strong>R$ 13,00</strong></div>
+    <div class="linha-preco"><span>Até 6 km</span><strong>R$ 16,00</strong></div>
+    <div class="linha-preco"><span>Acima de 6 km</span><strong>Calculado via GPS</strong></div>
+    <p class="obs-preco">* Acima de 6 km, o valor é calculado pelo atendente com base na rota real.</p>
+  </div>
+
+  <div class="rodape">
+    <p>📲 Dica: toque no menu do navegador e escolha <strong>"Adicionar à tela inicial"</strong> para instalar o Moto Conchal como app.</p>
+  </div>
+
+</div>
+
+<script src="app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
+  }
+</script>
+</body>
+</html>

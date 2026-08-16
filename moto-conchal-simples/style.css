@@ -1,0 +1,86 @@
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+  color: #f1f5f9;
+  display: flex;
+  justify-content: center;
+}
+
+.tela {
+  max-width: 420px;
+  width: 100%;
+  padding: 32px 22px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  min-height: 100vh;
+}
+
+.topo { margin-bottom: 30px; }
+.logo { font-size: 3.2rem; line-height: 1; margin-bottom: 6px; }
+h1 { font-size: 1.6rem; margin: 0; }
+.subtitulo { color: #94a3b8; font-size: 0.9rem; margin-top: 6px; }
+
+.botao-pedir {
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  border: none;
+  background: radial-gradient(circle at 30% 30%, #fb923c, #ea580c);
+  color: white;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 1.15rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 12px 30px rgba(249, 115, 22, 0.4);
+  transition: transform 0.15s ease;
+}
+.botao-pedir:active { transform: scale(0.96); }
+.botao-pedir .icone { font-size: 3.2rem; }
+
+.explicacao {
+  color: #94a3b8;
+  font-size: 0.85rem;
+  max-width: 300px;
+  margin: 22px 0 32px;
+}
+
+.tabela-precos {
+  width: 100%;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+.tabela-precos h2 { font-size: 1rem; margin: 0 0 14px; color: #f97316; }
+.linha-preco {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid #334155;
+  font-size: 0.95rem;
+}
+.linha-preco:last-of-type { border-bottom: none; }
+.linha-preco strong { color: #f1f5f9; }
+.obs-preco { font-size: 0.75rem; color: #64748b; margin-top: 10px; margin-bottom: 0; text-align: left; }
+
+.rodape {
+  margin-top: auto;
+  padding-top: 20px;
+}
+.rodape p {
+  font-size: 0.78rem;
+  color: #64748b;
+  line-height: 1.5;
+}
+.rodape strong { color: #94a3b8; }
