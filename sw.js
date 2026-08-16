@@ -1,4 +1,4 @@
-const CACHE_NAME = 'motoja-conchal-v18-trava-aceite';
+const CACHE_NAME = 'motoja-conchal-v20-pix-apos-aceite';
 const ARQUIVOS = ['./', './index.html', './motoboy.html', './dono.html', './motorista.webmanifest', './motorista-icon.svg'];
 
 self.addEventListener('install', (event) => {
