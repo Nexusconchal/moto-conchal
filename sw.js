@@ -1,4 +1,4 @@
-const CACHE_NAME = 'motoja-conchal-v27-contagem-aviso';
+const CACHE_NAME = 'motoja-conchal-v28-telefone-obrigatorio';
 const ARQUIVOS = ['./', './index.html', './motoboy.html', './dono.html', './cliente.webmanifest', './motorista.webmanifest', './motorista-icon.svg'];
 
 self.addEventListener('install', (event) => {
