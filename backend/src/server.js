@@ -4,6 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import admin from 'firebase-admin';
+import rateLimit from 'express-rate-limit';
 
 const PORT = Number(process.env.PORT || 10000);
 const DRIVER_PERCENT = Number(process.env.DRIVER_PERCENT || 0.7);
@@ -26,6 +27,15 @@ function serviceAccount() {
 
 function money(value) {
   return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function expectedFare(km) {
+  const distance = Number(km || 0);
+  if (!Number.isFinite(distance) || distance <= 0) return 0;
+  if (distance <= 2.5) return 7;
+  if (distance <= 4) return 10;
+  if (distance <= 6) return 13;
+  return Math.ceil(distance * 2);
 }
 
 function onlyDigits(value) {
@@ -87,6 +97,12 @@ const allowedOrigins = String(process.env.ALLOWED_ORIGINS || '')
 app.use(helmet());
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan('tiny'));
+app.use(rateLimit({
+  windowMs: 60 * 1000,
+  limit: 120,
+  standardHeaders: true,
+  legacyHeaders: false
+}));
 app.use(cors({
   origin(origin, callback) {
     if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
@@ -168,6 +184,24 @@ async function createPaymentPreference(rideId, ride, driverCpf) {
     appFee,
     driverAmount
   };
+}
+
+async function getDriverWithMercadoPago(driverCpf) {
+  const driverSnap = await db.collection('motoboys').doc(driverCpf).get();
+  if (!driverSnap.exists) {
+    const error = new Error('Motoboy nao cadastrado.');
+    error.status = 404;
+    error.code = 'motoboy_nao_cadastrado';
+    throw error;
+  }
+  const driver = driverSnap.data();
+  if (!driver.mercadoPago?.accessToken) {
+    const error = new Error('Motoboy ainda nao conectou Mercado Pago.');
+    error.status = 409;
+    error.code = 'motoboy_sem_mercado_pago';
+    throw error;
+  }
+  return driver;
 }
 
 async function notifyDriversAboutRide(rideId, ride) {
@@ -254,6 +288,14 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'motoja-conchal-backend' });
 });
 
+app.get('/', (_req, res) => {
+  res.json({
+    ok: true,
+    service: 'motoja-conchal-backend',
+    site: process.env.APP_BASE_URL || null
+  });
+});
+
 app.post('/api/drivers/:cpf/push-token', async (req, res, next) => {
   try {
     const driverCpf = onlyDigits(req.params.cpf);
@@ -288,6 +330,9 @@ app.post('/api/rides', async (req, res, next) => {
     if (!ride.valor || ride.valor <= 0) {
       return res.status(400).json({ error: 'valor_invalido' });
     }
+    if (money(ride.valor) !== expectedFare(ride.km)) {
+      return res.status(400).json({ error: 'valor_nao_confere_com_tabela' });
+    }
 
     const ref = await db.collection('corridas').add({
       ...ride,
@@ -313,10 +358,7 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
     const driverCpf = onlyDigits(req.body.driverCpf);
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
 
-    const driverSnap = await db.collection('motoboys').doc(driverCpf).get();
-    if (!driverSnap.exists) return res.status(404).json({ error: 'motoboy_nao_cadastrado' });
-
-    const driver = driverSnap.data();
+    const driver = await getDriverWithMercadoPago(driverCpf);
     let acceptedRide = null;
     const rideRef = db.collection('corridas').doc(req.params.rideId);
 
@@ -393,6 +435,79 @@ app.post('/api/rides/:rideId/notify-client', async (req, res, next) => {
     }, { merge: true });
 
     res.json({ ok: true, whatsapp: whatsappLink(ride.telefoneCliente, message) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/rides/:rideId/cancel', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    const reason = String(req.body.reason || '').trim().slice(0, 300);
+    if (driverCpf.length !== 11 || !reason) {
+      return res.status(400).json({ error: 'cpf_e_motivo_obrigatorios' });
+    }
+
+    const rideRef = db.collection('corridas').doc(req.params.rideId);
+    const rideSnap = await rideRef.get();
+    if (!rideSnap.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
+
+    const ride = rideSnap.data();
+    if (onlyDigits(ride.motoboyCpf) !== driverCpf) {
+      return res.status(409).json({ error: 'corrida_nao_pertence_ao_motoboy' });
+    }
+    if (ride.status === 'finalizada') {
+      return res.status(409).json({ error: 'corrida_ja_finalizada' });
+    }
+
+    await rideRef.set({
+      status: 'cancelada',
+      motivoCancelamento: reason,
+      canceladoPor: ride.motoboy || '',
+      canceladoPorCpf: driverCpf,
+      canceladoEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    const message = `Ola, ${ride.nome || 'cliente'}. O motoboy ${ride.motoboy || 'MotoJa Conchal'} cancelou a corrida.\n\nMotivo: ${reason}\n\nPor favor, peca uma nova corrida pelo app.`;
+    res.json({ ok: true, whatsapp: whatsappLink(ride.telefoneCliente, message) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/rides/:rideId/finish', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+
+    const rideRef = db.collection('corridas').doc(req.params.rideId);
+    const rideSnap = await rideRef.get();
+    if (!rideSnap.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
+
+    const ride = rideSnap.data();
+    if (onlyDigits(ride.motoboyCpf) !== driverCpf) {
+      return res.status(409).json({ error: 'corrida_nao_pertence_ao_motoboy' });
+    }
+    if (!ride.clienteAvisadoEm) {
+      return res.status(409).json({ error: 'avise_o_cliente_antes_de_finalizar' });
+    }
+    if (ride.pagamento?.status !== 'approved') {
+      return res.status(409).json({ error: 'pagamento_ainda_nao_aprovado' });
+    }
+    if (ride.status === 'cancelada') {
+      return res.status(409).json({ error: 'corrida_cancelada' });
+    }
+
+    await rideRef.set({
+      status: 'finalizada',
+      finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      ganhoMotoboy: DRIVER_PERCENT,
+      ganhoApp: APP_PERCENT,
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    res.json({ ok: true });
   } catch (error) {
     next(error);
   }

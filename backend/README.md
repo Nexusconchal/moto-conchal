@@ -10,6 +10,9 @@ Backend para rodar no Render quando o MotoJa Conchal sair do teste e precisar de
 - Cria link de pagamento Mercado Pago com split: 70% motoboy e 30% app.
 - Recebe webhook do Mercado Pago e marca pagamento confirmado na corrida.
 - Envia notificacao push para os motoboys cadastrados quando chegar corrida nova.
+- Bloqueia valor adulterado pelo navegador: o backend confere o valor com a tabela.
+- Bloqueia finalizar corrida sem cliente avisado e sem pagamento aprovado.
+- Limita excesso de chamadas na API para reduzir abuso simples.
 
 ## Modelo Mercado Pago
 
@@ -53,6 +56,8 @@ POST /api/drivers/:cpf/push-token
 POST /api/rides
 POST /api/rides/:rideId/accept
 POST /api/rides/:rideId/notify-client
+POST /api/rides/:rideId/cancel
+POST /api/rides/:rideId/finish
 POST /api/rides/:rideId/payment/preference
 POST /api/mercadopago/webhook
 POST /api/jobs/cleanup
