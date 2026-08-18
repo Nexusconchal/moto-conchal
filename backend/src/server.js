@@ -88,6 +88,7 @@ admin.initializeApp({
 
 const db = admin.firestore();
 const app = express();
+app.set('trust proxy', 1);
 
 const allowedOrigins = String(process.env.ALLOWED_ORIGINS || '')
   .split(',')
