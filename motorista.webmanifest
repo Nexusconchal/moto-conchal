@@ -3,7 +3,7 @@
   "name": "Motorista Nexus MotoJa",
   "short_name": "Nexus Motorista",
   "description": "Painel dos motoboys da Nexus MotoJa",
-  "start_url": "./motoboy.html?app=nexus-motoja-motorista-v4",
+  "start_url": "./motoboy.html?app=nexus-motoja-motorista-v5",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
