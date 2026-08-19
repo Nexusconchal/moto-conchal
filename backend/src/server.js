@@ -70,6 +70,7 @@ function whatsappLink(phone, message) {
 
 function ridePublicData(ride) {
   return {
+    clientRequestId: String(ride.clientRequestId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80),
     nome: String(ride.nome || ''),
     telefoneCliente: onlyDigits(ride.telefoneCliente),
     origem: String(ride.origem || ''),
@@ -335,13 +336,28 @@ app.post('/api/rides', async (req, res, next) => {
       return res.status(400).json({ error: 'valor_nao_confere_com_tabela' });
     }
 
-    const ref = await db.collection('corridas').add({
-      ...ride,
-      status: 'pendente',
-      pagamento: 'mercadopago_apos_aceite',
-      criadaEm: admin.firestore.FieldValue.serverTimestamp(),
-      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    const ref = ride.clientRequestId
+      ? db.collection('corridas').doc(ride.clientRequestId)
+      : db.collection('corridas').doc();
+    let created = false;
+
+    await db.runTransaction(async (tx) => {
+      const existing = await tx.get(ref);
+      if (existing.exists) return;
+
+      tx.set(ref, {
+        ...ride,
+        status: 'pendente',
+        pagamento: 'mercadopago_apos_aceite',
+        criadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+      created = true;
     });
+
+    if (!created) {
+      return res.status(200).json({ rideId: ref.id, duplicated: true, push: { sent: 0, failed: 0 } });
+    }
 
     const push = await notifyDriversAboutRide(ref.id, ride).catch((error) => {
       console.error('driver push failed', error);
