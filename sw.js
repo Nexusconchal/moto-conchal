@@ -1,5 +1,5 @@
-const CACHE_NAME = 'motoja-conchal-v29-backend-mercadopago';
-const ARQUIVOS = ['./', './index.html', './motoboy.html', './dono.html', './cliente.webmanifest', './motorista.webmanifest', './motorista-icon.svg'];
+const CACHE_NAME = 'nexus-motoja-v30-icons-warmup';
+const ARQUIVOS = ['./', './index.html', './motoboy.html', './dono.html', './cliente.webmanifest', './motorista.webmanifest', './dono.webmanifest', './motorista-icon.svg', './nexus-motoja-icon-180.png', './nexus-motoja-icon-192.png', './nexus-motoja-icon-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ARQUIVOS)));
