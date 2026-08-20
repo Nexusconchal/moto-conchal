@@ -45,6 +45,7 @@ Obrigatorias:
 - `MP_REDIRECT_URI`
 - `MP_OWNER_ACCESS_TOKEN`
 - `ADMIN_API_KEY`
+- `OWNER_PASSWORD` com a senha do painel do dono
 
 ## Endpoints principais
 

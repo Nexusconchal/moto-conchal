@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import admin from 'firebase-admin';
 import rateLimit from 'express-rate-limit';
+import crypto from 'crypto';
 
 const PORT = Number(process.env.PORT || 10000);
 const DRIVER_PERCENT = Number(process.env.DRIVER_PERCENT || 0.7);
@@ -55,6 +56,13 @@ function assertAdmin(req, res, next) {
     return res.status(401).json({ error: 'unauthorized' });
   }
   return next();
+}
+
+function safeEqual(a, b) {
+  const left = Buffer.from(String(a || ''));
+  const right = Buffer.from(String(b || ''));
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
 }
 
 function appUrl(path) {
@@ -296,6 +304,18 @@ app.get('/', (_req, res) => {
     service: 'motoja-conchal-backend',
     site: process.env.APP_BASE_URL || null
   });
+});
+
+app.post('/api/admin/login', (req, res) => {
+  const ownerPassword = process.env.OWNER_PASSWORD || process.env.ADMIN_PANEL_PASSWORD;
+  const password = String(req.body.password || '');
+  if (!ownerPassword) {
+    return res.status(503).json({ error: 'owner_password_not_configured' });
+  }
+  if (!safeEqual(password, ownerPassword)) {
+    return res.status(401).json({ error: 'senha_incorreta' });
+  }
+  return res.json({ ok: true });
 });
 
 app.post('/api/drivers/:cpf/push-token', async (req, res, next) => {
