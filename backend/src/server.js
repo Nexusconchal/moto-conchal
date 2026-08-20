@@ -32,9 +32,9 @@ function money(value) {
 function expectedFare(km) {
   const distance = Number(km || 0);
   if (!Number.isFinite(distance) || distance <= 0) return 0;
-  if (distance <= 2.5) return 7;
-  if (distance <= 4) return 10;
-  if (distance <= 6) return 13;
+  if (distance <= 3) return 4.5;
+  if (distance <= 5) return 7.5;
+  if (distance <= 8) return 12;
   return Math.ceil(distance * 2);
 }
 
