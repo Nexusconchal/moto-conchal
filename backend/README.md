@@ -10,6 +10,7 @@ Backend para rodar no Render quando o MotoJa Conchal sair do teste e precisar de
 - Cria link de pagamento Mercado Pago com split: 70% motoboy e 30% app.
 - Recebe webhook do Mercado Pago e marca pagamento confirmado na corrida.
 - Envia notificacao push para os motoboys cadastrados quando chegar corrida nova.
+- Envia aviso no grupo do Telegram dos motoboys quando chegar corrida nova.
 - Bloqueia valor adulterado pelo navegador: o backend confere o valor com a tabela.
 - Bloqueia finalizar corrida sem cliente avisado e sem pagamento aprovado.
 - Limita excesso de chamadas na API para reduzir abuso simples.
@@ -46,6 +47,8 @@ Obrigatorias:
 - `MP_OWNER_ACCESS_TOKEN`
 - `ADMIN_API_KEY`
 - `OWNER_PASSWORD` com a senha do painel do dono
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
 
 ## Endpoints principais
 

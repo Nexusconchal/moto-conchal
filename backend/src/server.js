@@ -76,6 +76,14 @@ function whatsappLink(phone, message) {
   return `https://api.whatsapp.com/send?phone=${withCountry}&text=${encodeURIComponent(message)}`;
 }
 
+function escapeTelegram(text) {
+  return String(text || '').replace(/[&<>]/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;'
+  }[char]));
+}
+
 function ridePublicData(ride) {
   return {
     clientRequestId: String(ride.clientRequestId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80),
@@ -89,6 +97,54 @@ function ridePublicData(ride) {
     precoLabel: String(ride.precoLabel || ''),
     origemMapa: String(ride.origemMapa || '')
   };
+}
+
+async function notifyTelegramAboutRide(rideId, ride) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) return { sent: false, skipped: true };
+
+  const value = money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const km = Number(ride.km || 0).toFixed(2).replace('.', ',');
+  const appLink = process.env.APP_BASE_URL
+    ? appUrl('/motoboy.html')
+    : 'https://nexusconchal.github.io/moto-conchal/motoboy.html';
+  const originMap = ride.origemMapa ? `\nMapa origem: ${ride.origemMapa}` : '';
+  const message = [
+    '<b>NOVA CORRIDA TOCANDO</b>',
+    '',
+    `<b>Cliente:</b> ${escapeTelegram(ride.nome || 'Cliente')}`,
+    `<b>Valor:</b> ${escapeTelegram(value)}`,
+    `<b>Distancia:</b> ${escapeTelegram(km)} km`,
+    `<b>Origem:</b> ${escapeTelegram(ride.origem || '-')}${escapeTelegram(originMap)}`,
+    `<b>Destino:</b> ${escapeTelegram(ride.destino || '-')}`,
+    '',
+    '<b>Expira em:</b> 5 minutos',
+    '',
+    `Abra o app do motorista para aceitar:\n${escapeTelegram(appLink)}`,
+    '',
+    `Codigo: <code>${escapeTelegram(rideId)}</code>`
+  ].join('\n');
+
+  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: message,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.description || `Telegram error ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+
+  return { sent: true, messageId: data.result?.message_id || null };
 }
 
 admin.initializeApp({
@@ -383,8 +439,12 @@ app.post('/api/rides', async (req, res, next) => {
       console.error('driver push failed', error);
       return { sent: 0, failed: 0 };
     });
+    const telegram = await notifyTelegramAboutRide(ref.id, ride).catch((error) => {
+      console.error('telegram notify failed', error);
+      return { sent: false, failed: true };
+    });
 
-    res.status(201).json({ rideId: ref.id, push });
+    res.status(201).json({ rideId: ref.id, push, telegram });
   } catch (error) {
     next(error);
   }
