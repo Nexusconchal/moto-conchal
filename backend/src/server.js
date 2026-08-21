@@ -12,6 +12,7 @@ const DRIVER_PERCENT = Number(process.env.DRIVER_PERCENT || 0.7);
 const APP_PERCENT = Number(process.env.APP_PERCENT || 0.3);
 const PENDING_EXPIRE_MS = Number(process.env.PENDING_EXPIRE_MINUTES || 5) * 60 * 1000;
 const ACCEPTED_NOTICE_MS = Number(process.env.ACCEPTED_NOTICE_MINUTES || 3) * 60 * 1000;
+const DUPLICATE_RIDE_MS = Number(process.env.DUPLICATE_RIDE_SECONDS || 45) * 1000;
 const MP_API = 'https://api.mercadopago.com';
 const BACKEND_BASE_URL = String(process.env.BACKEND_BASE_URL || '').replace(/\/$/, '');
 
@@ -41,6 +42,15 @@ function expectedFare(km) {
 
 function onlyDigits(value) {
   return String(value || '').replace(/\D/g, '');
+}
+
+function normalizeText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
 }
 
 function timestampMs(ts) {
@@ -169,6 +179,15 @@ app.use(rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 }));
+
+const createRideLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'muitas_tentativas', message: 'Aguarde um pouco antes de pedir outra corrida.' }
+});
+
 app.use(cors({
   origin(origin, callback) {
     if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
@@ -350,6 +369,29 @@ async function cleanupRides() {
   return { updated };
 }
 
+async function findRecentDuplicateRide(ride) {
+  const now = Date.now();
+  const snapshot = await db.collection('corridas')
+    .where('telefoneCliente', '==', ride.telefoneCliente)
+    .where('status', 'in', ['pendente', 'aceita'])
+    .limit(10)
+    .get();
+
+  const origem = normalizeText(ride.origem);
+  const destino = normalizeText(ride.destino);
+
+  for (const doc of snapshot.docs) {
+    const data = doc.data();
+    const createdAt = timestampMs(data.criadaEm);
+    if (!createdAt || now - createdAt > DUPLICATE_RIDE_MS) continue;
+    if (normalizeText(data.origem) === origem && normalizeText(data.destino) === destino) {
+      return doc.id;
+    }
+  }
+
+  return '';
+}
+
 app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'motoja-conchal-backend' });
 });
@@ -399,7 +441,7 @@ app.post('/api/drivers/:cpf/push-token', async (req, res, next) => {
   }
 });
 
-app.post('/api/rides', async (req, res, next) => {
+app.post('/api/rides', createRideLimiter, async (req, res, next) => {
   try {
     const ride = ridePublicData(req.body);
     if (!ride.nome || !ride.origem || !ride.destino || ride.telefoneCliente.length < 10 || ride.telefoneCliente.length > 11) {
@@ -410,6 +452,17 @@ app.post('/api/rides', async (req, res, next) => {
     }
     if (money(ride.valor) !== expectedFare(ride.km)) {
       return res.status(400).json({ error: 'valor_nao_confere_com_tabela' });
+    }
+
+    const duplicateRideId = await findRecentDuplicateRide(ride);
+    if (duplicateRideId) {
+      return res.status(200).json({
+        rideId: duplicateRideId,
+        duplicated: true,
+        message: 'Corrida igual ja foi enviada agora. Aguarde a resposta dos motoboys.',
+        push: { sent: 0, failed: 0 },
+        telegram: { sent: false, skipped: true }
+      });
     }
 
     const ref = ride.clientRequestId
