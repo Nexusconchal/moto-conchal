@@ -40,6 +40,20 @@ function expectedFare(km) {
   return Math.ceil(distance * 2);
 }
 
+function expectedDeliveryFare(distanceKm, stops = 1) {
+  const distance = Number(distanceKm || 0);
+  const deliveryStops = Math.max(1, Number(stops || 1));
+  if (!Number.isFinite(distance) || distance <= 0) return 0;
+
+  let base = 0;
+  if (distance <= 3) base = 6;
+  else if (distance <= 5) base = 8;
+  else if (distance <= 8) base = 12;
+  else base = Math.ceil(distance * 2);
+
+  return money(base + ((deliveryStops - 1) * 3));
+}
+
 function onlyDigits(value) {
   return String(value || '').replace(/\D/g, '');
 }
@@ -109,6 +123,24 @@ function ridePublicData(ride) {
   };
 }
 
+function deliveryPublicData(delivery) {
+  return {
+    clientRequestId: String(delivery.clientRequestId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80),
+    empresa: String(delivery.empresa || '').slice(0, 120),
+    responsavel: String(delivery.responsavel || '').slice(0, 120),
+    telefoneEmpresa: onlyDigits(delivery.telefoneEmpresa),
+    retirada: String(delivery.retirada || '').slice(0, 300),
+    entrega: String(delivery.entrega || '').slice(0, 300),
+    entregaEncontrada: String(delivery.entregaEncontrada || delivery.entrega || '').slice(0, 300),
+    observacao: String(delivery.observacao || '').slice(0, 500),
+    paradas: Math.min(5, Math.max(1, Number(delivery.paradas || 1))),
+    km: Number(delivery.km || 0),
+    valor: money(delivery.valor),
+    precoLabel: String(delivery.precoLabel || ''),
+    retiradaMapa: String(delivery.retiradaMapa || '')
+  };
+}
+
 async function notifyTelegramAboutRide(rideId, ride) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
@@ -135,6 +167,57 @@ async function notifyTelegramAboutRide(rideId, ride) {
     '',
     `Codigo: <code>${escapeTelegram(rideId)}</code>`
   ].join('\n');
+
+  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: message,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.description || `Telegram error ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+
+  return { sent: true, messageId: data.result?.message_id || null };
+}
+
+async function notifyTelegramAboutDelivery(deliveryId, delivery) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) return { sent: false, skipped: true };
+
+  const value = money(delivery.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const km = Number(delivery.km || 0).toFixed(2).replace('.', ',');
+  const appLink = process.env.APP_BASE_URL
+    ? appUrl('/motoboy.html')
+    : 'https://nexusconchal.github.io/moto-conchal/motoboy.html';
+  const pickupMap = delivery.retiradaMapa ? `\nMapa retirada: ${delivery.retiradaMapa}` : '';
+  const message = [
+    '<b>NOVA ENTREGA EMPRESARIAL</b>',
+    '',
+    `<b>Empresa:</b> ${escapeTelegram(delivery.empresa || '-')}`,
+    `<b>Responsavel:</b> ${escapeTelegram(delivery.responsavel || '-')}`,
+    `<b>Valor:</b> ${escapeTelegram(value)}`,
+    `<b>Distancia:</b> ${escapeTelegram(km)} km`,
+    `<b>Paradas:</b> ${escapeTelegram(delivery.paradas || 1)}`,
+    `<b>Retirada:</b> ${escapeTelegram(delivery.retirada || '-')}${escapeTelegram(pickupMap)}`,
+    `<b>Entrega:</b> ${escapeTelegram(delivery.entrega || '-')}`,
+    delivery.observacao ? `<b>Obs:</b> ${escapeTelegram(delivery.observacao)}` : '',
+    '',
+    '<b>Expira em:</b> 5 minutos',
+    '',
+    `Abra o app do motorista para aceitar:\n${escapeTelegram(appLink)}`,
+    '',
+    `Codigo: <code>${escapeTelegram(deliveryId)}</code>`
+  ].filter(Boolean).join('\n');
 
   const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST',
@@ -365,6 +448,20 @@ async function cleanupRides() {
     }
   });
 
+  const pendingDeliveries = await db.collection('entregas').where('status', '==', 'pendente').get();
+  pendingDeliveries.forEach((doc) => {
+    const data = doc.data();
+    const createdAt = timestampMs(data.criadaEm);
+    if (createdAt && now - createdAt > PENDING_EXPIRE_MS) {
+      batch.update(doc.ref, {
+        status: 'expirada',
+        expiradaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+      updated += 1;
+    }
+  });
+
   if (updated > 0) await batch.commit();
   return { updated };
 }
@@ -385,6 +482,29 @@ async function findRecentDuplicateRide(ride) {
     const createdAt = timestampMs(data.criadaEm);
     if (!createdAt || now - createdAt > DUPLICATE_RIDE_MS) continue;
     if (normalizeText(data.origem) === origem && normalizeText(data.destino) === destino) {
+      return doc.id;
+    }
+  }
+
+  return '';
+}
+
+async function findRecentDuplicateDelivery(delivery) {
+  const now = Date.now();
+  const snapshot = await db.collection('entregas')
+    .where('telefoneEmpresa', '==', delivery.telefoneEmpresa)
+    .where('status', 'in', ['pendente', 'aceita'])
+    .limit(10)
+    .get();
+
+  const retirada = normalizeText(delivery.retirada);
+  const entrega = normalizeText(delivery.entrega);
+
+  for (const doc of snapshot.docs) {
+    const data = doc.data();
+    const createdAt = timestampMs(data.criadaEm);
+    if (!createdAt || now - createdAt > DUPLICATE_RIDE_MS) continue;
+    if (normalizeText(data.retirada) === retirada && normalizeText(data.entrega) === entrega) {
       return doc.id;
     }
   }
@@ -503,6 +623,64 @@ app.post('/api/rides', createRideLimiter, async (req, res, next) => {
   }
 });
 
+app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
+  try {
+    const delivery = deliveryPublicData(req.body);
+    if (!delivery.empresa || !delivery.responsavel || !delivery.retirada || !delivery.entrega || delivery.telefoneEmpresa.length < 10 || delivery.telefoneEmpresa.length > 11) {
+      return res.status(400).json({ error: 'preencha_empresa_responsavel_telefone_retirada_entrega' });
+    }
+    if (!delivery.valor || delivery.valor <= 0) {
+      return res.status(400).json({ error: 'valor_invalido' });
+    }
+    if (money(delivery.valor) !== expectedDeliveryFare(delivery.km, delivery.paradas)) {
+      return res.status(400).json({ error: 'valor_nao_confere_com_tabela_entrega' });
+    }
+
+    const duplicateDeliveryId = await findRecentDuplicateDelivery(delivery);
+    if (duplicateDeliveryId) {
+      return res.status(200).json({
+        deliveryId: duplicateDeliveryId,
+        duplicated: true,
+        message: 'Entrega igual ja foi enviada agora. Aguarde a resposta dos motoboys.',
+        telegram: { sent: false, skipped: true }
+      });
+    }
+
+    const ref = delivery.clientRequestId
+      ? db.collection('entregas').doc(delivery.clientRequestId)
+      : db.collection('entregas').doc();
+    let created = false;
+
+    await db.runTransaction(async (tx) => {
+      const existing = await tx.get(ref);
+      if (existing.exists) return;
+
+      tx.set(ref, {
+        ...delivery,
+        tipo: 'entrega_empresarial',
+        status: 'pendente',
+        pagamento: 'credito_pre_pago_ou_fechamento_empresa',
+        criadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+      created = true;
+    });
+
+    if (!created) {
+      return res.status(200).json({ deliveryId: ref.id, duplicated: true });
+    }
+
+    const telegram = await notifyTelegramAboutDelivery(ref.id, delivery).catch((error) => {
+      console.error('telegram delivery notify failed', error);
+      return { sent: false, failed: true };
+    });
+
+    res.status(201).json({ deliveryId: ref.id, telegram });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/rides/:rideId/accept', async (req, res, next) => {
   try {
     const driverCpf = onlyDigits(req.body.driverCpf);
@@ -556,6 +734,48 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
     }, { merge: true });
 
     res.json({ ok: true, payment });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/deliveries/:deliveryId/accept', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+
+    const driverSnap = await db.collection('motoboys').doc(driverCpf).get();
+    if (!driverSnap.exists) return res.status(404).json({ error: 'motoboy_nao_cadastrado' });
+    const driver = driverSnap.data() || {};
+    const deliveryRef = db.collection('entregas').doc(req.params.deliveryId);
+
+    await db.runTransaction(async (tx) => {
+      const deliverySnap = await tx.get(deliveryRef);
+      if (!deliverySnap.exists) {
+        const error = new Error('Entrega nao encontrada.');
+        error.status = 404;
+        throw error;
+      }
+
+      const delivery = deliverySnap.data();
+      if (delivery.status !== 'pendente') {
+        const error = new Error(`Entrega ja foi aceita por ${delivery.motoboy || 'outro motoboy'}.`);
+        error.status = 409;
+        throw error;
+      }
+
+      tx.update(deliveryRef, {
+        status: 'aceita',
+        motoboy: driver.nome || req.body.driverName || '',
+        motoboyCpf: driverCpf,
+        motoboyCnh: driver.cnh || '',
+        motoboyTelefone: driver.telefone || '',
+        aceitaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+
+    res.json({ ok: true });
   } catch (error) {
     next(error);
   }
@@ -626,6 +846,41 @@ app.post('/api/rides/:rideId/cancel', async (req, res, next) => {
   }
 });
 
+app.post('/api/deliveries/:deliveryId/cancel', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    const reason = String(req.body.reason || '').trim().slice(0, 300);
+    if (driverCpf.length !== 11 || !reason) {
+      return res.status(400).json({ error: 'cpf_e_motivo_obrigatorios' });
+    }
+
+    const deliveryRef = db.collection('entregas').doc(req.params.deliveryId);
+    const deliverySnap = await deliveryRef.get();
+    if (!deliverySnap.exists) return res.status(404).json({ error: 'entrega_nao_encontrada' });
+
+    const delivery = deliverySnap.data();
+    if (onlyDigits(delivery.motoboyCpf) !== driverCpf) {
+      return res.status(409).json({ error: 'entrega_nao_pertence_ao_motoboy' });
+    }
+    if (delivery.status === 'finalizada') {
+      return res.status(409).json({ error: 'entrega_ja_finalizada' });
+    }
+
+    await deliveryRef.set({
+      status: 'cancelada',
+      motivoCancelamento: reason,
+      canceladoPor: delivery.motoboy || '',
+      canceladoPorCpf: driverCpf,
+      canceladoEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/rides/:rideId/finish', async (req, res, next) => {
   try {
     const driverCpf = onlyDigits(req.body.driverCpf);
@@ -650,6 +905,40 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
     }
 
     await rideRef.set({
+      status: 'finalizada',
+      finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      ganhoMotoboy: DRIVER_PERCENT,
+      ganhoApp: APP_PERCENT,
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+
+    const deliveryRef = db.collection('entregas').doc(req.params.deliveryId);
+    const deliverySnap = await deliveryRef.get();
+    if (!deliverySnap.exists) return res.status(404).json({ error: 'entrega_nao_encontrada' });
+
+    const delivery = deliverySnap.data();
+    if (onlyDigits(delivery.motoboyCpf) !== driverCpf) {
+      return res.status(409).json({ error: 'entrega_nao_pertence_ao_motoboy' });
+    }
+    if (delivery.status === 'cancelada') {
+      return res.status(409).json({ error: 'entrega_cancelada' });
+    }
+    if (delivery.status !== 'aceita') {
+      return res.status(409).json({ error: 'entrega_nao_esta_em_andamento' });
+    }
+
+    await deliveryRef.set({
       status: 'finalizada',
       finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
       ganhoMotoboy: DRIVER_PERCENT,
