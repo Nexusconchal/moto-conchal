@@ -636,8 +636,8 @@ app.post('/api/rides', createRideLimiter, async (req, res, next) => {
 app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
   try {
     const delivery = deliveryPublicData(req.body);
-    if (!delivery.empresa || !delivery.responsavel || !delivery.retirada || !delivery.entrega || delivery.telefoneEmpresa.length < 10 || delivery.telefoneEmpresa.length > 11) {
-      return res.status(400).json({ error: 'preencha_empresa_responsavel_telefone_retirada_entrega' });
+    if (!delivery.empresa || !delivery.responsavel || !delivery.retirada || !delivery.entrega || !delivery.recebedor || delivery.telefoneEmpresa.length < 10 || delivery.telefoneEmpresa.length > 11 || delivery.telefoneRecebedor.length < 10 || delivery.telefoneRecebedor.length > 11) {
+      return res.status(400).json({ error: 'preencha_empresa_responsavel_telefones_retirada_entrega_recebedor' });
     }
     if (!delivery.valor || delivery.valor <= 0) {
       return res.status(400).json({ error: 'valor_invalido' });
