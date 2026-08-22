@@ -15,6 +15,7 @@ const ACCEPTED_NOTICE_MS = Number(process.env.ACCEPTED_NOTICE_MINUTES || 3) * 60
 const DUPLICATE_RIDE_MS = Number(process.env.DUPLICATE_RIDE_SECONDS || 45) * 1000;
 const MP_API = 'https://api.mercadopago.com';
 const BACKEND_BASE_URL = String(process.env.BACKEND_BASE_URL || '').replace(/\/$/, '');
+const OWNER_WHATSAPP = onlyDigits(process.env.OWNER_WHATSAPP || process.env.SUPPORT_PHONE || '5519992306488');
 
 function requiredEnv(name) {
   const value = process.env[name];
@@ -84,11 +85,56 @@ function assertAdmin(req, res, next) {
   return next();
 }
 
+function ownerPasswordValue() {
+  return process.env.OWNER_PASSWORD || process.env.ADMIN_PANEL_PASSWORD || '';
+}
+
+function assertOwner(req, res, next) {
+  const ownerPassword = ownerPasswordValue();
+  const password = String(req.header('x-owner-password') || req.body.password || '');
+  if (!ownerPassword) {
+    return res.status(503).json({ error: 'owner_password_not_configured' });
+  }
+  if (!safeEqual(password, ownerPassword)) {
+    return res.status(401).json({ error: 'senha_incorreta' });
+  }
+  return next();
+}
+
 function safeEqual(a, b) {
   const left = Buffer.from(String(a || ''));
   const right = Buffer.from(String(b || ''));
   if (left.length !== right.length) return false;
   return crypto.timingSafeEqual(left, right);
+}
+
+function companyRefFromPhone(phone) {
+  const id = onlyDigits(phone);
+  if (id.length < 10 || id.length > 11) return null;
+  return db.collection('empresas').doc(id);
+}
+
+function companyBalance(data = {}) {
+  const saldo = money(data.saldo || 0);
+  const reservado = money(data.reservado || 0);
+  return {
+    saldo,
+    reservado,
+    disponivel: money(saldo - reservado)
+  };
+}
+
+function ledgerRef(companyId) {
+  return db.collection('empresas').doc(companyId).collection('movimentacoes').doc();
+}
+
+function depositPublicData(body) {
+  return {
+    empresa: String(body.empresa || '').slice(0, 120).trim(),
+    responsavel: String(body.responsavel || '').slice(0, 120).trim(),
+    telefoneEmpresa: onlyDigits(body.telefoneEmpresa),
+    valor: money(body.valor)
+  };
 }
 
 function appUrl(path) {
@@ -423,6 +469,7 @@ async function cleanupRides() {
   const now = Date.now();
   const batch = db.batch();
   let updated = 0;
+  let batchUpdated = 0;
 
   const pending = await db.collection('corridas').where('status', '==', 'pendente').get();
   pending.forEach((doc) => {
@@ -435,6 +482,7 @@ async function cleanupRides() {
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
       updated += 1;
+      batchUpdated += 1;
     }
   });
 
@@ -455,24 +503,23 @@ async function cleanupRides() {
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
       updated += 1;
+      batchUpdated += 1;
     }
   });
 
   const pendingDeliveries = await db.collection('entregas').where('status', '==', 'pendente').get();
-  pendingDeliveries.forEach((doc) => {
+  for (const doc of pendingDeliveries.docs) {
     const data = doc.data();
     const createdAt = timestampMs(data.criadaEm);
     if (createdAt && now - createdAt > PENDING_EXPIRE_MS) {
-      batch.update(doc.ref, {
-        status: 'expirada',
+      await releaseDeliveryReservation(doc.ref, 'expirada', {
         expiradaEm: admin.firestore.FieldValue.serverTimestamp(),
-        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
       updated += 1;
     }
-  });
+  }
 
-  if (updated > 0) await batch.commit();
+  if (batchUpdated > 0) await batch.commit();
   return { updated };
 }
 
@@ -522,6 +569,50 @@ async function findRecentDuplicateDelivery(delivery) {
   return '';
 }
 
+async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
+  let released = false;
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(deliveryRef);
+    if (!snap.exists) return;
+    const delivery = snap.data();
+    if (delivery.status === 'finalizada') return;
+
+    const valor = money(delivery.saldoReservado || delivery.valor || 0);
+    const companyRef = companyRefFromPhone(delivery.empresaId || delivery.telefoneEmpresa);
+    const updates = {
+      status,
+      ...extra,
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    if (valor > 0 && !delivery.saldoLiberadoEm && !delivery.saldoDebitadoEm && companyRef) {
+      const companySnap = await tx.get(companyRef);
+      const balance = companyBalance(companySnap.exists ? companySnap.data() : {});
+      const nextReserved = money(Math.max(0, balance.reservado - valor));
+      tx.set(companyRef, {
+        reservado: nextReserved,
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      tx.set(ledgerRef(companyRef.id), {
+        tipo: 'liberacao_reserva',
+        origem: status,
+        entregaId: deliveryRef.id,
+        valor,
+        saldoAntes: balance.saldo,
+        saldoDepois: balance.saldo,
+        reservadoAntes: balance.reservado,
+        reservadoDepois: nextReserved,
+        criadoEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+      updates.saldoLiberadoEm = admin.firestore.FieldValue.serverTimestamp();
+      released = true;
+    }
+
+    tx.update(deliveryRef, updates);
+  });
+  return released;
+}
+
 app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'motoja-conchal-backend' });
 });
@@ -535,7 +626,7 @@ app.get('/', (_req, res) => {
 });
 
 app.post('/api/admin/login', (req, res) => {
-  const ownerPassword = process.env.OWNER_PASSWORD || process.env.ADMIN_PANEL_PASSWORD;
+  const ownerPassword = ownerPasswordValue();
   const password = String(req.body.password || '');
   if (!ownerPassword) {
     return res.status(503).json({ error: 'owner_password_not_configured' });
@@ -544,6 +635,157 @@ app.post('/api/admin/login', (req, res) => {
     return res.status(401).json({ error: 'senha_incorreta' });
   }
   return res.json({ ok: true });
+});
+
+app.get('/api/companies/:phone/balance', async (req, res, next) => {
+  try {
+    const companyRef = companyRefFromPhone(req.params.phone);
+    if (!companyRef) return res.status(400).json({ error: 'telefone_empresa_invalido' });
+
+    const snap = await companyRef.get();
+    const data = snap.exists ? snap.data() : {};
+    res.json({ ok: true, telefoneEmpresa: companyRef.id, ...companyBalance(data) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/companies/deposit-request', createRideLimiter, async (req, res, next) => {
+  try {
+    const deposit = depositPublicData(req.body);
+    if (!deposit.empresa || !deposit.responsavel || deposit.telefoneEmpresa.length < 10 || deposit.telefoneEmpresa.length > 11) {
+      return res.status(400).json({ error: 'preencha_empresa_responsavel_telefone' });
+    }
+    if (!deposit.valor || deposit.valor < 10 || deposit.valor > 5000) {
+      return res.status(400).json({ error: 'valor_deposito_invalido', message: 'Deposito deve ser entre R$ 10,00 e R$ 5.000,00.' });
+    }
+
+    const companyRef = companyRefFromPhone(deposit.telefoneEmpresa);
+    const depositRef = db.collection('depositos').doc();
+    await db.runTransaction(async (tx) => {
+      tx.set(companyRef, {
+        empresa: deposit.empresa,
+        responsavel: deposit.responsavel,
+        telefoneEmpresa: deposit.telefoneEmpresa,
+        saldo: admin.firestore.FieldValue.increment(0),
+        reservado: admin.firestore.FieldValue.increment(0),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      tx.set(depositRef, {
+        ...deposit,
+        empresaId: deposit.telefoneEmpresa,
+        status: 'pendente',
+        criadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+
+    const msg = `Pedido de deposito Nexus MotoJa\n\nEmpresa: ${deposit.empresa}\nResponsavel: ${deposit.responsavel}\nWhatsApp: ${deposit.telefoneEmpresa}\nValor: ${deposit.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nCodigo: ${depositRef.id}\n\nDepois que o pagamento cair, aprove esse deposito no painel do dono para liberar saldo.`;
+    res.status(201).json({
+      ok: true,
+      depositId: depositRef.id,
+      status: 'pendente',
+      whatsapp: whatsappLink(OWNER_WHATSAPP, msg)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/admin/deposits/:depositId/approve', assertOwner, async (req, res, next) => {
+  try {
+    const depositRef = db.collection('depositos').doc(String(req.params.depositId || ''));
+    let result = null;
+
+    await db.runTransaction(async (tx) => {
+      const depositSnap = await tx.get(depositRef);
+      if (!depositSnap.exists) {
+        const error = new Error('Deposito nao encontrado.');
+        error.status = 404;
+        throw error;
+      }
+
+      const deposit = depositSnap.data();
+      if (deposit.status !== 'pendente') {
+        const error = new Error('Deposito ja foi processado.');
+        error.status = 409;
+        throw error;
+      }
+
+      const companyRef = companyRefFromPhone(deposit.telefoneEmpresa);
+      if (!companyRef) {
+        const error = new Error('Telefone da empresa invalido no deposito.');
+        error.status = 400;
+        throw error;
+      }
+
+      const companySnap = await tx.get(companyRef);
+      const before = companyBalance(companySnap.exists ? companySnap.data() : {});
+      const valor = money(deposit.valor);
+      const afterSaldo = money(before.saldo + valor);
+
+      tx.set(companyRef, {
+        empresa: deposit.empresa || '',
+        responsavel: deposit.responsavel || '',
+        telefoneEmpresa: deposit.telefoneEmpresa,
+        saldo: afterSaldo,
+        reservado: before.reservado,
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      tx.set(ledgerRef(deposit.telefoneEmpresa), {
+        tipo: 'credito',
+        origem: 'deposito_aprovado',
+        depositoId: depositRef.id,
+        valor,
+        saldoAntes: before.saldo,
+        saldoDepois: afterSaldo,
+        criadoEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      tx.update(depositRef, {
+        status: 'aprovado',
+        aprovadoEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      result = { saldo: afterSaldo, reservado: before.reservado, disponivel: money(afterSaldo - before.reservado) };
+    });
+
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/admin/deposits/:depositId/reject', assertOwner, async (req, res, next) => {
+  try {
+    const reason = String(req.body.reason || '').trim().slice(0, 250);
+    const depositRef = db.collection('depositos').doc(String(req.params.depositId || ''));
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(depositRef);
+      if (!snap.exists) {
+        const error = new Error('Deposito nao encontrado.');
+        error.status = 404;
+        throw error;
+      }
+      if (snap.data().status !== 'pendente') {
+        const error = new Error('Deposito ja foi processado.');
+        error.status = 409;
+        throw error;
+      }
+      tx.update(depositRef, {
+        status: 'recusado',
+        motivoRecusa: reason || 'Recusado pelo dono',
+        recusadoEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post('/api/drivers/:cpf/push-token', async (req, res, next) => {
@@ -665,11 +907,46 @@ app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
       const existing = await tx.get(ref);
       if (existing.exists) return;
 
+      const companyRef = companyRefFromPhone(delivery.telefoneEmpresa);
+      const companySnap = await tx.get(companyRef);
+      const balance = companyBalance(companySnap.exists ? companySnap.data() : {});
+      if (balance.disponivel < delivery.valor) {
+        const error = new Error('Saldo insuficiente. Faca um deposito e aguarde aprovacao do dono antes de chamar motoboy.');
+        error.status = 402;
+        error.code = 'saldo_insuficiente';
+        error.balance = balance;
+        throw error;
+      }
+      const nextReserved = money(balance.reservado + delivery.valor);
+
+      tx.set(companyRef, {
+        empresa: delivery.empresa,
+        responsavel: delivery.responsavel,
+        telefoneEmpresa: delivery.telefoneEmpresa,
+        saldo: balance.saldo,
+        reservado: nextReserved,
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      tx.set(ledgerRef(delivery.telefoneEmpresa), {
+        tipo: 'reserva',
+        origem: 'entrega_criada',
+        entregaId: ref.id,
+        valor: delivery.valor,
+        saldoAntes: balance.saldo,
+        saldoDepois: balance.saldo,
+        reservadoAntes: balance.reservado,
+        reservadoDepois: nextReserved,
+        criadoEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+
       tx.set(ref, {
         ...delivery,
+        empresaId: delivery.telefoneEmpresa,
         tipo: 'entrega_empresarial',
         status: 'pendente',
-        pagamento: 'credito_pre_pago_ou_fechamento_empresa',
+        pagamento: 'saldo_pre_pago_empresa',
+        saldoReservado: delivery.valor,
         criadaEm: admin.firestore.FieldValue.serverTimestamp(),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
@@ -687,6 +964,13 @@ app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
 
     res.status(201).json({ deliveryId: ref.id, telegram });
   } catch (error) {
+    if (error.code === 'saldo_insuficiente') {
+      return res.status(error.status || 402).json({
+        error: 'saldo_insuficiente',
+        message: error.message,
+        balance: error.balance || null
+      });
+    }
     next(error);
   }
 });
@@ -876,14 +1160,12 @@ app.post('/api/deliveries/:deliveryId/cancel', async (req, res, next) => {
       return res.status(409).json({ error: 'entrega_ja_finalizada' });
     }
 
-    await deliveryRef.set({
-      status: 'cancelada',
+    await releaseDeliveryReservation(deliveryRef, 'cancelada', {
       motivoCancelamento: reason,
       canceladoPor: delivery.motoboy || '',
       canceladoPorCpf: driverCpf,
       canceladoEm: admin.firestore.FieldValue.serverTimestamp(),
-      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+    });
 
     res.json({ ok: true });
   } catch (error) {
@@ -934,27 +1216,83 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
 
     const deliveryRef = db.collection('entregas').doc(req.params.deliveryId);
-    const deliverySnap = await deliveryRef.get();
-    if (!deliverySnap.exists) return res.status(404).json({ error: 'entrega_nao_encontrada' });
+    await db.runTransaction(async (tx) => {
+      const deliverySnap = await tx.get(deliveryRef);
+      if (!deliverySnap.exists) {
+        const error = new Error('Entrega nao encontrada.');
+        error.status = 404;
+        throw error;
+      }
 
-    const delivery = deliverySnap.data();
-    if (onlyDigits(delivery.motoboyCpf) !== driverCpf) {
-      return res.status(409).json({ error: 'entrega_nao_pertence_ao_motoboy' });
-    }
-    if (delivery.status === 'cancelada') {
-      return res.status(409).json({ error: 'entrega_cancelada' });
-    }
-    if (delivery.status !== 'aceita') {
-      return res.status(409).json({ error: 'entrega_nao_esta_em_andamento' });
-    }
+      const delivery = deliverySnap.data();
+      if (onlyDigits(delivery.motoboyCpf) !== driverCpf) {
+        const error = new Error('Entrega nao pertence ao motoboy.');
+        error.status = 409;
+        error.code = 'entrega_nao_pertence_ao_motoboy';
+        throw error;
+      }
+      if (delivery.status === 'cancelada') {
+        const error = new Error('Entrega cancelada.');
+        error.status = 409;
+        error.code = 'entrega_cancelada';
+        throw error;
+      }
+      if (delivery.status !== 'aceita') {
+        const error = new Error('Entrega nao esta em andamento.');
+        error.status = 409;
+        error.code = 'entrega_nao_esta_em_andamento';
+        throw error;
+      }
+      if (delivery.saldoDebitadoEm) {
+        const error = new Error('Entrega ja foi debitada.');
+        error.status = 409;
+        error.code = 'entrega_ja_debitada';
+        throw error;
+      }
 
-    await deliveryRef.set({
-      status: 'finalizada',
-      finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
-      ganhoMotoboy: DRIVER_PERCENT,
-      ganhoApp: APP_PERCENT,
-      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+      const valor = money(delivery.saldoReservado || delivery.valor || 0);
+      const companyRef = companyRefFromPhone(delivery.empresaId || delivery.telefoneEmpresa);
+      if (!companyRef || valor <= 0) {
+        const error = new Error('Dados de saldo da empresa invalidos.');
+        error.status = 409;
+        error.code = 'saldo_empresa_invalido';
+        throw error;
+      }
+
+      const companySnap = await tx.get(companyRef);
+      const balance = companyBalance(companySnap.exists ? companySnap.data() : {});
+      const nextSaldo = money(Math.max(0, balance.saldo - valor));
+      const nextReserved = money(Math.max(0, balance.reservado - valor));
+
+      tx.set(companyRef, {
+        saldo: nextSaldo,
+        reservado: nextReserved,
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      tx.set(ledgerRef(companyRef.id), {
+        tipo: 'debito',
+        origem: 'entrega_finalizada',
+        entregaId: deliveryRef.id,
+        valor,
+        motoboy: delivery.motoboy || '',
+        motoboyCpf: driverCpf,
+        saldoAntes: balance.saldo,
+        saldoDepois: nextSaldo,
+        reservadoAntes: balance.reservado,
+        reservadoDepois: nextReserved,
+        criadoEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      tx.update(deliveryRef, {
+        status: 'finalizada',
+        finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        saldoDebitadoEm: admin.firestore.FieldValue.serverTimestamp(),
+        ganhoMotoboy: DRIVER_PERCENT,
+        ganhoApp: APP_PERCENT,
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
 
     res.json({ ok: true });
   } catch (error) {
