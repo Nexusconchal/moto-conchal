@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexus-motoja-v40-precos-delivery';
+const CACHE_NAME = 'nexus-motoja-v42-select-escuro';
 const ARQUIVOS = ['./', './index.html', './motoboy.html', './dono.html', './empresa.html', './cliente.webmanifest', './motorista.webmanifest', './dono.webmanifest', './firebase-messaging-sw.js', './nexus-motoja-logo-mark.png', './motorista-icon.svg', './nexus-motoja-icon-180.png', './nexus-motoja-icon-192.png', './nexus-motoja-icon-512.png'];
 
 self.addEventListener('install', (event) => {
