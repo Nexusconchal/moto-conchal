@@ -40,18 +40,20 @@ function expectedFare(km) {
   return Math.ceil(distance * 2);
 }
 
-function expectedDeliveryFare(distanceKm, stops = 1) {
+function isFixedFoodDelivery(type) {
+  return /lanche|comida|pizza|pastel|acai/i.test(String(type || ''));
+}
+
+function expectedDeliveryFare(distanceKm, stops = 1, type = '') {
   const distance = Number(distanceKm || 0);
   const deliveryStops = Math.max(1, Number(stops || 1));
   if (!Number.isFinite(distance) || distance <= 0) return 0;
 
-  let base = 0;
-  if (distance <= 3) base = 6;
-  else if (distance <= 5) base = 8;
-  else if (distance <= 8) base = 12;
-  else base = Math.ceil(distance * 2);
+  if (isFixedFoodDelivery(type)) {
+    return money(5.5 * deliveryStops);
+  }
 
-  return money(base + ((deliveryStops - 1) * 3));
+  return money(Math.ceil(distance * 2));
 }
 
 function onlyDigits(value) {
@@ -640,7 +642,7 @@ app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
     if (!delivery.valor || delivery.valor <= 0) {
       return res.status(400).json({ error: 'valor_invalido' });
     }
-    if (money(delivery.valor) !== expectedDeliveryFare(delivery.km, delivery.paradas)) {
+    if (money(delivery.valor) !== expectedDeliveryFare(delivery.km, delivery.paradas, delivery.tipoEntrega)) {
       return res.status(400).json({ error: 'valor_nao_confere_com_tabela_entrega' });
     }
 
