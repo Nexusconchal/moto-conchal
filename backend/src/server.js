@@ -144,6 +144,14 @@ function onlyDigits(value) {
   return String(value || '').replace(/\D/g, '');
 }
 
+function cleanText(value, max = 200) {
+  return String(value || '')
+    .replace(/[<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+
 function normalizeText(value) {
   return String(value || '')
     .normalize('NFD')
