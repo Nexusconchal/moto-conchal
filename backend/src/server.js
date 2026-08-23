@@ -56,7 +56,7 @@ function isFixedFoodDelivery(type) {
 
 function expectedDeliveryFare(distanceKm, stops = 1, type = '') {
   const distance = Number(distanceKm || 0);
-  const deliveryStops = Math.max(1, Number(stops || 1));
+  const deliveryStops = deliveryStopCount(stops);
   if (!Number.isFinite(distance) || distance <= 0) return 0;
 
   if (isFixedFoodDelivery(type)) {
@@ -64,6 +64,12 @@ function expectedDeliveryFare(distanceKm, stops = 1, type = '') {
   }
 
   return money(Math.ceil(distance * 2));
+}
+
+function deliveryStopCount(stops = 1) {
+  const count = Math.floor(Number(stops || 1));
+  if (!Number.isFinite(count)) return 1;
+  return Math.min(5, Math.max(1, count));
 }
 
 function onlyDigits(value) {
@@ -183,18 +189,18 @@ function ridePublicData(ride) {
 function deliveryPublicData(delivery) {
   return {
     clientRequestId: String(delivery.clientRequestId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80),
-    empresa: String(delivery.empresa || '').slice(0, 120),
-    responsavel: String(delivery.responsavel || '').slice(0, 120),
+    empresa: String(delivery.empresa || '').slice(0, 120).trim(),
+    responsavel: String(delivery.responsavel || '').slice(0, 120).trim(),
     telefoneEmpresa: onlyDigits(delivery.telefoneEmpresa),
-    tipoEntrega: String(delivery.tipoEntrega || 'Delivery / encomendas').slice(0, 80),
-    retirada: String(delivery.retirada || '').slice(0, 300),
-    entrega: String(delivery.entrega || '').slice(0, 300),
-    entregaEncontrada: String(delivery.entregaEncontrada || delivery.entrega || '').slice(0, 300),
-    recebedor: String(delivery.recebedor || '').slice(0, 120),
+    tipoEntrega: String(delivery.tipoEntrega || 'Delivery / encomendas').slice(0, 80).trim(),
+    retirada: String(delivery.retirada || '').slice(0, 300).trim(),
+    entrega: String(delivery.entrega || '').slice(0, 300).trim(),
+    entregaEncontrada: String(delivery.entregaEncontrada || delivery.entrega || '').slice(0, 300).trim(),
+    recebedor: String(delivery.recebedor || '').slice(0, 120).trim(),
     telefoneRecebedor: onlyDigits(delivery.telefoneRecebedor).slice(0, 13),
-    descricao: String(delivery.descricao || '').slice(0, 500),
-    observacao: String(delivery.observacao || '').slice(0, 500),
-    paradas: Math.min(5, Math.max(1, Number(delivery.paradas || 1))),
+    descricao: String(delivery.descricao || '').slice(0, 500).trim(),
+    observacao: String(delivery.observacao || '').slice(0, 500).trim(),
+    paradas: deliveryStopCount(delivery.paradas),
     km: Number(delivery.km || 0),
     valor: money(delivery.valor),
     precoLabel: String(delivery.precoLabel || ''),
