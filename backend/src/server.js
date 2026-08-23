@@ -197,6 +197,21 @@ async function collectionState(name, limit = 500) {
     .sort((a, b) => timestampMs(b.finalizadaEm || b.aceitaEm || b.criadaEm || b.ultimoAcesso) - timestampMs(a.finalizadaEm || a.aceitaEm || a.criadaEm || a.ultimoAcesso));
 }
 
+function publicPendingJob(job = {}) {
+  const copy = { ...job };
+  delete copy.telefoneCliente;
+  delete copy.telefoneEmpresa;
+  delete copy.telefoneRecebedor;
+  delete copy.motoboyCpf;
+  delete copy.motoboyCnh;
+  delete copy.motoboyTelefone;
+  return copy;
+}
+
+function sortJobs(items = []) {
+  return items.sort((a, b) => timestampMs(b.finalizadaEm || b.aceitaEm || b.criadaEm) - timestampMs(a.finalizadaEm || a.aceitaEm || a.criadaEm));
+}
+
 function assertAdmin(req, res, next) {
   const key = process.env.ADMIN_API_KEY;
   if (!key || req.header('x-admin-key') !== key) {
@@ -886,6 +901,30 @@ app.post('/api/drivers/register', async (req, res, next) => {
     }, { merge: true });
 
     return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
+  try {
+    await cleanupRides();
+    const driverCpf = onlyDigits(req.params.cpf);
+    const kind = req.body.kind === 'deliveries' ? 'deliveries' : 'rides';
+    const scope = req.body.scope === 'mine' ? 'mine' : 'pending';
+    const collectionName = kind === 'deliveries' ? 'entregas' : 'corridas';
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+
+    const queryRef = scope === 'mine'
+      ? db.collection(collectionName).where('motoboyCpf', '==', driverCpf).limit(100)
+      : db.collection(collectionName).where('status', '==', 'pendente').limit(100);
+    const snapshot = await queryRef.get();
+    const jobs = sortJobs(snapshot.docs.map((docSnap) => {
+      const item = serializeFirestore({ id: docSnap.id, ...docSnap.data() });
+      return scope === 'pending' ? publicPendingJob(item) : item;
+    }));
+    return res.json({ ok: true, jobs });
   } catch (error) {
     return next(error);
   }
