@@ -144,6 +144,10 @@ function ownerPasswordValue() {
   return process.env.OWNER_PASSWORD || process.env.ADMIN_PANEL_PASSWORD || '';
 }
 
+function driverPasswordValue() {
+  return process.env.DRIVER_PASSWORD || 'moto123';
+}
+
 function assertOwner(req, res, next) {
   const ownerPassword = ownerPasswordValue();
   const password = String(req.header('x-owner-password') || req.body.password || '');
@@ -161,6 +165,34 @@ function safeEqual(a, b) {
   const right = Buffer.from(String(b || ''));
   if (left.length !== right.length) return false;
   return crypto.timingSafeEqual(left, right);
+}
+
+function assertDriverProof(driver = {}, body = {}) {
+  const expectedCnh = onlyDigits(driver.cnh);
+  const expectedPhone = onlyDigits(driver.telefone);
+  const givenCnh = onlyDigits(body.driverCnh);
+  const givenPhone = onlyDigits(body.driverTelefone);
+
+  if (!expectedCnh || !expectedPhone || expectedCnh !== givenCnh || expectedPhone !== givenPhone) {
+    const error = new Error('Dados do motoboy nao conferem. Entre novamente no painel.');
+    error.status = 401;
+    error.code = 'dados_motoboy_nao_conferem';
+    throw error;
+  }
+}
+
+async function getDriverWithProof(driverCpf, body = {}) {
+  const driverSnap = await db.collection('motoboys').doc(driverCpf).get();
+  if (!driverSnap.exists) {
+    const error = new Error('Motoboy nao cadastrado.');
+    error.status = 404;
+    error.code = 'motoboy_nao_cadastrado';
+    throw error;
+  }
+
+  const driver = driverSnap.data() || {};
+  assertDriverProof(driver, body);
+  return driver;
 }
 
 function companyRefFromPhone(phone) {
@@ -359,7 +391,8 @@ const db = admin.firestore();
 const app = express();
 app.set('trust proxy', 1);
 
-const allowedOrigins = String(process.env.ALLOWED_ORIGINS || '')
+const DEFAULT_ALLOWED_ORIGINS = 'https://nexusconchal.github.io,https://motoboy-conchal.onrender.com';
+const allowedOrigins = String(process.env.ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGINS)
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
@@ -693,6 +726,51 @@ app.post('/api/admin/login', (req, res) => {
   return res.json({ ok: true });
 });
 
+app.post('/api/drivers/register', async (req, res, next) => {
+  try {
+    const password = String(req.body.password || '');
+    const nome = cleanText(req.body.nome, 80);
+    const cpf = onlyDigits(req.body.cpf);
+    const cnh = onlyDigits(req.body.cnh);
+    const telefone = onlyDigits(req.body.telefone);
+
+    if (!safeEqual(password, driverPasswordValue())) {
+      return res.status(401).json({ error: 'senha_incorreta' });
+    }
+    if (!nome || cpf.length !== 11 || cnh.length !== 11 || telefone.length < 10 || telefone.length > 11) {
+      return res.status(400).json({ error: 'dados_invalidos' });
+    }
+
+    const driverRef = db.collection('motoboys').doc(cpf);
+    const driverSnap = await driverRef.get();
+    if (driverSnap.exists) {
+      const driver = driverSnap.data() || {};
+      const savedCnh = onlyDigits(driver.cnh);
+      const savedPhone = onlyDigits(driver.telefone);
+      if ((savedCnh && savedCnh !== cnh) || (savedPhone && savedPhone !== telefone)) {
+        return res.status(409).json({
+          error: 'cadastro_ja_existe',
+          message: 'CPF ja cadastrado com outros dados. Fale com o dono para conferir.'
+        });
+      }
+    }
+
+    await driverRef.set({
+      nome,
+      cpf,
+      cnh,
+      telefone,
+      status: 'ativo',
+      ultimoAcesso: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.get('/api/companies/:phone/balance', async (req, res, next) => {
   try {
     const companyRef = companyRefFromPhone(req.params.phone);
@@ -901,6 +979,8 @@ app.post('/api/drivers/:cpf/push-token', async (req, res, next) => {
     if (driverCpf.length !== 11 || !token) {
       return res.status(400).json({ error: 'dados_invalidos' });
     }
+
+    await getDriverWithProof(driverCpf, req.body);
 
     await db.collection('motoboys').doc(driverCpf).set({
       fcmTokens: {
@@ -1111,6 +1191,7 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
 
     const driver = await getDriverWithMercadoPago(driverCpf);
+    assertDriverProof(driver, req.body);
     let acceptedRide = null;
     const rideRef = db.collection('corridas').doc(req.params.rideId);
 
@@ -1168,9 +1249,7 @@ app.post('/api/deliveries/:deliveryId/accept', async (req, res, next) => {
     const driverCpf = onlyDigits(req.body.driverCpf);
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
 
-    const driverSnap = await db.collection('motoboys').doc(driverCpf).get();
-    if (!driverSnap.exists) return res.status(404).json({ error: 'motoboy_nao_cadastrado' });
-    const driver = driverSnap.data() || {};
+    const driver = await getDriverWithProof(driverCpf, req.body);
     const deliveryRef = db.collection('entregas').doc(req.params.deliveryId);
 
     await db.runTransaction(async (tx) => {
@@ -1208,6 +1287,9 @@ app.post('/api/deliveries/:deliveryId/accept', async (req, res, next) => {
 app.post('/api/rides/:rideId/notify-client', async (req, res, next) => {
   try {
     const driverCpf = onlyDigits(req.body.driverCpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+
     const rideRef = db.collection('corridas').doc(req.params.rideId);
     const rideSnap = await rideRef.get();
     if (!rideSnap.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
@@ -1241,6 +1323,7 @@ app.post('/api/rides/:rideId/cancel', async (req, res, next) => {
     if (driverCpf.length !== 11 || !reason) {
       return res.status(400).json({ error: 'cpf_e_motivo_obrigatorios' });
     }
+    await getDriverWithProof(driverCpf, req.body);
 
     const rideRef = db.collection('corridas').doc(req.params.rideId);
     const rideSnap = await rideRef.get();
@@ -1277,6 +1360,7 @@ app.post('/api/deliveries/:deliveryId/cancel', async (req, res, next) => {
     if (driverCpf.length !== 11 || !reason) {
       return res.status(400).json({ error: 'cpf_e_motivo_obrigatorios' });
     }
+    await getDriverWithProof(driverCpf, req.body);
 
     const deliveryRef = db.collection('entregas').doc(req.params.deliveryId);
     const deliverySnap = await deliveryRef.get();
@@ -1307,6 +1391,7 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
   try {
     const driverCpf = onlyDigits(req.body.driverCpf);
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
 
     const rideRef = db.collection('corridas').doc(req.params.rideId);
     const rideSnap = await rideRef.get();
@@ -1345,6 +1430,7 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
   try {
     const driverCpf = onlyDigits(req.body.driverCpf);
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
 
     const deliveryRef = db.collection('entregas').doc(req.params.deliveryId);
     await db.runTransaction(async (tx) => {

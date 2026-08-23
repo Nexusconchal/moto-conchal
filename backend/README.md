@@ -47,8 +47,10 @@ Obrigatorias:
 - `MP_OWNER_ACCESS_TOKEN`
 - `ADMIN_API_KEY`
 - `OWNER_PASSWORD` com a senha do painel do dono
+- `DRIVER_PASSWORD` com a senha dos motoboys; se nao definir, usa `moto123`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
+- `ALLOWED_ORIGINS` com os dominios autorizados, separados por virgula. Padrao: GitHub Pages do app e Render.
 
 ## Endpoints principais
 
