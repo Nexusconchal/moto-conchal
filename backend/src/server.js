@@ -813,6 +813,26 @@ app.post('/api/drivers/:cpf/push-token', async (req, res, next) => {
   }
 });
 
+app.get('/api/drivers/:cpf/mercadopago/status', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+
+    const snap = await db.collection('motoboys').doc(driverCpf).get();
+    const driver = snap.exists ? snap.data() : {};
+    const connected = !!driver?.mercadoPago?.accessToken;
+    res.json({
+      ok: true,
+      connected,
+      userId: connected ? driver.mercadoPago.userId || null : null,
+      liveMode: connected ? !!driver.mercadoPago.liveMode : null,
+      connectedAt: connected ? driver.mercadoPago.conectadoEm || null : null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/rides', createRideLimiter, async (req, res, next) => {
   try {
     const ride = ridePublicData(req.body);
@@ -1319,6 +1339,18 @@ app.get('/api/mercadopago/oauth/start', (req, res) => {
 
 app.get('/api/mercadopago/oauth/callback', async (req, res, next) => {
   try {
+    if (req.query.error) {
+      const detail = String(req.query.error_description || req.query.error || 'Autorizacao recusada pelo Mercado Pago.').slice(0, 400);
+      return res.status(400).send(`
+        <html><body style="font-family:Arial,sans-serif;background:#090911;color:#fff;padding:24px">
+          <h1>Mercado Pago nao conectou</h1>
+          <p>${detail}</p>
+          <p>Confira se a aplicacao do Mercado Pago esta ativa em producao, com a URL de redirecionamento exatamente igual a configurada no Render.</p>
+          <a style="color:#ff9a00" href="${appUrl('/motoboy.html')}">Voltar para o painel do motoboy</a>
+        </body></html>
+      `);
+    }
+
     const code = String(req.query.code || '');
     const driverCpf = onlyDigits(req.query.state);
     if (!code || driverCpf.length !== 11) {
@@ -1341,8 +1373,18 @@ app.get('/api/mercadopago/oauth/callback', async (req, res, next) => {
       },
       body: params
     });
-    const token = await response.json();
-    if (!response.ok) throw new Error(token.message || 'Falha ao autorizar Mercado Pago');
+    const token = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = token.message || token.error_description || token.error || 'Falha ao autorizar Mercado Pago';
+      return res.status(response.status).send(`
+        <html><body style="font-family:Arial,sans-serif;background:#090911;color:#fff;padding:24px">
+          <h1>Mercado Pago nao conectou</h1>
+          <p>${String(detail).slice(0, 400)}</p>
+          <p>Confira credenciais, Client Secret e Redirect URI da aplicacao Mercado Pago.</p>
+          <a style="color:#ff9a00" href="${appUrl('/motoboy.html')}">Voltar para o painel do motoboy</a>
+        </body></html>
+      `);
+    }
 
     await db.collection('motoboys').doc(driverCpf).set({
       mercadoPago: {
