@@ -56,7 +56,7 @@ function isOutOfConchal(value) {
 }
 
 function isFixedFoodDelivery(type) {
-  return /lanche|comida|pizza|pastel|acai/i.test(String(type || ''));
+  return /lanche|comida|pizza|pastel|acai|sorvete|marmita/i.test(String(type || ''));
 }
 
 function deliverySplit(delivery = {}) {
