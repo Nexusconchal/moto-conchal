@@ -41,6 +41,15 @@ function expectedFare(km) {
   return Math.ceil(distance * 2);
 }
 
+function rideSplit(km) {
+  const distance = Number(km || 0);
+  const appPercent = distance > 8 ? 0.2 : 0.25;
+  return {
+    appPercent,
+    driverPercent: money(1 - appPercent)
+  };
+}
+
 function isFixedFoodDelivery(type) {
   return /lanche|comida|pizza|pastel|acai/i.test(String(type || ''));
 }
@@ -367,8 +376,9 @@ async function createPaymentPreference(rideId, ride, driverCpf) {
   }
 
   const total = money(ride.valor);
-  const appFee = money(total * APP_PERCENT);
-  const driverAmount = money(total * DRIVER_PERCENT);
+  const split = rideSplit(ride.km);
+  const appFee = money(total * split.appPercent);
+  const driverAmount = money(total * split.driverPercent);
 
   const preference = await mpFetch('/checkout/preferences', {
     token: sellerToken,
@@ -394,8 +404,8 @@ async function createPaymentPreference(rideId, ride, driverCpf) {
       metadata: {
         ride_id: rideId,
         driver_cpf: driverCpf,
-        app_percent: APP_PERCENT,
-        driver_percent: DRIVER_PERCENT
+        app_percent: split.appPercent,
+        driver_percent: split.driverPercent
       }
     }
   });
@@ -1216,11 +1226,12 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
       return res.status(409).json({ error: 'corrida_cancelada' });
     }
 
+    const split = rideSplit(ride.km);
     await rideRef.set({
       status: 'finalizada',
       finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
-      ganhoMotoboy: DRIVER_PERCENT,
-      ganhoApp: APP_PERCENT,
+      ganhoMotoboy: split.driverPercent,
+      ganhoApp: split.appPercent,
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
 
