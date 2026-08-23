@@ -16,6 +16,7 @@ const DUPLICATE_RIDE_MS = Number(process.env.DUPLICATE_RIDE_SECONDS || 45) * 100
 const MP_API = 'https://api.mercadopago.com';
 const BACKEND_BASE_URL = String(process.env.BACKEND_BASE_URL || '').replace(/\/$/, '');
 const OWNER_WHATSAPP = onlyDigits(process.env.OWNER_WHATSAPP || process.env.SUPPORT_PHONE || '5519992306488');
+const GEOAPIFY_API_KEY = process.env.GEOAPIFY_API_KEY || '1361a528dcbe484e8143a19929527781';
 
 function requiredEnv(name) {
   const value = process.env[name];
@@ -100,6 +101,43 @@ function deliveryStopCount(stops = 1) {
   const count = Math.floor(Number(stops || 1));
   if (!Number.isFinite(count)) return 1;
   return Math.min(30, Math.max(1, count));
+}
+
+function validCoordinate(point) {
+  return point
+    && Number.isFinite(Number(point.lat))
+    && Number.isFinite(Number(point.lon))
+    && Math.abs(Number(point.lat)) <= 90
+    && Math.abs(Number(point.lon)) <= 180;
+}
+
+async function calculateRouteDistanceKm(points = []) {
+  if (!GEOAPIFY_API_KEY) throw new Error('Geoapify nao configurado no backend.');
+  if (!Array.isArray(points) || points.length < 2 || points.some((point) => !validCoordinate(point))) {
+    const error = new Error('Coordenadas invalidas para conferir a rota.');
+    error.status = 400;
+    error.code = 'coordenadas_invalidas';
+    throw error;
+  }
+
+  const waypoints = points.map((point) => `${Number(point.lat)},${Number(point.lon)}`).join('|');
+  const url = `https://api.geoapify.com/v1/routing?waypoints=${encodeURIComponent(waypoints)}&mode=drive&apiKey=${GEOAPIFY_API_KEY}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    const error = new Error('Nao consegui conferir a rota no servidor. Tente novamente.');
+    error.status = 502;
+    error.code = 'rota_backend_falhou';
+    throw error;
+  }
+  const data = await response.json();
+  const meters = data.features?.[0]?.properties?.distance;
+  if (!Number.isFinite(Number(meters)) || Number(meters) <= 0) {
+    const error = new Error('Rota nao encontrada para os pontos informados.');
+    error.status = 400;
+    error.code = 'rota_backend_nao_encontrada';
+    throw error;
+  }
+  return money(Number(meters) / 1000);
 }
 
 function onlyDigits(value) {
@@ -266,7 +304,11 @@ function deliveryPublicData(delivery) {
     telefoneEmpresa: onlyDigits(delivery.telefoneEmpresa),
     tipoEntrega: String(delivery.tipoEntrega || 'Delivery / encomendas').slice(0, 80).trim(),
     retirada: String(delivery.retirada || '').slice(0, 300).trim(),
+    retiradaLat: Number(delivery.retiradaLat || 0),
+    retiradaLon: Number(delivery.retiradaLon || 0),
     entrega: String(delivery.entrega || '').slice(0, 300).trim(),
+    entregaLat: Number(delivery.entregaLat || 0),
+    entregaLon: Number(delivery.entregaLon || 0),
     entregaEncontrada: String(delivery.entregaEncontrada || delivery.entrega || '').slice(0, 300).trim(),
     recebedor: String(delivery.recebedor || '').slice(0, 120).trim(),
     telefoneRecebedor: onlyDigits(delivery.telefoneRecebedor).slice(0, 13),
@@ -1117,8 +1159,16 @@ app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
     if (delivery.paradas > 1 && pontosExtras.length !== delivery.paradas - 1) {
       return res.status(400).json({ error: 'pontos_extras_invalidos', message: `Informe exatamente ${delivery.paradas - 1} ponto(s) extra(s).` });
     }
-    if (pontosExtras.some((p) => !String(p.digitado || '').trim() || !Number.isFinite(Number(p.lat)) || !Number.isFinite(Number(p.lon)))) {
+    if (pontosExtras.some((p) => !String(p.digitado || '').trim() || !validCoordinate(p))) {
       return res.status(400).json({ error: 'pontos_extras_invalidos', message: 'Confira os enderecos extras antes de chamar o motoboy.' });
+    }
+    if (!isFixedFoodDelivery(delivery.tipoEntrega)) {
+      const serverKm = await calculateRouteDistanceKm([
+        { lat: delivery.retiradaLat, lon: delivery.retiradaLon },
+        { lat: delivery.entregaLat, lon: delivery.entregaLon },
+        ...pontosExtras.map((point) => ({ lat: point.lat, lon: point.lon }))
+      ]);
+      delivery.km = serverKm;
     }
     if (!delivery.valor || delivery.valor <= 0) {
       return res.status(400).json({ error: 'valor_invalido' });
@@ -1536,8 +1586,10 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
         status: 'finalizada',
         finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
         saldoDebitadoEm: admin.firestore.FieldValue.serverTimestamp(),
-        ganhoMotoboy: split.driverPercent,
-        ganhoApp: split.appPercent,
+        ganhoMotoboy: split.driverAmount,
+        ganhoApp: split.appFee,
+        percentualMotoboy: split.driverPercent,
+        percentualApp: split.appPercent,
         valorMotoboy: split.driverAmount,
         valorApp: split.appFee,
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
