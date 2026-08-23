@@ -270,6 +270,15 @@ function deliveryPublicData(delivery) {
     entregaEncontrada: String(delivery.entregaEncontrada || delivery.entrega || '').slice(0, 300).trim(),
     recebedor: String(delivery.recebedor || '').slice(0, 120).trim(),
     telefoneRecebedor: onlyDigits(delivery.telefoneRecebedor).slice(0, 13),
+    enderecosExtras: String(delivery.enderecosExtras || '').slice(0, 1200).trim(),
+    pontosExtras: Array.isArray(delivery.pontosExtras) ? delivery.pontosExtras.slice(0, 29).map((p, index) => ({
+      ordem: Number(p.ordem || index + 2),
+      digitado: String(p.digitado || '').slice(0, 180).trim(),
+      encontrado: String(p.encontrado || '').slice(0, 220).trim(),
+      lat: Number(p.lat || 0),
+      lon: Number(p.lon || 0),
+      mapa: String(p.mapa || '').slice(0, 260).trim(),
+    })) : [],
     descricao: String(delivery.descricao || '').slice(0, 500).trim(),
     observacao: String(delivery.observacao || '').slice(0, 500).trim(),
     paradas: deliveryStopCount(delivery.paradas),
@@ -350,6 +359,7 @@ async function notifyTelegramAboutDelivery(deliveryId, delivery) {
     `<b>Paradas:</b> ${escapeTelegram(delivery.paradas || 1)}`,
     `<b>Retirada:</b> ${escapeTelegram(delivery.retirada || '-')}${escapeTelegram(pickupMap)}`,
     `<b>Entrega:</b> ${escapeTelegram(delivery.entrega || '-')}`,
+    Array.isArray(delivery.pontosExtras) && delivery.pontosExtras.length ? `<b>Pontos extras:</b>\n${delivery.pontosExtras.map((p) => `${escapeTelegram(p.ordem || '')}. ${escapeTelegram(p.digitado || '')}${p.mapa ? `\nMapa: ${escapeTelegram(p.mapa)}` : ''}`).join('\n')}` : (delivery.enderecosExtras ? `<b>Pontos extras:</b> ${escapeTelegram(delivery.enderecosExtras)}` : ''),
     delivery.recebedor ? `<b>Recebedor:</b> ${escapeTelegram(delivery.recebedor)}` : '',
     delivery.telefoneRecebedor ? `<b>WhatsApp recebedor:</b> ${escapeTelegram(delivery.telefoneRecebedor)}` : '',
     delivery.descricao ? `<b>Pedido:</b> ${escapeTelegram(delivery.descricao)}` : '',
@@ -832,6 +842,8 @@ app.get('/api/companies/:phone/delivery-report', async (req, res, next) => {
         status: item.status || '',
         tipoEntrega: item.tipoEntrega || '',
         entrega: item.entrega || '',
+        enderecosExtras: item.enderecosExtras || '',
+        pontosExtras: item.pontosExtras || [],
         bairroEntrega: item.bairroEntrega || bairroFromAddress(item.entregaEncontrada || item.entrega),
         valor: money(item.valor),
         criadaEm: timestampMs(item.criadaEm)
@@ -1097,6 +1109,16 @@ app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
     }
     if (!isPricedDeliveryType(delivery.tipoEntrega)) {
       return res.status(400).json({ error: 'tipo_entrega_sem_preco', message: 'Selecione um tipo de entrega com preco definido.' });
+    }
+    if (delivery.paradas > 1 && !delivery.enderecosExtras) {
+      return res.status(400).json({ error: 'enderecos_extras_obrigatorios', message: 'Informe os enderecos dos pontos extras.' });
+    }
+    const pontosExtras = Array.isArray(delivery.pontosExtras) ? delivery.pontosExtras : [];
+    if (delivery.paradas > 1 && pontosExtras.length !== delivery.paradas - 1) {
+      return res.status(400).json({ error: 'pontos_extras_invalidos', message: `Informe exatamente ${delivery.paradas - 1} ponto(s) extra(s).` });
+    }
+    if (pontosExtras.some((p) => !String(p.digitado || '').trim() || !Number.isFinite(Number(p.lat)) || !Number.isFinite(Number(p.lon)))) {
+      return res.status(400).json({ error: 'pontos_extras_invalidos', message: 'Confira os enderecos extras antes de chamar o motoboy.' });
     }
     if (!delivery.valor || delivery.valor <= 0) {
       return res.status(400).json({ error: 'valor_invalido' });
