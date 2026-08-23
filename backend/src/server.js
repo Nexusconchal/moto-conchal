@@ -794,9 +794,17 @@ app.get('/api/companies/:phone/delivery-report', async (req, res, next) => {
       .limit(200)
       .get();
 
+    const sinceMs = Number(req.query.sinceMs || 0);
+    const untilMs = Number(req.query.untilMs || 0);
     const deliveries = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
       .sort((a, b) => timestampMs(b.criadaEm) - timestampMs(a.criadaEm));
-    const billable = deliveries.filter((item) => item.status !== 'cancelada' && item.status !== 'expirada');
+    const scopedDeliveries = deliveries.filter((item) => {
+      const created = timestampMs(item.criadaEm);
+      if (sinceMs && created < sinceMs) return false;
+      if (untilMs && created > untilMs) return false;
+      return true;
+    });
+    const billable = scopedDeliveries.filter((item) => item.status !== 'cancelada' && item.status !== 'expirada');
     const byNeighborhood = {};
 
     billable.forEach((item) => {
@@ -813,13 +821,13 @@ app.get('/api/companies/:phone/delivery-report', async (req, res, next) => {
 
     res.json({
       ok: true,
-      totalEntregas: deliveries.length,
+      totalEntregas: scopedDeliveries.length,
       faturaveis: billable.length,
       totalGasto: money(billable.reduce((sum, item) => sum + money(item.valor), 0)),
       totalMotoboy,
       totalApp,
       porBairro: Object.values(byNeighborhood).sort((a, b) => b.quantidade - a.quantidade),
-      ultimas: deliveries.slice(0, 20).map((item) => ({
+      ultimas: scopedDeliveries.slice(0, 20).map((item) => ({
         id: item.id,
         status: item.status || '',
         tipoEntrega: item.tipoEntrega || '',
