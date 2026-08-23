@@ -54,6 +54,11 @@ function isFixedFoodDelivery(type) {
   return /lanche|comida|pizza|pastel|acai/i.test(String(type || ''));
 }
 
+function isPricedDeliveryType(type) {
+  const value = normalizeText(type);
+  return !!value && value !== 'delivery / encomendas';
+}
+
 function expectedDeliveryFare(distanceKm, stops = 1, type = '') {
   const distance = Number(distanceKm || 0);
   const deliveryStops = deliveryStopCount(stops);
@@ -916,6 +921,9 @@ app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
     const delivery = deliveryPublicData(req.body);
     if (!delivery.empresa || !delivery.responsavel || !delivery.retirada || !delivery.entrega || !delivery.recebedor || delivery.telefoneEmpresa.length < 10 || delivery.telefoneEmpresa.length > 11 || delivery.telefoneRecebedor.length < 10 || delivery.telefoneRecebedor.length > 11) {
       return res.status(400).json({ error: 'preencha_empresa_responsavel_telefones_retirada_entrega_recebedor' });
+    }
+    if (!isPricedDeliveryType(delivery.tipoEntrega)) {
+      return res.status(400).json({ error: 'tipo_entrega_sem_preco', message: 'Selecione um tipo de entrega com preco definido.' });
     }
     if (!delivery.valor || delivery.valor <= 0) {
       return res.status(400).json({ error: 'valor_invalido' });
