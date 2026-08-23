@@ -50,8 +50,33 @@ function rideSplit(km) {
   };
 }
 
+function isOutOfConchal(value) {
+  const text = normalizeText(value);
+  return !!text && !text.includes('conchal');
+}
+
 function isFixedFoodDelivery(type) {
   return /lanche|comida|pizza|pastel|acai/i.test(String(type || ''));
+}
+
+function deliverySplit(delivery = {}) {
+  const total = money(delivery.valor);
+  if (isFixedFoodDelivery(delivery.tipoEntrega)) {
+    const appFee = money(1.5 * deliveryStopCount(delivery.paradas));
+    return {
+      appFee: money(Math.min(total, appFee)),
+      driverAmount: money(Math.max(0, total - appFee)),
+      appPercent: total ? money(appFee / total) : 0,
+      driverPercent: total ? money((total - appFee) / total) : 0
+    };
+  }
+  const appPercent = isOutOfConchal(delivery.entregaEncontrada || delivery.entrega) ? 0.2 : 0.25;
+  return {
+    appFee: money(total * appPercent),
+    driverAmount: money(total * (1 - appPercent)),
+    appPercent,
+    driverPercent: money(1 - appPercent)
+  };
 }
 
 function isPricedDeliveryType(type) {
@@ -88,6 +113,16 @@ function normalizeText(value) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ');
+}
+
+function bairroFromAddress(value) {
+  const parts = String(value || '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length >= 3) return parts[2].slice(0, 80);
+  if (parts.length >= 2) return parts[1].replace(/\d+/g, '').trim().slice(0, 80) || 'Nao informado';
+  return 'Nao informado';
 }
 
 function timestampMs(ts) {
@@ -671,6 +706,56 @@ app.get('/api/companies/:phone/balance', async (req, res, next) => {
   }
 });
 
+app.get('/api/companies/:phone/delivery-report', async (req, res, next) => {
+  try {
+    const phone = onlyDigits(req.params.phone);
+    if (phone.length < 10 || phone.length > 11) return res.status(400).json({ error: 'telefone_empresa_invalido' });
+
+    const snapshot = await db.collection('entregas')
+      .where('telefoneEmpresa', '==', phone)
+      .limit(200)
+      .get();
+
+    const deliveries = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+      .sort((a, b) => timestampMs(b.criadaEm) - timestampMs(a.criadaEm));
+    const billable = deliveries.filter((item) => item.status !== 'cancelada' && item.status !== 'expirada');
+    const byNeighborhood = {};
+
+    billable.forEach((item) => {
+      const bairro = item.bairroEntrega || bairroFromAddress(item.entregaEncontrada || item.entrega);
+      const split = deliverySplit(item);
+      byNeighborhood[bairro] ??= { bairro, quantidade: 0, total: 0 };
+      byNeighborhood[bairro].quantidade += 1;
+      byNeighborhood[bairro].total = money(byNeighborhood[bairro].total + money(item.valor));
+      byNeighborhood[bairro].motoboy = money((byNeighborhood[bairro].motoboy || 0) + split.driverAmount);
+      byNeighborhood[bairro].app = money((byNeighborhood[bairro].app || 0) + split.appFee);
+    });
+    const totalMotoboy = money(billable.reduce((sum, item) => sum + deliverySplit(item).driverAmount, 0));
+    const totalApp = money(billable.reduce((sum, item) => sum + deliverySplit(item).appFee, 0));
+
+    res.json({
+      ok: true,
+      totalEntregas: deliveries.length,
+      faturaveis: billable.length,
+      totalGasto: money(billable.reduce((sum, item) => sum + money(item.valor), 0)),
+      totalMotoboy,
+      totalApp,
+      porBairro: Object.values(byNeighborhood).sort((a, b) => b.quantidade - a.quantidade),
+      ultimas: deliveries.slice(0, 20).map((item) => ({
+        id: item.id,
+        status: item.status || '',
+        tipoEntrega: item.tipoEntrega || '',
+        entrega: item.entrega || '',
+        bairroEntrega: item.bairroEntrega || bairroFromAddress(item.entregaEncontrada || item.entrega),
+        valor: money(item.valor),
+        criadaEm: timestampMs(item.criadaEm)
+      }))
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/companies/deposit-request', createRideLimiter, async (req, res, next) => {
   try {
     const deposit = depositPublicData(req.body);
@@ -987,6 +1072,7 @@ app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
       tx.set(ref, {
         ...delivery,
         empresaId: delivery.telefoneEmpresa,
+        bairroEntrega: bairroFromAddress(delivery.entregaEncontrada || delivery.entrega),
         tipo: 'entrega_empresarial',
         status: 'pendente',
         pagamento: 'saldo_pre_pago_empresa',
@@ -1296,6 +1382,7 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
       }
 
       const valor = money(delivery.saldoReservado || delivery.valor || 0);
+      const split = deliverySplit(delivery);
       const companyRef = companyRefFromPhone(delivery.empresaId || delivery.telefoneEmpresa);
       if (!companyRef || valor <= 0) {
         const error = new Error('Dados de saldo da empresa invalidos.');
@@ -1333,8 +1420,10 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
         status: 'finalizada',
         finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
         saldoDebitadoEm: admin.firestore.FieldValue.serverTimestamp(),
-        ganhoMotoboy: DRIVER_PERCENT,
-        ganhoApp: APP_PERCENT,
+        ganhoMotoboy: split.driverPercent,
+        ganhoApp: split.appPercent,
+        valorMotoboy: split.driverAmount,
+        valorApp: split.appFee,
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
     });
