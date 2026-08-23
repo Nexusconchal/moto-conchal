@@ -178,6 +178,25 @@ function timestampMs(ts) {
   return 0;
 }
 
+function serializeFirestore(value) {
+  if (!value) return value;
+  if (typeof value.toDate === 'function') {
+    return { seconds: Math.floor(value.toDate().getTime() / 1000) };
+  }
+  if (Array.isArray(value)) return value.map(serializeFirestore);
+  if (typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, serializeFirestore(item)]));
+  }
+  return value;
+}
+
+async function collectionState(name, limit = 500) {
+  const snapshot = await db.collection(name).limit(limit).get();
+  return snapshot.docs
+    .map((docSnap) => serializeFirestore({ id: docSnap.id, ...docSnap.data() }))
+    .sort((a, b) => timestampMs(b.finalizadaEm || b.aceitaEm || b.criadaEm || b.ultimoAcesso) - timestampMs(a.finalizadaEm || a.aceitaEm || a.criadaEm || a.ultimoAcesso));
+}
+
 function assertAdmin(req, res, next) {
   const key = process.env.ADMIN_API_KEY;
   if (!key || req.header('x-admin-key') !== key) {
@@ -793,6 +812,38 @@ app.post('/api/admin/login', (req, res) => {
     return res.status(401).json({ error: 'senha_incorreta' });
   }
   return res.json({ ok: true });
+});
+
+app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
+  try {
+    const [corridas, entregas, motoboys, depositos] = await Promise.all([
+      collectionState('corridas'),
+      collectionState('entregas'),
+      collectionState('motoboys'),
+      collectionState('depositos')
+    ]);
+    return res.json({ ok: true, corridas, entregas, motoboys, depositos });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/admin/rides/:rideId/cancel', assertOwner, async (req, res, next) => {
+  try {
+    const rideId = String(req.params.rideId || '').trim();
+    const motivo = cleanText(req.body.reason || req.body.motivo, 180);
+    if (!rideId || !motivo) return res.status(400).json({ error: 'motivo_obrigatorio' });
+    await db.collection('corridas').doc(rideId).update({
+      status: 'cancelada',
+      motivoCancelamento: motivo,
+      canceladoPor: 'Dono',
+      canceladoEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 app.post('/api/drivers/register', async (req, res, next) => {
