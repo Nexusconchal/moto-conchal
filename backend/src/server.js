@@ -99,7 +99,7 @@ function expectedDeliveryFare(distanceKm, stops = 1, type = '') {
 function deliveryStopCount(stops = 1) {
   const count = Math.floor(Number(stops || 1));
   if (!Number.isFinite(count)) return 1;
-  return Math.min(5, Math.max(1, count));
+  return Math.min(30, Math.max(1, count));
 }
 
 function onlyDigits(value) {
