@@ -182,8 +182,17 @@ function ownerPasswordValue() {
   return process.env.OWNER_PASSWORD || process.env.ADMIN_PANEL_PASSWORD || '';
 }
 
-function driverPasswordValue() {
-  return process.env.DRIVER_PASSWORD || 'moto123';
+function driverPasswordValues() {
+  const configured = String(process.env.DRIVER_PASSWORD || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return Array.from(new Set(['moto123', ...configured]));
+}
+
+function isValidDriverPassword(password) {
+  const typed = String(password || '');
+  return driverPasswordValues().some((allowed) => safeEqual(typed, allowed));
 }
 
 function assertOwner(req, res, next) {
@@ -786,7 +795,7 @@ app.post('/api/drivers/register', async (req, res, next) => {
     const cnh = onlyDigits(req.body.cnh);
     const telefone = onlyDigits(req.body.telefone);
 
-    if (!safeEqual(password, driverPasswordValue())) {
+    if (!isValidDriverPassword(password)) {
       return res.status(401).json({ error: 'senha_incorreta' });
     }
     if (!nome || cpf.length !== 11 || cnh.length !== 11 || telefone.length < 10 || telefone.length > 11) {
