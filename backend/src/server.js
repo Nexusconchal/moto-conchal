@@ -16,6 +16,7 @@ const DUPLICATE_RIDE_MS = Number(process.env.DUPLICATE_RIDE_SECONDS || 45) * 100
 const MP_API = 'https://api.mercadopago.com';
 const BACKEND_BASE_URL = String(process.env.BACKEND_BASE_URL || '').replace(/\/$/, '');
 const OWNER_WHATSAPP = onlyDigits(process.env.OWNER_WHATSAPP || process.env.SUPPORT_PHONE || '5519992306488');
+const OWNER_PIX_KEY = String(process.env.OWNER_PIX_KEY || '94bff0ce-3c37-4e5e-a911-4512651e3d55').trim();
 const GEOAPIFY_API_KEY = process.env.GEOAPIFY_API_KEY || '1361a528dcbe484e8143a19929527781';
 const DRIVER_PROOF_CACHE_MS = 5 * 60 * 1000;
 const driverProofCache = new Map();
@@ -1106,7 +1107,7 @@ app.post('/api/companies/deposit-request', createRideLimiter, async (req, res, n
       });
     });
 
-    const msg = `Pedido de deposito Nexus MotoJa\n\nEmpresa: ${deposit.empresa}\nResponsavel: ${deposit.responsavel}\nWhatsApp: ${deposit.telefoneEmpresa}\nValor: ${deposit.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nCodigo: ${depositRef.id}\n\nDepois que o pagamento cair, aprove esse deposito no painel do dono para liberar saldo.`;
+    const msg = `Pedido de deposito Nexus MotoJa\n\nEmpresa: ${deposit.empresa}\nResponsavel: ${deposit.responsavel}\nWhatsApp: ${deposit.telefoneEmpresa}\nValor: ${deposit.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nCodigo: ${depositRef.id}\n\nPix para pagamento:\nChave Pix: ${OWNER_PIX_KEY}\n\nDepois de pagar, envie o comprovante aqui. O saldo so entra no app depois que o dono conferir o pagamento e aprovar no painel.`;
     res.status(201).json({
       ok: true,
       depositId: depositRef.id,
