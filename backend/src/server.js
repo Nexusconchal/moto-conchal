@@ -163,6 +163,18 @@ function normalizeText(value) {
     .replace(/\s+/g, ' ');
 }
 
+function normalizedPersonName(value) {
+  return normalizeText(value).replace(/[^a-z\s]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function validDriverPhoto(value) {
+  const photo = String(value || '');
+  if (!photo) return '';
+  if (!/^data:image\/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(photo)) return '';
+  if (photo.length > 180000) return '';
+  return photo;
+}
+
 function bairroFromAddress(value) {
   const parts = String(value || '')
     .split(',')
@@ -824,6 +836,34 @@ app.get('/', (_req, res) => {
   });
 });
 
+function driverStatusHtml(title, item = {}) {
+  const name = cleanText(item.motoboy || 'Motoboy Nexus MotoJa', 80);
+  const phone = onlyDigits(item.motoboyTelefone);
+  const photo = validDriverPhoto(item.motoboyFoto) || '';
+  const service = cleanText(title, 60);
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${service}</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#090911;color:#fff;font-family:system-ui,sans-serif}.card{width:min(92vw,390px);padding:24px;border-radius:22px;background:linear-gradient(180deg,#241614,#11121c);border:1px solid rgba(255,154,0,.28);text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.4)}img{width:112px;height:112px;border-radius:50%;object-fit:cover;border:4px solid #ff9a00;background:#1b1b27}.empty{width:112px;height:112px;border-radius:50%;display:grid;place-items:center;margin:0 auto;background:#1b1b27;border:4px solid #ff9a00;color:#ff9a00;font-size:40px;font-weight:900}small{color:#ff9a00;font-weight:900;letter-spacing:1px;text-transform:uppercase}h1{font-size:24px;margin:12px 0 6px}.muted{color:#c8c8d6}.ok{color:#bfffd2;font-weight:800}</style></head><body><main class="card"><small>Nexus MotoJa</small><h1>${service}</h1>${photo ? `<img src="${photo}" alt="Foto do motoboy">` : '<div class="empty">MJ</div>'}<h2>${name}</h2><p class="muted">Este e o motoboy que aceitou o atendimento pelo app.</p>${phone ? `<p class="ok">WhatsApp: ${phone}</p>` : ''}</main></body></html>`;
+}
+
+app.get('/corrida/:rideId', async (req, res, next) => {
+  try {
+    const snap = await db.collection('corridas').doc(String(req.params.rideId || '')).get();
+    if (!snap.exists) return res.status(404).send('Corrida nao encontrada.');
+    return res.type('html').send(driverStatusHtml('Motoboy da corrida', snap.data() || {}));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/entrega/:deliveryId', async (req, res, next) => {
+  try {
+    const snap = await db.collection('entregas').doc(String(req.params.deliveryId || '')).get();
+    if (!snap.exists) return res.status(404).send('Entrega nao encontrada.');
+    return res.type('html').send(driverStatusHtml('Motoboy da entrega', snap.data() || {}));
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/admin/login', (req, res) => {
   const ownerPassword = ownerPasswordValue();
   const password = String(req.body.password || '');
@@ -875,6 +915,7 @@ app.post('/api/drivers/register', async (req, res, next) => {
     const cpf = onlyDigits(req.body.cpf);
     const cnh = onlyDigits(req.body.cnh);
     const telefone = onlyDigits(req.body.telefone);
+    const fotoMotoboy = validDriverPhoto(req.body.fotoMotoboy);
 
     if (!isValidDriverPassword(password)) {
       return res.status(401).json({ error: 'senha_incorreta' });
@@ -889,15 +930,28 @@ app.post('/api/drivers/register', async (req, res, next) => {
       const driver = driverSnap.data() || {};
       const savedCnh = onlyDigits(driver.cnh);
       const savedPhone = onlyDigits(driver.telefone);
-      if ((savedCnh && savedCnh !== cnh) || (savedPhone && savedPhone !== telefone)) {
+      const savedName = normalizedPersonName(driver.nome);
+      const givenName = normalizedPersonName(nome);
+      if ((savedCnh && savedCnh !== cnh) || (savedPhone && savedPhone !== telefone) || (savedName && givenName && savedName !== givenName)) {
         return res.status(409).json({
           error: 'cadastro_ja_existe',
           message: 'CPF ja cadastrado com outros dados. Fale com o dono para conferir.'
         });
       }
+      if (!driver.fotoMotoboy && !fotoMotoboy) {
+        return res.status(400).json({
+          error: 'foto_obrigatoria',
+          message: 'Envie uma foto do rosto para liberar o acesso do motoboy.'
+        });
+      }
+    } else if (!fotoMotoboy) {
+      return res.status(400).json({
+        error: 'foto_obrigatoria',
+        message: 'Envie uma foto do rosto para cadastrar o motoboy.'
+      });
     }
 
-    await driverRef.set({
+    const driverData = {
       nome,
       cpf,
       cnh,
@@ -905,7 +959,13 @@ app.post('/api/drivers/register', async (req, res, next) => {
       status: 'ativo',
       ultimoAcesso: admin.firestore.FieldValue.serverTimestamp(),
       atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+    };
+    if (fotoMotoboy) {
+      driverData.fotoMotoboy = fotoMotoboy;
+      driverData.fotoAtualizadaEm = admin.firestore.FieldValue.serverTimestamp();
+    }
+
+    await driverRef.set(driverData, { merge: true });
 
     return res.json({ ok: true });
   } catch (error) {
@@ -1000,6 +1060,8 @@ app.get('/api/companies/:phone/delivery-report', async (req, res, next) => {
         enderecosExtras: item.enderecosExtras || '',
         pontosExtras: item.pontosExtras || [],
         bairroEntrega: item.bairroEntrega || bairroFromAddress(item.entregaEncontrada || item.entrega),
+        motoboy: item.motoboy || '',
+        motoboyFoto: item.motoboyFoto || '',
         valor: money(item.valor),
         criadaEm: timestampMs(item.criadaEm)
       }))
@@ -1410,6 +1472,7 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
         motoboyCpf: driverCpf,
         motoboyCnh: driver.cnh || '',
         motoboyTelefone: driver.telefone || '',
+        motoboyFoto: driver.fotoMotoboy || '',
         aceitaEm: admin.firestore.FieldValue.serverTimestamp(),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
@@ -1466,6 +1529,7 @@ app.post('/api/deliveries/:deliveryId/accept', async (req, res, next) => {
         motoboyCpf: driverCpf,
         motoboyCnh: driver.cnh || '',
         motoboyTelefone: driver.telefone || '',
+        motoboyFoto: driver.fotoMotoboy || '',
         aceitaEm: admin.firestore.FieldValue.serverTimestamp(),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
@@ -1495,7 +1559,8 @@ app.post('/api/rides/:rideId/notify-client', async (req, res, next) => {
       return res.status(409).json({ error: 'pagamento_nao_criado' });
     }
 
-    const message = `Ola, ${ride.nome || 'cliente'}! Seu motoboy ${ride.motoboy || 'MotoJa Conchal'} aceitou a corrida.\n\nValor: ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nOrigem: ${ride.origem || '-'}\nDestino: ${ride.destino || '-'}\n\nPague por este link Mercado Pago:\n${ride.pagamento.initPoint}\n\nDepois do pagamento aprovado, envie o comprovante aqui se quiser e mostre ao motoboy antes de iniciar a corrida.`;
+    const driverUrl = BACKEND_BASE_URL ? `${BACKEND_BASE_URL}/corrida/${req.params.rideId}` : '';
+    const message = `Ola, ${ride.nome || 'cliente'}! Seu motoboy ${ride.motoboy || 'MotoJa Conchal'} aceitou a corrida.\n\nValor: ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nOrigem: ${ride.origem || '-'}\nDestino: ${ride.destino || '-'}${driverUrl ? `\n\nVer foto do motoboy:\n${driverUrl}` : ''}\n\nPague por este link Mercado Pago:\n${ride.pagamento.initPoint}\n\nDepois do pagamento aprovado, envie o comprovante aqui se quiser e mostre ao motoboy antes de iniciar a corrida.`;
 
     await rideRef.set({
       clienteAvisadoEm: admin.firestore.FieldValue.serverTimestamp(),
