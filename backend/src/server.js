@@ -967,7 +967,11 @@ app.post('/api/drivers/register', async (req, res, next) => {
 
     await driverRef.set(driverData, { merge: true });
 
-    return res.json({ ok: true });
+    const savedDriver = driverSnap.exists ? driverSnap.data() || {} : {};
+    return res.json({
+      ok: true,
+      fotoMotoboy: fotoMotoboy || savedDriver.fotoMotoboy || ''
+    });
   } catch (error) {
     return next(error);
   }
