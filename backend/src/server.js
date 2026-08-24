@@ -17,6 +17,8 @@ const MP_API = 'https://api.mercadopago.com';
 const BACKEND_BASE_URL = String(process.env.BACKEND_BASE_URL || '').replace(/\/$/, '');
 const OWNER_WHATSAPP = onlyDigits(process.env.OWNER_WHATSAPP || process.env.SUPPORT_PHONE || '5519992306488');
 const GEOAPIFY_API_KEY = process.env.GEOAPIFY_API_KEY || '1361a528dcbe484e8143a19929527781';
+const DRIVER_PROOF_CACHE_MS = 5 * 60 * 1000;
+const driverProofCache = new Map();
 
 function requiredEnv(name) {
   const value = process.env[name];
@@ -271,6 +273,10 @@ function assertDriverProof(driver = {}, body = {}) {
 }
 
 async function getDriverWithProof(driverCpf, body = {}) {
+  const cacheKey = `${driverCpf}:${onlyDigits(body.driverCnh)}:${onlyDigits(body.driverTelefone)}`;
+  const cached = driverProofCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.driver;
+
   const driverSnap = await db.collection('motoboys').doc(driverCpf).get();
   if (!driverSnap.exists) {
     const error = new Error('Motoboy nao cadastrado.');
@@ -281,6 +287,7 @@ async function getDriverWithProof(driverCpf, body = {}) {
 
   const driver = driverSnap.data() || {};
   assertDriverProof(driver, body);
+  driverProofCache.set(cacheKey, { driver, expiresAt: Date.now() + DRIVER_PROOF_CACHE_MS });
   return driver;
 }
 
@@ -908,7 +915,6 @@ app.post('/api/drivers/register', async (req, res, next) => {
 
 app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
   try {
-    await cleanupRides();
     const driverCpf = onlyDigits(req.params.cpf);
     const kind = req.body.kind === 'deliveries' ? 'deliveries' : 'rides';
     const scope = req.body.scope === 'mine' ? 'mine' : 'pending';
