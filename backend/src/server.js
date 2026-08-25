@@ -53,12 +53,18 @@ function nightRideActive(date = new Date()) {
 function expectedFare(km) {
   const distance = Number(km || 0);
   if (!Number.isFinite(distance) || distance <= 0) return 0;
+  if (nightRideActive()) {
+    if (distance <= 3) return 9;
+    if (distance <= 5) return 12;
+    if (distance <= 8) return 18;
+    return money(Math.ceil(distance * 3));
+  }
   let value;
   if (distance <= 3) value = 4.5;
   else if (distance <= 5) value = 7.5;
   else if (distance <= 8) value = 12;
   else value = Math.ceil(distance * 2);
-  return money(nightRideActive() ? value * 2 : value);
+  return money(value);
 }
 
 function rideSplit(km) {
