@@ -36,13 +36,29 @@ function money(value) {
   return Math.round(Number(value || 0) * 100) / 100;
 }
 
+function saoPauloHour(date = new Date()) {
+  const hour = Number(new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    hour12: false
+  }).format(date));
+  return hour % 24;
+}
+
+function nightRideActive(date = new Date()) {
+  const hour = saoPauloHour(date);
+  return hour >= 0 && hour < 6;
+}
+
 function expectedFare(km) {
   const distance = Number(km || 0);
   if (!Number.isFinite(distance) || distance <= 0) return 0;
-  if (distance <= 3) return 4.5;
-  if (distance <= 5) return 7.5;
-  if (distance <= 8) return 12;
-  return Math.ceil(distance * 2);
+  let value;
+  if (distance <= 3) value = 4.5;
+  else if (distance <= 5) value = 7.5;
+  else if (distance <= 8) value = 12;
+  else value = Math.ceil(distance * 2);
+  return money(nightRideActive() ? value * 2 : value);
 }
 
 function rideSplit(km) {
