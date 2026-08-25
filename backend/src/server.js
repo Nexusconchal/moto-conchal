@@ -85,6 +85,27 @@ function isFixedFoodDelivery(type) {
   return /lanche|comida|pizza|pastel|acai|sorvete|marmita/i.test(String(type || ''));
 }
 
+function isSpecialFoodDestination(value) {
+  const text = normalizeText(value);
+  return /martinho\s*prado|tujuguaba|iate/.test(text);
+}
+
+function fixedFoodDeliveryFare(delivery = {}) {
+  const deliveryStops = deliveryStopCount(delivery.paradas);
+  const destinations = [
+    `${delivery.entrega || ''} ${delivery.entregaEncontrada || ''}`,
+    ...(Array.isArray(delivery.pontosExtras)
+      ? delivery.pontosExtras.map(point => `${point.digitado || ''} ${point.encontrado || ''}`)
+      : [])
+  ];
+
+  let total = 0;
+  for (let index = 0; index < deliveryStops; index += 1) {
+    total += isSpecialFoodDestination(destinations[index] || '') ? 14 : 5.5;
+  }
+  return money(total);
+}
+
 function deliverySplit(delivery = {}) {
   const total = money(delivery.valor);
   if (isFixedFoodDelivery(delivery.tipoEntrega)) {
@@ -110,13 +131,13 @@ function isPricedDeliveryType(type) {
   return !!value && value !== 'delivery / encomendas';
 }
 
-function expectedDeliveryFare(distanceKm, stops = 1, type = '') {
+function expectedDeliveryFare(distanceKm, stops = 1, type = '', delivery = {}) {
   const distance = Number(distanceKm || 0);
   const deliveryStops = deliveryStopCount(stops);
   if (!Number.isFinite(distance) || distance <= 0) return 0;
 
   if (isFixedFoodDelivery(type)) {
-    return money(5.5 * deliveryStops);
+    return fixedFoodDeliveryFare({ ...delivery, paradas: deliveryStops, tipoEntrega: type });
   }
 
   return money(Math.ceil(distance * 2));
@@ -1375,7 +1396,7 @@ app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
     if (!delivery.valor || delivery.valor <= 0) {
       return res.status(400).json({ error: 'valor_invalido' });
     }
-    if (money(delivery.valor) !== expectedDeliveryFare(delivery.km, delivery.paradas, delivery.tipoEntrega)) {
+    if (money(delivery.valor) !== expectedDeliveryFare(delivery.km, delivery.paradas, delivery.tipoEntrega, delivery)) {
       return res.status(400).json({ error: 'valor_nao_confere_com_tabela_entrega' });
     }
 
