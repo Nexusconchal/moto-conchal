@@ -54,7 +54,7 @@ function expectedFare(km) {
   const distance = Number(km || 0);
   if (!Number.isFinite(distance) || distance <= 0) return 0;
   if (nightRideActive()) {
-    if (distance <= 3) return 9;
+    if (distance <= 3) return 8;
     if (distance <= 5) return 12;
     if (distance <= 8) return 18;
     return money(Math.ceil(distance * 3));
