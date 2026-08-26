@@ -1000,13 +1000,76 @@ app.post('/api/admin/login', (req, res) => {
 
 app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
   try {
-    const [corridas, entregas, motoboys, depositos] = await Promise.all([
+    const [corridas, entregas, motoboys, depositos, recuperacoesSenhaEmpresa] = await Promise.all([
       collectionState('corridas'),
       collectionState('entregas'),
       collectionState('motoboys'),
-      collectionState('depositos')
+      collectionState('depositos'),
+      collectionState('recuperacoesSenhaEmpresa')
     ]);
-    return res.json({ ok: true, corridas, entregas, motoboys, depositos });
+    return res.json({ ok: true, corridas, entregas, motoboys, depositos, recuperacoesSenhaEmpresa });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/admin/companies/password-recovery/:requestId/reset', assertOwner, async (req, res, next) => {
+  try {
+    const requestId = cleanText(req.params.requestId, 120);
+    const newPassword = String(req.body.newPassword || req.body.password || '');
+    if (!requestId || newPassword.length < 6) {
+      return res.status(400).json({ error: 'senha_nova_invalida', message: 'Digite uma senha nova com pelo menos 6 caracteres.' });
+    }
+
+    const requestRef = db.collection('recuperacoesSenhaEmpresa').doc(requestId);
+    const auth = passwordHash(newPassword);
+    let updatedCompany = null;
+    await db.runTransaction(async (tx) => {
+      const requestSnap = await tx.get(requestRef);
+      if (!requestSnap.exists) {
+        const error = new Error('Pedido de recuperacao nao encontrado.');
+        error.status = 404;
+        error.code = 'recuperacao_nao_encontrada';
+        throw error;
+      }
+      const requestData = requestSnap.data() || {};
+      if (requestData.status && requestData.status !== 'pendente') {
+        const error = new Error('Este pedido de recuperacao ja foi atendido.');
+        error.status = 409;
+        error.code = 'recuperacao_ja_atendida';
+        throw error;
+      }
+      const companyId = onlyDigits(requestData.companyId || requestData.telefoneEmpresa);
+      const companyRef = companyRefFromPhone(companyId);
+      if (!companyRef) {
+        const error = new Error('Empresa invalida no pedido de recuperacao.');
+        error.status = 400;
+        error.code = 'empresa_invalida';
+        throw error;
+      }
+      const companySnap = await tx.get(companyRef);
+      if (!companySnap.exists) {
+        const error = new Error('Conta da empresa nao existe mais.');
+        error.status = 404;
+        error.code = 'empresa_nao_encontrada';
+        throw error;
+      }
+      updatedCompany = publicCompany(companySnap.data() || {}, companyRef.id);
+      tx.set(companyRef, {
+        passwordSalt: auth.salt,
+        passwordHash: auth.hash,
+        sessionTokenHash: admin.firestore.FieldValue.delete(),
+        senhaAlteradaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      tx.set(requestRef, {
+        status: 'concluida',
+        concluidaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+
+    return res.json({ ok: true, company: updatedCompany });
   } catch (error) {
     return next(error);
   }
@@ -1186,12 +1249,45 @@ app.post('/api/companies/login', createRideLimiter, async (req, res, next) => {
       return res.status(404).json({ error: 'empresa_nao_encontrada', message: 'Nao encontrei empresa com este email. Confira o email ou crie a conta.' });
     }
     if (!verifyPassword(password, snap.docs[0].data())) {
-      return res.status(401).json({ error: 'senha_empresa_incorreta', message: 'Senha incorreta para este email. Se esqueceu, crie a conta de novo usando o mesmo WhatsApp da empresa para atualizar a senha.' });
+      return res.status(401).json({ error: 'senha_empresa_incorreta', message: 'Senha incorreta para este email. Clique em Esqueci minha senha para o dono trocar e reenviar.' });
     }
     const token = await issueCompanySession(snap.docs[0].ref);
     res.json({ ok: true, token, company: publicCompany(snap.docs[0].data(), snap.docs[0].id) });
   } catch (error) {
     next(error);
+  }
+});
+
+app.post('/api/companies/password-recovery', createRideLimiter, async (req, res, next) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase().slice(0, 160);
+    const telefoneEmpresa = onlyDigits(req.body.telefoneEmpresa);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || telefoneEmpresa.length < 10 || telefoneEmpresa.length > 11) {
+      return res.status(400).json({ error: 'dados_recuperacao_invalidos', message: 'Digite o email e o WhatsApp cadastrados da empresa.' });
+    }
+    const snap = await db.collection('empresas').where('email', '==', email).limit(1).get();
+    if (snap.empty) {
+      return res.status(404).json({ error: 'empresa_nao_encontrada', message: 'Nao encontrei empresa com este email. Confira o email ou crie a conta.' });
+    }
+    const doc = snap.docs[0];
+    const company = doc.data() || {};
+    if (onlyDigits(company.telefoneEmpresa || doc.id) !== telefoneEmpresa) {
+      return res.status(403).json({ error: 'telefone_nao_confere', message: 'O WhatsApp informado nao confere com esta conta. Fale com o suporte MotoJa.' });
+    }
+    const recoveryRef = db.collection('recuperacoesSenhaEmpresa').doc();
+    await recoveryRef.set({
+      companyId: doc.id,
+      empresa: cleanText(company.empresa || '', 120),
+      responsavel: cleanText(company.responsavel || '', 120),
+      email,
+      telefoneEmpresa,
+      status: 'pendente',
+      criadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return res.status(201).json({ ok: true, recoveryId: recoveryRef.id, message: 'Pedido enviado ao dono. Aguarde ele trocar a senha e enviar pelo WhatsApp.' });
+  } catch (error) {
+    return next(error);
   }
 });
 
