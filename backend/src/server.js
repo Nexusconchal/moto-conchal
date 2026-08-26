@@ -57,13 +57,13 @@ function expectedFare(km) {
     if (distance <= 3) return 8;
     if (distance <= 5) return 12;
     if (distance <= 8) return 18;
-    return money(Math.ceil(distance * 3));
+    return money(Math.ceil(distance) * 3);
   }
   let value;
   if (distance <= 3) value = 4.5;
   else if (distance <= 5) value = 7.5;
   else if (distance <= 8) value = 12;
-  else value = Math.ceil(distance * 2);
+  else value = Math.ceil(distance) * 2;
   return money(value);
 }
 
@@ -188,7 +188,7 @@ function expectedDeliveryFare(distanceKm, stops = 1, type = '', delivery = {}) {
     return fixedFoodDeliveryFare({ ...delivery, paradas: deliveryStops, tipoEntrega: type });
   }
 
-  return money(Math.ceil(distance * 2));
+  return money(Math.ceil(distance) * 2);
 }
 
 function deliveryStopCount(stops = 1) {
