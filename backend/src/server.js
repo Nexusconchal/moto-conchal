@@ -113,6 +113,20 @@ function ensureResolvedPlaceMatches(input, resolved, label = 'Endereco') {
   }
 }
 
+function ensureResolvedAddressIsSpecific(input, resolved, label = 'Endereco') {
+  const source = normalizeText(input);
+  const found = normalizeText(resolved);
+  const requestedStreetOrNumber = /\d|\br\.?\b|rua|avenida|av\.?|estrada|rodovia|travessa/.test(source);
+  if (!requestedStreetOrNumber) return;
+  const foundStreetOrNumber = /\d|\br\.?\b|rua|avenida|av\.?|estrada|rodovia|travessa/.test(found);
+  if (!foundStreetOrNumber) {
+    const error = new Error(`${label} ficou generico no mapa. Digite rua, numero, bairro e cidade para evitar preco errado.`);
+    error.status = 400;
+    error.code = 'endereco_generico_no_mapa';
+    throw error;
+  }
+}
+
 function ensureDistantRouteIsPlausible(distanceKm, ...texts) {
   const distance = Number(distanceKm || 0);
   const hasDistantPlace = texts.some((text) => isSpecialFoodDestination(text));
@@ -513,8 +527,12 @@ function ridePublicData(ride) {
     nome: String(ride.nome || ''),
     telefoneCliente: onlyDigits(ride.telefoneCliente),
     origem: String(ride.origem || ''),
+    origemLat: Number(ride.origemLat || 0),
+    origemLon: Number(ride.origemLon || 0),
     destino: String(ride.destino || ''),
     destinoEncontrado: String(ride.destinoEncontrado || ride.destino || ''),
+    destinoLat: Number(ride.destinoLat || 0),
+    destinoLon: Number(ride.destinoLon || 0),
     km: Number(ride.km || 0),
     valor: money(ride.valor),
     precoLabel: String(ride.precoLabel || ''),
@@ -1715,7 +1733,13 @@ app.post('/api/rides', createRideLimiter, async (req, res, next) => {
     if (!ride.valor || ride.valor <= 0) {
       return res.status(400).json({ error: 'valor_invalido' });
     }
+    const serverKm = await calculateRouteDistanceKm([
+      { lat: ride.origemLat, lon: ride.origemLon },
+      { lat: ride.destinoLat, lon: ride.destinoLon }
+    ]);
+    ride.km = serverKm;
     ensureResolvedPlaceMatches(ride.destino, ride.destinoEncontrado || ride.destino, 'Destino da corrida');
+    ensureResolvedAddressIsSpecific(ride.destino, ride.destinoEncontrado || ride.destino, 'Destino da corrida');
     ensureDistantRouteIsPlausible(ride.km, ride.destino, ride.destinoEncontrado);
     if (money(ride.valor) !== expectedFare(ride.km)) {
       return res.status(400).json({ error: 'valor_nao_confere_com_tabela' });
@@ -1790,8 +1814,10 @@ app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
       return res.status(400).json({ error: 'pontos_extras_invalidos', message: 'Confira endereco, nome e WhatsApp de todos os pontos extras antes de chamar o motoboy.' });
     }
     ensureResolvedPlaceMatches(delivery.entrega, delivery.entregaEncontrada || delivery.entrega, 'Endereco de entrega');
+    ensureResolvedAddressIsSpecific(delivery.entrega, delivery.entregaEncontrada || delivery.entrega, 'Endereco de entrega');
     pontosExtras.forEach((point) => {
       ensureResolvedPlaceMatches(point.digitado, point.encontrado || point.digitado, `Ponto ${point.ordem || ''}`.trim());
+      ensureResolvedAddressIsSpecific(point.digitado, point.encontrado || point.digitado, `Ponto ${point.ordem || ''}`.trim());
     });
     if (!isFixedFoodDelivery(delivery.tipoEntrega)) {
       const serverKm = await calculateRouteDistanceKm([
