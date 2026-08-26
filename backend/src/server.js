@@ -90,6 +90,40 @@ function isSpecialFoodDestination(value) {
   return /martinho\s*prado|tujuguaba|iate/.test(text);
 }
 
+function requestedPlaceHint(value) {
+  const text = normalizeText(value);
+  return [
+    'martinho prado',
+    'tujuguaba',
+    'iate',
+    'engenheiro coelho',
+    'artur nogueira',
+    'mogi mirim'
+  ].find((hint) => text.includes(hint)) || '';
+}
+
+function ensureResolvedPlaceMatches(input, resolved, label = 'Endereco') {
+  const hint = requestedPlaceHint(input);
+  if (!hint) return;
+  if (!normalizeText(resolved).includes(hint)) {
+    const error = new Error(`${label} nao conferiu com o local digitado (${hint}). Digite rua, numero, bairro e cidade e calcule novamente.`);
+    error.status = 400;
+    error.code = 'endereco_nao_confere_com_local_digitado';
+    throw error;
+  }
+}
+
+function ensureDistantRouteIsPlausible(distanceKm, ...texts) {
+  const distance = Number(distanceKm || 0);
+  const hasDistantPlace = texts.some((text) => isSpecialFoodDestination(text));
+  if (hasDistantPlace && Number.isFinite(distance) && distance > 0 && distance < 5) {
+    const error = new Error('A rota para Martinho Prado, Tujuguaba ou Iate ficou curta demais. Confira se o endereco encontrado esta correto antes de chamar o motoboy.');
+    error.status = 400;
+    error.code = 'rota_distante_curta_demais';
+    throw error;
+  }
+}
+
 function fixedFoodDeliveryFare(delivery = {}) {
   const deliveryStops = deliveryStopCount(delivery.paradas);
   const destinations = [
@@ -1681,6 +1715,8 @@ app.post('/api/rides', createRideLimiter, async (req, res, next) => {
     if (!ride.valor || ride.valor <= 0) {
       return res.status(400).json({ error: 'valor_invalido' });
     }
+    ensureResolvedPlaceMatches(ride.destino, ride.destinoEncontrado || ride.destino, 'Destino da corrida');
+    ensureDistantRouteIsPlausible(ride.km, ride.destino, ride.destinoEncontrado);
     if (money(ride.valor) !== expectedFare(ride.km)) {
       return res.status(400).json({ error: 'valor_nao_confere_com_tabela' });
     }
@@ -1753,6 +1789,10 @@ app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
     if (pontosExtras.some((p) => !String(p.digitado || '').trim() || !String(p.recebedor || '').trim() || onlyDigits(p.telefoneRecebedor).length < 10 || onlyDigits(p.telefoneRecebedor).length > 11 || !validCoordinate(p))) {
       return res.status(400).json({ error: 'pontos_extras_invalidos', message: 'Confira endereco, nome e WhatsApp de todos os pontos extras antes de chamar o motoboy.' });
     }
+    ensureResolvedPlaceMatches(delivery.entrega, delivery.entregaEncontrada || delivery.entrega, 'Endereco de entrega');
+    pontosExtras.forEach((point) => {
+      ensureResolvedPlaceMatches(point.digitado, point.encontrado || point.digitado, `Ponto ${point.ordem || ''}`.trim());
+    });
     if (!isFixedFoodDelivery(delivery.tipoEntrega)) {
       const serverKm = await calculateRouteDistanceKm([
         { lat: delivery.retiradaLat, lon: delivery.retiradaLon },
@@ -1761,6 +1801,12 @@ app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
       ]);
       delivery.km = serverKm;
     }
+    ensureDistantRouteIsPlausible(
+      delivery.km,
+      delivery.entrega,
+      delivery.entregaEncontrada,
+      ...pontosExtras.flatMap((point) => [point.digitado, point.encontrado])
+    );
     if (!delivery.valor || delivery.valor <= 0) {
       return res.status(400).json({ error: 'valor_invalido' });
     }
