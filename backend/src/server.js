@@ -1201,6 +1201,42 @@ app.post('/api/companies/me/integration', assertCompany, async (req, res, next) 
   }
 });
 
+app.post('/api/companies/me/integration/test', assertCompany, async (req, res, next) => {
+  try {
+    const company = publicCompany(req.company, req.companyId);
+    const now = new Date();
+    const fakeOrder = {
+      externalId: `teste-${now.getTime()}`,
+      origem: 'Painel de integracao',
+      empresa: company.empresa || 'Empresa teste',
+      cliente: 'Cliente de teste',
+      telefoneCliente: '19999999999',
+      enderecoEntrega: 'Rua das Angelicas, 730, Centro, Conchal - SP',
+      itens: [
+        { nome: 'Lanche teste', quantidade: 1 },
+        { nome: 'Acai teste', quantidade: 1 }
+      ],
+      observacao: 'Pedido simulado. Nao cria entrega, nao chama motoboy e nao desconta saldo.',
+      recebidoEm: now.toISOString()
+    };
+
+    await req.companySnap.ref.set({
+      ultimoTesteIntegracaoEm: admin.firestore.FieldValue.serverTimestamp(),
+      ultimoTesteIntegracaoStatus: 'ok',
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    res.json({
+      ok: true,
+      mode: 'test_only',
+      message: 'Teste de integracao OK. Nenhuma entrega real foi criada.',
+      orderPreview: fakeOrder
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/company/balance', assertCompany, async (req, res) => {
   res.json({ ok: true, telefoneEmpresa: req.companyId, ...companyBalance(req.company) });
 });
