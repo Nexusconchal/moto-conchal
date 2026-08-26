@@ -314,6 +314,63 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(left, right);
 }
 
+function hashSecret(value) {
+  return crypto.createHash('sha256').update(String(value || '')).digest('hex');
+}
+
+function encryptSecret(value) {
+  const keySource = process.env.DATA_ENCRYPTION_KEY || ownerPasswordValue();
+  if (!keySource || !value) return '';
+  const key = crypto.createHash('sha256').update(String(keySource)).digest();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(String(value), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${iv.toString('base64')}.${tag.toString('base64')}.${encrypted.toString('base64')}`;
+}
+
+function passwordHash(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const hash = crypto.pbkdf2Sync(String(password || ''), salt, 120000, 32, 'sha256').toString('hex');
+  return { salt, hash };
+}
+
+function verifyPassword(password, saved = {}) {
+  if (!saved?.salt || !saved?.hash) return false;
+  const typed = passwordHash(password, saved.salt).hash;
+  return safeEqual(typed, saved.hash);
+}
+
+function publicCompany(data = {}, id = '') {
+  return {
+    id,
+    empresa: data.empresa || '',
+    responsavel: data.responsavel || '',
+    email: data.email || '',
+    telefoneEmpresa: data.telefoneEmpresa || id,
+    retirada: data.retirada || '',
+    integracaoAtiva: !!data.integracaoAtiva,
+    integracaoNome: data.integracaoNome || '',
+    ...companyBalance(data)
+  };
+}
+
+async function assertCompany(req, res, next) {
+  try {
+    const header = String(req.header('authorization') || '');
+    const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+    if (!token) return res.status(401).json({ error: 'empresa_login_obrigatorio' });
+    const tokenHash = hashSecret(token);
+    const snap = await db.collection('empresas').where('sessionTokenHash', '==', tokenHash).limit(1).get();
+    if (snap.empty) return res.status(401).json({ error: 'sessao_empresa_invalida' });
+    req.companySnap = snap.docs[0];
+    req.company = snap.docs[0].data() || {};
+    req.companyId = snap.docs[0].id;
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+}
+
 function assertDriverProof(driver = {}, body = {}) {
   const expectedCnh = onlyDigits(driver.cnh);
   const expectedPhone = onlyDigits(driver.telefone);
@@ -1057,6 +1114,97 @@ app.get('/api/companies/:phone/balance', async (req, res, next) => {
   }
 });
 
+app.post('/api/companies/register', createRideLimiter, async (req, res, next) => {
+  try {
+    const empresa = String(req.body.empresa || '').slice(0, 120).trim();
+    const responsavel = String(req.body.responsavel || '').slice(0, 120).trim();
+    const email = String(req.body.email || '').trim().toLowerCase().slice(0, 160);
+    const telefoneEmpresa = onlyDigits(req.body.telefoneEmpresa);
+    const retirada = String(req.body.retirada || '').slice(0, 300).trim();
+    const password = String(req.body.password || '');
+    if (!empresa || !responsavel || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || telefoneEmpresa.length < 10 || telefoneEmpresa.length > 11 || password.length < 6) {
+      return res.status(400).json({ error: 'dados_empresa_invalidos', message: 'Preencha empresa, responsavel, email, WhatsApp e senha com pelo menos 6 caracteres.' });
+    }
+
+    const existing = await db.collection('empresas').where('email', '==', email).limit(1).get();
+    if (!existing.empty && existing.docs[0].id !== telefoneEmpresa) {
+      return res.status(409).json({ error: 'email_ja_cadastrado', message: 'Este email ja esta cadastrado em outra empresa.' });
+    }
+
+    const auth = passwordHash(password);
+    const token = crypto.randomBytes(32).toString('hex');
+    const companyRef = companyRefFromPhone(telefoneEmpresa);
+    await companyRef.set({
+      empresa,
+      responsavel,
+      email,
+      telefoneEmpresa,
+      retirada,
+      passwordSalt: auth.salt,
+      passwordHash: auth.hash,
+      sessionTokenHash: hashSecret(token),
+      saldo: admin.firestore.FieldValue.increment(0),
+      reservado: admin.firestore.FieldValue.increment(0),
+      cadastradaEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      ultimoLoginEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    res.status(201).json({ ok: true, token, company: publicCompany({ empresa, responsavel, email, telefoneEmpresa, retirada }, telefoneEmpresa) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/companies/login', createRideLimiter, async (req, res, next) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase().slice(0, 160);
+    const password = String(req.body.password || '');
+    const snap = await db.collection('empresas').where('email', '==', email).limit(1).get();
+    if (snap.empty || !verifyPassword(password, snap.docs[0].data())) {
+      return res.status(401).json({ error: 'login_empresa_incorreto', message: 'Email ou senha incorretos.' });
+    }
+    const token = crypto.randomBytes(32).toString('hex');
+    await snap.docs[0].ref.set({
+      sessionTokenHash: hashSecret(token),
+      ultimoLoginEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    res.json({ ok: true, token, company: publicCompany(snap.docs[0].data(), snap.docs[0].id) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/companies/me', assertCompany, async (req, res) => {
+  res.json({ ok: true, company: publicCompany(req.company, req.companyId) });
+});
+
+app.post('/api/companies/me/integration', assertCompany, async (req, res, next) => {
+  try {
+    const nome = String(req.body.nome || '').slice(0, 80).trim();
+    const token = String(req.body.token || '').trim();
+    const ativo = !!token;
+    const encryptedToken = ativo ? encryptSecret(token) : '';
+    await req.companySnap.ref.set({
+      integracaoNome: nome || 'Painel de integracao',
+      integracaoTokenHash: ativo ? hashSecret(token) : admin.firestore.FieldValue.delete(),
+      integracaoTokenEncrypted: encryptedToken || admin.firestore.FieldValue.delete(),
+      integracaoAtiva: ativo,
+      integracaoProtegida: !!encryptedToken,
+      integracaoAtualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    res.json({ ok: true, integracaoAtiva: ativo });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/company/balance', assertCompany, async (req, res) => {
+  res.json({ ok: true, telefoneEmpresa: req.companyId, ...companyBalance(req.company) });
+});
+
 app.get('/api/companies/:phone/delivery-report', async (req, res, next) => {
   try {
     const phone = onlyDigits(req.params.phone);
@@ -1252,6 +1400,73 @@ app.post('/api/admin/deposits/:depositId/reject', assertOwner, async (req, res, 
       });
     });
     res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/admin/deposits/:depositId/cancel-credit', assertOwner, async (req, res, next) => {
+  try {
+    const reason = String(req.body.reason || '').trim().slice(0, 250);
+    if (!reason) return res.status(400).json({ error: 'motivo_obrigatorio', message: 'Informe o motivo para cancelar o credito.' });
+    const depositRef = db.collection('depositos').doc(String(req.params.depositId || ''));
+    let result = null;
+
+    await db.runTransaction(async (tx) => {
+      const depositSnap = await tx.get(depositRef);
+      if (!depositSnap.exists) {
+        const error = new Error('Deposito nao encontrado.');
+        error.status = 404;
+        throw error;
+      }
+      const deposit = depositSnap.data();
+      if (deposit.status !== 'aprovado') {
+        const error = new Error('So e possivel cancelar credito de deposito aprovado.');
+        error.status = 409;
+        throw error;
+      }
+      const companyRef = companyRefFromPhone(deposit.telefoneEmpresa);
+      if (!companyRef) {
+        const error = new Error('Telefone da empresa invalido no deposito.');
+        error.status = 400;
+        throw error;
+      }
+      const companySnap = await tx.get(companyRef);
+      const before = companyBalance(companySnap.exists ? companySnap.data() : {});
+      const valor = money(deposit.valor);
+      if (before.disponivel < valor) {
+        const error = new Error('Nao da para cancelar: a empresa ja usou parte desse saldo. Ajuste manualmente pelo financeiro.');
+        error.status = 409;
+        throw error;
+      }
+      const afterSaldo = money(before.saldo - valor);
+      tx.set(companyRef, {
+        saldo: afterSaldo,
+        reservado: before.reservado,
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      tx.set(ledgerRef(deposit.telefoneEmpresa), {
+        tipo: 'debito',
+        origem: 'cancelamento_credito_deposito',
+        depositoId: depositRef.id,
+        valor,
+        motivo: reason,
+        saldoAntes: before.saldo,
+        saldoDepois: afterSaldo,
+        reservadoAntes: before.reservado,
+        reservadoDepois: before.reservado,
+        criadoEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+      tx.update(depositRef, {
+        status: 'credito_cancelado',
+        motivoCancelamentoCredito: reason,
+        creditoCanceladoEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+      result = { saldo: afterSaldo, reservado: before.reservado, disponivel: money(afterSaldo - before.reservado) };
+    });
+
+    res.json({ ok: true, ...result });
   } catch (error) {
     next(error);
   }
