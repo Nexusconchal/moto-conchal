@@ -260,6 +260,13 @@ function publicPendingJob(job = {}) {
   delete copy.telefoneCliente;
   delete copy.telefoneEmpresa;
   delete copy.telefoneRecebedor;
+  if (Array.isArray(copy.pontosExtras)) {
+    copy.pontosExtras = copy.pontosExtras.map((point) => {
+      const publicPoint = { ...point };
+      delete publicPoint.telefoneRecebedor;
+      return publicPoint;
+    });
+  }
   delete copy.motoboyCpf;
   delete copy.motoboyCnh;
   delete copy.motoboyTelefone;
@@ -488,6 +495,8 @@ function deliveryPublicData(delivery) {
       ordem: Number(p.ordem || index + 2),
       digitado: String(p.digitado || '').slice(0, 180).trim(),
       encontrado: String(p.encontrado || '').slice(0, 220).trim(),
+      recebedor: String(p.recebedor || '').slice(0, 120).trim(),
+      telefoneRecebedor: onlyDigits(p.telefoneRecebedor).slice(0, 13),
       lat: Number(p.lat || 0),
       lon: Number(p.lon || 0),
       mapa: String(p.mapa || '').slice(0, 260).trim(),
@@ -572,7 +581,7 @@ async function notifyTelegramAboutDelivery(deliveryId, delivery) {
     `<b>Paradas:</b> ${escapeTelegram(delivery.paradas || 1)}`,
     `<b>Retirada:</b> ${escapeTelegram(delivery.retirada || '-')}${escapeTelegram(pickupMap)}`,
     `<b>Entrega:</b> ${escapeTelegram(delivery.entrega || '-')}`,
-    Array.isArray(delivery.pontosExtras) && delivery.pontosExtras.length ? `<b>Pontos extras:</b>\n${delivery.pontosExtras.map((p) => `${escapeTelegram(p.ordem || '')}. ${escapeTelegram(p.digitado || '')}${p.mapa ? `\nMapa: ${escapeTelegram(p.mapa)}` : ''}`).join('\n')}` : (delivery.enderecosExtras ? `<b>Pontos extras:</b> ${escapeTelegram(delivery.enderecosExtras)}` : ''),
+    Array.isArray(delivery.pontosExtras) && delivery.pontosExtras.length ? `<b>Pontos extras:</b>\n${delivery.pontosExtras.map((p) => `${escapeTelegram(p.ordem || '')}. ${escapeTelegram(p.digitado || '')}\nRecebe: ${escapeTelegram(p.recebedor || '-')}\nWhatsApp: ${escapeTelegram(p.telefoneRecebedor || '-')}${p.mapa ? `\nMapa: ${escapeTelegram(p.mapa)}` : ''}`).join('\n\n')}` : (delivery.enderecosExtras ? `<b>Pontos extras:</b> ${escapeTelegram(delivery.enderecosExtras)}` : ''),
     delivery.recebedor ? `<b>Recebedor:</b> ${escapeTelegram(delivery.recebedor)}` : '',
     delivery.telefoneRecebedor ? `<b>WhatsApp recebedor:</b> ${escapeTelegram(delivery.telefoneRecebedor)}` : '',
     delivery.descricao ? `<b>Pedido:</b> ${escapeTelegram(delivery.descricao)}` : '',
@@ -1633,8 +1642,8 @@ app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
     if (delivery.paradas > 1 && pontosExtras.length !== delivery.paradas - 1) {
       return res.status(400).json({ error: 'pontos_extras_invalidos', message: `Informe exatamente ${delivery.paradas - 1} ponto(s) extra(s).` });
     }
-    if (pontosExtras.some((p) => !String(p.digitado || '').trim() || !validCoordinate(p))) {
-      return res.status(400).json({ error: 'pontos_extras_invalidos', message: 'Confira os enderecos extras antes de chamar o motoboy.' });
+    if (pontosExtras.some((p) => !String(p.digitado || '').trim() || !String(p.recebedor || '').trim() || onlyDigits(p.telefoneRecebedor).length < 10 || onlyDigits(p.telefoneRecebedor).length > 11 || !validCoordinate(p))) {
+      return res.status(400).json({ error: 'pontos_extras_invalidos', message: 'Confira endereco, nome e WhatsApp de todos os pontos extras antes de chamar o motoboy.' });
     }
     if (!isFixedFoodDelivery(delivery.tipoEntrega)) {
       const serverKm = await calculateRouteDistanceKm([
