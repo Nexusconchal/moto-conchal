@@ -342,9 +342,11 @@ function passwordHash(password, salt = crypto.randomBytes(16).toString('hex')) {
 }
 
 function verifyPassword(password, saved = {}) {
-  if (!saved?.salt || !saved?.hash) return false;
-  const typed = passwordHash(password, saved.salt).hash;
-  return safeEqual(typed, saved.hash);
+  const salt = saved?.passwordSalt || saved?.salt;
+  const hash = saved?.passwordHash || saved?.hash;
+  if (!salt || !hash) return false;
+  const typed = passwordHash(password, salt).hash;
+  return safeEqual(typed, hash);
 }
 
 async function issueCompanySession(ref, tx = null) {
