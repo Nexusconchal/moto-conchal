@@ -38,13 +38,6 @@
       <button id="cadastrarEmpresa" type="button">Criar conta</button>
     </div>
   </section>
-  <section class="box app-area hidden">
-    <h2>Painel de integracao</h2>
-    <p class="muted">Use quando a empresa tiver um sistema de pedidos. O codigo fica salvo no servidor e nao aparece para motoboy nem cliente.</p>
-    <label>Nome da integracao<input id="integracaoNome" placeholder="Ex: Sistema de pedidos"></label>
-    <label>Chave/API da empresa<textarea id="integracaoToken" placeholder="Cole a chave da integracao aqui"></textarea></label>
-    <div class="grid2"><button id="salvarIntegracao" type="button" class="secondary">Salvar integracao</button><button id="testarIntegracao" type="button">Testar integracao</button></div><div id="resultadoIntegracao" class="result"></div>
-  </section>
   <section class="wallet app-area hidden">
     <small>Saldo da empresa</small>
     <strong id="saldoEmpresa">R$ 0,00</strong>
@@ -57,10 +50,11 @@
     <button id="pegarPix" type="button" class="green" style="display:none">Pegar Pix e enviar comprovante</button>
   </section>
   <section class="box app-area hidden">
-    <h2>Relatorio da empresa</h2>
-    <p class="muted">Use no fim do turno para conferir as entregas de hoje deste WhatsApp da empresa.</p>
-    <button id="verRelatorioDia" type="button">Ver relatorio do dia</button>
-    <div id="relatorioEmpresa" class="result show">Clique em Ver relatorio do dia quando quiser conferir.</div>
+    <h2>Painel de integracao</h2>
+    <p class="muted">Use quando a empresa tiver um sistema de pedidos. O codigo fica salvo no servidor e nao aparece para motoboy nem cliente.</p>
+    <label>Nome da integracao<input id="integracaoNome" placeholder="Ex: Sistema de pedidos"></label>
+    <label>Chave/API da empresa<textarea id="integracaoToken" placeholder="Cole a chave da integracao aqui"></textarea></label>
+    <div class="grid2"><button id="salvarIntegracao" type="button" class="secondary">Salvar integracao</button><button id="testarIntegracao" type="button">Testar integracao</button></div><div id="resultadoIntegracao" class="result"></div>
   </section>
   <section class="box app-area hidden">
     <button id="editarCadastroLoja" type="button" class="secondary">Editar cadastro da loja</button>
@@ -112,6 +106,12 @@ Ponto 3: Rua das Angelicas, 730, Centro"></textarea></label>
     <button id="calcular" type="button">Calcular entrega</button>
     <button id="confirmar" class="green" type="button" style="display:none">Confirmar e chamar motoboy</button>
     <p class="small">Lanche, pizza, pastel, marmita, acai e pote de sorvete: R$ 5,50 por entrega. Para Martinho Prado, Tujuguaba ou Iate: R$ 14,00 por entrega. Encomendas, produtos e farmacia: R$ 2,00 por km.</p>
+  </section>
+  <section class="box app-area hidden">
+    <h2>Relatorio da empresa</h2>
+    <p class="muted">Use no fim do turno para conferir as entregas de hoje deste WhatsApp da empresa.</p>
+    <button id="verRelatorioDia" type="button">Ver relatorio do dia</button>
+    <div id="relatorioEmpresa" class="result show">Clique em Ver relatorio do dia quando quiser conferir.</div>
   </section>
 </main>
 <script type="module">
