@@ -347,6 +347,18 @@ function verifyPassword(password, saved = {}) {
   return safeEqual(typed, saved.hash);
 }
 
+async function issueCompanySession(ref, tx = null) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const data = {
+    sessionTokenHash: hashSecret(token),
+    ultimoLoginEm: admin.firestore.FieldValue.serverTimestamp(),
+    atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+  };
+  if (tx) tx.set(ref, data, { merge: true });
+  else await ref.set(data, { merge: true });
+  return token;
+}
+
 function publicCompany(data = {}, id = '') {
   return {
     id,
@@ -1135,15 +1147,15 @@ app.post('/api/companies/register', createRideLimiter, async (req, res, next) =>
       return res.status(400).json({ error: 'dados_empresa_invalidos', message: 'Preencha empresa, responsavel, email, WhatsApp e senha com pelo menos 6 caracteres.' });
     }
 
-    const existing = await db.collection('empresas').where('email', '==', email).limit(1).get();
-    if (!existing.empty && existing.docs[0].id !== telefoneEmpresa) {
+    const existingByEmail = await db.collection('empresas').where('email', '==', email).limit(1).get();
+    if (!existingByEmail.empty && existingByEmail.docs[0].id !== telefoneEmpresa) {
       return res.status(409).json({ error: 'email_ja_cadastrado', message: 'Este email ja esta cadastrado em outra empresa.' });
     }
 
     const auth = passwordHash(password);
-    const token = crypto.randomBytes(32).toString('hex');
     const companyRef = companyRefFromPhone(telefoneEmpresa);
-    await companyRef.set({
+    const token = await issueCompanySession(companyRef);
+    const companyData = {
       empresa,
       responsavel,
       email,
@@ -1151,13 +1163,13 @@ app.post('/api/companies/register', createRideLimiter, async (req, res, next) =>
       retirada,
       passwordSalt: auth.salt,
       passwordHash: auth.hash,
-      sessionTokenHash: hashSecret(token),
       saldo: admin.firestore.FieldValue.increment(0),
       reservado: admin.firestore.FieldValue.increment(0),
       cadastradaEm: admin.firestore.FieldValue.serverTimestamp(),
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
       ultimoLoginEm: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+    };
+    await companyRef.set(companyData, { merge: true });
 
     res.status(201).json({ ok: true, token, company: publicCompany({ empresa, responsavel, email, telefoneEmpresa, retirada }, telefoneEmpresa) });
   } catch (error) {
@@ -1170,15 +1182,13 @@ app.post('/api/companies/login', createRideLimiter, async (req, res, next) => {
     const email = String(req.body.email || '').trim().toLowerCase().slice(0, 160);
     const password = String(req.body.password || '');
     const snap = await db.collection('empresas').where('email', '==', email).limit(1).get();
-    if (snap.empty || !verifyPassword(password, snap.docs[0].data())) {
-      return res.status(401).json({ error: 'login_empresa_incorreto', message: 'Email ou senha incorretos.' });
+    if (snap.empty) {
+      return res.status(404).json({ error: 'empresa_nao_encontrada', message: 'Nao encontrei empresa com este email. Confira o email ou crie a conta.' });
     }
-    const token = crypto.randomBytes(32).toString('hex');
-    await snap.docs[0].ref.set({
-      sessionTokenHash: hashSecret(token),
-      ultimoLoginEm: admin.firestore.FieldValue.serverTimestamp(),
-      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+    if (!verifyPassword(password, snap.docs[0].data())) {
+      return res.status(401).json({ error: 'senha_empresa_incorreta', message: 'Senha incorreta para este email. Se esqueceu, crie a conta de novo usando o mesmo WhatsApp da empresa para atualizar a senha.' });
+    }
+    const token = await issueCompanySession(snap.docs[0].ref);
     res.json({ ok: true, token, company: publicCompany(snap.docs[0].data(), snap.docs[0].id) });
   } catch (error) {
     next(error);
