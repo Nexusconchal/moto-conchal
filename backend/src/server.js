@@ -154,10 +154,26 @@ function fixedFoodDeliveryFare(delivery = {}) {
   return money(total);
 }
 
+function fixedFoodDeliveryAppFee(delivery = {}) {
+  const deliveryStops = deliveryStopCount(delivery.paradas);
+  const destinations = [
+    `${delivery.entrega || ''} ${delivery.entregaEncontrada || ''}`,
+    ...(Array.isArray(delivery.pontosExtras)
+      ? delivery.pontosExtras.map(point => `${point.digitado || ''} ${point.encontrado || ''}`)
+      : [])
+  ];
+
+  let total = 0;
+  for (let index = 0; index < deliveryStops; index += 1) {
+    total += isSpecialFoodDestination(destinations[index] || '') ? 2 : 1.5;
+  }
+  return money(total);
+}
+
 function deliverySplit(delivery = {}) {
   const total = money(delivery.valor);
   if (isFixedFoodDelivery(delivery.tipoEntrega)) {
-    const appFee = money(1.5 * deliveryStopCount(delivery.paradas));
+    const appFee = fixedFoodDeliveryAppFee(delivery);
     return {
       appFee: money(Math.min(total, appFee)),
       driverAmount: money(Math.max(0, total - appFee)),
@@ -1054,14 +1070,16 @@ app.post('/api/admin/login', (req, res) => {
 
 app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
   try {
-    const [corridas, entregas, motoboys, depositos, recuperacoesSenhaEmpresa] = await Promise.all([
+    const [corridas, entregas, motoboys, depositos, recuperacoesSenhaEmpresa, empresasRaw] = await Promise.all([
       collectionState('corridas'),
       collectionState('entregas'),
       collectionState('motoboys'),
       collectionState('depositos'),
-      collectionState('recuperacoesSenhaEmpresa')
+      collectionState('recuperacoesSenhaEmpresa'),
+      collectionState('empresas')
     ]);
-    return res.json({ ok: true, corridas, entregas, motoboys, depositos, recuperacoesSenhaEmpresa });
+    const empresas = empresasRaw.map((empresa) => publicCompany(empresa, empresa.id));
+    return res.json({ ok: true, corridas, entregas, motoboys, depositos, recuperacoesSenhaEmpresa, empresas });
   } catch (error) {
     return next(error);
   }
