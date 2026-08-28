@@ -93,6 +93,7 @@ function isSpecialFoodDestination(value) {
 function requestedPlaceHint(value) {
   const text = normalizeText(value);
   return [
+    'conchal',
     'martinho prado',
     'tujuguaba',
     'iate',
@@ -103,14 +104,17 @@ function requestedPlaceHint(value) {
 }
 
 function ensureResolvedPlaceMatches(input, resolved, label = 'Endereco') {
-  const hint = requestedPlaceHint(input);
-  if (!hint) return;
-  if (!normalizeText(resolved).includes(hint)) {
-    const error = new Error(`${label} nao conferiu com o local digitado (${hint}). Digite rua, numero, bairro e cidade e calcule novamente.`);
+  const expectedPlace = requestedPlaceHint(input) || 'conchal';
+  if (!normalizeText(resolved).includes(expectedPlace)) {
+    const error = new Error(`${label} nao conferiu com o local esperado (${expectedPlace}). Digite rua, numero, bairro e cidade e calcule novamente.`);
     error.status = 400;
     error.code = 'endereco_nao_confere_com_local_digitado';
     throw error;
   }
+}
+
+function isGpsOrigin(value) {
+  return normalizeText(value).includes('gps') || normalizeText(value).includes('localizacao atual');
 }
 
 function ensureResolvedAddressIsSpecific(input, resolved, label = 'Endereco') {
@@ -543,6 +547,8 @@ function ridePublicData(ride) {
     nome: String(ride.nome || ''),
     telefoneCliente: onlyDigits(ride.telefoneCliente),
     origem: String(ride.origem || ''),
+    origemDigitada: String(ride.origemDigitada || ride.origem || ''),
+    origemEncontrada: String(ride.origemEncontrada || ride.origem || ''),
     origemLat: Number(ride.origemLat || 0),
     origemLon: Number(ride.origemLon || 0),
     destino: String(ride.destino || ''),
@@ -564,6 +570,7 @@ function deliveryPublicData(delivery) {
     telefoneEmpresa: onlyDigits(delivery.telefoneEmpresa),
     tipoEntrega: String(delivery.tipoEntrega || 'Delivery / encomendas').slice(0, 80).trim(),
     retirada: String(delivery.retirada || '').slice(0, 300).trim(),
+    retiradaEncontrada: String(delivery.retiradaEncontrada || delivery.retirada || '').slice(0, 300).trim(),
     retiradaLat: Number(delivery.retiradaLat || 0),
     retiradaLon: Number(delivery.retiradaLon || 0),
     entrega: String(delivery.entrega || '').slice(0, 300).trim(),
@@ -1756,6 +1763,10 @@ app.post('/api/rides', createRideLimiter, async (req, res, next) => {
       { lat: ride.destinoLat, lon: ride.destinoLon }
     ]);
     ride.km = serverKm;
+    if (!isGpsOrigin(ride.origemDigitada || ride.origem)) {
+      ensureResolvedPlaceMatches(ride.origemDigitada || ride.origem, ride.origemEncontrada || ride.origem, 'Origem da corrida');
+      ensureResolvedAddressIsSpecific(ride.origemDigitada || ride.origem, ride.origemEncontrada || ride.origem, 'Origem da corrida');
+    }
     ensureResolvedPlaceMatches(ride.destino, ride.destinoEncontrado || ride.destino, 'Destino da corrida');
     ensureResolvedAddressIsSpecific(ride.destino, ride.destinoEncontrado || ride.destino, 'Destino da corrida');
     ensureDistantRouteIsPlausible(ride.km, ride.destino, ride.destinoEncontrado);
@@ -1831,6 +1842,8 @@ app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
     if (pontosExtras.some((p) => !String(p.digitado || '').trim() || !String(p.recebedor || '').trim() || onlyDigits(p.telefoneRecebedor).length < 10 || onlyDigits(p.telefoneRecebedor).length > 11 || !validCoordinate(p))) {
       return res.status(400).json({ error: 'pontos_extras_invalidos', message: 'Confira endereco, nome e WhatsApp de todos os pontos extras antes de chamar o motoboy.' });
     }
+    ensureResolvedPlaceMatches(delivery.retirada, delivery.retiradaEncontrada || delivery.retirada, 'Endereco de retirada');
+    ensureResolvedAddressIsSpecific(delivery.retirada, delivery.retiradaEncontrada || delivery.retirada, 'Endereco de retirada');
     ensureResolvedPlaceMatches(delivery.entrega, delivery.entregaEncontrada || delivery.entrega, 'Endereco de entrega');
     ensureResolvedAddressIsSpecific(delivery.entrega, delivery.entregaEncontrada || delivery.entrega, 'Endereco de entrega');
     pontosExtras.forEach((point) => {
