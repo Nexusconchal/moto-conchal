@@ -440,6 +440,7 @@ function publicCompany(data = {}, id = '') {
     telefoneEmpresa: data.telefoneEmpresa || id,
     retirada: data.retirada || '',
     integracaoAtiva: !!data.integracaoAtiva,
+    integracaoProtegida: !!(data.integracaoProtegida || data.integracaoTokenEncrypted),
     integracaoNome: data.integracaoNome || '',
     ...companyBalance(data)
   };
@@ -1380,18 +1381,33 @@ app.post('/api/companies/me/integration', assertCompany, async (req, res, next) 
   try {
     const nome = String(req.body.nome || '').slice(0, 80).trim();
     const token = String(req.body.token || '').trim();
-    const ativo = !!token;
-    const encryptedToken = ativo ? encryptSecret(token) : '';
-    await req.companySnap.ref.set({
+    const hasAtivo = Object.prototype.hasOwnProperty.call(req.body || {}, 'ativo');
+    const ativo = hasAtivo ? !!req.body.ativo : !!token;
+    const encryptedToken = token ? encryptSecret(token) : '';
+    const tokenJaSalvo = !!req.company.integracaoTokenEncrypted;
+
+    if (ativo && !encryptedToken && !tokenJaSalvo) {
+      return res.status(400).json({
+        error: 'integration_token_required',
+        message: 'Cole a chave/API da empresa e salve antes de ligar o modo automatico.'
+      });
+    }
+
+    const update = {
       integracaoNome: nome || 'Painel de integracao',
-      integracaoTokenHash: ativo ? hashSecret(token) : admin.firestore.FieldValue.delete(),
-      integracaoTokenEncrypted: encryptedToken || admin.firestore.FieldValue.delete(),
       integracaoAtiva: ativo,
-      integracaoProtegida: !!encryptedToken,
+      integracaoProtegida: !!(encryptedToken || tokenJaSalvo),
       integracaoAtualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
-    res.json({ ok: true, integracaoAtiva: ativo });
+    };
+
+    if (encryptedToken) {
+      update.integracaoTokenHash = hashSecret(token);
+      update.integracaoTokenEncrypted = encryptedToken;
+    }
+
+    await req.companySnap.ref.set(update, { merge: true });
+    res.json({ ok: true, integracaoAtiva: ativo, integracaoProtegida: !!(encryptedToken || tokenJaSalvo) });
   } catch (error) {
     next(error);
   }
@@ -1399,6 +1415,13 @@ app.post('/api/companies/me/integration', assertCompany, async (req, res, next) 
 
 app.post('/api/companies/me/integration/test', assertCompany, async (req, res, next) => {
   try {
+    if (!req.company.integracaoTokenEncrypted) {
+      return res.status(400).json({
+        error: 'integration_token_missing',
+        message: 'Nenhuma chave/API salva. Cole a chave da integracao, salve e teste novamente.'
+      });
+    }
+
     const company = publicCompany(req.company, req.companyId);
     const now = new Date();
     const fakeOrder = {
@@ -1425,7 +1448,10 @@ app.post('/api/companies/me/integration/test', assertCompany, async (req, res, n
     res.json({
       ok: true,
       mode: 'test_only',
-      message: 'Teste de integracao OK. Nenhuma entrega real foi criada.',
+      integracaoAtiva: !!req.company.integracaoAtiva,
+      message: req.company.integracaoAtiva
+        ? 'Teste de integracao OK. Modo automatico esta ligado. Nenhuma entrega real foi criada.'
+        : 'Chave/API salva com seguranca. Modo automatico esta desligado, entao a empresa continua no manual.',
       orderPreview: fakeOrder
     });
   } catch (error) {
