@@ -283,7 +283,7 @@ function validDriverPhoto(value) {
   const photo = String(value || '');
   if (!photo) return '';
   if (!/^data:image\/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(photo)) return '';
-  if (photo.length > 180000) return '';
+  if (photo.length > 220000) return '';
   return photo;
 }
 
