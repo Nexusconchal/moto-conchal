@@ -122,6 +122,8 @@ function ensureResolvedAddressIsSpecific(input, resolved, label = 'Endereco') {
   const found = normalizeText(resolved);
   const requestedStreetOrNumber = /\d|\br\.?\b|rua|avenida|av\.?|estrada|rodovia|travessa/.test(source);
   if (!requestedStreetOrNumber) return;
+  const expectedPlace = requestedPlaceHint(input) || 'conchal';
+  if (found.includes(expectedPlace)) return;
   const foundStreetOrNumber = /\d|\br\.?\b|rua|avenida|av\.?|estrada|rodovia|travessa/.test(found);
   if (!foundStreetOrNumber) {
     const error = new Error(`${label} ficou generico no mapa. Digite rua, numero, bairro e cidade para evitar preco errado.`);
