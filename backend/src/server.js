@@ -1825,6 +1825,118 @@ app.post('/api/rides', createRideLimiter, async (req, res, next) => {
   }
 });
 
+app.get('/api/rides/:rideId/status', async (req, res, next) => {
+  try {
+    const doc = await db.collection('corridas').doc(String(req.params.rideId || '')).get();
+    if (!doc.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
+    const ride = doc.data() || {};
+    res.json({
+      ok: true,
+      rideId: doc.id,
+      status: ride.status || '',
+      criadaEmMs: timestampMs(ride.criadaEm),
+      expiradaEmMs: timestampMs(ride.expiradaEm),
+      aceitaEmMs: timestampMs(ride.aceitaEm),
+      motoboy: ride.motoboy || '',
+      valor: money(ride.valor),
+      destino: ride.destino || ''
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/rides/:rideId/renew', createRideLimiter, async (req, res, next) => {
+  try {
+    const telefoneCliente = onlyDigits(req.body.telefoneCliente);
+    if (telefoneCliente.length < 10 || telefoneCliente.length > 11) {
+      return res.status(400).json({ error: 'telefone_cliente_obrigatorio' });
+    }
+    const ref = db.collection('corridas').doc(String(req.params.rideId || ''));
+    let renewedRide = null;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        const error = new Error('Corrida nao encontrada.');
+        error.status = 404;
+        error.code = 'corrida_nao_encontrada';
+        throw error;
+      }
+      const ride = snap.data() || {};
+      if (onlyDigits(ride.telefoneCliente) !== telefoneCliente) {
+        const error = new Error('Telefone nao confere com o pedido.');
+        error.status = 403;
+        error.code = 'telefone_nao_confere';
+        throw error;
+      }
+      if (!['pendente', 'expirada'].includes(ride.status)) {
+        const error = new Error('Essa corrida nao pode ser renovada agora.');
+        error.status = 409;
+        error.code = 'corrida_nao_renovavel';
+        throw error;
+      }
+      renewedRide = { ...ride, status: 'pendente' };
+      tx.update(ref, {
+        status: 'pendente',
+        renovacoes: Number(ride.renovacoes || 0) + 1,
+        expiradaEm: null,
+        renovadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        criadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    const telegram = await notifyTelegramAboutRide(ref.id, renewedRide).catch((error) => {
+      console.error('telegram renew notify failed', error);
+      return { sent: false, failed: true };
+    });
+    res.json({ ok: true, rideId: ref.id, telegram });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/rides/:rideId/client-cancel', async (req, res, next) => {
+  try {
+    const telefoneCliente = onlyDigits(req.body.telefoneCliente);
+    if (telefoneCliente.length < 10 || telefoneCliente.length > 11) {
+      return res.status(400).json({ error: 'telefone_cliente_obrigatorio' });
+    }
+    const ref = db.collection('corridas').doc(String(req.params.rideId || ''));
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        const error = new Error('Corrida nao encontrada.');
+        error.status = 404;
+        error.code = 'corrida_nao_encontrada';
+        throw error;
+      }
+      const ride = snap.data() || {};
+      if (onlyDigits(ride.telefoneCliente) !== telefoneCliente) {
+        const error = new Error('Telefone nao confere com o pedido.');
+        error.status = 403;
+        error.code = 'telefone_nao_confere';
+        throw error;
+      }
+      if (!['pendente', 'expirada'].includes(ride.status)) {
+        const error = new Error('Essa corrida ja foi aceita e nao pode ser cancelada por aqui.');
+        error.status = 409;
+        error.code = 'corrida_ja_aceita';
+        throw error;
+      }
+      tx.update(ref, {
+        status: 'cancelada',
+        canceladoPor: 'Cliente',
+        motivoCancelamento: 'Cliente cancelou depois da espera',
+        canceladoEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    res.json({ ok: true, rideId: ref.id });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
   try {
     const delivery = deliveryPublicData(req.body);
