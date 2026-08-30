@@ -2515,6 +2515,8 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
 app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (req, res, next) => {
   try {
     const reason = String(req.body.reason || '').trim().slice(0, 250);
+    const manualDriverCpf = onlyDigits(req.body.driverCpf);
+    const requestedValue = money(req.body.valor);
     if (!reason) return res.status(400).json({ error: 'motivo_obrigatorio', message: 'Informe o motivo para finalizar pelo painel.' });
     const deliveryRef = db.collection('entregas').doc(String(req.params.deliveryId || ''));
 
@@ -2531,15 +2533,44 @@ app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (r
         error.status = 409;
         throw error;
       }
-      if (!delivery.motoboy || onlyDigits(delivery.motoboyCpf).length !== 11) {
-        const error = new Error('Nao da para finalizar pelo painel sem motoboy vinculado.');
-        error.status = 409;
-        throw error;
+
+      let driverCpf = onlyDigits(delivery.motoboyCpf);
+      let driverData = null;
+      if (driverCpf.length === 11) {
+        driverData = {
+          nome: delivery.motoboy || '',
+          cpf: driverCpf,
+          cnh: delivery.motoboyCnh || '',
+          telefone: onlyDigits(delivery.motoboyTelefone),
+          fotoMotoboy: delivery.motoboyFoto || ''
+        };
+      } else {
+        if (manualDriverCpf.length !== 11) {
+          const error = new Error('Informe o CPF do motoboy cadastrado que fez esta entrega.');
+          error.status = 400;
+          throw error;
+        }
+        const driverSnap = await tx.get(db.collection('motoboys').doc(manualDriverCpf));
+        if (!driverSnap.exists) {
+          const error = new Error('Motoboy nao cadastrado. Cadastre o motoboy antes de finalizar esta entrega.');
+          error.status = 404;
+          throw error;
+        }
+        const foundDriver = driverSnap.data() || {};
+        driverCpf = manualDriverCpf;
+        driverData = {
+          nome: cleanText(foundDriver.nome || ''),
+          cpf: driverCpf,
+          cnh: onlyDigits(foundDriver.cnh),
+          telefone: onlyDigits(foundDriver.telefone),
+          fotoMotoboy: foundDriver.fotoMotoboy || ''
+        };
       }
 
-      const valor = money(delivery.saldoReservado || delivery.valor || 0);
+      const valorOriginal = money(delivery.saldoReservado || delivery.valor || 0);
+      const valor = requestedValue > 0 ? requestedValue : valorOriginal;
       const companyRef = companyRefFromPhone(delivery.empresaId || delivery.telefoneEmpresa);
-      if (!companyRef || valor <= 0) {
+      if (!companyRef || valor <= 0 || valor > 5000) {
         const error = new Error('Dados de saldo da empresa invalidos.');
         error.status = 409;
         throw error;
@@ -2556,7 +2587,8 @@ app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (r
       const wasReserved = !delivery.saldoLiberadoEm;
       const nextSaldo = money(balance.saldo - valor);
       const nextReserved = wasReserved ? money(Math.max(0, balance.reservado - valor)) : balance.reservado;
-      const split = deliverySplit(delivery);
+      const adjustedDelivery = { ...delivery, valor, saldoReservado: valor };
+      const split = deliverySplit(adjustedDelivery);
 
       tx.set(companyRef, {
         saldo: nextSaldo,
@@ -2569,9 +2601,10 @@ app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (r
         origem: 'entrega_finalizada_pelo_dono',
         entregaId: deliveryRef.id,
         valor,
+        valorOriginal,
         motivo: reason,
-        motoboy: delivery.motoboy || '',
-        motoboyCpf: onlyDigits(delivery.motoboyCpf),
+        motoboy: driverData.nome,
+        motoboyCpf: driverCpf,
         saldoAntes: balance.saldo,
         saldoDepois: nextSaldo,
         reservadoAntes: balance.reservado,
@@ -2581,6 +2614,15 @@ app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (r
 
       tx.update(deliveryRef, {
         status: 'finalizada',
+        valor,
+        saldoReservado: valor,
+        valorOriginalAntesAjuste: valor !== valorOriginal ? valorOriginal : admin.firestore.FieldValue.delete(),
+        valorAjustadoPeloDonoEm: valor !== valorOriginal ? admin.firestore.FieldValue.serverTimestamp() : admin.firestore.FieldValue.delete(),
+        motoboy: driverData.nome,
+        motoboyCpf: driverCpf,
+        motoboyCnh: driverData.cnh,
+        motoboyTelefone: driverData.telefone,
+        motoboyFoto: driverData.fotoMotoboy,
         finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
         finalizadaPeloDonoEm: admin.firestore.FieldValue.serverTimestamp(),
         finalizadaPeloDonoMotivo: reason,
