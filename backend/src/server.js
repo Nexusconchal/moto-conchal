@@ -10,7 +10,10 @@ import crypto from 'crypto';
 const PORT = Number(process.env.PORT || 10000);
 const DRIVER_PERCENT = Number(process.env.DRIVER_PERCENT || 0.7);
 const APP_PERCENT = Number(process.env.APP_PERCENT || 0.3);
-const PENDING_EXPIRE_MS = Number(process.env.PENDING_EXPIRE_MINUTES || 5) * 60 * 1000;
+const RIDE_EXPIRE_MINUTES = Number(process.env.RIDE_EXPIRE_MINUTES || process.env.PENDING_EXPIRE_MINUTES || 5);
+const DELIVERY_EXPIRE_MINUTES = Number(process.env.DELIVERY_EXPIRE_MINUTES || 15);
+const RIDE_EXPIRE_MS = RIDE_EXPIRE_MINUTES * 60 * 1000;
+const DELIVERY_EXPIRE_MS = DELIVERY_EXPIRE_MINUTES * 60 * 1000;
 const ACCEPTED_NOTICE_MS = Number(process.env.ACCEPTED_NOTICE_MINUTES || 3) * 60 * 1000;
 const DUPLICATE_RIDE_MS = Number(process.env.DUPLICATE_RIDE_SECONDS || 45) * 1000;
 const MP_API = 'https://api.mercadopago.com';
@@ -626,7 +629,7 @@ async function notifyTelegramAboutRide(rideId, ride) {
     `<b>Origem:</b> ${escapeTelegram(ride.origem || '-')}${escapeTelegram(originMap)}`,
     `<b>Destino:</b> ${escapeTelegram(ride.destino || '-')}`,
     '',
-    '<b>Expira em:</b> 5 minutos',
+    `<b>Expira em:</b> ${RIDE_EXPIRE_MINUTES} minutos`,
     '',
     `Abra o app do motorista para aceitar:\n${escapeTelegram(appLink)}`,
     '',
@@ -682,7 +685,7 @@ async function notifyTelegramAboutDelivery(deliveryId, delivery) {
     delivery.descricao ? `<b>Pedido:</b> ${escapeTelegram(delivery.descricao)}` : '',
     delivery.observacao ? `<b>Obs:</b> ${escapeTelegram(delivery.observacao)}` : '',
     '',
-    '<b>Expira em:</b> 5 minutos',
+    `<b>Expira em:</b> ${DELIVERY_EXPIRE_MINUTES} minutos`,
     '',
     `Abra o app do motorista para aceitar:\n${escapeTelegram(appLink)}`,
     '',
@@ -936,7 +939,7 @@ async function cleanupRides() {
   pending.forEach((doc) => {
     const data = doc.data();
     const createdAt = timestampMs(data.criadaEm);
-    if (createdAt && now - createdAt > PENDING_EXPIRE_MS) {
+    if (createdAt && now - createdAt > RIDE_EXPIRE_MS) {
       batch.update(doc.ref, {
         status: 'expirada',
         expiradaEm: admin.firestore.FieldValue.serverTimestamp(),
@@ -972,7 +975,7 @@ async function cleanupRides() {
   for (const doc of pendingDeliveries.docs) {
     const data = doc.data();
     const createdAt = timestampMs(data.criadaEm);
-    if (createdAt && now - createdAt > PENDING_EXPIRE_MS) {
+    if (createdAt && now - createdAt > DELIVERY_EXPIRE_MS) {
       await releaseDeliveryReservation(doc.ref, 'expirada', {
         expiradaEm: admin.firestore.FieldValue.serverTimestamp(),
       });
