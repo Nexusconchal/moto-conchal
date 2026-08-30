@@ -2271,6 +2271,183 @@ app.post('/api/deliveries', assertCompany, createRideLimiter, async (req, res, n
   }
 });
 
+app.post('/api/deliveries/:deliveryId/renew', assertCompany, createRideLimiter, async (req, res, next) => {
+  try {
+    const ref = db.collection('entregas').doc(String(req.params.deliveryId || ''));
+    let renewedDelivery = null;
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        const error = new Error('Entrega nao encontrada.');
+        error.status = 404;
+        error.code = 'entrega_nao_encontrada';
+        throw error;
+      }
+
+      const delivery = snap.data() || {};
+      if (onlyDigits(delivery.empresaId || delivery.telefoneEmpresa) !== req.companyId) {
+        const error = new Error('Entrega nao pertence a esta empresa.');
+        error.status = 403;
+        error.code = 'empresa_nao_confere';
+        throw error;
+      }
+      if (!['pendente', 'expirada'].includes(delivery.status)) {
+        const error = new Error('Essa entrega nao pode ser chamada novamente agora.');
+        error.status = 409;
+        error.code = 'entrega_nao_renovavel';
+        throw error;
+      }
+
+      const valor = money(delivery.saldoReservado || delivery.valor || 0);
+      const companyRef = req.companySnap.ref;
+      const companySnap = await tx.get(companyRef);
+      const balance = companyBalance(companySnap.exists ? companySnap.data() : {});
+      const precisaReservar = delivery.status === 'expirada' || !!delivery.saldoLiberadoEm;
+      if (precisaReservar && balance.disponivel < valor) {
+        const error = new Error('Saldo insuficiente para chamar esta entrega novamente.');
+        error.status = 402;
+        error.code = 'saldo_insuficiente';
+        error.balance = balance;
+        throw error;
+      }
+
+      const nextReserved = precisaReservar ? money(balance.reservado + valor) : balance.reservado;
+      if (precisaReservar) {
+        tx.set(companyRef, {
+          reservado: nextReserved,
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        tx.set(ledgerRef(companyRef.id), {
+          tipo: 'reserva',
+          origem: 'entrega_renovada',
+          entregaId: ref.id,
+          valor,
+          saldoAntes: balance.saldo,
+          saldoDepois: balance.saldo,
+          reservadoAntes: balance.reservado,
+          reservadoDepois: nextReserved,
+          criadoEm: admin.firestore.FieldValue.serverTimestamp()
+        });
+      }
+
+      renewedDelivery = { ...delivery, status: 'pendente' };
+      tx.update(ref, {
+        status: 'pendente',
+        motoboy: '',
+        motoboyCpf: '',
+        motoboyCnh: '',
+        motoboyTelefone: '',
+        aceitaEm: null,
+        expiradaEm: null,
+        saldoLiberadoEm: admin.firestore.FieldValue.delete(),
+        renovacoes: Number(delivery.renovacoes || 0) + 1,
+        renovadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        criadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+
+    const telegram = await notifyTelegramAboutDelivery(ref.id, renewedDelivery).catch((error) => {
+      console.error('telegram delivery renew notify failed', error);
+      return { sent: false, failed: true };
+    });
+    res.json({ ok: true, deliveryId: ref.id, telegram });
+  } catch (error) {
+    if (error.code === 'saldo_insuficiente') {
+      return res.status(error.status || 402).json({
+        error: 'saldo_insuficiente',
+        message: error.message,
+        balance: error.balance || null
+      });
+    }
+    next(error);
+  }
+});
+
+app.post('/api/admin/deliveries/:deliveryId/renew', assertOwner, async (req, res, next) => {
+  try {
+    const ref = db.collection('entregas').doc(String(req.params.deliveryId || ''));
+    let renewedDelivery = null;
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        const error = new Error('Entrega nao encontrada.');
+        error.status = 404;
+        throw error;
+      }
+
+      const delivery = snap.data() || {};
+      if (!['pendente', 'expirada'].includes(delivery.status)) {
+        const error = new Error('Essa entrega nao pode ser chamada novamente agora.');
+        error.status = 409;
+        throw error;
+      }
+
+      const valor = money(delivery.saldoReservado || delivery.valor || 0);
+      const companyRef = companyRefFromPhone(delivery.empresaId || delivery.telefoneEmpresa);
+      if (!companyRef || valor <= 0) {
+        const error = new Error('Dados da empresa invalidos para renovar a entrega.');
+        error.status = 409;
+        throw error;
+      }
+
+      const companySnap = await tx.get(companyRef);
+      const balance = companyBalance(companySnap.exists ? companySnap.data() : {});
+      const precisaReservar = delivery.status === 'expirada' || !!delivery.saldoLiberadoEm;
+      if (precisaReservar && balance.disponivel < valor) {
+        const error = new Error('Saldo insuficiente para chamar esta entrega novamente.');
+        error.status = 402;
+        throw error;
+      }
+
+      const nextReserved = precisaReservar ? money(balance.reservado + valor) : balance.reservado;
+      if (precisaReservar) {
+        tx.set(companyRef, {
+          reservado: nextReserved,
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        tx.set(ledgerRef(companyRef.id), {
+          tipo: 'reserva',
+          origem: 'entrega_renovada_pelo_dono',
+          entregaId: ref.id,
+          valor,
+          saldoAntes: balance.saldo,
+          saldoDepois: balance.saldo,
+          reservadoAntes: balance.reservado,
+          reservadoDepois: nextReserved,
+          criadoEm: admin.firestore.FieldValue.serverTimestamp()
+        });
+      }
+
+      renewedDelivery = { ...delivery, status: 'pendente' };
+      tx.update(ref, {
+        status: 'pendente',
+        motoboy: '',
+        motoboyCpf: '',
+        motoboyCnh: '',
+        motoboyTelefone: '',
+        aceitaEm: null,
+        expiradaEm: null,
+        saldoLiberadoEm: admin.firestore.FieldValue.delete(),
+        renovacoes: Number(delivery.renovacoes || 0) + 1,
+        renovadaPeloDonoEm: admin.firestore.FieldValue.serverTimestamp(),
+        criadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+
+    const telegram = await notifyTelegramAboutDelivery(ref.id, renewedDelivery).catch((error) => {
+      console.error('telegram admin delivery renew notify failed', error);
+      return { sent: false, failed: true };
+    });
+    res.json({ ok: true, deliveryId: ref.id, telegram });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/rides/:rideId/accept', async (req, res, next) => {
   try {
     const driverCpf = onlyDigits(req.body.driverCpf);
