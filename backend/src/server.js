@@ -439,6 +439,8 @@ function publicCompany(data = {}, id = '') {
     email: data.email || '',
     telefoneEmpresa: data.telefoneEmpresa || id,
     retirada: data.retirada || '',
+    pagamentoModo: data.pagamentoModo === 'mercadopago' ? 'mercadopago' : 'pix_manual',
+    mercadoPagoEmpresaConectado: !!data.ultimoDepositoMercadoPagoEm,
     integracaoAtiva: !!data.integracaoAtiva,
     integracaoProtegida: !!(data.integracaoProtegida || data.integracaoTokenEncrypted),
     integracaoNome: data.integracaoNome || '',
@@ -521,7 +523,8 @@ function depositPublicData(body) {
     empresa: String(body.empresa || '').slice(0, 120).trim(),
     responsavel: String(body.responsavel || '').slice(0, 120).trim(),
     telefoneEmpresa: onlyDigits(body.telefoneEmpresa),
-    valor: money(body.valor)
+    valor: money(body.valor),
+    metodo: String(body.metodo || 'pix_manual').slice(0, 40).trim()
   };
 }
 
@@ -820,6 +823,51 @@ async function createPaymentPreference(rideId, ride, driverCpf) {
     total,
     appFee,
     driverAmount
+  };
+}
+
+async function createCompanyDepositPreference(depositId, deposit) {
+  const total = money(deposit.valor);
+  if (total < 10) {
+    const error = new Error('Deposito minimo: R$ 10,00.');
+    error.status = 400;
+    error.code = 'valor_deposito_invalido';
+    throw error;
+  }
+
+  const preference = await mpFetch('/checkout/preferences', {
+    token: requiredEnv('MP_OWNER_ACCESS_TOKEN'),
+    method: 'POST',
+    body: {
+      external_reference: `deposit:${depositId}`,
+      notification_url: `${BACKEND_BASE_URL}/api/mercadopago/webhook`,
+      back_urls: {
+        success: appUrl('/empresa.html?deposito=ok'),
+        failure: appUrl('/empresa.html?deposito=erro'),
+        pending: appUrl('/empresa.html?deposito=pendente')
+      },
+      auto_return: 'approved',
+      items: [{
+        id: depositId,
+        title: `Credito Nexus Entregas - ${deposit.empresa || 'empresa'}`,
+        description: `Saldo pre-pago para entregas da empresa ${deposit.empresa || ''}`.trim(),
+        quantity: 1,
+        currency_id: 'BRL',
+        unit_price: total
+      }],
+      metadata: {
+        deposit_id: depositId,
+        company_id: deposit.telefoneEmpresa,
+        payment_kind: 'company_deposit'
+      }
+    }
+  });
+
+  return {
+    preferenceId: preference.id,
+    initPoint: preference.init_point,
+    sandboxInitPoint: preference.sandbox_init_point,
+    total
   };
 }
 
@@ -1377,6 +1425,27 @@ app.get('/api/companies/me', assertCompany, async (req, res) => {
   res.json({ ok: true, company: publicCompany(req.company, req.companyId) });
 });
 
+app.post('/api/companies/me/payment-mode', assertCompany, async (req, res, next) => {
+  try {
+    const modo = req.body.modo === 'mercadopago' ? 'mercadopago' : 'pix_manual';
+    await req.companySnap.ref.set({
+      pagamentoModo: modo,
+      pagamentoModoAtualizadoEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    return res.json({
+      ok: true,
+      pagamentoModo: modo,
+      message: modo === 'mercadopago'
+        ? 'Modo Mercado Pago ativado. Depositos pagos pelo checkout entram automaticamente quando aprovados.'
+        : 'Modo manual ativado. Depositos continuam por Pix e comprovante.'
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/companies/me/integration', assertCompany, async (req, res, next) => {
   try {
     const nome = String(req.body.nome || '').slice(0, 80).trim();
@@ -1549,6 +1618,7 @@ app.post('/api/companies/deposit-request', createRideLimiter, async (req, res, n
 
       tx.set(depositRef, {
         ...deposit,
+        metodo: 'pix_manual',
         empresaId: deposit.telefoneEmpresa,
         status: 'pendente',
         criadaEm: admin.firestore.FieldValue.serverTimestamp(),
@@ -1565,6 +1635,65 @@ app.post('/api/companies/deposit-request', createRideLimiter, async (req, res, n
     });
   } catch (error) {
     next(error);
+  }
+});
+
+app.post('/api/companies/deposit-preference', assertCompany, createRideLimiter, async (req, res, next) => {
+  try {
+    const deposit = {
+      ...depositPublicData({
+        ...req.body,
+        empresa: req.company.empresa,
+        responsavel: req.company.responsavel,
+        telefoneEmpresa: req.companyId,
+        metodo: 'mercadopago'
+      }),
+      email: req.company.email || ''
+    };
+
+    if (!deposit.valor || deposit.valor < 10 || deposit.valor > 5000) {
+      return res.status(400).json({ error: 'valor_deposito_invalido', message: 'Deposito deve ser entre R$ 10,00 e R$ 5.000,00.' });
+    }
+
+    const depositRef = db.collection('depositos').doc();
+    const preference = await createCompanyDepositPreference(depositRef.id, deposit);
+
+    await db.runTransaction(async (tx) => {
+      tx.set(req.companySnap.ref, {
+        pagamentoModo: 'mercadopago',
+        mercadoPagoEmpresa: {
+          ultimoPreferenceId: preference.preferenceId,
+          ultimoDepositoId: depositRef.id,
+          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+        },
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      tx.set(depositRef, {
+        ...deposit,
+        empresaId: req.companyId,
+        metodo: 'mercadopago',
+        status: 'aguardando_pagamento',
+        mercadoPago: {
+          preferenceId: preference.preferenceId,
+          initPoint: preference.initPoint,
+          sandboxInitPoint: preference.sandboxInitPoint,
+          criadoEm: admin.firestore.FieldValue.serverTimestamp()
+        },
+        criadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+
+    return res.status(201).json({
+      ok: true,
+      depositId: depositRef.id,
+      status: 'aguardando_pagamento',
+      initPoint: preference.initPoint,
+      sandboxInitPoint: preference.sandboxInitPoint
+    });
+  } catch (error) {
+    return next(error);
   }
 });
 
@@ -2572,6 +2701,72 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
       token: requiredEnv('MP_OWNER_ACCESS_TOKEN')
     });
     const rideId = payment.external_reference || payment.metadata?.ride_id;
+    const paymentKind = String(payment.metadata?.payment_kind || '');
+    if (String(rideId || '').startsWith('deposit:') || paymentKind === 'company_deposit') {
+      const depositId = String(rideId || '').startsWith('deposit:')
+        ? String(rideId).replace(/^deposit:/, '')
+        : String(payment.metadata?.deposit_id || '');
+      const paymentStatus = String(payment.status || '');
+      if (!depositId) return res.status(200).json({ ignored: true });
+
+      const depositRef = db.collection('depositos').doc(depositId);
+      await db.runTransaction(async (tx) => {
+        const depositSnap = await tx.get(depositRef);
+        if (!depositSnap.exists) return;
+        const deposit = depositSnap.data() || {};
+        const alreadyCredited = !!deposit.aprovadoEm || deposit.status === 'aprovado';
+        const companyRef = companyRefFromPhone(deposit.empresaId || deposit.telefoneEmpresa);
+        if (!companyRef) return;
+
+        const updateDeposit = {
+          status: paymentStatus === 'approved' ? 'aprovado' : paymentStatus || 'aguardando_pagamento',
+          mercadoPago: {
+            ...(deposit.mercadoPago || {}),
+            paymentId: String(payment.id),
+            status: paymentStatus,
+            statusDetail: payment.status_detail || null,
+            totalPago: money(payment.transaction_amount),
+            atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+          },
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        if (paymentStatus !== 'approved' || alreadyCredited) {
+          tx.set(depositRef, updateDeposit, { merge: true });
+          return;
+        }
+
+        const companySnap = await tx.get(companyRef);
+        const before = companyBalance(companySnap.exists ? companySnap.data() : {});
+        const valor = money(deposit.valor);
+        const afterSaldo = money(before.saldo + valor);
+        tx.set(companyRef, {
+          saldo: afterSaldo,
+          reservado: before.reservado,
+          pagamentoModo: 'mercadopago',
+          ultimoDepositoMercadoPagoEm: admin.firestore.FieldValue.serverTimestamp(),
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        tx.set(ledgerRef(companyRef.id), {
+          tipo: 'credito',
+          origem: 'deposito_mercadopago_aprovado',
+          depositoId: depositRef.id,
+          valor,
+          saldoAntes: before.saldo,
+          saldoDepois: afterSaldo,
+          reservadoAntes: before.reservado,
+          reservadoDepois: before.reservado,
+          criadoEm: admin.firestore.FieldValue.serverTimestamp()
+        });
+        tx.set(depositRef, {
+          ...updateDeposit,
+          aprovadoEm: admin.firestore.FieldValue.serverTimestamp(),
+          aprovadoPor: 'mercadopago_webhook'
+        }, { merge: true });
+      });
+
+      return res.json({ ok: true, kind: 'company_deposit' });
+    }
     if (!rideId) return res.status(200).json({ ignored: true });
 
     await db.collection('corridas').doc(String(rideId)).set({
