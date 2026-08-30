@@ -1799,6 +1799,38 @@ app.post('/api/admin/deposits/:depositId/reject', assertOwner, async (req, res, 
   }
 });
 
+app.post('/api/admin/deposits/:depositId/update-value', assertOwner, async (req, res, next) => {
+  try {
+    const newValue = money(req.body.valor);
+    if (!newValue || newValue < 10 || newValue > 5000) {
+      return res.status(400).json({ error: 'valor_deposito_invalido', message: 'Deposito deve ser entre R$ 10,00 e R$ 5.000,00.' });
+    }
+    const depositRef = db.collection('depositos').doc(String(req.params.depositId || ''));
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(depositRef);
+      if (!snap.exists) {
+        const error = new Error('Deposito nao encontrado.');
+        error.status = 404;
+        throw error;
+      }
+      if (snap.data().status !== 'pendente') {
+        const error = new Error('So e possivel editar valor de deposito pendente.');
+        error.status = 409;
+        throw error;
+      }
+      tx.update(depositRef, {
+        valor: newValue,
+        valorEditadoEm: admin.firestore.FieldValue.serverTimestamp(),
+        valorEditadoPor: 'dono',
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    res.json({ ok: true, valor: newValue });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/admin/deposits/:depositId/cancel-credit', assertOwner, async (req, res, next) => {
   try {
     const reason = String(req.body.reason || '').trim().slice(0, 250);
@@ -2473,6 +2505,95 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
       ganhoApp: split.appPercent,
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
+
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (req, res, next) => {
+  try {
+    const reason = String(req.body.reason || '').trim().slice(0, 250);
+    if (!reason) return res.status(400).json({ error: 'motivo_obrigatorio', message: 'Informe o motivo para finalizar pelo painel.' });
+    const deliveryRef = db.collection('entregas').doc(String(req.params.deliveryId || ''));
+
+    await db.runTransaction(async (tx) => {
+      const deliverySnap = await tx.get(deliveryRef);
+      if (!deliverySnap.exists) {
+        const error = new Error('Entrega nao encontrada.');
+        error.status = 404;
+        throw error;
+      }
+      const delivery = deliverySnap.data();
+      if (delivery.status === 'finalizada' || delivery.saldoDebitadoEm) {
+        const error = new Error('Entrega ja foi finalizada ou debitada.');
+        error.status = 409;
+        throw error;
+      }
+      if (!delivery.motoboy || onlyDigits(delivery.motoboyCpf).length !== 11) {
+        const error = new Error('Nao da para finalizar pelo painel sem motoboy vinculado.');
+        error.status = 409;
+        throw error;
+      }
+
+      const valor = money(delivery.saldoReservado || delivery.valor || 0);
+      const companyRef = companyRefFromPhone(delivery.empresaId || delivery.telefoneEmpresa);
+      if (!companyRef || valor <= 0) {
+        const error = new Error('Dados de saldo da empresa invalidos.');
+        error.status = 409;
+        throw error;
+      }
+
+      const companySnap = await tx.get(companyRef);
+      const balance = companyBalance(companySnap.exists ? companySnap.data() : {});
+      if (balance.saldo < valor) {
+        const error = new Error('Saldo total insuficiente para abater esta entrega.');
+        error.status = 409;
+        throw error;
+      }
+
+      const wasReserved = !delivery.saldoLiberadoEm;
+      const nextSaldo = money(balance.saldo - valor);
+      const nextReserved = wasReserved ? money(Math.max(0, balance.reservado - valor)) : balance.reservado;
+      const split = deliverySplit(delivery);
+
+      tx.set(companyRef, {
+        saldo: nextSaldo,
+        reservado: nextReserved,
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      tx.set(ledgerRef(companyRef.id), {
+        tipo: 'debito',
+        origem: 'entrega_finalizada_pelo_dono',
+        entregaId: deliveryRef.id,
+        valor,
+        motivo: reason,
+        motoboy: delivery.motoboy || '',
+        motoboyCpf: onlyDigits(delivery.motoboyCpf),
+        saldoAntes: balance.saldo,
+        saldoDepois: nextSaldo,
+        reservadoAntes: balance.reservado,
+        reservadoDepois: nextReserved,
+        criadoEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      tx.update(deliveryRef, {
+        status: 'finalizada',
+        finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        finalizadaPeloDonoEm: admin.firestore.FieldValue.serverTimestamp(),
+        finalizadaPeloDonoMotivo: reason,
+        saldoDebitadoEm: admin.firestore.FieldValue.serverTimestamp(),
+        ganhoMotoboy: split.driverAmount,
+        ganhoApp: split.appFee,
+        percentualMotoboy: split.driverPercent,
+        percentualApp: split.appPercent,
+        valorMotoboy: split.driverAmount,
+        valorApp: split.appFee,
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
 
     res.json({ ok: true });
   } catch (error) {
