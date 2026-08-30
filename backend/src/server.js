@@ -1315,10 +1315,11 @@ app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
   }
 });
 
-app.get('/api/companies/:phone/balance', async (req, res, next) => {
+app.get('/api/companies/:phone/balance', assertCompany, async (req, res, next) => {
   try {
     const companyRef = companyRefFromPhone(req.params.phone);
     if (!companyRef) return res.status(400).json({ error: 'telefone_empresa_invalido' });
+    if (companyRef.id !== req.companyId) return res.status(403).json({ error: 'empresa_nao_autorizada' });
 
     const snap = await companyRef.get();
     const data = snap.exists ? snap.data() : {};
@@ -1532,10 +1533,11 @@ app.get('/api/company/balance', assertCompany, async (req, res) => {
   res.json({ ok: true, telefoneEmpresa: req.companyId, ...companyBalance(req.company) });
 });
 
-app.get('/api/companies/:phone/delivery-report', async (req, res, next) => {
+app.get('/api/companies/:phone/delivery-report', assertCompany, async (req, res, next) => {
   try {
     const phone = onlyDigits(req.params.phone);
     if (phone.length < 10 || phone.length > 11) return res.status(400).json({ error: 'telefone_empresa_invalido' });
+    if (phone !== req.companyId) return res.status(403).json({ error: 'empresa_nao_autorizada' });
 
     const snapshot = await db.collection('entregas')
       .where('telefoneEmpresa', '==', phone)
@@ -1594,9 +1596,14 @@ app.get('/api/companies/:phone/delivery-report', async (req, res, next) => {
   }
 });
 
-app.post('/api/companies/deposit-request', createRideLimiter, async (req, res, next) => {
+app.post('/api/companies/deposit-request', assertCompany, createRideLimiter, async (req, res, next) => {
   try {
-    const deposit = depositPublicData(req.body);
+    const deposit = depositPublicData({
+      ...req.body,
+      empresa: req.company.empresa || req.body.empresa,
+      responsavel: req.company.responsavel || req.body.responsavel,
+      telefoneEmpresa: req.companyId
+    });
     if (!deposit.empresa || !deposit.responsavel || deposit.telefoneEmpresa.length < 10 || deposit.telefoneEmpresa.length > 11) {
       return res.status(400).json({ error: 'preencha_empresa_responsavel_telefone' });
     }
@@ -1604,7 +1611,7 @@ app.post('/api/companies/deposit-request', createRideLimiter, async (req, res, n
       return res.status(400).json({ error: 'valor_deposito_invalido', message: 'Deposito deve ser entre R$ 10,00 e R$ 5.000,00.' });
     }
 
-    const companyRef = companyRefFromPhone(deposit.telefoneEmpresa);
+    const companyRef = req.companySnap.ref;
     const depositRef = db.collection('depositos').doc();
     await db.runTransaction(async (tx) => {
       tx.set(companyRef, {
@@ -2092,9 +2099,10 @@ app.post('/api/rides/:rideId/client-cancel', async (req, res, next) => {
   }
 });
 
-app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
+app.post('/api/deliveries', assertCompany, createRideLimiter, async (req, res, next) => {
   try {
     const delivery = deliveryPublicData(req.body);
+    delivery.telefoneEmpresa = req.companyId;
     if (!delivery.empresa || !delivery.responsavel || !delivery.retirada || !delivery.entrega || !delivery.recebedor || delivery.telefoneEmpresa.length < 10 || delivery.telefoneEmpresa.length > 11 || delivery.telefoneRecebedor.length < 10 || delivery.telefoneRecebedor.length > 11) {
       return res.status(400).json({ error: 'preencha_empresa_responsavel_telefones_retirada_entrega_recebedor' });
     }
@@ -2159,7 +2167,7 @@ app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
       const existing = await tx.get(ref);
       if (existing.exists) return;
 
-      const companyRef = companyRefFromPhone(delivery.telefoneEmpresa);
+      const companyRef = req.companySnap.ref;
       const companySnap = await tx.get(companyRef);
       const balance = companyBalance(companySnap.exists ? companySnap.data() : {});
       if (balance.disponivel < delivery.valor) {
@@ -2174,7 +2182,7 @@ app.post('/api/deliveries', createRideLimiter, async (req, res, next) => {
       tx.set(companyRef, {
         empresa: delivery.empresa,
         responsavel: delivery.responsavel,
-        telefoneEmpresa: delivery.telefoneEmpresa,
+        telefoneEmpresa: req.companyId,
         saldo: balance.saldo,
         reservado: nextReserved,
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
@@ -2736,9 +2744,23 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
           return;
         }
 
+        const valor = money(deposit.valor);
+        const totalPago = money(payment.transaction_amount);
+        if (totalPago < valor) {
+          tx.set(depositRef, {
+            ...updateDeposit,
+            status: 'pagamento_divergente',
+            divergencia: {
+              esperado: valor,
+              recebido: totalPago,
+              motivo: 'valor_pago_menor_que_deposito'
+            }
+          }, { merge: true });
+          return;
+        }
+
         const companySnap = await tx.get(companyRef);
         const before = companyBalance(companySnap.exists ? companySnap.data() : {});
-        const valor = money(deposit.valor);
         const afterSaldo = money(before.saldo + valor);
         tx.set(companyRef, {
           saldo: afterSaldo,
