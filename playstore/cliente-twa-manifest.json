@@ -1,0 +1,19 @@
+{
+  "packageId": "br.com.nexusmotoja.cliente",
+  "host": "nexusconchal.github.io",
+  "name": "Nexus MotoJa",
+  "launcherName": "Nexus MotoJa",
+  "display": "standalone",
+  "themeColor": "#ff8a00",
+  "navigationColor": "#090911",
+  "backgroundColor": "#090911",
+  "startUrl": "/moto-conchal/",
+  "manifestUrl": "https://nexusconchal.github.io/moto-conchal/cliente.webmanifest",
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "signingKey": {
+    "path": "REPLACE_WITH_YOUR_RELEASE_KEYSTORE_PATH",
+    "alias": "REPLACE_WITH_KEY_ALIAS"
+  },
+  "appVersion": "1"
+}

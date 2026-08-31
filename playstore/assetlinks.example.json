@@ -1,0 +1,26 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "br.com.nexusmotoja.cliente",
+      "sha256_cert_fingerprints": [
+        "COLE_AQUI_O_SHA256_DO_APP_CLIENTE"
+      ]
+    }
+  },
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "br.com.nexusmotoja.motorista",
+      "sha256_cert_fingerprints": [
+        "COLE_AQUI_O_SHA256_DO_APP_MOTORISTA"
+      ]
+    }
+  }
+]

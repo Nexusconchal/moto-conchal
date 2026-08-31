@@ -929,6 +929,43 @@ async function notifyDriversAboutRide(rideId, ride) {
   };
 }
 
+async function notifyDriversAboutDelivery(deliveryId, delivery) {
+  const drivers = await db.collection('motoboys').where('status', '==', 'ativo').get();
+  const tokens = [];
+
+  drivers.forEach((doc) => {
+    const data = doc.data();
+    const saved = data.fcmTokens || {};
+    Object.entries(saved).forEach(([token, info]) => {
+      if (info?.ativo !== false) tokens.push(token);
+    });
+  });
+
+  if (!tokens.length) return { sent: 0, failed: 0 };
+
+  const response = await admin.messaging().sendEachForMulticast({
+    tokens,
+    notification: {
+      title: 'Nova entrega Nexus MotoJa',
+      body: `${delivery.empresa || 'Empresa'} - ${money(delivery.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`
+    },
+    webpush: {
+      fcmOptions: {
+        link: appUrl('/motoboy.html?aba=entregas')
+      }
+    },
+    data: {
+      deliveryId,
+      tipo: 'nova_entrega'
+    }
+  });
+
+  return {
+    sent: response.successCount,
+    failed: response.failureCount
+  };
+}
+
 async function cleanupRides() {
   const now = Date.now();
   const batch = db.batch();
@@ -2257,8 +2294,12 @@ app.post('/api/deliveries', assertCompany, createRideLimiter, async (req, res, n
       console.error('telegram delivery notify failed', error);
       return { sent: false, failed: true };
     });
+    const push = await notifyDriversAboutDelivery(ref.id, delivery).catch((error) => {
+      console.error('push delivery notify failed', error);
+      return { sent: 0, failed: 1 };
+    });
 
-    res.status(201).json({ deliveryId: ref.id, telegram });
+    res.status(201).json({ deliveryId: ref.id, telegram, push });
   } catch (error) {
     if (error.code === 'saldo_insuficiente') {
       return res.status(error.status || 402).json({
@@ -2352,7 +2393,11 @@ app.post('/api/deliveries/:deliveryId/renew', assertCompany, createRideLimiter, 
       console.error('telegram delivery renew notify failed', error);
       return { sent: false, failed: true };
     });
-    res.json({ ok: true, deliveryId: ref.id, telegram });
+    const push = await notifyDriversAboutDelivery(ref.id, renewedDelivery).catch((error) => {
+      console.error('push delivery renew notify failed', error);
+      return { sent: 0, failed: 1 };
+    });
+    res.json({ ok: true, deliveryId: ref.id, telegram, push });
   } catch (error) {
     if (error.code === 'saldo_insuficiente') {
       return res.status(error.status || 402).json({
@@ -2442,7 +2487,11 @@ app.post('/api/admin/deliveries/:deliveryId/renew', assertOwner, async (req, res
       console.error('telegram admin delivery renew notify failed', error);
       return { sent: false, failed: true };
     });
-    res.json({ ok: true, deliveryId: ref.id, telegram });
+    const push = await notifyDriversAboutDelivery(ref.id, renewedDelivery).catch((error) => {
+      console.error('push admin delivery renew notify failed', error);
+      return { sent: 0, failed: 1 };
+    });
+    res.json({ ok: true, deliveryId: ref.id, telegram, push });
   } catch (error) {
     next(error);
   }
@@ -2568,7 +2617,7 @@ app.post('/api/rides/:rideId/notify-client', async (req, res, next) => {
     }
 
     const driverUrl = BACKEND_BASE_URL ? `${BACKEND_BASE_URL}/corrida/${req.params.rideId}` : '';
-    const message = `Ola, ${ride.nome || 'cliente'}! Seu motoboy ${ride.motoboy || 'MotoJa Conchal'} aceitou a corrida.\n\nValor: ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nOrigem: ${ride.origem || '-'}\nDestino: ${ride.destino || '-'}${driverUrl ? `\n\nVer foto do motoboy:\n${driverUrl}` : ''}\n\nPague por este link Mercado Pago:\n${ride.pagamento.initPoint}\n\nDepois do pagamento aprovado, envie o comprovante aqui se quiser e mostre ao motoboy antes de iniciar a corrida.`;
+    const message = `Ola, ${ride.nome || 'cliente'}! Seu motoboy ${ride.motoboy || 'MotoJa Conchal'} aceitou a corrida.\n\nValor: ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nOrigem: ${ride.origem || '-'}\nDestino: ${ride.destino || '-'}${driverUrl ? `\n\nVer foto do motoboy:\n${driverUrl}` : ''}\n\nPague por este link Mercado Pago:\n${ride.pagamento.initPoint}\n\nDepois de pagar, envie o comprovante aqui. O app so libera finalizar quando o Mercado Pago confirmar o pagamento aprovado.`;
 
     await rideRef.set({
       clienteAvisadoEm: admin.firestore.FieldValue.serverTimestamp(),
@@ -2670,7 +2719,7 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
     if (!ride.clienteAvisadoEm) {
       return res.status(409).json({ error: 'avise_o_cliente_antes_de_finalizar' });
     }
-    if (ride.pagamento?.status !== 'approved') {
+    if (ride.pagamento?.status !== 'approved' || ride.pagamento?.valido === false) {
       return res.status(409).json({ error: 'pagamento_ainda_nao_aprovado' });
     }
     if (ride.status === 'cancelada') {
@@ -3134,17 +3183,30 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
     }
     if (!rideId) return res.status(200).json({ ignored: true });
 
-    await db.collection('corridas').doc(String(rideId)).set({
+    const rideRef = db.collection('corridas').doc(String(rideId));
+    const rideSnap = await rideRef.get();
+    const ride = rideSnap.exists ? rideSnap.data() || {} : {};
+    const totalPago = money(payment.transaction_amount);
+    const valorEsperado = money(ride.pagamento?.total || ride.valor || 0);
+    const pagamentoAprovado = payment.status === 'approved';
+    const valorConfere = !valorEsperado || totalPago >= valorEsperado;
+
+    await rideRef.set({
       pagamento: {
         provider: 'mercadopago',
         paymentId: String(payment.id),
         status: payment.status,
         statusDetail: payment.status_detail || null,
-        totalPago: money(payment.transaction_amount),
+        totalPago,
+        valorEsperado: valorEsperado || null,
+        valido: pagamentoAprovado ? valorConfere : false,
+        divergencia: pagamentoAprovado && !valorConfere
+          ? `Valor pago ${totalPago.toFixed(2)} menor que o esperado ${valorEsperado.toFixed(2)}`
+          : null,
         appFee: money(payment.marketplace_fee || 0),
         atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
       },
-      pagamentoConfirmadoEm: payment.status === 'approved'
+      pagamentoConfirmadoEm: pagamentoAprovado && valorConfere
         ? admin.firestore.FieldValue.serverTimestamp()
         : null,
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()

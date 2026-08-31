@@ -26,5 +26,7 @@ messaging.onBackgroundMessage((payload) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  event.waitUntil(clients.openWindow('./motoboy.html'));
+  const data = event.notification?.data || {};
+  const target = data.tipo === 'nova_entrega' ? './motoboy.html?aba=entregas' : './motoboy.html';
+  event.waitUntil(clients.openWindow(target));
 });
