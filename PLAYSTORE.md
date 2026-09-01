@@ -6,7 +6,7 @@ Este projeto continua funcionando por link no GitHub Pages e tambem pode virar a
 
 - Cliente: `https://nexusconchal.github.io/moto-conchal/`
 - Motorista: `https://nexusconchal.github.io/moto-conchal/motoboy.html`
-- Politica de privacidade: `https://nexusconchal.github.io/moto-conchal/privacy.html`
+- Politica de privacidade: `https://nexusconchal.github.io/moto-conchal/privacidade.html`
 
 ## Forma recomendada
 
@@ -73,6 +73,6 @@ Use estes links no cadastro dos apps:
 
 - Site do cliente: `https://nexusconchal.github.io/moto-conchal/`
 - Site do motorista: `https://nexusconchal.github.io/moto-conchal/motoboy.html`
-- Politica de privacidade: `https://nexusconchal.github.io/moto-conchal/privacy.html`
+- Politica de privacidade: `https://nexusconchal.github.io/moto-conchal/privacidade.html`
 
 Para o app do motorista, deixe claro na descricao que ele e exclusivo para motoboys cadastrados pela Nexus MotoJa.
