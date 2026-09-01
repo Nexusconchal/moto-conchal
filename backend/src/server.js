@@ -455,6 +455,16 @@ async function issueCompanySession(ref, tx = null) {
   return token;
 }
 
+async function issueCustomerSession(ref) {
+  const token = crypto.randomBytes(32).toString('hex');
+  await ref.set({
+    sessionTokenHash: hashSecret(token),
+    ultimoLoginEm: admin.firestore.FieldValue.serverTimestamp(),
+    atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
+  return token;
+}
+
 function publicCompany(data = {}, id = '') {
   return {
     id,
@@ -469,6 +479,16 @@ function publicCompany(data = {}, id = '') {
     integracaoProtegida: !!(data.integracaoProtegida || data.integracaoTokenEncrypted),
     integracaoNome: data.integracaoNome || '',
     ...companyBalance(data)
+  };
+}
+
+function publicCustomer(data = {}, id = '') {
+  return {
+    id,
+    nome: data.nome || '',
+    telefoneCliente: data.telefoneCliente || id,
+    origem: data.origem || '',
+    fotoCliente: validDriverPhoto(data.fotoCliente) || ''
   };
 }
 
@@ -1512,6 +1532,86 @@ app.post('/api/companies/password-recovery', createRideLimiter, async (req, res,
     return res.status(201).json({ ok: true, recoveryId: recoveryRef.id, message: 'Pedido enviado ao dono. Aguarde ele trocar a senha e enviar pelo WhatsApp.' });
   } catch (error) {
     return next(error);
+  }
+});
+
+app.post('/api/customers/register', createRideLimiter, async (req, res, next) => {
+  try {
+    const nome = cleanText(req.body.nome, 80);
+    const telefoneCliente = onlyDigits(req.body.telefoneCliente);
+    const origem = cleanText(req.body.origem, 300);
+    const fotoCliente = validDriverPhoto(req.body.fotoCliente);
+    const password = String(req.body.password || '');
+    if (!nome || telefoneCliente.length < 10 || telefoneCliente.length > 11 || password.length < 4) {
+      return res.status(400).json({ error: 'dados_cliente_invalidos', message: 'Preencha nome, WhatsApp e senha com pelo menos 4 numeros.' });
+    }
+    const customerRef = db.collection('clientes').doc(telefoneCliente);
+    const existing = await customerRef.get();
+    if (existing.exists && !verifyPassword(password, existing.data())) {
+      return res.status(409).json({ error: 'cliente_ja_cadastrado', message: 'Este WhatsApp ja tem perfil. Use Entrar com a senha cadastrada.' });
+    }
+    const auth = passwordHash(password);
+    const token = await issueCustomerSession(customerRef);
+    const customerData = {
+      nome,
+      telefoneCliente,
+      origem,
+      passwordSalt: auth.salt,
+      passwordHash: auth.hash,
+      cadastradaEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      ultimoLoginEm: admin.firestore.FieldValue.serverTimestamp()
+    };
+    if (fotoCliente) customerData.fotoCliente = fotoCliente;
+    await customerRef.set(customerData, { merge: true });
+    res.status(201).json({ ok: true, token, customer: publicCustomer({ ...customerData, fotoCliente }, telefoneCliente) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/customers/login', createRideLimiter, async (req, res, next) => {
+  try {
+    const telefoneCliente = onlyDigits(req.body.telefoneCliente);
+    const password = String(req.body.password || '');
+    if (telefoneCliente.length < 10 || telefoneCliente.length > 11 || password.length < 4) {
+      return res.status(400).json({ error: 'dados_cliente_invalidos', message: 'Digite WhatsApp e senha.' });
+    }
+    const customerRef = db.collection('clientes').doc(telefoneCliente);
+    const snap = await customerRef.get();
+    if (!snap.exists) {
+      return res.status(404).json({ error: 'cliente_nao_encontrado', message: 'Nao encontrei perfil com este WhatsApp. Voce pode pedir corrida sem conta ou criar perfil.' });
+    }
+    if (!verifyPassword(password, snap.data())) {
+      return res.status(401).json({ error: 'senha_cliente_incorreta', message: 'Senha incorreta para este WhatsApp.' });
+    }
+    const token = await issueCustomerSession(customerRef);
+    res.json({ ok: true, token, customer: publicCustomer(snap.data(), telefoneCliente) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/customers/me', createRideLimiter, async (req, res, next) => {
+  try {
+    const header = String(req.header('authorization') || '');
+    const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+    if (!token) return res.status(401).json({ error: 'cliente_login_obrigatorio' });
+    const snap = await db.collection('clientes').where('sessionTokenHash', '==', hashSecret(token)).limit(1).get();
+    if (snap.empty) return res.status(401).json({ error: 'sessao_cliente_invalida' });
+    const update = {
+      nome: cleanText(req.body.nome, 80),
+      telefoneCliente: snap.docs[0].id,
+      origem: cleanText(req.body.origem, 300),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    };
+    const fotoCliente = validDriverPhoto(req.body.fotoCliente);
+    if (fotoCliente) update.fotoCliente = fotoCliente;
+    if (!update.nome) return res.status(400).json({ error: 'nome_cliente_obrigatorio', message: 'Digite seu nome para salvar o perfil.' });
+    await snap.docs[0].ref.set(update, { merge: true });
+    res.json({ ok: true, customer: publicCustomer({ ...snap.docs[0].data(), ...update, fotoCliente: fotoCliente || snap.docs[0].data().fotoCliente }, snap.docs[0].id) });
+  } catch (error) {
+    next(error);
   }
 });
 
