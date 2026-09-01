@@ -1891,7 +1891,10 @@ app.get('/api/companies/:phone/delivery-report', assertCompany, async (req, res,
         motoboy: item.motoboy || '',
         motoboyFoto: item.motoboyFoto || '',
         valor: money(item.valor),
-        criadaEm: timestampMs(item.criadaEm)
+        criadaEm: timestampMs(item.criadaEm),
+        quantidadeEntregasExclusivo: Number(item.quantidadeEntregasExclusivo || 0),
+        taxaFixaEntrega: money(item.taxaFixaEntrega || 0),
+        empresaFicaPorTaxa: money(item.empresaFicaPorTaxa || 0)
       }))
     });
   } catch (error) {
@@ -3298,6 +3301,9 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
 
       const valor = money(delivery.saldoReservado || delivery.valor || 0);
       const split = deliverySplit(delivery);
+      const quantidadeExclusivo = delivery.tipo === 'servico_exclusivo'
+        ? Math.max(0, Math.min(300, Math.floor(Number(req.body.quantidadeEntregasExclusivo || 0))))
+        : 0;
       const companyRef = companyRefFromPhone(delivery.empresaId || delivery.telefoneEmpresa);
       if (!companyRef || valor <= 0) {
         const error = new Error('Dados de saldo da empresa invalidos.');
@@ -3341,6 +3347,7 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
         percentualApp: split.appPercent,
         valorMotoboy: split.driverAmount,
         valorApp: split.appFee,
+        quantidadeEntregasExclusivo: quantidadeExclusivo || admin.firestore.FieldValue.delete(),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
     });
