@@ -48,25 +48,38 @@ function saoPauloHour(date = new Date()) {
   return hour % 24;
 }
 
-function nightRideActive(date = new Date()) {
+function rideFarePeriod(date = new Date()) {
   const hour = saoPauloHour(date);
-  return hour >= 0 && hour < 6;
+  if (hour >= 0 && hour < 6) return 'madrugada';
+  if (hour >= 18) return 'noite';
+  return 'dia';
+}
+
+function nightRideActive(date = new Date()) {
+  return rideFarePeriod(date) === 'madrugada';
 }
 
 function expectedFare(km) {
   const distance = Number(km || 0);
   if (!Number.isFinite(distance) || distance <= 0) return 0;
-  if (nightRideActive()) {
+  const period = rideFarePeriod();
+  if (period === 'madrugada') {
     if (distance <= 3) return 8;
     if (distance <= 5) return 12;
     if (distance <= 8) return 18;
+    return money(Math.ceil(distance) * 3.5);
+  }
+  if (period === 'noite') {
+    if (distance <= 3) return 6;
+    if (distance <= 5) return 10;
+    if (distance <= 8) return 15;
     return money(Math.ceil(distance) * 3);
   }
   let value;
   if (distance <= 3) value = 4.5;
   else if (distance <= 5) value = 7.5;
   else if (distance <= 8) value = 12;
-  else value = Math.ceil(distance) * 2;
+  else value = Math.ceil(distance) * 2.5;
   return money(value);
 }
 
