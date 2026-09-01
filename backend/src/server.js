@@ -526,7 +526,15 @@ function assertDriverProof(driver = {}, body = {}) {
 async function getDriverWithProof(driverCpf, body = {}) {
   const cacheKey = `${driverCpf}:${onlyDigits(body.driverCnh)}:${onlyDigits(body.driverTelefone)}`;
   const cached = driverProofCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.driver;
+  if (cached && cached.expiresAt > Date.now()) {
+    if (cached.driver?.status === 'bloqueado') {
+      const error = new Error('Motoboy bloqueado pelo dono. Fale com o suporte MotoJa.');
+      error.status = 403;
+      error.code = 'motoboy_bloqueado';
+      throw error;
+    }
+    return cached.driver;
+  }
 
   const driverSnap = await db.collection('motoboys').doc(driverCpf).get();
   if (!driverSnap.exists) {
@@ -537,6 +545,12 @@ async function getDriverWithProof(driverCpf, body = {}) {
   }
 
   const driver = driverSnap.data() || {};
+  if (driver.status === 'bloqueado') {
+    const error = new Error('Motoboy bloqueado pelo dono. Fale com o suporte MotoJa.');
+    error.status = 403;
+    error.code = 'motoboy_bloqueado';
+    throw error;
+  }
   assertDriverProof(driver, body);
   driverProofCache.set(cacheKey, { driver, expiresAt: Date.now() + DRIVER_PROOF_CACHE_MS });
   return driver;
@@ -1304,6 +1318,47 @@ app.post('/api/admin/rides/:rideId/cancel', assertOwner, async (req, res, next) 
   }
 });
 
+app.post('/api/admin/drivers/:cpf/block', assertOwner, async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.params.cpf);
+    const motivo = cleanText(req.body.reason || req.body.motivo || 'Bloqueado pelo dono', 180);
+    if (cpf.length !== 11) return res.status(400).json({ error: 'cpf_invalido' });
+    const driverRef = db.collection('motoboys').doc(cpf);
+    const snap = await driverRef.get();
+    if (!snap.exists) return res.status(404).json({ error: 'motoboy_nao_encontrado' });
+    await driverRef.set({
+      status: 'bloqueado',
+      motivoBloqueio: motivo,
+      bloqueadoEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    driverProofCache.clear();
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/admin/drivers/:cpf/unblock', assertOwner, async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.params.cpf);
+    if (cpf.length !== 11) return res.status(400).json({ error: 'cpf_invalido' });
+    const driverRef = db.collection('motoboys').doc(cpf);
+    const snap = await driverRef.get();
+    if (!snap.exists) return res.status(404).json({ error: 'motoboy_nao_encontrado' });
+    await driverRef.set({
+      status: 'ativo',
+      motivoBloqueio: admin.firestore.FieldValue.delete(),
+      desbloqueadoEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    driverProofCache.clear();
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/drivers/register', async (req, res, next) => {
   try {
     const password = String(req.body.password || '');
@@ -1334,6 +1389,12 @@ app.post('/api/drivers/register', async (req, res, next) => {
     const driverSnap = await driverRef.get();
     if (driverSnap.exists) {
       const driver = driverSnap.data() || {};
+      if (driver.status === 'bloqueado') {
+        return res.status(403).json({
+          error: 'motoboy_bloqueado',
+          message: 'Seu cadastro esta bloqueado pelo dono. Fale com o suporte MotoJa.'
+        });
+      }
       const savedCnh = onlyDigits(driver.cnh);
       const savedPhone = onlyDigits(driver.telefone);
       const savedName = normalizedPersonName(driver.nome);
@@ -1612,6 +1673,47 @@ app.post('/api/customers/me', createRideLimiter, async (req, res, next) => {
     res.json({ ok: true, customer: publicCustomer({ ...snap.docs[0].data(), ...update, fotoCliente: fotoCliente || snap.docs[0].data().fotoCliente }, snap.docs[0].id) });
   } catch (error) {
     next(error);
+  }
+});
+
+app.get('/api/customers/me/rides', createRideLimiter, async (req, res, next) => {
+  try {
+    const header = String(req.header('authorization') || '');
+    const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+    if (!token) return res.status(401).json({ error: 'cliente_login_obrigatorio' });
+    const snap = await db.collection('clientes').where('sessionTokenHash', '==', hashSecret(token)).limit(1).get();
+    if (snap.empty) return res.status(401).json({ error: 'sessao_cliente_invalida' });
+
+    const telefoneCliente = snap.docs[0].id;
+    const ridesSnap = await db.collection('corridas')
+      .where('telefoneCliente', '==', telefoneCliente)
+      .limit(80)
+      .get();
+
+    const rides = ridesSnap.docs
+      .map((docSnap) => {
+        const ride = serializeFirestore({ id: docSnap.id, ...docSnap.data() });
+        return {
+          id: ride.id,
+          status: ride.status || '',
+          origem: ride.origemDigitada || ride.origem || '',
+          destino: ride.destino || '',
+          destinoEncontrado: ride.destinoEncontrado || '',
+          km: Number(ride.km || 0),
+          valor: Number(ride.valor || 0),
+          precoLabel: ride.precoLabel || '',
+          motoboy: ride.motoboy || '',
+          motoboyFoto: validDriverPhoto(ride.motoboyFoto) || '',
+          criadaEm: ride.criadaEm || null,
+          aceitaEm: ride.aceitaEm || null,
+          finalizadaEm: ride.finalizadaEm || null
+        };
+      })
+      .sort((a, b) => timestampMs(b.criadaEm) - timestampMs(a.criadaEm));
+
+    return res.json({ ok: true, rides });
+  } catch (error) {
+    return next(error);
   }
 });
 
