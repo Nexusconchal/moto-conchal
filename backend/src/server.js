@@ -305,6 +305,14 @@ function validDriverPhoto(value) {
   return photo;
 }
 
+function validDriverDocument(value) {
+  const photo = String(value || '');
+  if (!photo) return '';
+  if (!/^data:image\/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(photo)) return '';
+  if (photo.length > 550000) return '';
+  return photo;
+}
+
 function bairroFromAddress(value) {
   const parts = String(value || '')
     .split(',')
@@ -1284,12 +1292,22 @@ app.post('/api/drivers/register', async (req, res, next) => {
     const cnh = onlyDigits(req.body.cnh);
     const telefone = onlyDigits(req.body.telefone);
     const fotoMotoboy = validDriverPhoto(req.body.fotoMotoboy);
+    const motoModelo = cleanText(req.body.motoModelo, 60);
+    const motoAno = onlyDigits(req.body.motoAno);
+    const motoPlaca = cleanText(req.body.motoPlaca, 12).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const crlvFoto = validDriverDocument(req.body.crlvFoto);
 
     if (!isValidDriverPassword(password)) {
       return res.status(401).json({ error: 'senha_incorreta' });
     }
     if (!nome || cpf.length !== 11 || cnh.length !== 11 || telefone.length < 10 || telefone.length > 11) {
       return res.status(400).json({ error: 'dados_invalidos' });
+    }
+    if (!motoModelo || !/^(19|20)\d{2}$/.test(motoAno) || motoPlaca.length < 7) {
+      return res.status(400).json({
+        error: 'dados_moto_invalidos',
+        message: 'Preencha modelo, ano e placa da moto para liberar o acesso.'
+      });
     }
 
     const driverRef = db.collection('motoboys').doc(cpf);
@@ -1312,10 +1330,21 @@ app.post('/api/drivers/register', async (req, res, next) => {
           message: 'Envie uma foto do rosto para liberar o acesso do motoboy.'
         });
       }
+      if (!driver.crlvFoto && !crlvFoto) {
+        return res.status(400).json({
+          error: 'crlv_obrigatorio',
+          message: 'Envie uma foto do CRLV/documento da moto para liberar o acesso do motoboy.'
+        });
+      }
     } else if (!fotoMotoboy) {
       return res.status(400).json({
         error: 'foto_obrigatoria',
         message: 'Envie uma foto do rosto para cadastrar o motoboy.'
+      });
+    } else if (!crlvFoto) {
+      return res.status(400).json({
+        error: 'crlv_obrigatorio',
+        message: 'Envie uma foto do CRLV/documento da moto para cadastrar o motoboy.'
       });
     }
 
@@ -1324,6 +1353,9 @@ app.post('/api/drivers/register', async (req, res, next) => {
       cpf,
       cnh,
       telefone,
+      motoModelo,
+      motoAno,
+      motoPlaca,
       status: 'ativo',
       ultimoAcesso: admin.firestore.FieldValue.serverTimestamp(),
       atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
@@ -1332,13 +1364,21 @@ app.post('/api/drivers/register', async (req, res, next) => {
       driverData.fotoMotoboy = fotoMotoboy;
       driverData.fotoAtualizadaEm = admin.firestore.FieldValue.serverTimestamp();
     }
+    if (crlvFoto) {
+      driverData.crlvFoto = crlvFoto;
+      driverData.crlvAtualizadoEm = admin.firestore.FieldValue.serverTimestamp();
+    }
 
     await driverRef.set(driverData, { merge: true });
 
     const savedDriver = driverSnap.exists ? driverSnap.data() || {} : {};
     return res.json({
       ok: true,
-      fotoMotoboy: fotoMotoboy || savedDriver.fotoMotoboy || ''
+      fotoMotoboy: fotoMotoboy || savedDriver.fotoMotoboy || '',
+      motoModelo,
+      motoAno,
+      motoPlaca,
+      crlvFoto: crlvFoto || savedDriver.crlvFoto || ''
     });
   } catch (error) {
     return next(error);
