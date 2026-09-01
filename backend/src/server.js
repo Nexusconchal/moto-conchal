@@ -194,6 +194,14 @@ function fixedFoodDeliveryAppFee(delivery = {}) {
 
 function deliverySplit(delivery = {}) {
   const total = money(delivery.valor);
+  if (delivery.tipo === 'servico_exclusivo' || normalizeText(delivery.tipoEntrega).includes('exclusivo')) {
+    return {
+      appFee: money(Math.min(total, 20)),
+      driverAmount: money(Math.max(0, Math.min(total, 50))),
+      appPercent: total ? money(20 / total) : 0,
+      driverPercent: total ? money(50 / total) : 0
+    };
+  }
   if (isFixedFoodDelivery(delivery.tipoEntrega)) {
     const appFee = fixedFoodDeliveryAppFee(delivery);
     return {
@@ -2564,6 +2572,126 @@ app.post('/api/deliveries', assertCompany, createRideLimiter, async (req, res, n
       });
     }
     next(error);
+  }
+});
+
+app.post('/api/companies/exclusive-service', assertCompany, createRideLimiter, async (req, res, next) => {
+  try {
+    const empresa = cleanText(req.body.empresa || req.company.empresa || '', 120);
+    const responsavel = cleanText(req.body.responsavel || req.company.responsavel || '', 120);
+    const retirada = cleanText(req.body.retirada || req.company.retirada || '', 300);
+    const horario = cleanText(req.body.horario || 'Horario a combinar com suporte MotoJa', 120);
+    if (!empresa || !responsavel) {
+      return res.status(400).json({ error: 'dados_empresa_invalidos', message: 'Entre na conta da empresa e confira empresa/responsavel.' });
+    }
+
+    const valor = 70;
+    const driverAmount = 50;
+    const appFee = 20;
+    const taxaFixaEntrega = 4;
+    const empresaFicaPorTaxa = 1;
+    const ref = db.collection('entregas').doc();
+    const companyRef = req.companySnap.ref;
+
+    await db.runTransaction(async (tx) => {
+      const companySnap = await tx.get(companyRef);
+      const balance = companyBalance(companySnap.exists ? companySnap.data() : {});
+      if (balance.disponivel < valor) {
+        const error = new Error('Saldo insuficiente para contratar o MotoJa Exclusivo. Carregue saldo antes de aceitar a diaria.');
+        error.status = 402;
+        error.code = 'saldo_insuficiente';
+        error.balance = balance;
+        throw error;
+      }
+      const nextReserved = money(balance.reservado + valor);
+
+      tx.set(companyRef, {
+        saldo: balance.saldo,
+        reservado: nextReserved,
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      tx.set(ledgerRef(req.companyId), {
+        tipo: 'reserva',
+        origem: 'motoja_exclusivo_contratado',
+        entregaId: ref.id,
+        valor,
+        saldoAntes: balance.saldo,
+        saldoDepois: balance.saldo,
+        reservadoAntes: balance.reservado,
+        reservadoDepois: nextReserved,
+        criadoEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      tx.set(ref, {
+        empresa,
+        responsavel,
+        telefoneEmpresa: req.companyId,
+        empresaId: req.companyId,
+        tipo: 'servico_exclusivo',
+        tipoEntrega: 'MotoJa Exclusivo',
+        retirada: retirada || 'Loja da empresa',
+        entrega: 'Motoboy dedicado para a loja',
+        entregaEncontrada: 'Servico exclusivo sem rota fixa',
+        recebedor: responsavel,
+        telefoneRecebedor: req.companyId,
+        km: 0,
+        valor,
+        precoLabel: 'Diaria MotoJa Exclusivo: R$ 70,00',
+        horario,
+        periodo: horario,
+        taxaFixaEntrega,
+        empresaFicaPorTaxa,
+        ganhoMotoboyPrevisto: driverAmount,
+        ganhoAppPrevisto: appFee,
+        saldoReservado: valor,
+        status: 'pendente',
+        pagamento: 'saldo_pre_pago_empresa',
+        observacao: 'Motoboy dedicado para empresa no horario combinado. Plano sujeito a disponibilidade e confirmacao do suporte MotoJa.',
+        criadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+
+    const job = {
+      empresa,
+      responsavel,
+      telefoneEmpresa: req.companyId,
+      tipo: 'servico_exclusivo',
+      tipoEntrega: 'MotoJa Exclusivo',
+      valor,
+      horario,
+      observacao: 'Motoboy dedicado para empresa no horario combinado.'
+    };
+    const telegram = await notifyTelegramAboutDelivery(ref.id, job).catch((error) => {
+      console.error('telegram exclusive notify failed', error);
+      return { sent: false, failed: true };
+    });
+    const push = await notifyDriversAboutDelivery(ref.id, job).catch((error) => {
+      console.error('push exclusive notify failed', error);
+      return { sent: 0, failed: 1 };
+    });
+
+    return res.status(201).json({
+      ok: true,
+      deliveryId: ref.id,
+      valor,
+      motoboy: driverAmount,
+      app: appFee,
+      taxaFixaEntrega,
+      empresaFicaPorTaxa,
+      telegram,
+      push
+    });
+  } catch (error) {
+    if (error.code === 'saldo_insuficiente') {
+      return res.status(error.status || 402).json({
+        error: 'saldo_insuficiente',
+        message: error.message,
+        balance: error.balance || null
+      });
+    }
+    return next(error);
   }
 });
 
