@@ -64,21 +64,21 @@ function expectedFare(km) {
   if (!Number.isFinite(distance) || distance <= 0) return 0;
   const period = rideFarePeriod();
   if (period === 'madrugada') {
-    if (distance <= 3) return 8;
-    if (distance <= 5) return 12;
-    if (distance <= 8) return 18;
+    if (distance <= 3) return 9;
+    if (distance <= 5) return 13;
+    if (distance <= 8) return 19;
     return money(Math.ceil(distance) * 3.5);
   }
   if (period === 'noite') {
-    if (distance <= 3) return 6;
-    if (distance <= 5) return 10;
-    if (distance <= 8) return 15;
+    if (distance <= 3) return 7;
+    if (distance <= 5) return 11;
+    if (distance <= 8) return 16;
     return money(Math.ceil(distance) * 3);
   }
   let value;
-  if (distance <= 3) value = 4.5;
-  else if (distance <= 5) value = 7.5;
-  else if (distance <= 8) value = 12;
+  if (distance <= 3) value = 5.5;
+  else if (distance <= 5) value = 8.5;
+  else if (distance <= 8) value = 13;
   else value = Math.ceil(distance) * 2.5;
   return money(value);
 }
