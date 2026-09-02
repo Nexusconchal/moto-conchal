@@ -923,21 +923,57 @@ async function createPaymentPreference(rideId, ride, driverCpf) {
   };
 }
 
-function manualPixPaymentData(reason = 'mercadopago_indisponivel') {
+async function createOwnerRidePaymentPreference(rideId, ride, driverCpf) {
+  const total = money(ride.valor);
+  const split = rideSplit(ride.km);
+  const appFee = money(total * split.appPercent);
+  const driverAmount = money(total * split.driverPercent);
+
+  const preference = await mpFetch('/checkout/preferences', {
+    token: requiredEnv('MP_OWNER_ACCESS_TOKEN'),
+    method: 'POST',
+    body: {
+      external_reference: rideId,
+      notification_url: `${BACKEND_BASE_URL}/api/mercadopago/webhook`,
+      back_urls: {
+        success: appUrl('/index.html?pagamento=ok'),
+        failure: appUrl('/index.html?pagamento=erro'),
+        pending: appUrl('/index.html?pagamento=pendente')
+      },
+      auto_return: 'approved',
+      items: [{
+        id: rideId,
+        title: `Corrida MotoJa Conchal - ${ride.nome || 'cliente'}`,
+        description: `${ride.origem || '-'} para ${ride.destino || '-'}`,
+        quantity: 1,
+        currency_id: 'BRL',
+        unit_price: total
+      }],
+      metadata: {
+        ride_id: rideId,
+        driver_cpf: driverCpf,
+        payment_kind: 'ride_owner_fallback',
+        app_percent: split.appPercent,
+        driver_percent: split.driverPercent,
+        app_fee: appFee,
+        driver_amount: driverAmount
+      }
+    }
+  });
+
   return {
-    provider: 'pix_manual',
-    status: 'manual_pending',
-    pixKey: OWNER_PIX_KEY,
-    fallbackReason: reason,
-    criadoEm: admin.firestore.FieldValue.serverTimestamp()
+    preferenceId: preference.id,
+    initPoint: preference.init_point,
+    sandboxInitPoint: preference.sandbox_init_point,
+    total,
+    appFee,
+    driverAmount,
+    ownerFallback: true
   };
 }
 
 function ridePaymentInstructions(ride) {
-  if (ride.pagamento?.initPoint) {
-    return `Pague por este link Mercado Pago:\n${ride.pagamento.initPoint}\n\nDepois de pagar, envie o comprovante aqui. O app libera finalizar quando o Mercado Pago confirmar o pagamento aprovado.`;
-  }
-  return `Pague por Pix manual:\nChave Pix MotoJa: ${ride.pagamento?.pixKey || OWNER_PIX_KEY}\n\nDepois de pagar, envie o comprovante aqui para conferencia.`;
+  return `Pague por este link Mercado Pago:\n${ride.pagamento.initPoint}\n\nDepois de pagar, envie o comprovante aqui. O app libera finalizar quando o Mercado Pago confirmar o pagamento aprovado.`;
 }
 async function createCompanyDepositPreference(depositId, deposit) {
   const total = money(deposit.valor);
@@ -3087,12 +3123,48 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
     } catch (paymentError) {
-      console.error('ride mercado pago preference failed; using manual pix fallback', paymentError);
-      payment = { provider: 'pix_manual', pixKey: OWNER_PIX_KEY, fallback: true };
-      await rideRef.set({
-        pagamento: manualPixPaymentData(paymentError.code || paymentError.message || 'mercadopago_indisponivel'),
-        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
+      console.error('ride driver mercado pago preference failed; using owner automatic fallback', paymentError);
+      try {
+        payment = await createOwnerRidePaymentPreference(req.params.rideId, acceptedRide, driverCpf);
+        await rideRef.set({
+          pagamento: {
+            provider: 'mercadopago',
+            receiver: 'motoja_owner',
+            preferenceId: payment.preferenceId,
+            initPoint: payment.initPoint,
+            sandboxInitPoint: payment.sandboxInitPoint,
+            status: 'preference_created',
+            total: payment.total,
+            appFee: payment.appFee,
+            driverAmount: payment.driverAmount,
+            ownerFallback: true,
+            fallbackReason: paymentError.code || paymentError.message || 'driver_mercadopago_indisponivel',
+            criadoEm: admin.firestore.FieldValue.serverTimestamp()
+          },
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      } catch (ownerPaymentError) {
+        console.error('ride owner mercado pago fallback failed; releasing ride', ownerPaymentError);
+        await rideRef.set({
+          status: 'pendente',
+          motoboy: admin.firestore.FieldValue.delete(),
+          motoboyCpf: admin.firestore.FieldValue.delete(),
+          motoboyCnh: admin.firestore.FieldValue.delete(),
+          motoboyTelefone: admin.firestore.FieldValue.delete(),
+          motoboyFoto: admin.firestore.FieldValue.delete(),
+          aceitaEm: admin.firestore.FieldValue.delete(),
+          pagamento: {
+            provider: 'mercadopago',
+            status: 'preference_failed',
+            erro: ownerPaymentError.code || ownerPaymentError.message || 'mercadopago_indisponivel',
+            atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+          },
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        ownerPaymentError.status = ownerPaymentError.status || 503;
+        ownerPaymentError.code = ownerPaymentError.code || 'mercadopago_indisponivel';
+        throw ownerPaymentError;
+      }
     }
 
     res.json({ ok: true, payment });
@@ -3260,8 +3332,7 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
     if (!ride.clienteAvisadoEm) {
       return res.status(409).json({ error: 'avise_o_cliente_antes_de_finalizar' });
     }
-    const pagamentoManual = ride.pagamento?.provider === 'pix_manual';
-    if (!pagamentoManual && (ride.pagamento?.status !== 'approved' || ride.pagamento?.valido === false)) {
+    if (ride.pagamento?.status !== 'approved' || ride.pagamento?.valido === false) {
       return res.status(409).json({ error: 'pagamento_ainda_nao_aprovado' });
     }
     if (ride.status === 'cancelada') {
@@ -3739,6 +3810,7 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
 
     await rideRef.set({
       pagamento: {
+        ...(ride.pagamento || {}),
         provider: 'mercadopago',
         paymentId: String(payment.id),
         status: payment.status,
@@ -3749,7 +3821,8 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
         divergencia: pagamentoAprovado && !valorConfere
           ? `Valor pago ${totalPago.toFixed(2)} menor que o esperado ${valorEsperado.toFixed(2)}`
           : null,
-        appFee: money(payment.marketplace_fee || 0),
+        appFee: money(payment.marketplace_fee || payment.metadata?.app_fee || ride.pagamento?.appFee || 0),
+        driverAmount: money(payment.metadata?.driver_amount || ride.pagamento?.driverAmount || 0),
         atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
       },
       pagamentoConfirmadoEm: pagamentoAprovado && valorConfere
