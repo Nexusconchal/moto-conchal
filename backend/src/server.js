@@ -97,8 +97,25 @@ function isOutOfConchal(value) {
   return !!text && !text.includes('conchal');
 }
 
+const DAILY_PLAN_TYPE = 'Plano Diario MotoJa Pro';
+const DAILY_PLAN_PRICE = 70;
+const DAILY_PLAN_DELIVERY_FEE = 4;
+const DAILY_PLAN_APP_FEE = 1;
+
+function todayKeySaoPaulo(date = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(date);
+}
+
+function dailyPlanRef(companyId, dayKey = todayKeySaoPaulo()) {
+  return db.collection('empresas').doc(companyId).collection('planosDiarios').doc(dayKey);
+}
+
 function isFixedFoodDelivery(type) {
   return /lanche|comida|pizza|pastel|acai|sorvete|marmita/i.test(String(type || ''));
+}
+
+function isDailyPlanDelivery(type) {
+  return normalizeText(type).includes('plano diario motoja pro');
 }
 
 function isSpecialFoodDestination(value) {
@@ -202,6 +219,16 @@ function deliverySplit(delivery = {}) {
       driverPercent: total ? money(50 / total) : 0
     };
   }
+  if (isDailyPlanDelivery(delivery.tipoEntrega)) {
+    const stops = deliveryStopCount(delivery.paradas);
+    const appFee = money(Math.min(total, DAILY_PLAN_APP_FEE * stops));
+    return {
+      appFee,
+      driverAmount: money(Math.max(0, total - appFee)),
+      appPercent: total ? money(appFee / total) : 0,
+      driverPercent: total ? money((total - appFee) / total) : 0
+    };
+  }
   if (isFixedFoodDelivery(delivery.tipoEntrega)) {
     const appFee = fixedFoodDeliveryAppFee(delivery);
     return {
@@ -229,6 +256,10 @@ function expectedDeliveryFare(distanceKm, stops = 1, type = '', delivery = {}) {
   const distance = Number(distanceKm || 0);
   const deliveryStops = deliveryStopCount(stops);
   if (!Number.isFinite(distance) || distance <= 0) return 0;
+
+  if (isDailyPlanDelivery(type)) {
+    return money(DAILY_PLAN_DELIVERY_FEE * deliveryStops);
+  }
 
   if (isFixedFoodDelivery(type)) {
     return fixedFoodDeliveryFare({ ...delivery, paradas: deliveryStops, tipoEntrega: type });
@@ -2437,6 +2468,89 @@ app.post('/api/rides/:rideId/client-cancel', async (req, res, next) => {
   }
 });
 
+app.get('/api/companies/daily-plan/status', assertCompany, async (req, res, next) => {
+  try {
+    const dia = todayKeySaoPaulo();
+    const snap = await dailyPlanRef(req.companyId, dia).get();
+    const plan = snap.exists ? snap.data() : null;
+    res.json({
+      ok: true,
+      active: !!plan && plan.status === 'ativo',
+      dia,
+      tipoEntrega: DAILY_PLAN_TYPE,
+      diaria: DAILY_PLAN_PRICE,
+      taxaEntrega: DAILY_PLAN_DELIVERY_FEE,
+      appFee: DAILY_PLAN_APP_FEE
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/companies/daily-plan/activate', assertCompany, createRideLimiter, async (req, res, next) => {
+  try {
+    const dia = todayKeySaoPaulo();
+    const companyRef = req.companySnap.ref;
+    const planRef = dailyPlanRef(req.companyId, dia);
+    let balanceAfter = null;
+    let alreadyActive = false;
+
+    await db.runTransaction(async (tx) => {
+      const planSnap = await tx.get(planRef);
+      if (planSnap.exists && planSnap.data().status === 'ativo') {
+        alreadyActive = true;
+        balanceAfter = companyBalance((await tx.get(companyRef)).data() || {});
+        return;
+      }
+
+      const companySnap = await tx.get(companyRef);
+      const balance = companyBalance(companySnap.exists ? companySnap.data() : {});
+      if (balance.disponivel < DAILY_PLAN_PRICE) {
+        const error = new Error('Saldo insuficiente para ativar o Plano Diario MotoJa Pro. Carregue saldo antes de aceitar.');
+        error.status = 402;
+        error.code = 'saldo_insuficiente';
+        error.balance = balance;
+        throw error;
+      }
+      const nextSaldo = money(balance.saldo - DAILY_PLAN_PRICE);
+      tx.set(companyRef, {
+        saldo: nextSaldo,
+        reservado: balance.reservado,
+        planoDiarioAtivoDia: dia,
+        planoDiarioTaxa: DAILY_PLAN_DELIVERY_FEE,
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      tx.set(planRef, {
+        status: 'ativo',
+        dia,
+        valor: DAILY_PLAN_PRICE,
+        taxaEntrega: DAILY_PLAN_DELIVERY_FEE,
+        appFee: DAILY_PLAN_APP_FEE,
+        tipoEntrega: DAILY_PLAN_TYPE,
+        ativadoEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+      tx.set(ledgerRef(req.companyId), {
+        tipo: 'debito',
+        origem: 'plano_diario_motoja_pro_ativado',
+        valor: DAILY_PLAN_PRICE,
+        saldoAntes: balance.saldo,
+        saldoDepois: nextSaldo,
+        reservadoAntes: balance.reservado,
+        reservadoDepois: balance.reservado,
+        criadoEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+      balanceAfter = companyBalance({ saldo: nextSaldo, reservado: balance.reservado });
+    });
+
+    res.json({ ok: true, active: true, alreadyActive, dia, balance: balanceAfter, tipoEntrega: DAILY_PLAN_TYPE, diaria: DAILY_PLAN_PRICE, taxaEntrega: DAILY_PLAN_DELIVERY_FEE });
+  } catch (error) {
+    if (error.code === 'saldo_insuficiente') {
+      return res.status(error.status || 402).json({ error: 'saldo_insuficiente', message: error.message, balance: error.balance || null });
+    }
+    next(error);
+  }
+});
+
 app.post('/api/deliveries', assertCompany, createRideLimiter, async (req, res, next) => {
   try {
     const delivery = deliveryPublicData(req.body);
@@ -2508,6 +2622,22 @@ app.post('/api/deliveries', assertCompany, createRideLimiter, async (req, res, n
       const companyRef = req.companySnap.ref;
       const companySnap = await tx.get(companyRef);
       const balance = companyBalance(companySnap.exists ? companySnap.data() : {});
+      const dailyPlan = isDailyPlanDelivery(delivery.tipoEntrega);
+      if (dailyPlan) {
+        const dia = todayKeySaoPaulo();
+        const planSnap = await tx.get(dailyPlanRef(req.companyId, dia));
+        if (!planSnap.exists || planSnap.data().status !== 'ativo') {
+          const error = new Error('Plano Diario MotoJa Pro nao esta ativo hoje. Ative e desconte a diaria antes de usar taxa fixa de R$ 4,00.');
+          error.status = 403;
+          error.code = 'plano_diario_inativo';
+          throw error;
+        }
+        delivery.planoDiario = true;
+        delivery.planoDiarioDia = dia;
+        delivery.taxaFixaEntrega = DAILY_PLAN_DELIVERY_FEE;
+        delivery.empresaFicaPorTaxa = DAILY_PLAN_APP_FEE;
+        delivery.precoLabel = `Plano Diario MotoJa Pro ativo: R$ ${DAILY_PLAN_DELIVERY_FEE.toFixed(2).replace('.', ',')} por entrega/ponto`;
+      }
       if (balance.disponivel < delivery.valor) {
         const error = new Error('Saldo insuficiente. Faca um deposito e aguarde aprovacao do dono antes de chamar motoboy.');
         error.status = 402;
@@ -2573,6 +2703,9 @@ app.post('/api/deliveries', assertCompany, createRideLimiter, async (req, res, n
         message: error.message,
         balance: error.balance || null
       });
+    }
+    if (error.code === 'plano_diario_inativo') {
+      return res.status(error.status || 403).json({ error: 'plano_diario_inativo', message: error.message });
     }
     next(error);
   }
