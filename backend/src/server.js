@@ -629,6 +629,16 @@ function appUrl(path) {
   return `${String(process.env.APP_BASE_URL || '').replace(/\/$/, '')}${path}`;
 }
 
+function backendUrl(path) {
+  return `${BACKEND_BASE_URL}${path}`;
+}
+
+function mercadoPagoWebhookUrl(params = {}) {
+  const query = new URLSearchParams(params);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return backendUrl(`/api/mercadopago/webhook${suffix}`);
+}
+
 function whatsappLink(phone, message) {
   const digits = onlyDigits(phone);
   if (!digits) return '';
@@ -889,7 +899,7 @@ async function createPaymentPreference(rideId, ride, driverCpf) {
     body: {
       external_reference: rideId,
       marketplace_fee: appFee,
-      notification_url: `${BACKEND_BASE_URL}/api/mercadopago/webhook`,
+      notification_url: mercadoPagoWebhookUrl({ rideId, driverCpf }),
       back_urls: {
         success: appUrl('/index.html?pagamento=ok'),
         failure: appUrl('/index.html?pagamento=erro'),
@@ -934,7 +944,7 @@ async function createOwnerRidePaymentPreference(rideId, ride, driverCpf) {
     method: 'POST',
     body: {
       external_reference: rideId,
-      notification_url: `${BACKEND_BASE_URL}/api/mercadopago/webhook`,
+      notification_url: mercadoPagoWebhookUrl({ rideId, receiver: 'owner' }),
       back_urls: {
         success: appUrl('/index.html?pagamento=ok'),
         failure: appUrl('/index.html?pagamento=erro'),
@@ -3714,10 +3724,18 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
       return res.status(200).json({ ignored: true });
     }
 
+    let paymentToken = requiredEnv('MP_OWNER_ACCESS_TOKEN');
+    const webhookDriverCpf = onlyDigits(req.query.driverCpf);
+    if (webhookDriverCpf.length === 11) {
+      const driverSnap = await db.collection('motoboys').doc(webhookDriverCpf).get();
+      const sellerToken = driverSnap.data()?.mercadoPago?.accessToken;
+      if (sellerToken) paymentToken = sellerToken;
+    }
+
     const payment = await mpFetch(`/v1/payments/${paymentId}`, {
-      token: requiredEnv('MP_OWNER_ACCESS_TOKEN')
+      token: paymentToken
     });
-    const rideId = payment.external_reference || payment.metadata?.ride_id;
+    const rideId = req.query.rideId || payment.external_reference || payment.metadata?.ride_id;
     const paymentKind = String(payment.metadata?.payment_kind || '');
     if (String(rideId || '').startsWith('deposit:') || paymentKind === 'company_deposit') {
       const depositId = String(rideId || '').startsWith('deposit:')
