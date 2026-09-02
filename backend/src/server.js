@@ -36,7 +36,8 @@ function serviceAccount() {
 }
 
 function money(value) {
-  return Math.round(Number(value || 0) * 100) / 100;
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : 0;
 }
 
 function saoPauloHour(date = new Date()) {
@@ -1695,13 +1696,18 @@ app.post('/api/companies/register', createRideLimiter, async (req, res, next) =>
       return res.status(400).json({ error: 'dados_empresa_invalidos', message: 'Preencha empresa, responsavel, email, WhatsApp e senha com pelo menos 6 caracteres.' });
     }
 
+    const companyRef = companyRefFromPhone(telefoneEmpresa);
+    const existingByPhone = await companyRef.get();
+    if (existingByPhone.exists && existingByPhone.data()?.passwordHash) {
+      return res.status(409).json({ error: 'empresa_ja_cadastrada', message: 'Esta empresa ja tem conta. Use Entrar ou Esqueci minha senha.' });
+    }
+
     const existingByEmail = await db.collection('empresas').where('email', '==', email).limit(1).get();
     if (!existingByEmail.empty && existingByEmail.docs[0].id !== telefoneEmpresa) {
       return res.status(409).json({ error: 'email_ja_cadastrado', message: 'Este email ja esta cadastrado em outra empresa.' });
     }
 
     const auth = passwordHash(password);
-    const companyRef = companyRefFromPhone(telefoneEmpresa);
     const token = await issueCompanySession(companyRef);
     const companyData = {
       empresa,
@@ -3660,6 +3666,12 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
 
       const companySnap = await tx.get(companyRef);
       const balance = companyBalance(companySnap.exists ? companySnap.data() : {});
+      if (balance.saldo < valor || balance.reservado < valor) {
+        const error = new Error('Saldo reservado da empresa nao cobre esta entrega. Chame o suporte antes de finalizar.');
+        error.status = 409;
+        error.code = 'saldo_reservado_insuficiente';
+        throw error;
+      }
       const nextSaldo = money(Math.max(0, balance.saldo - valor));
       const nextReserved = money(Math.max(0, balance.reservado - valor));
 
