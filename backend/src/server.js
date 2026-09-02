@@ -1085,6 +1085,85 @@ async function notifyDriversAboutRide(rideId, ride) {
   };
 }
 
+async function notifyCustomersRideReminder(slot) {
+  const customers = await db.collection('clientes').limit(1000).get();
+  const tokens = [];
+
+  customers.forEach((doc) => {
+    const data = doc.data() || {};
+    const saved = data.fcmTokens || {};
+    Object.entries(saved).forEach(([token, info]) => {
+      if (info?.ativo !== false && info?.tipo === 'cliente_lembrete') tokens.push(token);
+    });
+  });
+
+  if (!tokens.length) return { sent: 0, failed: 0 };
+
+  const morning = slot === '06:40';
+  const response = await admin.messaging().sendEachForMulticast({
+    tokens,
+    notification: {
+      title: 'MotoJa Conchal',
+      body: morning ? 'Vai sair hoje? Chame sua MotoJa em poucos segundos.' : 'Precisa de mototaxi em Conchal? A MotoJa esta online.'
+    },
+    webpush: {
+      fcmOptions: {
+        link: appUrl('/index.html')
+      }
+    },
+    data: {
+      tipo: 'cliente_lembrete',
+      slot
+    }
+  });
+
+  return {
+    sent: response.successCount,
+    failed: response.failureCount
+  };
+}
+
+function saoPauloDateTimeParts(date = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).formatToParts(date).filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]));
+  return {
+    day: parts.year + '-' + parts.month + '-' + parts.day,
+    time: parts.hour + ':' + parts.minute
+  };
+}
+
+async function runCustomerReminderTick(date = new Date()) {
+  const { day, time } = saoPauloDateTimeParts(date);
+  if (time !== '06:40' && time !== '16:50') return;
+
+  const markerRef = db.collection('sistema').doc('cliente_lembrete_' + day + '_' + time.replace(':', ''));
+  let shouldSend = false;
+  await db.runTransaction(async (tx) => {
+    const marker = await tx.get(markerRef);
+    if (marker.exists) return;
+    tx.set(markerRef, {
+      day,
+      time,
+      criadoEm: admin.firestore.FieldValue.serverTimestamp()
+    });
+    shouldSend = true;
+  });
+  if (!shouldSend) return;
+
+  const result = await notifyCustomersRideReminder(time);
+  await markerRef.set({
+    ...result,
+    enviadoEm: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
+}
+
 async function notifyDriversAboutDelivery(deliveryId, delivery) {
   const drivers = await db.collection('motoboys').where('status', '==', 'ativo').get();
   const tokens = [];
@@ -1772,6 +1851,36 @@ app.post('/api/customers/me', createRideLimiter, async (req, res, next) => {
     if (!update.nome) return res.status(400).json({ error: 'nome_cliente_obrigatorio', message: 'Digite seu nome para salvar o perfil.' });
     await snap.docs[0].ref.set(update, { merge: true });
     res.json({ ok: true, customer: publicCustomer({ ...snap.docs[0].data(), ...update, fotoCliente: fotoCliente || snap.docs[0].data().fotoCliente }, snap.docs[0].id) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/customers/push-token', createRideLimiter, async (req, res, next) => {
+  try {
+    const telefoneCliente = onlyDigits(req.body.telefoneCliente);
+    const token = String(req.body.token || '').trim();
+    const nome = cleanText(req.body.nome, 80);
+    if (telefoneCliente.length < 10 || telefoneCliente.length > 11 || !token) {
+      return res.status(400).json({ error: 'dados_invalidos', message: 'Informe WhatsApp e permita notificacoes.' });
+    }
+
+    await db.collection('clientes').doc(telefoneCliente).set({
+      nome: nome || 'Cliente MotoJa',
+      telefoneCliente,
+      fcmTokens: {
+        [token]: {
+          ativo: true,
+          tipo: 'cliente_lembrete',
+          horarios: ['06:40', '16:50'],
+          userAgent: String(req.body.userAgent || '').slice(0, 300),
+          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+        }
+      },
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    res.json({ ok: true, horarios: ['06:40', '16:50'] });
   } catch (error) {
     next(error);
   }
@@ -3866,6 +3975,12 @@ app.post('/api/jobs/cleanup', assertAdmin, async (_req, res, next) => {
 setInterval(() => {
   cleanupRides().catch((error) => console.error('cleanup failed', error));
 }, 30 * 1000);
+
+setInterval(() => {
+  runCustomerReminderTick().catch((error) => console.error('customer reminder failed', error));
+}, 60 * 1000);
+runCustomerReminderTick().catch((error) => console.error('customer reminder startup failed', error));
+
 
 app.use((error, _req, res, _next) => {
   console.error(error);
