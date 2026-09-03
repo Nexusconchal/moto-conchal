@@ -22,11 +22,12 @@ self.addEventListener('push', function (event) {
 self.addEventListener('notificationclick', function (event) {
   event.notification.close();
   var data = event.notification && event.notification.data ? event.notification.data : {};
-  var target = data.tipo === 'cliente_lembrete'
-    ? './index.html'
-    : data.tipo === 'nova_entrega'
-      ? './motoboy.html?aba=entregas'
-      : './motoboy.html';
+  var target = './motoboy.html';
+  if (data.tipo === 'cliente_lembrete') {
+    target = './index.html';
+  } else if (data.tipo === 'nova_entrega') {
+    target = './motoboy.html?aba=entregas';
+  }
 
   event.waitUntil(clients.openWindow(target));
 });
