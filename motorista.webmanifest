@@ -1,7 +1,7 @@
 {
   "id": "/moto-conchal/motoboy.html?app=nexus-motoja-motorista",
-  "name": "Motorista Nexus MotoJa",
-  "short_name": "Nexus Motorista",
+  "name": "Nexus MotoJÁ Motorista",
+  "short_name": "MotoJÁ Motorista",
   "description": "Painel dos motoboys da Nexus MotoJa para receber corridas e entregas.",
   "start_url": "./motoboy.html?app=nexus-motoja-motorista",
   "scope": "./",
