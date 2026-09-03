@@ -13,12 +13,13 @@ firebase.initializeApp({
 const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
-  const title = payload.notification?.title || 'Nova corrida Nexus MotoJa';
+  const notification = payload && payload.notification ? payload.notification : {};
+  const title = notification.title || 'Nova corrida Nexus MotoJa';
   const options = {
-    body: payload.notification?.body || 'Abra o painel do motoboy para aceitar.',
+    body: notification.body || 'Abra o painel do motoboy para aceitar.',
     icon: './nexus-motoja-icon-192.png',
     badge: './nexus-motoja-icon-192.png',
-    data: payload.data || {},
+    data: payload && payload.data ? payload.data : {},
   };
 
   self.registration.showNotification(title, options);
@@ -26,7 +27,7 @@ messaging.onBackgroundMessage((payload) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const data = event.notification?.data || {};
+  const data = event.notification && event.notification.data ? event.notification.data : {};
   const target = data.tipo === 'cliente_lembrete' ? './index.html' : data.tipo === 'nova_entrega' ? './motoboy.html?aba=entregas' : './motoboy.html';
   event.waitUntil(clients.openWindow(target));
 });

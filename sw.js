@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexus-motoja-v58-push-scope-fix';
+const CACHE_NAME = 'nexus-motoja-v59-push-old-android-fix';
 const ARQUIVOS = ['./', './index.html', './motoboy.html', './dono.html', './empresa.html', './privacy.html', './cliente.webmanifest', './motorista.webmanifest', './dono.webmanifest', './firebase-messaging-sw.js', './nexus-motoja-logo-mark.png', './motorista-icon.svg', './nexus-motoja-icon-180.png', './nexus-motoja-icon-192.png', './nexus-motoja-icon-512.png'];
 
 self.addEventListener('install', (event) => {
