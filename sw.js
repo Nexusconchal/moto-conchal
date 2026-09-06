@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexus-motoja-v62-push-cache-reset';
+const CACHE_NAME = 'nexus-motoja-v63-app-shell-fast';
 const ARQUIVOS = ['./', './index.html', './motoboy.html', './dono.html', './empresa.html', './privacy.html', './cliente.webmanifest', './motorista.webmanifest', './dono.webmanifest', './firebase-messaging-sw.js', './nexus-motoja-logo-mark.png', './motorista-icon.svg', './nexus-motoja-icon-180.png', './nexus-motoja-icon-192.png', './nexus-motoja-icon-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -18,13 +18,28 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
 
-  event.respondWith(
-    fetch(event.request)
-      .then((resposta) => {
-        const copia = resposta.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copia));
-        return resposta;
+  const url = new URL(event.request.url);
+  const mesmoSite = url.origin === location.origin;
+
+  if (mesmoSite) {
+    event.respondWith(
+      caches.match(event.request).then((cache) => {
+        const atualizacao = fetch(event.request)
+          .then((resposta) => {
+            if (resposta && resposta.ok) {
+              const copia = resposta.clone();
+              caches.open(CACHE_NAME).then((c) => c.put(event.request, copia));
+            }
+            return resposta;
+          })
+          .catch(() => null);
+
+        if (cache) return cache;
+        return atualizacao.then((resposta) => resposta || caches.match('./index.html'));
       })
-      .catch(() => caches.match(event.request))
-  );
+    );
+    return;
+  }
+
+  event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
 });
