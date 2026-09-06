@@ -13,6 +13,10 @@ self.addEventListener('push', function (event) {
     body: notification.body || data.body || 'A MotoJa esta online.',
     icon: './nexus-motoja-icon-192.png',
     badge: './nexus-motoja-icon-192.png',
+    tag: data.tipo || 'motoja',
+    renotify: true,
+    requireInteraction: data.tipo === 'cliente_lembrete',
+    vibrate: [180, 80, 180],
     data: data
   };
 

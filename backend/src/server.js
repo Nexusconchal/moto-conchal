@@ -1112,8 +1112,19 @@ async function notifyCustomersRideReminder(slot) {
       body: morning ? 'Vai sair hoje? Chame sua MotoJa em poucos segundos.' : 'Precisa de mototaxi em Conchal? A MotoJa esta online.'
     },
     webpush: {
+      headers: {
+        Urgency: 'high'
+      },
       fcmOptions: {
         link: appUrl('/index.html')
+      },
+      notification: {
+        icon: appUrl('/nexus-motoja-icon-192.png'),
+        badge: appUrl('/nexus-motoja-icon-192.png'),
+        tag: 'cliente_lembrete_' + slot.replace(':', ''),
+        renotify: true,
+        requireInteraction: true,
+        vibrate: [180, 80, 180]
       }
     },
     data: {
