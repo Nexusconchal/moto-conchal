@@ -2668,9 +2668,11 @@ app.post('/api/rides/:rideId/client-cancel', async (req, res, next) => {
         throw error;
       }
       if (!['pendente', 'expirada'].includes(ride.status)) {
-        const error = new Error('Essa corrida ja foi aceita e nao pode ser cancelada por aqui.');
+        const error = new Error('Essa corrida ja foi aceita por um motoboy e nao pode ser cancelada por aqui.');
         error.status = 409;
         error.code = 'corrida_ja_aceita';
+        error.currentStatus = ride.status || '';
+        error.motoboy = ride.motoboy || '';
         throw error;
       }
       tx.update(ref, {
@@ -4040,7 +4042,9 @@ app.use((error, _req, res, _next) => {
   console.error(error);
   res.status(error.status || 500).json({
     error: error.code || 'internal_error',
-    message: error.message
+    message: error.message,
+    currentStatus: error.currentStatus || undefined,
+    motoboy: error.motoboy || undefined
   });
 });
 
