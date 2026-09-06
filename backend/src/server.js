@@ -370,6 +370,10 @@ function timestampMs(ts) {
   return 0;
 }
 
+function dateKeySaoPaulo(date = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(date);
+}
+
 function serializeFirestore(value) {
   if (!value) return value;
   if (typeof value.toDate === 'function') {
@@ -1402,18 +1406,56 @@ app.post('/api/admin/login', (req, res) => {
   return res.json({ ok: true });
 });
 
+app.post('/api/analytics/event', async (req, res, next) => {
+  try {
+    const type = cleanText(req.body.type || req.body.tipo, 80);
+    if (!type) return res.status(400).json({ error: 'tipo_obrigatorio' });
+
+    const campaign = cleanText(req.body.campaign || req.body.campanha || '', 80);
+    const source = cleanText(req.body.source || req.body.origem || 'cliente', 40);
+    const rideId = cleanText(req.body.rideId || req.body.corridaId || '', 120);
+    const details = req.body.details && typeof req.body.details === 'object' ? req.body.details : {};
+    const allowedDetails = {};
+
+    Object.entries(details).slice(0, 20).forEach(([key, value]) => {
+      if (['string', 'number', 'boolean'].includes(typeof value)) {
+        allowedDetails[cleanText(key, 40)] = typeof value === 'string' ? cleanText(value, 160) : value;
+      }
+    });
+
+    await db.collection('eventosFunil').add({
+      type,
+      source,
+      campaign,
+      rideId,
+      telefoneCliente: onlyDigits(req.body.telefoneCliente).slice(0, 11),
+      sessionId: cleanText(req.body.sessionId, 80),
+      page: cleanText(req.body.page || req.header('referer') || '', 220),
+      userAgent: cleanText(req.header('user-agent') || req.body.userAgent || '', 260),
+      details: allowedDetails,
+      dia: dateKeySaoPaulo(),
+      criadaEm: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    return res.status(201).json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
   try {
-    const [corridas, entregas, motoboys, depositos, recuperacoesSenhaEmpresa, empresasRaw] = await Promise.all([
+    const [corridas, entregas, motoboys, depositos, recuperacoesSenhaEmpresa, empresasRaw, eventosFunil] = await Promise.all([
       collectionState('corridas'),
       collectionState('entregas'),
       collectionState('motoboys'),
       collectionState('depositos'),
       collectionState('recuperacoesSenhaEmpresa'),
-      collectionState('empresas')
+      collectionState('empresas'),
+      collectionState('eventosFunil', 2000)
     ]);
     const empresas = empresasRaw.map((empresa) => publicCompany(empresa, empresa.id));
-    return res.json({ ok: true, corridas, entregas, motoboys, depositos, recuperacoesSenhaEmpresa, empresas });
+    return res.json({ ok: true, corridas, entregas, motoboys, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil });
   } catch (error) {
     return next(error);
   }
