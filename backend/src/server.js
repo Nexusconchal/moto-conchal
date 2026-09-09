@@ -758,7 +758,7 @@ async function notifyTelegramAboutRide(rideId, ride) {
   const km = Number(ride.km || 0).toFixed(2).replace('.', ',');
   const appLink = process.env.APP_BASE_URL
     ? appUrl('/motoboy.html')
-    : 'https://nexusconchal.github.io/moto-conchal/motoboy.html';
+    : 'https://nexusmotoja.com.br/motoboy.html';
   const originMap = ride.origemMapa ? `\nMapa origem: ${ride.origemMapa}` : '';
   const message = [
     '<b>NOVA CORRIDA TOCANDO</b>',
@@ -806,7 +806,7 @@ async function notifyTelegramAboutDelivery(deliveryId, delivery) {
   const km = Number(delivery.km || 0).toFixed(2).replace('.', ',');
   const appLink = process.env.APP_BASE_URL
     ? appUrl('/motoboy.html')
-    : 'https://nexusconchal.github.io/moto-conchal/motoboy.html';
+    : 'https://nexusmotoja.com.br/motoboy.html';
   const pickupMap = delivery.retiradaMapa ? `\nMapa retirada: ${delivery.retiradaMapa}` : '';
   const message = [
     '<b>NOVA ENTREGA EMPRESARIAL</b>',
