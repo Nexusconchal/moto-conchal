@@ -896,11 +896,17 @@ const db = admin.firestore();
 const app = express();
 app.set('trust proxy', 1);
 
-const DEFAULT_ALLOWED_ORIGINS = 'https://nexusmotoja.com.br,https://www.nexusmotoja.com.br,https://motoboy-conchal.onrender.com';
-const allowedOrigins = String(process.env.ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGINS)
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://nexusmotoja.com.br',
+  'https://www.nexusmotoja.com.br',
+  'https://nexusconchal.github.io',
+  'https://motoboy-conchal.onrender.com'
+].join(',');
+const allowedOrigins = String(`${DEFAULT_ALLOWED_ORIGINS},${process.env.ALLOWED_ORIGINS || ''}`)
   .split(',')
   .map((origin) => origin.trim())
-  .filter(Boolean);
+  .filter(Boolean)
+  .filter((origin, index, all) => all.indexOf(origin) === index);
 
 app.use(cors({
   origin(origin, callback) {
