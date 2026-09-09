@@ -126,6 +126,7 @@ function isSpecialFoodDestination(value) {
 
 function requestedPlaceHint(value) {
   const text = normalizeText(value);
+  if (text.includes('arthur nogueira')) return 'artur nogueira';
   return [
     'conchal',
     'martinho prado',
@@ -133,12 +134,21 @@ function requestedPlaceHint(value) {
     'iate',
     'engenheiro coelho',
     'artur nogueira',
-    'mogi mirim'
+    'mogi mirim',
+    'mogi guacu',
+    'araras',
+    'americana',
+    'limeira',
+    'leme',
+    'pirassununga',
+    'rio claro',
+    'campinas'
   ].find((hint) => text.includes(hint)) || '';
 }
 
 function ensureResolvedPlaceMatches(input, resolved, label = 'Endereco') {
-  const expectedPlace = requestedPlaceHint(input) || 'conchal';
+  const expectedPlace = requestedPlaceHint(input);
+  if (!expectedPlace) return;
   if (!normalizeText(resolved).includes(expectedPlace)) {
     const error = new Error(`${label} nao conferiu com o local esperado (${expectedPlace}). Digite rua, numero, bairro e cidade e calcule novamente.`);
     error.status = 400;
@@ -156,7 +166,8 @@ function ensureResolvedAddressIsSpecific(input, resolved, label = 'Endereco') {
   const found = normalizeText(resolved);
   const requestedStreetOrNumber = /\d|\br\.?\b|rua|avenida|av\.?|estrada|rodovia|travessa/.test(source);
   if (!requestedStreetOrNumber) return;
-  const expectedPlace = requestedPlaceHint(input) || 'conchal';
+  const expectedPlace = requestedPlaceHint(input);
+  if (!expectedPlace) return;
   if (found.includes(expectedPlace)) return;
   const foundStreetOrNumber = /\d|\br\.?\b|rua|avenida|av\.?|estrada|rodovia|travessa/.test(found);
   if (!foundStreetOrNumber) {
@@ -169,9 +180,29 @@ function ensureResolvedAddressIsSpecific(input, resolved, label = 'Endereco') {
 
 function ensureDistantRouteIsPlausible(distanceKm, ...texts) {
   const distance = Number(distanceKm || 0);
-  const hasDistantPlace = texts.some((text) => isSpecialFoodDestination(text));
-  if (hasDistantPlace && Number.isFinite(distance) && distance > 0 && distance < 5) {
-    const error = new Error('A rota para Martinho Prado, Tujuguaba ou Iate ficou curta demais. Confira se o endereco encontrado esta correto antes de chamar o motoboy.');
+  const distantPlaces = [
+    'martinho prado',
+    'tujuguaba',
+    'iate',
+    'engenheiro coelho',
+    'artur nogueira',
+    'arthur nogueira',
+    'mogi mirim',
+    'mogi guacu',
+    'araras',
+    'americana',
+    'limeira',
+    'leme',
+    'pirassununga',
+    'rio claro',
+    'campinas'
+  ];
+  const hasDistantPlace = texts.some((text) => {
+    const normalized = normalizeText(text);
+    return distantPlaces.some((place) => normalized.includes(place));
+  });
+  if (hasDistantPlace && Number.isFinite(distance) && distance > 0 && distance < 10) {
+    const error = new Error('A rota para outra cidade ficou curta demais. Confira se o endereco encontrado esta correto antes de chamar o motoboy.');
     error.status = 400;
     error.code = 'rota_distante_curta_demais';
     throw error;
@@ -830,7 +861,7 @@ const db = admin.firestore();
 const app = express();
 app.set('trust proxy', 1);
 
-const DEFAULT_ALLOWED_ORIGINS = 'https://nexusconchal.github.io,https://motoboy-conchal.onrender.com';
+const DEFAULT_ALLOWED_ORIGINS = 'https://nexusconchal.github.io,https://nexusmotoja.com.br,https://www.nexusmotoja.com.br,https://motoboy-conchal.onrender.com';
 const allowedOrigins = String(process.env.ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGINS)
   .split(',')
   .map((origin) => origin.trim())
