@@ -902,8 +902,17 @@ const allowedOrigins = String(process.env.ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORI
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error('Origin not allowed'));
+  }
+}));
 app.use(helmet());
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '8mb' }));
 app.use(morgan('tiny'));
 app.use(rateLimit({
   windowMs: 60 * 1000,
@@ -927,16 +936,6 @@ const mapLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'muitas_tentativas_mapa', message: 'Aguarde um pouco antes de consultar o mapa novamente.' }
 });
-
-app.use(cors({
-  origin(origin, callback) {
-    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
-      callback(null, true);
-      return;
-    }
-    callback(new Error('Origin not allowed'));
-  }
-}));
 
 async function mpFetch(path, { token, method = 'GET', body } = {}) {
   const response = await fetch(`${MP_API}${path}`, {
