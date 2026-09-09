@@ -93,6 +93,18 @@ function rideSplit(km) {
   };
 }
 
+function rideSplitAmounts(total, km) {
+  const amount = money(total);
+  const split = rideSplit(km);
+  const appFee = money(amount * split.appPercent);
+  return {
+    ...split,
+    total: amount,
+    appFee,
+    driverAmount: money(Math.max(0, amount - appFee))
+  };
+}
+
 function isOutOfConchal(value) {
   const text = normalizeText(value);
   return !!text && !text.includes('conchal');
@@ -932,10 +944,8 @@ async function createPaymentPreference(rideId, ride, driverCpf) {
     throw error;
   }
 
-  const total = money(ride.valor);
-  const split = rideSplit(ride.km);
-  const appFee = money(total * split.appPercent);
-  const driverAmount = money(total * split.driverPercent);
+  const split = rideSplitAmounts(ride.valor, ride.km);
+  const { total, appFee, driverAmount } = split;
 
   const preference = await mpFetch('/checkout/preferences', {
     token: sellerToken,
@@ -962,7 +972,9 @@ async function createPaymentPreference(rideId, ride, driverCpf) {
         ride_id: rideId,
         driver_cpf: driverCpf,
         app_percent: split.appPercent,
-        driver_percent: split.driverPercent
+        driver_percent: split.driverPercent,
+        app_fee: appFee,
+        driver_amount: driverAmount
       }
     }
   });
@@ -978,10 +990,8 @@ async function createPaymentPreference(rideId, ride, driverCpf) {
 }
 
 async function createOwnerRidePaymentPreference(rideId, ride, driverCpf) {
-  const total = money(ride.valor);
-  const split = rideSplit(ride.km);
-  const appFee = money(total * split.appPercent);
-  const driverAmount = money(total * split.driverPercent);
+  const split = rideSplitAmounts(ride.valor, ride.km);
+  const { total, appFee, driverAmount } = split;
 
   const preference = await mpFetch('/checkout/preferences', {
     token: requiredEnv('MP_OWNER_ACCESS_TOKEN'),
@@ -3653,12 +3663,16 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
       return res.status(409).json({ error: 'corrida_cancelada' });
     }
 
-    const split = rideSplit(ride.km);
+    const split = rideSplitAmounts(ride.pagamento?.total || ride.valor, ride.km);
     await rideRef.set({
       status: 'finalizada',
       finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
-      ganhoMotoboy: split.driverPercent,
-      ganhoApp: split.appPercent,
+      ganhoMotoboy: split.driverAmount,
+      ganhoApp: split.appFee,
+      percentualMotoboy: split.driverPercent,
+      percentualApp: split.appPercent,
+      valorMotoboy: split.driverAmount,
+      valorApp: split.appFee,
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
 
