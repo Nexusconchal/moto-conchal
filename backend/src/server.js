@@ -553,6 +553,7 @@ async function issueCustomerSession(ref) {
 }
 
 function publicCompany(data = {}, id = '') {
+  const status = companyStatus(data);
   return {
     id,
     empresa: data.empresa || '',
@@ -560,6 +561,9 @@ function publicCompany(data = {}, id = '') {
     email: data.email || '',
     telefoneEmpresa: data.telefoneEmpresa || id,
     retirada: data.retirada || '',
+    status,
+    aprovada: status === 'aprovada',
+    bloqueada: status === 'bloqueada',
     pagamentoModo: data.pagamentoModo === 'mercadopago' ? 'mercadopago' : 'pix_manual',
     mercadoPagoEmpresaConectado: !!data.ultimoDepositoMercadoPagoEm,
     integracaoAtiva: !!data.integracaoAtiva,
@@ -567,6 +571,25 @@ function publicCompany(data = {}, id = '') {
     integracaoNome: data.integracaoNome || '',
     ...companyBalance(data)
   };
+}
+
+function companyStatus(data = {}) {
+  const status = String(data.status || '').trim();
+  if (status === 'aguardando_aprovacao' || status === 'bloqueada') return status;
+  return 'aprovada';
+}
+
+function assertCompanyApproved(req, res, next) {
+  const status = companyStatus(req.company);
+  if (status !== 'aprovada') {
+    return res.status(403).json({
+      error: status === 'bloqueada' ? 'empresa_bloqueada' : 'empresa_aguardando_aprovacao',
+      message: status === 'bloqueada'
+        ? 'Esta empresa esta bloqueada pelo dono. Fale com o suporte MotoJa.'
+        : 'Cadastro da empresa aguardando aprovacao do dono. Depois de aprovado, voce podera pedir deposito e chamar motoboy.'
+    });
+  }
+  return next();
 }
 
 function publicCustomer(data = {}, id = '') {
@@ -1660,6 +1683,50 @@ app.post('/api/admin/companies/password-recovery/:requestId/reset', assertOwner,
   }
 });
 
+app.post('/api/admin/companies/:companyId/approve', assertOwner, async (req, res, next) => {
+  try {
+    const companyRef = companyRefFromPhone(req.params.companyId);
+    if (!companyRef) return res.status(400).json({ error: 'empresa_invalida', message: 'Empresa invalida.' });
+
+    const snap = await companyRef.get();
+    if (!snap.exists) return res.status(404).json({ error: 'empresa_nao_encontrada', message: 'Empresa nao encontrada.' });
+
+    await companyRef.set({
+      status: 'aprovada',
+      aprovadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    const updated = await companyRef.get();
+    return res.json({ ok: true, company: publicCompany(updated.data() || {}, companyRef.id) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/admin/companies/:companyId/block', assertOwner, async (req, res, next) => {
+  try {
+    const companyRef = companyRefFromPhone(req.params.companyId);
+    if (!companyRef) return res.status(400).json({ error: 'empresa_invalida', message: 'Empresa invalida.' });
+
+    const reason = cleanText(req.body.reason || 'Bloqueada pelo dono', 250);
+    const snap = await companyRef.get();
+    if (!snap.exists) return res.status(404).json({ error: 'empresa_nao_encontrada', message: 'Empresa nao encontrada.' });
+
+    await companyRef.set({
+      status: 'bloqueada',
+      motivoBloqueio: reason,
+      bloqueadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    const updated = await companyRef.get();
+    return res.json({ ok: true, company: publicCompany(updated.data() || {}, companyRef.id) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/admin/rides/:rideId/cancel', assertOwner, async (req, res, next) => {
   try {
     const rideId = String(req.params.rideId || '').trim();
@@ -1921,6 +1988,7 @@ app.post('/api/companies/register', createRideLimiter, async (req, res, next) =>
       email,
       telefoneEmpresa,
       retirada,
+      status: 'aguardando_aprovacao',
       passwordSalt: auth.salt,
       passwordHash: auth.hash,
       saldo: admin.firestore.FieldValue.increment(0),
@@ -1931,7 +1999,7 @@ app.post('/api/companies/register', createRideLimiter, async (req, res, next) =>
     };
     await companyRef.set(companyData, { merge: true });
 
-    res.status(201).json({ ok: true, token, company: publicCompany({ empresa, responsavel, email, telefoneEmpresa, retirada }, telefoneEmpresa) });
+    res.status(201).json({ ok: true, token, company: publicCompany({ empresa, responsavel, email, telefoneEmpresa, retirada, status: 'aguardando_aprovacao' }, telefoneEmpresa) });
   } catch (error) {
     next(error);
   }
@@ -2143,7 +2211,7 @@ app.get('/api/companies/me', assertCompany, async (req, res) => {
   res.json({ ok: true, company: publicCompany(req.company, req.companyId) });
 });
 
-app.post('/api/companies/me/payment-mode', assertCompany, async (req, res, next) => {
+app.post('/api/companies/me/payment-mode', assertCompany, assertCompanyApproved, async (req, res, next) => {
   try {
     const modo = req.body.modo === 'mercadopago' ? 'mercadopago' : 'pix_manual';
     await req.companySnap.ref.set({
@@ -2164,7 +2232,7 @@ app.post('/api/companies/me/payment-mode', assertCompany, async (req, res, next)
   }
 });
 
-app.post('/api/companies/me/integration', assertCompany, async (req, res, next) => {
+app.post('/api/companies/me/integration', assertCompany, assertCompanyApproved, async (req, res, next) => {
   try {
     const nome = String(req.body.nome || '').slice(0, 80).trim();
     const token = String(req.body.token || '').trim();
@@ -2200,7 +2268,7 @@ app.post('/api/companies/me/integration', assertCompany, async (req, res, next) 
   }
 });
 
-app.post('/api/companies/me/integration/test', assertCompany, async (req, res, next) => {
+app.post('/api/companies/me/integration/test', assertCompany, assertCompanyApproved, async (req, res, next) => {
   try {
     if (!req.company.integracaoTokenEncrypted) {
       return res.status(400).json({
@@ -2316,7 +2384,7 @@ app.get('/api/companies/:phone/delivery-report', assertCompany, async (req, res,
   }
 });
 
-app.post('/api/companies/deposit-request', assertCompany, createRideLimiter, async (req, res, next) => {
+app.post('/api/companies/deposit-request', assertCompany, assertCompanyApproved, createRideLimiter, async (req, res, next) => {
   try {
     const deposit = depositPublicData({
       ...req.body,
@@ -2365,7 +2433,7 @@ app.post('/api/companies/deposit-request', assertCompany, createRideLimiter, asy
   }
 });
 
-app.post('/api/companies/deposit-preference', assertCompany, createRideLimiter, async (req, res, next) => {
+app.post('/api/companies/deposit-preference', assertCompany, assertCompanyApproved, createRideLimiter, async (req, res, next) => {
   try {
     const deposit = {
       ...depositPublicData({
@@ -2872,7 +2940,7 @@ app.get('/api/companies/daily-plan/status', assertCompany, async (req, res, next
   }
 });
 
-app.post('/api/companies/daily-plan/activate', assertCompany, createRideLimiter, async (req, res, next) => {
+app.post('/api/companies/daily-plan/activate', assertCompany, assertCompanyApproved, createRideLimiter, async (req, res, next) => {
   try {
     const dia = todayKeySaoPaulo();
     const companyRef = req.companySnap.ref;
@@ -2936,7 +3004,7 @@ app.post('/api/companies/daily-plan/activate', assertCompany, createRideLimiter,
   }
 });
 
-app.post('/api/deliveries', assertCompany, createRideLimiter, async (req, res, next) => {
+app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimiter, async (req, res, next) => {
   try {
     const delivery = deliveryPublicData(req.body);
     delivery.telefoneEmpresa = req.companyId;
@@ -3096,7 +3164,7 @@ app.post('/api/deliveries', assertCompany, createRideLimiter, async (req, res, n
   }
 });
 
-app.post('/api/companies/exclusive-service', assertCompany, createRideLimiter, async (req, res, next) => {
+app.post('/api/companies/exclusive-service', assertCompany, assertCompanyApproved, createRideLimiter, async (req, res, next) => {
   try {
     const empresa = cleanText(req.body.empresa || req.company.empresa || '', 120);
     const responsavel = cleanText(req.body.responsavel || req.company.responsavel || '', 120);
@@ -3216,7 +3284,7 @@ app.post('/api/companies/exclusive-service', assertCompany, createRideLimiter, a
   }
 });
 
-app.post('/api/deliveries/:deliveryId/renew', assertCompany, createRideLimiter, async (req, res, next) => {
+app.post('/api/deliveries/:deliveryId/renew', assertCompany, assertCompanyApproved, createRideLimiter, async (req, res, next) => {
   try {
     const ref = db.collection('entregas').doc(String(req.params.deliveryId || ''));
     let renewedDelivery = null;
