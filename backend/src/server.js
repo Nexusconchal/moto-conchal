@@ -861,7 +861,7 @@ const db = admin.firestore();
 const app = express();
 app.set('trust proxy', 1);
 
-const DEFAULT_ALLOWED_ORIGINS = 'https://nexusconchal.github.io,https://nexusmotoja.com.br,https://www.nexusmotoja.com.br,https://motoboy-conchal.onrender.com';
+const DEFAULT_ALLOWED_ORIGINS = 'https://nexusmotoja.com.br,https://www.nexusmotoja.com.br,https://motoboy-conchal.onrender.com';
 const allowedOrigins = String(process.env.ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGINS)
   .split(',')
   .map((origin) => origin.trim())
@@ -883,6 +883,14 @@ const createRideLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'muitas_tentativas', message: 'Aguarde um pouco antes de pedir outra corrida.' }
+});
+
+const mapLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 45,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'muitas_tentativas_mapa', message: 'Aguarde um pouco antes de consultar o mapa novamente.' }
 });
 
 app.use(cors({
@@ -1408,6 +1416,83 @@ app.get('/', (_req, res) => {
   });
 });
 
+app.get('/api/maps/geocode', mapLimiter, async (req, res, next) => {
+  try {
+    if (!GEOAPIFY_API_KEY) {
+      res.status(500).json({ error: 'geoapify_nao_configurado', message: 'Mapa nao configurado no servidor.' });
+      return;
+    }
+
+    const text = cleanText(req.query.text, 220);
+    if (!text) {
+      res.status(400).json({ error: 'endereco_obrigatorio', message: 'Informe o endereco para localizar.' });
+      return;
+    }
+
+    const params = new URLSearchParams({
+      text,
+      lang: 'pt',
+      limit: String(Math.min(5, Math.max(1, Number(req.query.limit) || 5))),
+      apiKey: GEOAPIFY_API_KEY
+    });
+    const filter = cleanText(req.query.filter, 80);
+    const bias = cleanText(req.query.bias, 80);
+    if (/^rect:-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(filter)) params.set('filter', filter);
+    if (/^proximity:-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(bias)) params.set('bias', bias);
+
+    const response = await fetch(`https://api.geoapify.com/v1/geocode/search?${params.toString()}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      res.status(502).json({ error: 'geoapify_falhou', message: 'Nao consegui consultar o mapa agora.' });
+      return;
+    }
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/maps/reverse', mapLimiter, async (req, res, next) => {
+  try {
+    if (!GEOAPIFY_API_KEY) {
+      res.status(500).json({ error: 'geoapify_nao_configurado', message: 'Mapa nao configurado no servidor.' });
+      return;
+    }
+
+    const lat = Number(req.query.lat);
+    const lon = Number(req.query.lon);
+    if (!validCoordinate({ lat, lon })) {
+      res.status(400).json({ error: 'coordenadas_invalidas', message: 'Coordenadas invalidas para consultar o mapa.' });
+      return;
+    }
+
+    const params = new URLSearchParams({
+      lat: String(lat),
+      lon: String(lon),
+      lang: 'pt',
+      apiKey: GEOAPIFY_API_KEY
+    });
+    const response = await fetch(`https://api.geoapify.com/v1/geocode/reverse?${params.toString()}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      res.status(502).json({ error: 'geoapify_falhou', message: 'Nao consegui consultar o mapa agora.' });
+      return;
+    }
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/maps/route', mapLimiter, async (req, res, next) => {
+  try {
+    const km = await calculateRouteDistanceKm(req.body?.points || []);
+    res.json({ km });
+  } catch (error) {
+    next(error);
+  }
+});
+
 function driverStatusHtml(title, item = {}) {
   const name = cleanText(item.motoboy || 'Motoboy Nexus MotoJa', 80);
   const phone = onlyDigits(item.motoboyTelefone);
@@ -1749,6 +1834,24 @@ app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
       return scope === 'pending' ? publicPendingJob(item) : item;
     }));
     return res.json({ ok: true, jobs });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/drivers/:cpf/telegram-link', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+    const link = String(process.env.TELEGRAM_GROUP_LINK || 'https://t.me/+M49aycYVf_kyZjUx').trim();
+    if (!/^https:\/\/t\.me\//i.test(link)) {
+      return res.status(404).json({
+        error: 'telegram_nao_configurado',
+        message: 'Grupo do Telegram ainda nao configurado no servidor.'
+      });
+    }
+    return res.json({ ok: true, link });
   } catch (error) {
     return next(error);
   }

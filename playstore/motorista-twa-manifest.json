@@ -1,14 +1,14 @@
 {
   "packageId": "br.com.nexusconchal.motoja.motorista",
-  "host": "nexusconchal.github.io",
+  "host": "nexusmotoja.com.br",
   "name": "Nexus MotoJÁ Motorista",
   "launcherName": "MotoJÁ Motorista",
   "display": "standalone",
   "themeColor": "#ff8a00",
   "navigationColor": "#090911",
   "backgroundColor": "#090911",
-  "startUrl": "/moto-conchal/motoboy.html?app=nexus-motoja-motorista",
-  "manifestUrl": "https://nexusconchal.github.io/moto-conchal/motorista.webmanifest",
+  "startUrl": "/motoboy.html?app=nexus-motoja-motorista",
+  "manifestUrl": "https://nexusmotoja.com.br/motorista.webmanifest",
   "appVersionName": "1.0.0",
   "appVersionCode": 1,
   "signingKey": {

@@ -1,0 +1,33 @@
+# dependencies
+node_modules/
+.npm-cache/
+
+# environment and local machine files
+.env
+.env.*
+!.env.example
+local.properties
+
+# Android build output and local caches
+.android-build/
+.android-user/
+.gradle/
+.gradle-motorista/
+**/build/
+
+# Android signing keys - never commit these
+*.keystore
+*.jks
+key.properties
+*key-passwords*.txt
+*upload-key-passwords*.txt
+
+# generated files and temporary outputs
+outputs/
+*.log
+*.tmp
+*.bak
+
+# OS/editor files
+.DS_Store
+Thumbs.db
