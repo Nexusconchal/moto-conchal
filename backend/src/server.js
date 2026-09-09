@@ -1722,19 +1722,27 @@ app.post('/api/admin/drivers/:cpf/unblock', assertOwner, async (req, res, next) 
 app.post('/api/drivers/register', async (req, res, next) => {
   try {
     const password = String(req.body.password || '');
-    const nome = cleanText(req.body.nome, 80);
     const cpf = onlyDigits(req.body.cpf);
-    const cnh = onlyDigits(req.body.cnh);
-    const telefone = onlyDigits(req.body.telefone);
-    const fotoMotoboy = validDriverPhoto(req.body.fotoMotoboy);
-    const motoModelo = cleanText(req.body.motoModelo, 60);
-    const motoAno = onlyDigits(req.body.motoAno);
-    const motoPlaca = cleanText(req.body.motoPlaca, 12).toUpperCase().replace(/[^A-Z0-9]/g, '');
-    const crlvFoto = validDriverDocument(req.body.crlvFoto);
 
     if (!isValidDriverPassword(password)) {
       return res.status(401).json({ error: 'senha_incorreta' });
     }
+    if (cpf.length !== 11) {
+      return res.status(400).json({ error: 'cpf_invalido' });
+    }
+
+    const driverRef = db.collection('motoboys').doc(cpf);
+    const driverSnap = await driverRef.get();
+    const savedDriver = driverSnap.exists ? driverSnap.data() || {} : {};
+    const nome = cleanText(req.body.nome || savedDriver.nome, 80);
+    const cnh = onlyDigits(req.body.cnh || savedDriver.cnh);
+    const telefone = onlyDigits(req.body.telefone || savedDriver.telefone);
+    const fotoMotoboy = validDriverPhoto(req.body.fotoMotoboy) || savedDriver.fotoMotoboy || '';
+    const motoModelo = cleanText(req.body.motoModelo || savedDriver.motoModelo, 60);
+    const motoAno = onlyDigits(req.body.motoAno || savedDriver.motoAno);
+    const motoPlaca = cleanText(req.body.motoPlaca || savedDriver.motoPlaca, 12).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const crlvFoto = validDriverDocument(req.body.crlvFoto) || savedDriver.crlvFoto || '';
+
     if (!nome || cpf.length !== 11 || cnh.length !== 11 || telefone.length < 10 || telefone.length > 11) {
       return res.status(400).json({ error: 'dados_invalidos' });
     }
@@ -1745,8 +1753,6 @@ app.post('/api/drivers/register', async (req, res, next) => {
       });
     }
 
-    const driverRef = db.collection('motoboys').doc(cpf);
-    const driverSnap = await driverRef.get();
     if (driverSnap.exists) {
       const driver = driverSnap.data() || {};
       if (driver.status === 'bloqueado') {
@@ -1812,14 +1818,17 @@ app.post('/api/drivers/register', async (req, res, next) => {
 
     await driverRef.set(driverData, { merge: true });
 
-    const savedDriver = driverSnap.exists ? driverSnap.data() || {} : {};
     return res.json({
       ok: true,
-      fotoMotoboy: fotoMotoboy || savedDriver.fotoMotoboy || '',
+      nome,
+      cpf,
+      cnh,
+      telefone,
+      fotoMotoboy,
       motoModelo,
       motoAno,
       motoPlaca,
-      crlvFoto: crlvFoto || savedDriver.crlvFoto || ''
+      crlvFoto
     });
   } catch (error) {
     return next(error);
