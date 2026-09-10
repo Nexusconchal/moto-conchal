@@ -326,7 +326,7 @@ function validCoordinate(point) {
     && Math.abs(Number(point.lon)) <= 180;
 }
 
-async function calculateRouteDistanceKm(points = []) {
+async function calculateRoute(points = []) {
   if (!GEOAPIFY_API_KEY) throw new Error('Geoapify nao configurado no backend.');
   if (!Array.isArray(points) || points.length < 2 || points.some((point) => !validCoordinate(point))) {
     const error = new Error('Coordenadas invalidas para conferir a rota.');
@@ -345,14 +345,28 @@ async function calculateRouteDistanceKm(points = []) {
     throw error;
   }
   const data = await response.json();
-  const meters = data.features?.[0]?.properties?.distance;
+  const feature = data.features?.[0] || {};
+  const meters = feature.properties?.distance;
   if (!Number.isFinite(Number(meters)) || Number(meters) <= 0) {
     const error = new Error('Rota nao encontrada para os pontos informados.');
     error.status = 400;
     error.code = 'rota_backend_nao_encontrada';
     throw error;
   }
-  return money(Number(meters) / 1000);
+  const coordinates = feature.geometry?.coordinates || [];
+  const line = feature.geometry?.type === 'MultiLineString' ? coordinates.flat() : coordinates;
+  const geometry = Array.isArray(line)
+    ? line
+      .filter((coord) => Array.isArray(coord) && coord.length >= 2)
+      .map(([lon, lat]) => [Number(lat), Number(lon)])
+      .filter(([lat, lon]) => Number.isFinite(lat) && Number.isFinite(lon))
+    : [];
+  return { km: money(Number(meters) / 1000), geometry };
+}
+
+async function calculateRouteDistanceKm(points = []) {
+  const route = await calculateRoute(points);
+  return route.km;
 }
 
 function onlyDigits(value) {
@@ -1524,8 +1538,8 @@ app.get('/api/maps/reverse', mapLimiter, async (req, res, next) => {
 
 app.post('/api/maps/route', mapLimiter, async (req, res, next) => {
   try {
-    const km = await calculateRouteDistanceKm(req.body?.points || []);
-    res.json({ km });
+    const route = await calculateRoute(req.body?.points || []);
+    res.json(route);
   } catch (error) {
     next(error);
   }
