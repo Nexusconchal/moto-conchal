@@ -326,15 +326,32 @@ function validCoordinate(point) {
     && Math.abs(Number(point.lon)) <= 180;
 }
 
-async function calculateRoute(points = []) {
-  if (!GEOAPIFY_API_KEY) throw new Error('Geoapify nao configurado no backend.');
+function ensureRoutePoints(points = []) {
   if (!Array.isArray(points) || points.length < 2 || points.some((point) => !validCoordinate(point))) {
     const error = new Error('Coordenadas invalidas para conferir a rota.');
     error.status = 400;
     error.code = 'coordenadas_invalidas';
     throw error;
   }
+}
 
+function geoJsonLineToLatLon(geometry = {}) {
+  const coordinates = geometry.coordinates || [];
+  const line = geometry.type === 'MultiLineString' ? coordinates.flat() : coordinates;
+  return Array.isArray(line)
+    ? line
+      .filter((coord) => Array.isArray(coord) && coord.length >= 2)
+      .map(([lon, lat]) => [Number(lat), Number(lon)])
+      .filter(([lat, lon]) => Number.isFinite(lat) && Number.isFinite(lon))
+    : [];
+}
+
+async function calculateGeoapifyRoute(points = []) {
+  if (!GEOAPIFY_API_KEY) {
+    const error = new Error('Geoapify nao configurado no backend.');
+    error.code = 'geoapify_nao_configurado';
+    throw error;
+  }
   const waypoints = points.map((point) => `${Number(point.lat)},${Number(point.lon)}`).join('|');
   const url = `https://api.geoapify.com/v1/routing?waypoints=${encodeURIComponent(waypoints)}&mode=drive&apiKey=${GEOAPIFY_API_KEY}`;
   const response = await fetch(url);
@@ -353,15 +370,46 @@ async function calculateRoute(points = []) {
     error.code = 'rota_backend_nao_encontrada';
     throw error;
   }
-  const coordinates = feature.geometry?.coordinates || [];
-  const line = feature.geometry?.type === 'MultiLineString' ? coordinates.flat() : coordinates;
-  const geometry = Array.isArray(line)
-    ? line
-      .filter((coord) => Array.isArray(coord) && coord.length >= 2)
-      .map(([lon, lat]) => [Number(lat), Number(lon)])
-      .filter(([lat, lon]) => Number.isFinite(lat) && Number.isFinite(lon))
-    : [];
-  return { km: money(Number(meters) / 1000), geometry };
+  return { km: money(Number(meters) / 1000), geometry: geoJsonLineToLatLon(feature.geometry), provider: 'geoapify' };
+}
+
+async function calculateOsrmRoute(points = []) {
+  const coords = points.map((point) => `${Number(point.lon)},${Number(point.lat)}`).join(';');
+  const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    const error = new Error('OSRM nao conseguiu conferir a rota agora.');
+    error.status = 502;
+    error.code = 'osrm_falhou';
+    throw error;
+  }
+  const data = await response.json();
+  const route = data.routes?.[0] || {};
+  const meters = route.distance;
+  if (!Number.isFinite(Number(meters)) || Number(meters) <= 0) {
+    const error = new Error('OSRM nao encontrou rota para os pontos informados.');
+    error.status = 400;
+    error.code = 'osrm_rota_nao_encontrada';
+    throw error;
+  }
+  return { km: money(Number(meters) / 1000), geometry: geoJsonLineToLatLon(route.geometry), provider: 'osrm' };
+}
+
+async function calculateRoute(points = []) {
+  ensureRoutePoints(points);
+
+  const results = await Promise.allSettled([
+    calculateGeoapifyRoute(points),
+    calculateOsrmRoute(points)
+  ]);
+  const geoapify = results[0].status === 'fulfilled' ? results[0].value : null;
+  const osrm = results[1].status === 'fulfilled' ? results[1].value : null;
+  if (geoapify) return { ...geoapify, fallbackAvailable: !!osrm };
+  if (osrm) return { ...osrm, fallbackUsed: true };
+
+  const error = results.find((result) => result.status === 'rejected')?.reason || new Error('Rota nao encontrada.');
+  error.status = error.status || 502;
+  throw error;
 }
 
 async function calculateRouteDistanceKm(points = []) {
