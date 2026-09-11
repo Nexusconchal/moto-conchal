@@ -646,6 +646,7 @@ function publicCompany(data = {}, id = '') {
     integracaoProtegida: !!(data.integracaoProtegida || data.integracaoTokenEncrypted),
     integracaoNome: data.integracaoNome || '',
     integracaoCodigoLoja: data.integracaoCodigoLoja || '',
+    integracaoTipoEntrega: data.integracaoTipoEntrega || '',
     ...companyBalance(data)
   };
 }
@@ -2319,6 +2320,7 @@ app.post('/api/companies/me/integration', assertCompany, assertCompanyApproved, 
     const nome = String(req.body.nome || '').slice(0, 80).trim();
     let token = String(req.body.token || '').trim();
     let codigoLoja = cleanText(req.body.codigoLoja || req.body.storeCode || '', 40);
+    const tipoEntrega = cleanText(req.body.tipoEntrega || req.body.integrationDeliveryType || '', 80);
     const tokenLines = token.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     if (!codigoLoja && tokenLines.length > 1 && /^\d{3,}$/.test(tokenLines[0])) {
       codigoLoja = tokenLines[0];
@@ -2328,6 +2330,13 @@ app.post('/api/companies/me/integration', assertCompany, assertCompanyApproved, 
     const ativo = hasAtivo ? !!req.body.ativo : !!token;
     const encryptedToken = token ? encryptSecret(token) : '';
     const tokenJaSalvo = !!req.company.integracaoTokenEncrypted;
+
+    if (ativo && !tipoEntrega && !req.company.integracaoTipoEntrega) {
+      return res.status(400).json({
+        error: 'integration_delivery_type_required',
+        message: 'Selecione o tipo de entrega antes de ligar o automatico.'
+      });
+    }
 
     if (ativo && !encryptedToken && !tokenJaSalvo) {
       return res.status(400).json({
@@ -2339,6 +2348,7 @@ app.post('/api/companies/me/integration', assertCompany, assertCompanyApproved, 
     const update = {
       integracaoNome: nome || 'Painel de integracao',
       integracaoCodigoLoja: codigoLoja || req.company.integracaoCodigoLoja || '',
+      integracaoTipoEntrega: tipoEntrega || req.company.integracaoTipoEntrega || '',
       integracaoAtiva: ativo,
       integracaoProtegida: !!(encryptedToken || tokenJaSalvo),
       integracaoAtualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
@@ -2351,7 +2361,7 @@ app.post('/api/companies/me/integration', assertCompany, assertCompanyApproved, 
     }
 
     await req.companySnap.ref.set(update, { merge: true });
-    res.json({ ok: true, integracaoAtiva: ativo, integracaoProtegida: !!(encryptedToken || tokenJaSalvo) });
+    res.json({ ok: true, integracaoAtiva: ativo, integracaoProtegida: !!(encryptedToken || tokenJaSalvo), integracaoTipoEntrega: tipoEntrega || req.company.integracaoTipoEntrega || '' });
   } catch (error) {
     next(error);
   }
