@@ -4329,6 +4329,8 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
             status: paymentStatus,
             statusDetail: payment.status_detail || null,
             totalPago: money(payment.transaction_amount),
+            taxaMercadoPago: money(payment.fee_details?.reduce?.((sum, fee) => sum + Number(fee.amount || 0), 0) || payment.marketplace_fee || 0),
+            valorLiquido: money(payment.transaction_details?.net_received_amount || payment.transaction_amount || 0),
             atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
           },
           atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
@@ -4341,6 +4343,8 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
 
         const valor = money(deposit.valor);
         const totalPago = money(payment.transaction_amount);
+        const taxaMercadoPago = money(payment.fee_details?.reduce?.((sum, fee) => sum + Number(fee.amount || 0), 0) || payment.marketplace_fee || 0);
+        const valorLiquido = money(payment.transaction_details?.net_received_amount || Math.max(0, totalPago - taxaMercadoPago));
         if (totalPago < valor) {
           tx.set(depositRef, {
             ...updateDeposit,
@@ -4356,7 +4360,7 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
 
         const companySnap = await tx.get(companyRef);
         const before = companyBalance(companySnap.exists ? companySnap.data() : {});
-        const afterSaldo = money(before.saldo + valor);
+        const afterSaldo = money(before.saldo + valorLiquido);
         tx.set(companyRef, {
           saldo: afterSaldo,
           reservado: before.reservado,
@@ -4368,7 +4372,9 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
           tipo: 'credito',
           origem: 'deposito_mercadopago_aprovado',
           depositoId: depositRef.id,
-          valor,
+          valor: valorLiquido,
+          valorBruto: totalPago,
+          taxaMercadoPago,
           saldoAntes: before.saldo,
           saldoDepois: afterSaldo,
           reservadoAntes: before.reservado,
@@ -4378,7 +4384,10 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
         tx.set(depositRef, {
           ...updateDeposit,
           aprovadoEm: admin.firestore.FieldValue.serverTimestamp(),
-          aprovadoPor: 'mercadopago_webhook'
+          aprovadoPor: 'mercadopago_webhook',
+          valorCreditado: valorLiquido,
+          valorBruto: totalPago,
+          taxaMercadoPago
         }, { merge: true });
       });
 
