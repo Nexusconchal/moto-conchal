@@ -2317,8 +2317,13 @@ app.post('/api/companies/me/payment-mode', assertCompany, assertCompanyApproved,
 app.post('/api/companies/me/integration', assertCompany, assertCompanyApproved, async (req, res, next) => {
   try {
     const nome = String(req.body.nome || '').slice(0, 80).trim();
-    const token = String(req.body.token || '').trim();
-    const codigoLoja = cleanText(req.body.codigoLoja || req.body.storeCode || '', 40);
+    let token = String(req.body.token || '').trim();
+    let codigoLoja = cleanText(req.body.codigoLoja || req.body.storeCode || '', 40);
+    const tokenLines = token.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (!codigoLoja && tokenLines.length > 1 && /^\d{3,}$/.test(tokenLines[0])) {
+      codigoLoja = tokenLines[0];
+      token = tokenLines.slice(1).join('');
+    }
     const hasAtivo = Object.prototype.hasOwnProperty.call(req.body || {}, 'ativo');
     const ativo = hasAtivo ? !!req.body.ativo : !!token;
     const encryptedToken = token ? encryptSecret(token) : '';
