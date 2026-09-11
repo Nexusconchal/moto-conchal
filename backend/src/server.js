@@ -579,6 +579,20 @@ function encryptSecret(value) {
   return `${iv.toString('base64')}.${tag.toString('base64')}.${encrypted.toString('base64')}`;
 }
 
+function decryptSecret(value) {
+  const keySource = process.env.DATA_ENCRYPTION_KEY || ownerPasswordValue();
+  if (!keySource || !value) return '';
+  const [ivText, tagText, encryptedText] = String(value).split('.');
+  if (!ivText || !tagText || !encryptedText) return '';
+  const key = crypto.createHash('sha256').update(String(keySource)).digest();
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivText, 'base64'));
+  decipher.setAuthTag(Buffer.from(tagText, 'base64'));
+  return Buffer.concat([
+    decipher.update(Buffer.from(encryptedText, 'base64')),
+    decipher.final()
+  ]).toString('utf8');
+}
+
 function passwordHash(password, salt = crypto.randomBytes(16).toString('hex')) {
   const hash = crypto.pbkdf2Sync(String(password || ''), salt, 120000, 32, 'sha256').toString('hex');
   return { salt, hash };
@@ -631,6 +645,7 @@ function publicCompany(data = {}, id = '') {
     integracaoAtiva: !!data.integracaoAtiva,
     integracaoProtegida: !!(data.integracaoProtegida || data.integracaoTokenEncrypted),
     integracaoNome: data.integracaoNome || '',
+    integracaoCodigoLoja: data.integracaoCodigoLoja || '',
     ...companyBalance(data)
   };
 }
@@ -2303,6 +2318,7 @@ app.post('/api/companies/me/integration', assertCompany, assertCompanyApproved, 
   try {
     const nome = String(req.body.nome || '').slice(0, 80).trim();
     const token = String(req.body.token || '').trim();
+    const codigoLoja = cleanText(req.body.codigoLoja || req.body.storeCode || '', 40);
     const hasAtivo = Object.prototype.hasOwnProperty.call(req.body || {}, 'ativo');
     const ativo = hasAtivo ? !!req.body.ativo : !!token;
     const encryptedToken = token ? encryptSecret(token) : '';
@@ -2317,6 +2333,7 @@ app.post('/api/companies/me/integration', assertCompany, assertCompanyApproved, 
 
     const update = {
       integracaoNome: nome || 'Painel de integracao',
+      integracaoCodigoLoja: codigoLoja || req.company.integracaoCodigoLoja || '',
       integracaoAtiva: ativo,
       integracaoProtegida: !!(encryptedToken || tokenJaSalvo),
       integracaoAtualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
@@ -2335,6 +2352,92 @@ app.post('/api/companies/me/integration', assertCompany, assertCompanyApproved, 
   }
 });
 
+function cardapioWebBaseUrl() {
+  return String(process.env.CARDAPIOWEB_API_BASE_URL || 'https://integracao.cardapioweb.com/api/partner/v1').replace(/\/$/, '');
+}
+
+function cardapioWebHeaders(apiKey, storeCode = '') {
+  const headers = {
+    accept: 'application/json',
+    'X-API-KEY': apiKey
+  };
+  if (storeCode) {
+    headers['X-PARTNER-KEY'] = storeCode;
+    headers['X-STORE-CODE'] = storeCode;
+  }
+  return headers;
+}
+
+function joinAddress(parts = []) {
+  return parts.map((item) => cleanText(item, 120)).filter(Boolean).join(', ');
+}
+
+function pickFirst(...values) {
+  return values.find((value) => String(value || '').trim()) || '';
+}
+
+function normalizeCardapioWebOrder(order = {}, company = {}) {
+  const customer = order.customer || order.client || order.consumer || {};
+  const delivery = order.delivery || order.delivery_address || order.address || order.shipping || {};
+  const address = delivery.address || delivery;
+  const street = pickFirst(address.street, address.street_name, address.route, address.public_place);
+  const number = pickFirst(address.number, address.street_number, address.house_number);
+  const neighborhood = pickFirst(address.neighborhood, address.district, address.area);
+  const city = pickFirst(address.city, address.city_name, company.cidade || 'Conchal');
+  const state = pickFirst(address.state, address.uf, 'SP');
+  const complement = pickFirst(address.complement, address.reference, address.landmark);
+  const enderecoEntrega = pickFirst(
+    order.delivery_address_text,
+    order.deliveryAddress,
+    delivery.formatted,
+    delivery.full_address,
+    joinAddress([street && number ? `${street}, ${number}` : street, neighborhood, `${city} - ${state}`])
+  );
+  const items = Array.isArray(order.items) ? order.items : Array.isArray(order.cart) ? order.cart : [];
+  return {
+    externalId: String(order.id || order.order_id || order.uuid || order.code || '').slice(0, 80),
+    status: String(order.status || '').slice(0, 60),
+    origem: 'Cardapio Web',
+    empresa: company.empresa || 'Empresa',
+    cliente: cleanText(pickFirst(customer.name, customer.nome, order.customer_name, order.client_name, 'Cliente Cardapio Web'), 120),
+    telefoneCliente: onlyDigits(pickFirst(customer.phone, customer.phone_number, customer.whatsapp, order.customer_phone, order.phone)).slice(0, 13),
+    enderecoEntrega: cleanText(enderecoEntrega, 300),
+    complemento: cleanText(complement, 160),
+    itens: items.slice(0, 20).map((item) => ({
+      nome: cleanText(pickFirst(item.name, item.item_name, item.product_name, item.description, 'Item'), 120),
+      quantidade: Number(item.quantity || item.amount || item.qty || 1)
+    })),
+    valorPedido: money(order.total || order.total_price || order.total_amount || order.amount || 0),
+    recebidoEm: pickFirst(order.created_at, order.createdAt, order.updated_at, new Date().toISOString())
+  };
+}
+
+async function fetchCardapioWebLatestOrder(apiKey, storeCode, company) {
+  const base = cardapioWebBaseUrl();
+  const ordersUrl = `${base}/orders`;
+  const response = await fetch(ordersUrl, { headers: cardapioWebHeaders(apiKey, storeCode) });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.message || data.error || `Cardapio Web respondeu HTTP ${response.status}. Confira token, codigo da loja e URL base.`);
+    error.status = 502;
+    throw error;
+  }
+  const orders = Array.isArray(data) ? data : Array.isArray(data.orders) ? data.orders : Array.isArray(data.data) ? data.data : [];
+  if (!orders.length) {
+    const error = new Error('Conectou na Cardapio Web, mas nao encontrei pedido recente para importar.');
+    error.status = 404;
+    throw error;
+  }
+  const first = orders[0];
+  const orderId = first.id || first.order_id || first.uuid;
+  let fullOrder = first;
+  if (orderId) {
+    const detail = await fetch(`${base}/orders/${encodeURIComponent(orderId)}`, { headers: cardapioWebHeaders(apiKey, storeCode) });
+    if (detail.ok) fullOrder = await detail.json().catch(() => first);
+  }
+  return normalizeCardapioWebOrder(fullOrder, company);
+}
+
 app.post('/api/companies/me/integration/test', assertCompany, assertCompanyApproved, async (req, res, next) => {
   try {
     if (!req.company.integracaoTokenEncrypted) {
@@ -2345,25 +2448,13 @@ app.post('/api/companies/me/integration/test', assertCompany, assertCompanyAppro
     }
 
     const company = publicCompany(req.company, req.companyId);
-    const now = new Date();
-    const fakeOrder = {
-      externalId: `teste-${now.getTime()}`,
-      origem: 'Painel de integracao',
-      empresa: company.empresa || 'Empresa teste',
-      cliente: 'Cliente de teste',
-      telefoneCliente: '19999999999',
-      enderecoEntrega: 'Rua das Angelicas, 730, Centro, Conchal - SP',
-      itens: [
-        { nome: 'Lanche teste', quantidade: 1 },
-        { nome: 'Acai teste', quantidade: 1 }
-      ],
-      observacao: 'Pedido simulado. Nao cria entrega, nao chama motoboy e nao desconta saldo.',
-      recebidoEm: now.toISOString()
-    };
+    const apiKey = decryptSecret(req.company.integracaoTokenEncrypted);
+    const orderPreview = await fetchCardapioWebLatestOrder(apiKey, req.company.integracaoCodigoLoja || '', company);
 
     await req.companySnap.ref.set({
       ultimoTesteIntegracaoEm: admin.firestore.FieldValue.serverTimestamp(),
       ultimoTesteIntegracaoStatus: 'ok',
+      ultimoTesteIntegracaoPedido: orderPreview.externalId || '',
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
 
@@ -2371,12 +2462,16 @@ app.post('/api/companies/me/integration/test', assertCompany, assertCompanyAppro
       ok: true,
       mode: 'test_only',
       integracaoAtiva: !!req.company.integracaoAtiva,
-      message: req.company.integracaoAtiva
-        ? 'Teste de integracao OK. Modo automatico esta ligado. Nenhuma entrega real foi criada.'
-        : 'Chave/API salva com seguranca. Modo automatico esta desligado, entao a empresa continua no manual.',
-      orderPreview: fakeOrder
+      message: 'Pedido encontrado na Cardapio Web. Preenchi os dados no app; confira, calcule e confirme para chamar motoboy.',
+      orderPreview
     });
   } catch (error) {
+    await req.companySnap.ref.set({
+      ultimoTesteIntegracaoEm: admin.firestore.FieldValue.serverTimestamp(),
+      ultimoTesteIntegracaoStatus: 'erro',
+      ultimoTesteIntegracaoErro: String(error.message || 'erro').slice(0, 300),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true }).catch(() => {});
     next(error);
   }
 });
