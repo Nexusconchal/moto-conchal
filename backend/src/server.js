@@ -2459,6 +2459,13 @@ async function alreadyImportedIntegrationOrder(companyId, origem, externalId) {
   return doc.exists;
 }
 
+function integrationPendingRef(companyId, origem, externalId) {
+  return db.collection('empresas')
+    .doc(companyId)
+    .collection('integracaoPedidosDisponiveis')
+    .doc(externalOrderDocId(origem, externalId));
+}
+
 async function fetchCardapioWebLatestOrder(apiKey, storeCode, company, companyId) {
   const base = cardapioWebBaseUrl();
   const ordersUrl = `${base}/orders`;
@@ -2530,6 +2537,25 @@ app.post('/api/companies/me/integration/test', assertCompany, assertCompanyAppro
       ultimoTesteIntegracaoQuantidade: orderPreviews.length,
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
+
+    const validUntilMs = Date.now() + 15 * 60 * 1000;
+    const batch = db.batch();
+    orderPreviews.forEach((order) => {
+      batch.set(integrationPendingRef(req.companyId, order.origem, order.externalId), {
+        origem: order.origem,
+        pedidoId: order.externalId,
+        recebidoEm: order.recebidoEm || '',
+        recebidoEmMs: order.recebidoEmMs || 0,
+        recebidoDia: order.recebidoDia || '',
+        enderecoEntrega: order.enderecoEntrega || '',
+        cliente: order.cliente || '',
+        telefoneCliente: order.telefoneCliente || '',
+        valorPedido: order.valorPedido || 0,
+        validUntilMs,
+        atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+    await batch.commit();
 
     res.json({
       ok: true,
@@ -3318,12 +3344,27 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
         ? externalOrderDocId(delivery.integracaoOrigem, delivery.integracaoPedidoId)
         : '';
       const integrationRef = integrationDocId ? companyRef.collection('integracaoPedidos').doc(integrationDocId) : null;
+      const pendingIntegrationRef = integrationDocId ? integrationPendingRef(req.companyId, delivery.integracaoOrigem, delivery.integracaoPedidoId) : null;
       if (integrationRef) {
         const integrationSnap = await tx.get(integrationRef);
         if (integrationSnap.exists) {
           const error = new Error('Esse pedido da API ja foi enviado para os motoboys.');
           error.status = 409;
           error.code = 'pedido_integracao_ja_processado';
+          throw error;
+        }
+        const pendingSnap = await tx.get(pendingIntegrationRef);
+        const pending = pendingSnap.exists ? pendingSnap.data() || {} : null;
+        if (!pending || pending.recebidoDia !== todayKeySaoPaulo() || Number(pending.validUntilMs || 0) < Date.now()) {
+          const error = new Error('Pedido da API nao esta mais liberado. Teste a integracao novamente para carregar somente pedidos de hoje.');
+          error.status = 409;
+          error.code = 'pedido_integracao_nao_liberado';
+          throw error;
+        }
+        if (normalizeText(pending.enderecoEntrega) !== normalizeText(delivery.entrega)) {
+          const error = new Error('Endereco do pedido da API foi alterado. Para evitar fraude ou erro de saldo, teste a integracao novamente.');
+          error.status = 409;
+          error.code = 'pedido_integracao_endereco_alterado';
           throw error;
         }
       }
@@ -3382,6 +3423,7 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
           status: 'enviado_motoboy',
           criadoEm: admin.firestore.FieldValue.serverTimestamp()
         });
+        tx.delete(pendingIntegrationRef);
       }
 
       tx.set(ref, {
