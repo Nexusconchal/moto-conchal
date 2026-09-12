@@ -2478,6 +2478,7 @@ async function fetchCardapioWebLatestOrder(apiKey, storeCode, company, companyId
   const today = dateKeySaoPaulo();
   let sawOld = false;
   let sawImported = false;
+  const availableOrders = [];
   for (const candidate of orders.slice(0, 30)) {
     const orderId = candidate.id || candidate.order_id || candidate.uuid || candidate.code;
     let fullOrder = candidate;
@@ -2495,8 +2496,10 @@ async function fetchCardapioWebLatestOrder(apiKey, storeCode, company, companyId
       sawImported = true;
       continue;
     }
-    return preview;
+    availableOrders.push(preview);
+    if (availableOrders.length >= 10) break;
   }
+  if (availableOrders.length) return availableOrders;
   const error = new Error(sawImported
     ? 'Os pedidos de hoje encontrados na Cardapio Web ja foram enviados para os motoboys.'
     : sawOld
@@ -2517,12 +2520,14 @@ app.post('/api/companies/me/integration/test', assertCompany, assertCompanyAppro
 
     const company = publicCompany(req.company, req.companyId);
     const apiKey = decryptSecret(req.company.integracaoTokenEncrypted);
-    const orderPreview = await fetchCardapioWebLatestOrder(apiKey, req.company.integracaoCodigoLoja || '', company, req.companyId);
+    const orderPreviews = await fetchCardapioWebLatestOrder(apiKey, req.company.integracaoCodigoLoja || '', company, req.companyId);
+    const orderPreview = orderPreviews[0] || {};
 
     await req.companySnap.ref.set({
       ultimoTesteIntegracaoEm: admin.firestore.FieldValue.serverTimestamp(),
       ultimoTesteIntegracaoStatus: 'ok',
       ultimoTesteIntegracaoPedido: orderPreview.externalId || '',
+      ultimoTesteIntegracaoQuantidade: orderPreviews.length,
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
 
@@ -2530,8 +2535,12 @@ app.post('/api/companies/me/integration/test', assertCompany, assertCompanyAppro
       ok: true,
       mode: 'test_only',
       integracaoAtiva: !!req.company.integracaoAtiva,
-      message: 'Pedido encontrado na Cardapio Web. Preenchi os dados no app; confira, calcule e confirme para chamar motoboy.',
-      orderPreview
+      message: orderPreviews.length === 1
+        ? '1 pedido de hoje encontrado na Cardapio Web.'
+        : `${orderPreviews.length} pedidos de hoje encontrados na Cardapio Web.`,
+      orderPreview,
+      orderPreviews,
+      totalPedidos: orderPreviews.length
     });
   } catch (error) {
     await req.companySnap.ref.set({
