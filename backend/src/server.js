@@ -479,6 +479,21 @@ function dateKeySaoPaulo(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(date);
 }
 
+function externalOrderMs(value) {
+  if (!value) return 0;
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  if (typeof value.seconds === 'number') return value.seconds * 1000;
+  if (typeof value === 'number') return value > 100000000000 ? value : value * 1000;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function externalOrderDocId(provider, externalId) {
+  const source = String(provider || 'api').replace(/[^a-z0-9_-]/gi, '').slice(0, 30) || 'api';
+  const id = String(externalId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
+  return `${source}_${id}`;
+}
+
 function serializeFirestore(value) {
   if (!value) return value;
   if (typeof value.toDate === 'function') {
@@ -854,6 +869,9 @@ function deliveryPublicData(delivery) {
     })) : [],
     descricao: String(delivery.descricao || '').slice(0, 500).trim(),
     observacao: String(delivery.observacao || '').slice(0, 500).trim(),
+    integracaoOrigem: String(delivery.integracaoOrigem || '').slice(0, 60).trim(),
+    integracaoPedidoId: String(delivery.integracaoPedidoId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80),
+    integracaoPedidoRecebidoEm: String(delivery.integracaoPedidoRecebidoEm || '').slice(0, 80).trim(),
     paradas: deliveryStopCount(delivery.paradas),
     km: Number(delivery.km || 0),
     valor: money(delivery.valor),
@@ -2409,6 +2427,8 @@ function normalizeCardapioWebOrder(order = {}, company = {}) {
     joinAddress([street && number ? `${street}, ${number}` : street, neighborhood, `${city} - ${state}`])
   );
   const items = Array.isArray(order.items) ? order.items : Array.isArray(order.cart) ? order.cart : [];
+  const recebidoEm = pickFirst(order.created_at, order.createdAt, order.created, order.date, order.updated_at, new Date().toISOString());
+  const recebidoEmMs = externalOrderMs(recebidoEm);
   return {
     externalId: String(order.id || order.order_id || order.uuid || order.code || '').slice(0, 80),
     status: String(order.status || '').slice(0, 60),
@@ -2423,11 +2443,23 @@ function normalizeCardapioWebOrder(order = {}, company = {}) {
       quantidade: Number(item.quantity || item.amount || item.qty || 1)
     })),
     valorPedido: money(order.total || order.total_price || order.total_amount || order.amount || 0),
-    recebidoEm: pickFirst(order.created_at, order.createdAt, order.updated_at, new Date().toISOString())
+    recebidoEm,
+    recebidoEmMs,
+    recebidoDia: recebidoEmMs ? dateKeySaoPaulo(new Date(recebidoEmMs)) : ''
   };
 }
 
-async function fetchCardapioWebLatestOrder(apiKey, storeCode, company) {
+async function alreadyImportedIntegrationOrder(companyId, origem, externalId) {
+  if (!externalId) return false;
+  const doc = await db.collection('empresas')
+    .doc(companyId)
+    .collection('integracaoPedidos')
+    .doc(externalOrderDocId(origem, externalId))
+    .get();
+  return doc.exists;
+}
+
+async function fetchCardapioWebLatestOrder(apiKey, storeCode, company, companyId) {
   const base = cardapioWebBaseUrl();
   const ordersUrl = `${base}/orders`;
   const response = await fetch(ordersUrl, { headers: cardapioWebHeaders(apiKey, storeCode) });
@@ -2443,14 +2475,35 @@ async function fetchCardapioWebLatestOrder(apiKey, storeCode, company) {
     error.status = 404;
     throw error;
   }
-  const first = orders[0];
-  const orderId = first.id || first.order_id || first.uuid;
-  let fullOrder = first;
-  if (orderId) {
-    const detail = await fetch(`${base}/orders/${encodeURIComponent(orderId)}`, { headers: cardapioWebHeaders(apiKey, storeCode) });
-    if (detail.ok) fullOrder = await detail.json().catch(() => first);
+  const today = dateKeySaoPaulo();
+  let sawOld = false;
+  let sawImported = false;
+  for (const candidate of orders.slice(0, 30)) {
+    const orderId = candidate.id || candidate.order_id || candidate.uuid || candidate.code;
+    let fullOrder = candidate;
+    if (orderId) {
+      const detail = await fetch(`${base}/orders/${encodeURIComponent(orderId)}`, { headers: cardapioWebHeaders(apiKey, storeCode) });
+      if (detail.ok) fullOrder = await detail.json().catch(() => candidate);
+    }
+    const preview = normalizeCardapioWebOrder(fullOrder, company);
+    if (!preview.externalId) continue;
+    if (!preview.recebidoEmMs || preview.recebidoDia !== today) {
+      sawOld = true;
+      continue;
+    }
+    if (await alreadyImportedIntegrationOrder(companyId, preview.origem, preview.externalId)) {
+      sawImported = true;
+      continue;
+    }
+    return preview;
   }
-  return normalizeCardapioWebOrder(fullOrder, company);
+  const error = new Error(sawImported
+    ? 'Os pedidos de hoje encontrados na Cardapio Web ja foram enviados para os motoboys.'
+    : sawOld
+      ? 'A Cardapio Web retornou pedido antigo. Por seguranca, o MotoJa so importa pedidos de hoje.'
+      : 'Conectou na Cardapio Web, mas nao encontrei pedido de hoje para importar.');
+  error.status = 404;
+  throw error;
 }
 
 app.post('/api/companies/me/integration/test', assertCompany, assertCompanyApproved, async (req, res, next) => {
@@ -2464,7 +2517,7 @@ app.post('/api/companies/me/integration/test', assertCompany, assertCompanyAppro
 
     const company = publicCompany(req.company, req.companyId);
     const apiKey = decryptSecret(req.company.integracaoTokenEncrypted);
-    const orderPreview = await fetchCardapioWebLatestOrder(apiKey, req.company.integracaoCodigoLoja || '', company);
+    const orderPreview = await fetchCardapioWebLatestOrder(apiKey, req.company.integracaoCodigoLoja || '', company, req.companyId);
 
     await req.companySnap.ref.set({
       ultimoTesteIntegracaoEm: admin.firestore.FieldValue.serverTimestamp(),
@@ -3252,6 +3305,19 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
       const companyRef = req.companySnap.ref;
       const companySnap = await tx.get(companyRef);
       const balance = companyBalance(companySnap.exists ? companySnap.data() : {});
+      const integrationDocId = delivery.integracaoOrigem && delivery.integracaoPedidoId
+        ? externalOrderDocId(delivery.integracaoOrigem, delivery.integracaoPedidoId)
+        : '';
+      const integrationRef = integrationDocId ? companyRef.collection('integracaoPedidos').doc(integrationDocId) : null;
+      if (integrationRef) {
+        const integrationSnap = await tx.get(integrationRef);
+        if (integrationSnap.exists) {
+          const error = new Error('Esse pedido da API ja foi enviado para os motoboys.');
+          error.status = 409;
+          error.code = 'pedido_integracao_ja_processado';
+          throw error;
+        }
+      }
       const dailyPlan = isDailyPlanDelivery(delivery.tipoEntrega);
       if (dailyPlan) {
         const dia = todayKeySaoPaulo();
@@ -3297,6 +3363,17 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
         reservadoDepois: nextReserved,
         criadoEm: admin.firestore.FieldValue.serverTimestamp()
       });
+
+      if (integrationRef) {
+        tx.set(integrationRef, {
+          origem: delivery.integracaoOrigem,
+          pedidoId: delivery.integracaoPedidoId,
+          recebidoEm: delivery.integracaoPedidoRecebidoEm || '',
+          entregaId: ref.id,
+          status: 'enviado_motoboy',
+          criadoEm: admin.firestore.FieldValue.serverTimestamp()
+        });
+      }
 
       tx.set(ref, {
         ...delivery,
