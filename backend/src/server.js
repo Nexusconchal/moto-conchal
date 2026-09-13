@@ -1039,13 +1039,14 @@ const mapLimiter = rateLimit({
   message: { error: 'muitas_tentativas_mapa', message: 'Aguarde um pouco antes de consultar o mapa novamente.' }
 });
 
-async function mpFetch(path, { token, method = 'GET', body } = {}) {
+async function mpFetch(path, { token, method = 'GET', body, headers = {} } = {}) {
   const response = await fetch(`${MP_API}${path}`, {
     method,
     headers: {
       accept: 'application/json',
       'content-type': 'application/json',
-      authorization: `Bearer ${token}`
+      authorization: `Bearer ${token}`,
+      ...headers
     },
     body: body ? JSON.stringify(body) : undefined
   });
@@ -1157,6 +1158,68 @@ async function createOwnerRidePaymentPreference(rideId, ride, driverCpf) {
     appFee,
     driverAmount,
     ownerFallback: true
+  };
+}
+
+async function createPointPaymentOrder(rideId, ride, driverCpf) {
+  const terminalId = String(process.env.MP_POINT_TERMINAL_ID || '').trim();
+  if (!terminalId) {
+    const error = new Error('Terminal Mercado Pago Point ainda nao configurado. Defina MP_POINT_TERMINAL_ID no Render.');
+    error.status = 503;
+    error.code = 'mp_point_terminal_missing';
+    throw error;
+  }
+
+  const split = rideSplitAmounts(ride.valor, ride.km);
+  const externalReference = String(`ride_${rideId}`).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+  const idempotencyKey = crypto.createHash('sha256')
+    .update(`${externalReference}:${terminalId}:${money(ride.valor).toFixed(2)}`)
+    .digest('hex');
+  const order = await mpFetch('/v1/orders', {
+    token: requiredEnv('MP_OWNER_ACCESS_TOKEN'),
+    method: 'POST',
+    headers: {
+      'X-Idempotency-Key': idempotencyKey
+    },
+    body: {
+      type: 'point',
+      external_reference: externalReference,
+      expiration_time: 'PT10M',
+      transactions: {
+        payments: [{
+          amount: split.total.toFixed(2)
+        }]
+      },
+      config: {
+        point: {
+          terminal_id: terminalId,
+          print_on_terminal: 'no_ticket'
+        },
+        payment_method: {
+          default_type: 'credit_card',
+          installments_cost: 'seller'
+        }
+      },
+      description: `Corrida MotoJa ${ride.nome || 'cliente'}`.slice(0, 120),
+      metadata: {
+        ride_id: rideId,
+        driver_cpf: driverCpf,
+        payment_kind: 'ride_point_tap',
+        app_fee: split.appFee,
+        driver_amount: split.driverAmount
+      }
+    }
+  });
+
+  return {
+    orderId: order.id,
+    externalReference,
+    terminalId,
+    status: order.status || 'created',
+    statusDetail: order.status_detail || '',
+    total: split.total,
+    appFee: split.appFee,
+    driverAmount: split.driverAmount
   };
 }
 
@@ -4422,6 +4485,104 @@ app.post('/api/rides/:rideId/payment/preference', assertAdmin, async (req, res, 
   }
 });
 
+app.post('/api/rides/:rideId/payment/point-order', createRideLimiter, async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+
+    const rideRef = db.collection('corridas').doc(String(req.params.rideId || ''));
+    const rideSnap = await rideRef.get();
+    if (!rideSnap.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
+    const ride = rideSnap.data() || {};
+    if (onlyDigits(ride.motoboyCpf) !== driverCpf) {
+      return res.status(409).json({ error: 'corrida_nao_pertence_ao_motoboy' });
+    }
+    if (ride.status !== 'aceita') {
+      return res.status(409).json({ error: 'corrida_nao_esta_em_andamento', message: 'A corrida precisa estar aceita para cobrar por aproximacao.' });
+    }
+    if (ride.pagamentoConfirmadoEm || ride.pagamento?.status === 'approved') {
+      return res.status(409).json({ error: 'pagamento_ja_aprovado', message: 'Pagamento desta corrida ja consta como aprovado.' });
+    }
+
+    const pointOrder = await createPointPaymentOrder(rideSnap.id, ride, driverCpf);
+    await rideRef.set({
+      pagamento: {
+        ...(ride.pagamento || {}),
+        provider: 'mercadopago',
+        point: {
+          orderId: pointOrder.orderId,
+          externalReference: pointOrder.externalReference,
+          terminalId: pointOrder.terminalId,
+          status: pointOrder.status,
+          statusDetail: pointOrder.statusDetail,
+          total: pointOrder.total,
+          appFee: pointOrder.appFee,
+          driverAmount: pointOrder.driverAmount,
+          criadoEm: admin.firestore.FieldValue.serverTimestamp()
+        },
+        status: ride.pagamento?.status || 'point_order_created',
+        total: ride.pagamento?.total || pointOrder.total,
+        appFee: ride.pagamento?.appFee || pointOrder.appFee,
+        driverAmount: ride.pagamento?.driverAmount || pointOrder.driverAmount
+      },
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    res.status(201).json({
+      ok: true,
+      message: 'Cobranca enviada para o terminal Mercado Pago Point. Aproxime o cartao no celular/maquininha cadastrada.',
+      ...pointOrder
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/rides/:rideId/payment/point-order/status', createRideLimiter, async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+
+    const rideRef = db.collection('corridas').doc(String(req.params.rideId || ''));
+    const rideSnap = await rideRef.get();
+    if (!rideSnap.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
+    const ride = rideSnap.data() || {};
+    if (onlyDigits(ride.motoboyCpf) !== driverCpf) {
+      return res.status(409).json({ error: 'corrida_nao_pertence_ao_motoboy' });
+    }
+    const orderId = String(ride.pagamento?.point?.orderId || '');
+    if (!orderId) return res.status(404).json({ error: 'point_order_nao_encontrada', message: 'Nenhuma cobranca por aproximacao foi criada para esta corrida.' });
+
+    const order = await mpFetch(`/v1/orders/${encodeURIComponent(orderId)}`, {
+      token: requiredEnv('MP_OWNER_ACCESS_TOKEN')
+    });
+    await rideRef.set({
+      pagamento: {
+        ...(ride.pagamento || {}),
+        point: {
+          ...(ride.pagamento?.point || {}),
+          status: order.status || ride.pagamento?.point?.status || '',
+          statusDetail: order.status_detail || ride.pagamento?.point?.statusDetail || '',
+          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+        }
+      },
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    res.json({
+      ok: true,
+      orderId,
+      status: order.status || '',
+      statusDetail: order.status_detail || '',
+      paymentStatus: order.transactions?.payments?.[0]?.status || ''
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/mercadopago/webhook', async (req, res, next) => {
   try {
     const paymentId = req.query.id || req.body?.data?.id;
@@ -4441,7 +4602,8 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
     const payment = await mpFetch(`/v1/payments/${paymentId}`, {
       token: paymentToken
     });
-    const rideId = req.query.rideId || payment.external_reference || payment.metadata?.ride_id;
+    const rawRideRef = req.query.rideId || payment.external_reference || payment.metadata?.ride_id;
+    const rideId = String(rawRideRef || '').replace(/^ride_/, '');
     const paymentKind = String(payment.metadata?.payment_kind || '');
     if (String(rideId || '').startsWith('deposit:') || paymentKind === 'company_deposit') {
       const depositId = String(rideId || '').startsWith('deposit:')
