@@ -1909,6 +1909,46 @@ app.post('/api/admin/rides/:rideId/cancel', assertOwner, async (req, res, next) 
   }
 });
 
+app.post('/api/admin/rides/:rideId/payment/presential/approve', assertOwner, async (req, res, next) => {
+  try {
+    const rideRef = db.collection('corridas').doc(String(req.params.rideId || ''));
+    await db.runTransaction(async (tx) => {
+      const rideSnap = await tx.get(rideRef);
+      if (!rideSnap.exists) {
+        const error = new Error('Corrida nao encontrada.');
+        error.status = 404;
+        throw error;
+      }
+      const ride = rideSnap.data() || {};
+      if (ride.status === 'cancelada') {
+        const error = new Error('Corrida cancelada nao pode ter pagamento aprovado.');
+        error.status = 409;
+        throw error;
+      }
+      if (!ride.pagamento?.presencialManual?.codigo) {
+        const error = new Error('Esta corrida nao tem pagamento presencial informado.');
+        error.status = 400;
+        throw error;
+      }
+      tx.set(rideRef, {
+        pagamento: {
+          ...(ride.pagamento || {}),
+          provider: ride.pagamento?.provider || 'mercadopago',
+          status: 'approved',
+          valido: true,
+          aprovadoManualEm: admin.firestore.FieldValue.serverTimestamp(),
+          aprovadoManualPor: 'dono'
+        },
+        pagamentoConfirmadoEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/admin/drivers/:cpf/block', assertOwner, async (req, res, next) => {
   try {
     const cpf = onlyDigits(req.params.cpf);
@@ -4577,6 +4617,62 @@ app.post('/api/rides/:rideId/payment/point-order/status', createRideLimiter, asy
       status: order.status || '',
       statusDetail: order.status_detail || '',
       paymentStatus: order.transactions?.payments?.[0]?.status || ''
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/rides/:rideId/payment/presential-report', createRideLimiter, async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    const codigo = cleanText(req.body.codigo || req.body.comprovante || '', 80);
+    const observacao = cleanText(req.body.observacao || '', 180);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    if (!codigo) {
+      return res.status(400).json({
+        error: 'codigo_pagamento_obrigatorio',
+        message: 'Informe o codigo/autorizacao do comprovante para registrar pagamento por aproximacao.'
+      });
+    }
+    await getDriverWithProof(driverCpf, req.body);
+
+    const rideRef = db.collection('corridas').doc(String(req.params.rideId || ''));
+    const rideSnap = await rideRef.get();
+    if (!rideSnap.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
+    const ride = rideSnap.data() || {};
+    if (onlyDigits(ride.motoboyCpf) !== driverCpf) {
+      return res.status(409).json({ error: 'corrida_nao_pertence_ao_motoboy' });
+    }
+    if (ride.status !== 'aceita') {
+      return res.status(409).json({ error: 'corrida_nao_esta_em_andamento', message: 'A corrida precisa estar aceita para registrar pagamento presencial.' });
+    }
+    if (!ride.clienteAvisadoEm) {
+      return res.status(409).json({ error: 'avise_o_cliente_antes_de_registrar_pagamento', message: 'Avise o cliente antes de registrar pagamento presencial.' });
+    }
+
+    await rideRef.set({
+      pagamento: {
+        ...(ride.pagamento || {}),
+        provider: ride.pagamento?.provider || 'mercadopago',
+        status: 'presencial_em_conferencia',
+        valido: false,
+        presencialManual: {
+          tipo: 'aproximacao_manual',
+          codigo,
+          observacao,
+          valorInformado: money(ride.valor),
+          motoboy: ride.motoboy || '',
+          motoboyCpf: driverCpf,
+          informadoEm: admin.firestore.FieldValue.serverTimestamp()
+        }
+      },
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    res.json({
+      ok: true,
+      message: 'Pagamento por aproximacao registrado para conferencia do dono. O link/Pix continua disponivel como alternativa.'
     });
   } catch (error) {
     next(error);
