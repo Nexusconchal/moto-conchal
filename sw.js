@@ -1,5 +1,5 @@
-const CACHE_NAME = 'nexus-motoja-v117-app-shell-fast';
-const ARQUIVOS = ['./', './index.html', './motoboy.html', './dono.html', './empresa.html', './privacy.html', './cliente.webmanifest', './motorista.webmanifest', './dono.webmanifest', './firebase-messaging-sw.js', './nexus-motoja-logo-mark.png', './motorista-icon.svg', './nexus-motoja-icon-180.png', './nexus-motoja-icon-192.png', './nexus-motoja-icon-512.png'];
+const CACHE_NAME = 'nexus-motoja-v118-app-shell-fast';
+const ARQUIVOS = ['./', './index.html', './motoboy.html', './dono.html', './empresa.html', './privacy.html', './cliente.webmanifest', './motorista.webmanifest', './dono.webmanifest', './empresa.webmanifest', './firebase-messaging-sw.js', './nexus-motoja-logo-mark.png', './motorista-icon.svg', './nexus-motoja-icon-180.png', './nexus-motoja-icon-192.png', './nexus-motoja-icon-512.png', './nexus-entregas-icon-180.png', './nexus-entregas-icon-192.png', './nexus-entregas-icon-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ARQUIVOS)));
