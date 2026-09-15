@@ -14,19 +14,19 @@
   "lang": "pt-BR",
   "icons": [
     {
-      "src": "./nexus-entregas-icon-180.png?v=1",
+      "src": "./nexus-motoja-icon-180.png?v=119",
       "sizes": "180x180",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "./nexus-entregas-icon-192.png?v=1",
+      "src": "./nexus-motoja-icon-192.png?v=119",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "./nexus-entregas-icon-512.png?v=1",
+      "src": "./nexus-motoja-icon-512.png?v=119",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
@@ -38,7 +38,7 @@
       "short_name": "Entrega",
       "description": "Abrir o app de empresas para chamar uma entrega.",
       "url": "./empresa.html?app=nexus-entregas-empresa&acao=entrega",
-      "icons": [{ "src": "./nexus-entregas-icon-192.png?v=1", "sizes": "192x192" }]
+      "icons": [{ "src": "./nexus-motoja-icon-192.png?v=119", "sizes": "192x192" }]
     }
   ]
 }
