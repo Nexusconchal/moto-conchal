@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexus-motoja-v128-app-shell-fast';
+const CACHE_NAME = 'nexus-motoja-v129-app-shell-fast';
 const ARQUIVOS = ['./', './index.html', './motoboy.html', './dono.html', './empresa.html', './privacy.html', './cliente.webmanifest', './motorista.webmanifest', './dono.webmanifest', './empresa.webmanifest', './firebase-messaging-sw.js', './nexus-motoja-logo-mark.png', './nexus-motoja-site-logo.png', './motorista-icon.svg', './nexus-motoja-icon-180.png', './nexus-motoja-icon-192.png', './nexus-motoja-icon-512.png'];
 
 self.addEventListener('install', (event) => {
