@@ -1,8 +1,8 @@
 {
   "id": "./dono.html?app=nexus-motoja-dono-v1",
-  "name": "Dono Nexus MotoJa",
+  "name": "Dono Nexus MotoJÁ",
   "short_name": "Nexus Dono",
-  "description": "Painel do dono da Nexus MotoJa",
+  "description": "Painel do dono da Nexus MotoJÁ",
   "start_url": "./dono.html?app=nexus-motoja-dono-v1",
   "scope": "./",
   "display": "standalone",
@@ -11,13 +11,13 @@
   "theme_color": "#ff6b00",
   "icons": [
     {
-      "src": "./nexus-motoja-icon-192.png?v=121",
+      "src": "./nexus-motoja-icon-192.png?v=122",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "./nexus-motoja-icon-512.png?v=121",
+      "src": "./nexus-motoja-icon-512.png?v=122",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
