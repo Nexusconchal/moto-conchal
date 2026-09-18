@@ -6,6 +6,8 @@ import morgan from 'morgan';
 import admin from 'firebase-admin';
 import rateLimit from 'express-rate-limit';
 import crypto from 'crypto';
+import { createServer } from 'http';
+import { Server as SocketIOServer } from 'socket.io';
 
 const PORT = Number(process.env.PORT || 10000);
 const DRIVER_PERCENT = Number(process.env.DRIVER_PERCENT || 0.7);
@@ -429,6 +431,100 @@ function cleanText(value, max = 200) {
     .slice(0, max);
 }
 
+function parseBrazilianMoney(value) {
+  const raw = String(value || '').replace(/[^0-9,.-]/g, '');
+  if (!raw) return 0;
+  const normalized = raw.includes(',')
+    ? raw.replace(/\./g, '').replace(',', '.')
+    : raw;
+  return money(normalized);
+}
+
+function incomingOrderText(body = {}) {
+  const candidates = [
+    body.text,
+    body.message,
+    body.data?.message?.conversation,
+    body.data?.message?.extendedTextMessage?.text,
+    body.data?.message?.imageMessage?.caption,
+    body.payload?.text
+  ];
+  const text = candidates.find((value) => typeof value === 'string' && value.trim());
+  return String(text || '').replace(/\r/g, '').trim().slice(0, 12000);
+}
+
+function parseMessageOrder(text) {
+  const source = String(text || '').replace(/\r/g, '').trim();
+  const lines = source.split('\n').map((line) => line.trim()).filter(Boolean);
+  const findValue = (labels) => {
+    const pattern = new RegExp(`^(?:${labels})\\s*[:#-]?\\s*(.+)$`, 'i');
+    const found = lines.map((line) => line.match(pattern)).find(Boolean);
+    return cleanText(found?.[1] || '', 400);
+  };
+  const moneyMatches = [...source.matchAll(/(?:total(?:\s+do\s+pedido)?|valor(?:\s+do\s+pedido)?)\s*[:=-]?\s*R?\$?\s*([0-9.]+(?:,[0-9]{1,2})?)/gi)];
+  const total = parseBrazilianMoney(moneyMatches.at(-1)?.[1] || '');
+  const itemLines = lines.filter((line) => /^\d+\s*[xX]\s+/.test(line) || /^[-*]\s+\d+\s*[xX]?\s*/.test(line));
+  const orderId = findValue('pedido|n[uú]mero(?:\s+do\s+pedido)?|order') || cleanText(source.match(/#\s*([A-Za-z0-9_-]{2,40})/)?.[1] || '', 80);
+  const customer = findValue('cliente|nome') || '';
+  const address = findValue('endere[cç]o(?:\s+de\s+entrega)?|entrega|destino') || '';
+  const phone = onlyDigits(findValue('telefone|whatsapp|celular')).slice(-11);
+  return {
+    orderId,
+    customer,
+    phone,
+    address,
+    items: itemLines.map((line) => cleanText(line.replace(/^[-*]\s*/, ''), 250)).slice(0, 80),
+    total,
+    rawText: source.slice(0, 12000),
+    valid: !!(address && total > 0),
+    missing: [!address ? 'endereco' : '', total <= 0 ? 'valor_total' : ''].filter(Boolean)
+  };
+}
+
+function orderAmounts(total, commissionPercent) {
+  const gross = money(total);
+  const percent = Math.max(0, Math.min(100, Number(commissionPercent || 0)));
+  const commission = money(gross * percent / 100);
+  return { gross, commissionPercent: percent, commission, net: money(Math.max(0, gross - commission)) };
+}
+
+function formatMessageOrder(order, amounts, companyName) {
+  return [
+    '*NOVO PEDIDO - NEXUS MOTOJA*',
+    companyName ? `Empresa: ${companyName}` : '',
+    order.orderId ? `Pedido: ${order.orderId}` : '',
+    order.customer ? `Cliente: ${order.customer}` : '',
+    order.phone ? `WhatsApp: ${order.phone}` : '',
+    `Endereco: ${order.address}`,
+    order.items.length ? `Itens:\n${order.items.map((item) => `- ${item}`).join('\n')}` : '',
+    `Total: ${amounts.gross.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`,
+    `Taxa da empresa (${amounts.commissionPercent.toLocaleString('pt-BR')}%): -${amounts.commission.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`,
+    `Valor liquido: ${amounts.net.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`
+  ].filter(Boolean).join('\n\n');
+}
+
+async function sendEvolutionGroupMessage(groupJid, text) {
+  const baseUrl = String(process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
+  const apiKey = String(process.env.EVOLUTION_API_KEY || '').trim();
+  const instance = String(process.env.EVOLUTION_INSTANCE || '').trim();
+  if (!baseUrl || !apiKey || !instance || !groupJid) {
+    return { sent: false, reason: 'evolution_nao_configurada' };
+  }
+  const response = await fetch(`${baseUrl}/message/sendText/${encodeURIComponent(instance)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', apikey: apiKey },
+    body: JSON.stringify({ number: groupJid, text })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.message || data.error || `Evolution API respondeu ${response.status}.`);
+    error.status = 502;
+    error.code = 'evolution_envio_falhou';
+    throw error;
+  }
+  return { sent: true, id: data.key?.id || data.messageId || '' };
+}
+
 function normalizeText(value) {
   return String(value || '')
     .normalize('NFD')
@@ -662,6 +758,10 @@ function publicCompany(data = {}, id = '') {
     integracaoNome: data.integracaoNome || '',
     integracaoCodigoLoja: data.integracaoCodigoLoja || '',
     integracaoTipoEntrega: data.integracaoTipoEntrega || '',
+    pedidosMensagemAtivos: !!data.pedidosMensagemAtivos,
+    pedidosMensagemTaxaPercentual: Number(data.pedidosMensagemTaxaPercentual || 0),
+    pedidosMensagemGrupoConfigurado: !!data.pedidosMensagemGrupoJid,
+    pedidosMensagemWebhookConfigurado: !!data.pedidosMensagemWebhookSecretHash,
     ...companyBalance(data)
   };
 }
@@ -695,21 +795,36 @@ function publicCustomer(data = {}, id = '') {
   };
 }
 
+async function findCompanySession(token) {
+  const value = String(token || '').trim();
+  if (!value) return null;
+  const tokenHash = hashSecret(value);
+  const snap = await db.collection('empresas').where('sessionTokenHash', '==', tokenHash).limit(1).get();
+  if (snap.empty) return null;
+  const companySnap = snap.docs[0];
+  return { companySnap, company: companySnap.data() || {}, companyId: companySnap.id };
+}
+
 async function assertCompany(req, res, next) {
   try {
     const header = String(req.header('authorization') || '');
     const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
     if (!token) return res.status(401).json({ error: 'empresa_login_obrigatorio' });
-    const tokenHash = hashSecret(token);
-    const snap = await db.collection('empresas').where('sessionTokenHash', '==', tokenHash).limit(1).get();
-    if (snap.empty) return res.status(401).json({ error: 'sessao_empresa_invalida' });
-    req.companySnap = snap.docs[0];
-    req.company = snap.docs[0].data() || {};
-    req.companyId = snap.docs[0].id;
+    const session = await findCompanySession(token);
+    if (!session) return res.status(401).json({ error: 'sessao_empresa_invalida' });
+    req.companySnap = session.companySnap;
+    req.company = session.company;
+    req.companyId = session.companyId;
     return next();
   } catch (error) {
     return next(error);
   }
+}
+
+function emitDeliveryTracking(companyId, event) {
+  const id = onlyDigits(companyId);
+  if (!id) return;
+  io.to(`company:${id}`).emit('delivery:tracking', serializeFirestore(event));
 }
 
 function assertDriverProof(driver = {}, body = {}) {
@@ -990,6 +1105,7 @@ admin.initializeApp({
 
 const db = admin.firestore();
 const app = express();
+const httpServer = createServer(app);
 app.set('trust proxy', 1);
 
 const DEFAULT_ALLOWED_ORIGINS = [
@@ -1003,6 +1119,33 @@ const allowedOrigins = String(`${DEFAULT_ALLOWED_ORIGINS},${process.env.ALLOWED_
   .map((origin) => origin.trim())
   .filter(Boolean)
   .filter((origin, index, all) => all.indexOf(origin) === index);
+
+const io = new SocketIOServer(httpServer, {
+  cors: {
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error('Origin not allowed'));
+    }
+  },
+  transports: ['websocket', 'polling']
+});
+
+io.use(async (socket, next) => {
+  try {
+    const session = await findCompanySession(socket.handshake.auth?.token);
+    if (!session || companyStatus(session.company) !== 'aprovada') {
+      return next(new Error('sessao_empresa_invalida'));
+    }
+    socket.data.companyId = session.companyId;
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+});
+
+io.on('connection', (socket) => {
+  socket.join(`company:${socket.data.companyId}`);
+});
 
 app.use(cors({
   origin(origin, callback) {
@@ -1569,6 +1712,9 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
     const companyRef = companyRefFromPhone(delivery.empresaId || delivery.telefoneEmpresa);
     const updates = {
       status,
+      rastreamentoAtivo: false,
+      motoboyLocalizacao: admin.firestore.FieldValue.delete(),
+      localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
       ...extra,
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     };
@@ -2413,6 +2559,151 @@ app.get('/api/customers/me/rides', createRideLimiter, async (req, res, next) => 
 
 app.get('/api/companies/me', assertCompany, async (req, res) => {
   res.json({ ok: true, company: publicCompany(req.company, req.companyId) });
+});
+
+app.get('/api/companies/me/message-integration', assertCompany, assertCompanyApproved, async (req, res) => {
+  const baseUrl = BACKEND_BASE_URL || `${req.protocol}://${req.get('host')}`;
+  res.json({
+    ok: true,
+    active: !!req.company.pedidosMensagemAtivos,
+    commissionPercent: Number(req.company.pedidosMensagemTaxaPercentual || 0),
+    groupJid: req.company.pedidosMensagemGrupoJid || '',
+    webhookConfigured: !!req.company.pedidosMensagemWebhookSecretHash,
+    webhookUrl: `${baseUrl}/api/integrations/message-orders/${req.companyId}`
+  });
+});
+
+app.post('/api/companies/me/message-integration', assertCompany, assertCompanyApproved, async (req, res, next) => {
+  try {
+    const active = req.body.active === true;
+    const commissionPercent = Math.max(0, Math.min(100, Number(req.body.commissionPercent || 0)));
+    const groupJidRaw = String(req.body.groupJid || '').trim();
+    const groupJid = groupJidRaw && !groupJidRaw.includes('@') ? `${onlyDigits(groupJidRaw)}@g.us` : groupJidRaw;
+    if (groupJid && !/^\d{5,30}(?:-\d{5,30})?@g\.us$/.test(groupJid)) {
+      return res.status(400).json({ error: 'grupo_whatsapp_invalido', message: 'Informe o ID do grupo do WhatsApp no formato numero@g.us.' });
+    }
+    if (active && (!groupJid || commissionPercent < 0 || commissionPercent > 100)) {
+      return res.status(400).json({ error: 'configuracao_incompleta', message: 'Informe o grupo e uma taxa valida antes de ligar.' });
+    }
+
+    let webhookSecret = '';
+    const regenerate = req.body.regenerateSecret === true;
+    if (regenerate || !req.company.pedidosMensagemWebhookSecretHash) {
+      webhookSecret = crypto.randomBytes(24).toString('hex');
+    }
+    const update = {
+      pedidosMensagemAtivos: active,
+      pedidosMensagemTaxaPercentual: commissionPercent,
+      pedidosMensagemGrupoJid: groupJid,
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    };
+    if (webhookSecret) update.pedidosMensagemWebhookSecretHash = hashSecret(webhookSecret);
+    await req.companySnap.ref.set(update, { merge: true });
+    const baseUrl = BACKEND_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    return res.json({
+      ok: true,
+      active,
+      commissionPercent,
+      groupJid,
+      webhookUrl: `${baseUrl}/api/integrations/message-orders/${req.companyId}`,
+      webhookSecret: webhookSecret || undefined,
+      message: webhookSecret
+        ? 'Integracao salva. Guarde a chave agora; ela nao sera exibida novamente.'
+        : 'Integracao salva.'
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/companies/me/message-order/test', assertCompany, assertCompanyApproved, async (req, res, next) => {
+  try {
+    const order = parseMessageOrder(incomingOrderText(req.body));
+    if (!order.valid) {
+      return res.status(422).json({ error: 'pedido_nao_reconhecido', message: `Nao encontrei: ${order.missing.join(', ')}.`, order });
+    }
+    const amounts = orderAmounts(order.total, req.company.pedidosMensagemTaxaPercentual);
+    const message = formatMessageOrder(order, amounts, req.company.empresa || 'Empresa');
+    const delivery = req.body.send === true
+      ? await sendEvolutionGroupMessage(req.company.pedidosMensagemGrupoJid, message)
+      : { sent: false, reason: 'somente_teste' };
+    return res.json({ ok: true, order, amounts, message, delivery });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/integrations/message-orders/:companyId', async (req, res, next) => {
+  try {
+    const companyId = onlyDigits(req.params.companyId);
+    if (companyId.length < 10) return res.status(404).json({ error: 'empresa_nao_encontrada' });
+    const companyRef = db.collection('empresas').doc(companyId);
+    const companySnap = await companyRef.get();
+    if (!companySnap.exists) return res.status(404).json({ error: 'empresa_nao_encontrada' });
+    const company = companySnap.data() || {};
+    const suppliedSecret = String(req.header('x-motoja-webhook-secret') || '').trim();
+    if (!company.pedidosMensagemWebhookSecretHash || !safeEqual(hashSecret(suppliedSecret), company.pedidosMensagemWebhookSecretHash)) {
+      return res.status(401).json({ error: 'webhook_nao_autorizado' });
+    }
+    if (!company.pedidosMensagemAtivos) return res.status(409).json({ error: 'integracao_desligada' });
+
+    const rawText = incomingOrderText(req.body);
+    const order = parseMessageOrder(rawText);
+    if (!order.valid) {
+      return res.status(422).json({ error: 'pedido_nao_reconhecido', message: `Nao encontrei: ${order.missing.join(', ')}.`, order });
+    }
+    const fingerprint = crypto.createHash('sha256').update(`${companyId}:${normalizeText(rawText)}`).digest('hex');
+    const orderRef = companyRef.collection('pedidosMensagem').doc(fingerprint);
+    const amounts = orderAmounts(order.total, company.pedidosMensagemTaxaPercentual);
+    const message = formatMessageOrder(order, amounts, company.empresa || 'Empresa');
+    let duplicated = false;
+    await db.runTransaction(async (tx) => {
+      const existing = await tx.get(orderRef);
+      if (existing.exists) {
+        if (existing.data()?.status === 'envio_falhou' || existing.data()?.status === 'aguardando_configuracao_whatsapp') {
+          tx.set(orderRef, {
+            status: 'processando',
+            novaTentativaEm: admin.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+        } else {
+          duplicated = true;
+        }
+        return;
+      }
+      tx.create(orderRef, {
+        status: 'processando',
+        fingerprint,
+        criadoEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    if (duplicated) return res.status(200).json({ ok: true, duplicated: true, orderId: orderRef.id });
+
+    let delivery;
+    try {
+      delivery = await sendEvolutionGroupMessage(company.pedidosMensagemGrupoJid, message);
+    } catch (error) {
+      await orderRef.set({
+        status: 'envio_falhou',
+        ultimoErro: cleanText(error.message || error.code || 'envio_falhou', 500),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      throw error;
+    }
+    await orderRef.set({
+      ...order,
+      rawText: order.rawText.slice(0, 12000),
+      ...amounts,
+      formattedMessage: message,
+      whatsappSent: delivery.sent,
+      whatsappMessageId: delivery.id || '',
+      whatsappReason: delivery.reason || '',
+      status: delivery.sent ? 'enviado' : 'aguardando_configuracao_whatsapp',
+      criadoEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return res.status(201).json({ ok: true, orderId: orderRef.id, order, amounts, delivery });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 app.post('/api/companies/me/payment-mode', assertCompany, assertCompanyApproved, async (req, res, next) => {
@@ -3982,6 +4273,133 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
   }
 });
 
+app.get('/api/companies/me/active-deliveries', assertCompany, assertCompanyApproved, async (req, res, next) => {
+  try {
+    const snapshot = await db.collection('entregas')
+      .where('empresaId', '==', req.companyId)
+      .limit(100)
+      .get();
+    const deliveries = snapshot.docs
+      .map((docSnap) => serializeFirestore({ id: docSnap.id, ...docSnap.data() }))
+      .filter((delivery) => delivery.status === 'aceita' || delivery.status === 'retirada')
+      .sort((a, b) => Number(timestampMs(b.aceitaEm)) - Number(timestampMs(a.aceitaEm)));
+    return res.json({ ok: true, deliveries });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/deliveries/:deliveryId/pickup', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+
+    const deliveryRef = db.collection('entregas').doc(req.params.deliveryId);
+    let companyId = '';
+    await db.runTransaction(async (tx) => {
+      const deliverySnap = await tx.get(deliveryRef);
+      if (!deliverySnap.exists) {
+        const error = new Error('Entrega nao encontrada.');
+        error.status = 404;
+        throw error;
+      }
+      const delivery = deliverySnap.data();
+      if (onlyDigits(delivery.motoboyCpf) !== driverCpf) {
+        const error = new Error('Entrega nao pertence ao motoboy.');
+        error.status = 409;
+        error.code = 'entrega_nao_pertence_ao_motoboy';
+        throw error;
+      }
+      if (delivery.tipo === 'servico_exclusivo') {
+        const error = new Error('Servico exclusivo nao usa rastreamento por retirada.');
+        error.status = 409;
+        error.code = 'servico_exclusivo_sem_rastreamento';
+        throw error;
+      }
+      if (delivery.status !== 'aceita' && delivery.status !== 'retirada') {
+        const error = new Error('Esta entrega nao pode iniciar o rastreamento.');
+        error.status = 409;
+        error.code = 'entrega_nao_esta_aceita';
+        throw error;
+      }
+      companyId = onlyDigits(delivery.empresaId || delivery.telefoneEmpresa);
+      if (delivery.status === 'aceita') {
+        tx.update(deliveryRef, {
+          status: 'retirada',
+          retiradaConfirmadaEm: admin.firestore.FieldValue.serverTimestamp(),
+          rastreamentoAtivo: true,
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        });
+      }
+    });
+
+    emitDeliveryTracking(companyId, {
+      deliveryId: req.params.deliveryId,
+      status: 'retirada',
+      rastreamentoAtivo: true
+    });
+    return res.json({ ok: true, status: 'retirada', tracking: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/deliveries/:deliveryId/location', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    const latitude = Number(req.body.latitude);
+    const longitude = Number(req.body.longitude);
+    const accuracy = Math.max(0, Number(req.body.accuracy || 0));
+    const clientTimestamp = Number(req.body.timestamp || Date.now());
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+      return res.status(400).json({ error: 'coordenadas_invalidas' });
+    }
+    if (!Number.isFinite(clientTimestamp) || Math.abs(Date.now() - clientTimestamp) > 5 * 60 * 1000) {
+      return res.status(400).json({ error: 'localizacao_fora_do_tempo' });
+    }
+    await getDriverWithProof(driverCpf, req.body);
+
+    const deliveryRef = db.collection('entregas').doc(req.params.deliveryId);
+    const deliverySnap = await deliveryRef.get();
+    if (!deliverySnap.exists) return res.status(404).json({ error: 'entrega_nao_encontrada' });
+    const delivery = deliverySnap.data();
+    if (onlyDigits(delivery.motoboyCpf) !== driverCpf) {
+      return res.status(409).json({ error: 'entrega_nao_pertence_ao_motoboy' });
+    }
+    if (delivery.status !== 'retirada' || delivery.rastreamentoAtivo === false) {
+      return res.status(409).json({ error: 'rastreamento_nao_ativo' });
+    }
+
+    const location = {
+      latitude,
+      longitude,
+      accuracy: Math.min(5000, accuracy),
+      heading: Number.isFinite(Number(req.body.heading)) ? Number(req.body.heading) : null,
+      speed: Number.isFinite(Number(req.body.speed)) ? Math.max(0, Number(req.body.speed)) : null,
+      clientTimestamp,
+      serverTimestampMs: Date.now()
+    };
+    await deliveryRef.set({
+      motoboyLocalizacao: location,
+      localizacaoAtualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    emitDeliveryTracking(delivery.empresaId || delivery.telefoneEmpresa, {
+      deliveryId: deliveryRef.id,
+      status: 'retirada',
+      rastreamentoAtivo: true,
+      motoboy: delivery.motoboy || '',
+      location
+    });
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/deliveries/:deliveryId/accept', async (req, res, next) => {
   try {
     const driverCpf = onlyDigits(req.body.driverCpf);
@@ -3990,6 +4408,7 @@ app.post('/api/deliveries/:deliveryId/accept', async (req, res, next) => {
     const driver = await getDriverWithProof(driverCpf, req.body);
     const deliveryRef = db.collection('entregas').doc(req.params.deliveryId);
 
+    let companyId = '';
     await db.runTransaction(async (tx) => {
       const deliverySnap = await tx.get(deliveryRef);
       if (!deliverySnap.exists) {
@@ -3999,6 +4418,7 @@ app.post('/api/deliveries/:deliveryId/accept', async (req, res, next) => {
       }
 
       const delivery = deliverySnap.data();
+      companyId = onlyDigits(delivery.empresaId || delivery.telefoneEmpresa);
       if (delivery.status !== 'pendente') {
         const error = new Error(`Entrega ja foi aceita por ${delivery.motoboy || 'outro motoboy'}.`);
         error.status = 409;
@@ -4017,6 +4437,11 @@ app.post('/api/deliveries/:deliveryId/accept', async (req, res, next) => {
       });
     });
 
+    emitDeliveryTracking(companyId, {
+      deliveryId: req.params.deliveryId,
+      status: 'aceita',
+      rastreamentoAtivo: false
+    });
     res.json({ ok: true });
   } catch (error) {
     next(error);
@@ -4118,6 +4543,11 @@ app.post('/api/deliveries/:deliveryId/cancel', async (req, res, next) => {
       canceladoEm: admin.firestore.FieldValue.serverTimestamp(),
     });
 
+    emitDeliveryTracking(delivery.empresaId || delivery.telefoneEmpresa, {
+      deliveryId: deliveryRef.id,
+      status: 'cancelada',
+      rastreamentoAtivo: false
+    });
     res.json({ ok: true });
   } catch (error) {
     next(error);
@@ -4269,6 +4699,9 @@ app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (r
 
       tx.update(deliveryRef, {
         status: 'finalizada',
+        rastreamentoAtivo: false,
+        motoboyLocalizacao: admin.firestore.FieldValue.delete(),
+        localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
         valor,
         saldoReservado: valor,
         valorOriginalAntesAjuste: valor !== valorOriginal ? valorOriginal : admin.firestore.FieldValue.delete(),
@@ -4292,6 +4725,13 @@ app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (r
       });
     });
 
+    const finishedDelivery = await deliveryRef.get();
+    const finishedData = finishedDelivery.data() || {};
+    emitDeliveryTracking(finishedData.empresaId || finishedData.telefoneEmpresa, {
+      deliveryId: deliveryRef.id,
+      status: 'finalizada',
+      rastreamentoAtivo: false
+    });
     res.json({ ok: true });
   } catch (error) {
     next(error);
@@ -4326,10 +4766,11 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
         error.code = 'entrega_cancelada';
         throw error;
       }
-      if (delivery.status !== 'aceita') {
-        const error = new Error('Entrega nao esta em andamento.');
+      const exclusiveService = delivery.tipo === 'servico_exclusivo';
+      if (delivery.status !== 'retirada' && !(exclusiveService && delivery.status === 'aceita')) {
+        const error = new Error('Confirme a retirada do pedido antes de finalizar a entrega.');
         error.status = 409;
-        error.code = 'entrega_nao_esta_em_andamento';
+        error.code = 'confirme_retirada_antes_de_finalizar';
         throw error;
       }
       if (delivery.saldoDebitadoEm) {
@@ -4385,6 +4826,9 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
 
       tx.update(deliveryRef, {
         status: 'finalizada',
+        rastreamentoAtivo: false,
+        motoboyLocalizacao: admin.firestore.FieldValue.delete(),
+        localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
         finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
         saldoDebitadoEm: admin.firestore.FieldValue.serverTimestamp(),
         ganhoMotoboy: split.driverAmount,
@@ -4398,6 +4842,13 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
       });
     });
 
+    const finishedDelivery = await deliveryRef.get();
+    const finishedData = finishedDelivery.data() || {};
+    emitDeliveryTracking(finishedData.empresaId || finishedData.telefoneEmpresa, {
+      deliveryId: deliveryRef.id,
+      status: 'finalizada',
+      rastreamentoAtivo: false
+    });
     res.json({ ok: true });
   } catch (error) {
     next(error);
@@ -4856,6 +5307,6 @@ app.use((error, _req, res, _next) => {
   });
 });
 
-app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`MotoJa Conchal backend listening on ${PORT}`);
 });

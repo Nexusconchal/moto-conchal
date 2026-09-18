@@ -65,9 +65,24 @@ POST /api/rides/:rideId/notify-client
 POST /api/rides/:rideId/cancel
 POST /api/rides/:rideId/finish
 POST /api/rides/:rideId/payment/preference
+GET /api/companies/me/active-deliveries
+POST /api/deliveries/:deliveryId/pickup
+POST /api/deliveries/:deliveryId/location
+GET /api/companies/me/message-integration
+POST /api/companies/me/message-integration
+POST /api/companies/me/message-order/test
+POST /api/integrations/message-orders/:companyId
 POST /api/mercadopago/webhook
 POST /api/jobs/cleanup
 ```
+
+## Rastreamento de entregas empresariais
+
+O rastreamento usa uma sala Socket.IO autenticada para cada empresa. O motoboy somente pode enviar GPS depois de confirmar a retirada e se o CPF, CNH, telefone e entrega forem dele. Corridas de passageiro continuam em `corridas` e nao usam essas rotas.
+
+## Pedidos recebidos por mensagem
+
+O painel da empresa gera uma URL e uma chave de webhook. A integracao autorizada deve enviar o texto em `text` e o cabecalho `x-motoja-webhook-secret`. O backend reconhece endereco, itens e total, calcula a taxa configurada pela empresa, impede mensagens duplicadas e envia o resumo ao grupo pela Evolution API. Configure `EVOLUTION_API_URL`, `EVOLUTION_API_KEY` e `EVOLUTION_INSTANCE` no Render.
 
 Para chamar endpoints de dono/manual, envie:
 
