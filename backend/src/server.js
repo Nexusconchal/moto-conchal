@@ -1486,21 +1486,6 @@ const app = express();
 const httpServer = createServer(app);
 app.set('trust proxy', 1);
 
-app.get('/health/firestore', async (_req, res) => {
-  try {
-    await db.collection('sistema').limit(1).get();
-    return res.json({ ok: true, firestore: 'available' });
-  } catch (error) {
-    return res.status(503).json({
-      ok: false,
-      firestore: 'unavailable',
-      code: error?.code ?? null,
-      message: cleanText(error?.message || '', 500),
-      details: cleanText(error?.details || '', 500)
-    });
-  }
-});
-
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://nexusmotoja.com.br',
   'https://www.nexusmotoja.com.br',
