@@ -143,6 +143,7 @@ function requestedPlaceHint(value) {
   if (text.includes('arthur nogueira')) return 'artur nogueira';
   return [
     'conchal',
+    'aguai',
     'martinho prado',
     'tujuguaba',
     'iate',
@@ -467,14 +468,20 @@ function parseMessageOrder(text) {
   const orderId = findValue('pedido|n[uú]mero(?:\s+do\s+pedido)?|order') || cleanText(source.match(/#\s*([A-Za-z0-9_-]{2,40})/)?.[1] || '', 80);
   const customer = findValue('cliente|nome') || '';
   const address = findValue('endere[cç]o(?:\s+de\s+entrega)?|entrega|destino') || '';
+  const neighborhood = findValue('bairro') || '';
   const phone = onlyDigits(findValue('telefone|whatsapp|celular')).slice(-11);
+  const deliveryFee = parseBrazilianMoney(findValue('taxa(?:\s+de\s+entrega)?|frete'));
+  const storeFee = parseBrazilianMoney(findValue('taxa(?:\s+da\s+loja|\s+da\s+plataforma)|comiss[aã]o'));
   return {
     orderId,
     customer,
     phone,
     address,
+    neighborhood,
     items: itemLines.map((line) => cleanText(line.replace(/^[-*]\s*/, ''), 250)).slice(0, 80),
     total,
+    deliveryFee,
+    storeFee,
     rawText: source.slice(0, 12000),
     valid: !!(address && total > 0),
     missing: [!address ? 'endereco' : '', total <= 0 ? 'valor_total' : ''].filter(Boolean)
@@ -525,6 +532,276 @@ async function sendEvolutionGroupMessage(groupJid, text) {
   return { sent: true, id: data.key?.id || data.messageId || '' };
 }
 
+const CAPTURE_PLATFORMS = new Set(['anotaai', 'beefood', 'ifood']);
+const CAPTURE_SOURCES = new Set(['whatsapp', 'extension', 'print']);
+
+function capturePlatform(value) {
+  const platform = normalizeText(value).replace(/[^a-z]/g, '');
+  return CAPTURE_PLATFORMS.has(platform) ? platform : '';
+}
+
+function captureSource(value, platform) {
+  const source = normalizeText(value).replace(/[^a-z]/g, '');
+  if (CAPTURE_SOURCES.has(source)) return source;
+  return platform === 'anotaai' ? 'whatsapp' : 'extension';
+}
+
+function defaultCaptureConfig(platform) {
+  return {
+    active: false,
+    autoDispatch: false,
+    commissionPercent: 0,
+    deliveryType: 'Lanche / pizza / pastel / marmita',
+    captureMode: platform === 'anotaai' ? 'whatsapp' : 'extension',
+    connected: false,
+    updatedAtMs: 0
+  };
+}
+
+function companyCaptureConfig(company = {}, platform) {
+  const saved = company.captureIntegrations?.[platform] || {};
+  return {
+    ...defaultCaptureConfig(platform),
+    active: saved.active === true,
+    autoDispatch: saved.autoDispatch === true,
+    commissionPercent: Math.max(0, Math.min(100, Number(saved.commissionPercent || 0))),
+    deliveryType: cleanText(saved.deliveryType || 'Lanche / pizza / pastel / marmita', 80),
+    captureMode: captureSource(saved.captureMode, platform),
+    connected: saved.connected === true,
+    instanceName: cleanText(saved.instanceName || '', 120),
+    updatedAtMs: Number(saved.updatedAtMs || 0)
+  };
+}
+
+function captureSecretField(platform, source) {
+  return `${platform}_${source}`.replace(/[^a-z_]/g, '');
+}
+
+function captureSecretHash(company = {}, platform, source) {
+  return company.captureSecretHashes?.[captureSecretField(platform, source)] || '';
+}
+
+function normalizeCapturedOrder(platform, source, body = {}) {
+  const supplied = body.order && typeof body.order === 'object' ? body.order : body;
+  const parsed = parseMessageOrder(incomingOrderText(body) || supplied.rawText || '');
+  const items = Array.isArray(supplied.items)
+    ? supplied.items.slice(0, 80).map((item) => cleanText(typeof item === 'string' ? item : `${item.quantity || item.quantidade || 1}x ${item.name || item.nome || ''}`, 250)).filter(Boolean)
+    : parsed.items;
+  const orderTotal = money(supplied.orderTotal || supplied.total || supplied.valorTotal || parsed.total);
+  const externalId = cleanText(supplied.externalId || supplied.orderId || supplied.pedidoId || parsed.orderId || '', 100);
+  const customer = cleanText(supplied.customer || supplied.customerName || supplied.cliente || parsed.customer || '', 120);
+  const address = cleanText(supplied.address || supplied.deliveryAddress || supplied.endereco || parsed.address || '', 350);
+  const neighborhood = cleanText(supplied.neighborhood || supplied.bairro || parsed.neighborhood || '', 120);
+  const phone = onlyDigits(supplied.phone || supplied.customerPhone || supplied.telefone || parsed.phone).slice(-11);
+  return {
+    platform,
+    source,
+    externalId,
+    customer,
+    phone,
+    address,
+    neighborhood,
+    items,
+    orderTotal,
+    platformDeliveryFee: money(supplied.deliveryFee || supplied.taxaEntrega || parsed.deliveryFee),
+    declaredStoreFee: money(supplied.storeFee || supplied.taxaLoja || parsed.storeFee),
+    rawText: cleanText(supplied.rawText || incomingOrderText(body), 12000),
+    receivedAtMs: Date.now()
+  };
+}
+
+function capturedOrderMissing(order = {}) {
+  return [
+    !order.customer ? 'nome do cliente' : '',
+    onlyDigits(order.phone).length < 10 ? 'WhatsApp do cliente' : '',
+    !order.address ? 'endereco de entrega' : '',
+    Number(order.orderTotal || 0) <= 0 ? 'valor total' : ''
+  ].filter(Boolean);
+}
+
+function capturedOrderAmounts(order, config) {
+  const amounts = orderAmounts(order.orderTotal, config.commissionPercent);
+  return {
+    productTotal: amounts.gross,
+    companyCommissionPercent: amounts.commissionPercent,
+    companyCommission: amounts.commission,
+    storeNetAmount: amounts.net,
+    platformDeliveryFee: money(order.platformDeliveryFee),
+    declaredStoreFee: money(order.declaredStoreFee)
+  };
+}
+
+function captureFingerprint(companyId, order = {}) {
+  const identity = order.externalId
+    ? `${order.platform}:${order.externalId}`
+    : `${order.platform}:${order.source}:${normalizeText(order.rawText || `${order.customer}|${order.address}|${order.orderTotal}`)}`;
+  return crypto.createHash('sha256').update(`${companyId}:${identity}`).digest('hex');
+}
+
+function captureOrderRef(companyId, order) {
+  return db.collection('empresas').doc(companyId).collection('pedidosCapturados').doc(captureFingerprint(companyId, order));
+}
+
+async function geocodeCapturedAddress(value) {
+  if (!GEOAPIFY_API_KEY) {
+    const error = new Error('Mapa nao configurado no servidor.');
+    error.status = 503;
+    error.code = 'geoapify_nao_configurado';
+    throw error;
+  }
+  const address = cleanText(value, 300);
+  const query = requestedPlaceHint(address) ? address : `${address}, Conchal, SP, Brasil`;
+  const params = new URLSearchParams({ text: query, lang: 'pt', limit: '1', apiKey: GEOAPIFY_API_KEY });
+  const response = await fetch(`https://api.geoapify.com/v1/geocode/search?${params.toString()}`);
+  const data = await response.json().catch(() => ({}));
+  const feature = data.features?.[0];
+  if (!response.ok || !feature) {
+    const error = new Error(`Nao consegui localizar o endereco: ${address}. Confira o pedido na fila.`);
+    error.status = 422;
+    error.code = 'endereco_nao_localizado';
+    throw error;
+  }
+  const properties = feature.properties || {};
+  const result = {
+    lat: Number(properties.lat ?? feature.geometry?.coordinates?.[1]),
+    lon: Number(properties.lon ?? feature.geometry?.coordinates?.[0]),
+    text: cleanText(properties.formatted || properties.address_line2 || query, 300)
+  };
+  if (!validCoordinate(result)) {
+    const error = new Error(`O mapa nao devolveu coordenadas validas para: ${address}.`);
+    error.status = 422;
+    error.code = 'coordenadas_invalidas';
+    throw error;
+  }
+  ensureResolvedPlaceMatches(address, result.text, 'Endereco');
+  ensureResolvedAddressIsSpecific(address, result.text, 'Endereco');
+  return result;
+}
+
+async function dispatchCapturedOrder(companyId, company, orderRef, captured, config) {
+  const missing = capturedOrderMissing(captured);
+  if (missing.length) {
+    const error = new Error(`Confira antes de chamar: ${missing.join(', ')}.`);
+    error.status = 422;
+    error.code = 'pedido_incompleto';
+    throw error;
+  }
+  if (!company.retirada) {
+    const error = new Error('Cadastre o endereco de retirada da empresa antes de ligar o envio automatico.');
+    error.status = 422;
+    error.code = 'retirada_empresa_obrigatoria';
+    throw error;
+  }
+  if (!isPricedDeliveryType(config.deliveryType)) {
+    const error = new Error('Escolha um tipo de entrega com preco definido.');
+    error.status = 422;
+    error.code = 'tipo_entrega_sem_preco';
+    throw error;
+  }
+
+  const [pickup, destination] = await Promise.all([
+    geocodeCapturedAddress(company.retirada),
+    geocodeCapturedAddress(`${captured.address}${captured.neighborhood ? `, ${captured.neighborhood}` : ''}`)
+  ]);
+  const km = await calculateRouteDistanceKm([pickup, destination]);
+  ensureDistantRouteIsPlausible(km, captured.address, destination.text);
+  const delivery = deliveryPublicData({
+    clientRequestId: `cap_${orderRef.id.slice(0, 60)}`,
+    empresa: company.empresa || 'Empresa',
+    responsavel: company.responsavel || company.empresa || 'Responsavel',
+    telefoneEmpresa: companyId,
+    tipoEntrega: config.deliveryType,
+    retirada: company.retirada,
+    retiradaEncontrada: pickup.text,
+    retiradaLat: pickup.lat,
+    retiradaLon: pickup.lon,
+    retiradaMapa: `https://www.google.com/maps?q=${pickup.lat},${pickup.lon}`,
+    entrega: captured.address,
+    entregaEncontrada: destination.text,
+    entregaLat: destination.lat,
+    entregaLon: destination.lon,
+    recebedor: captured.customer,
+    telefoneRecebedor: captured.phone,
+    descricao: captured.items.join(', ').slice(0, 500) || `Pedido ${captured.externalId || captured.platform}`,
+    observacao: `Capturado de ${captured.platform}${captured.externalId ? ` - pedido ${captured.externalId}` : ''}`,
+    integracaoOrigem: captured.platform,
+    integracaoPedidoId: captured.externalId || orderRef.id.slice(0, 70),
+    integracaoPedidoRecebidoEm: String(captured.receivedAtMs || Date.now()),
+    paradas: 1,
+    km
+  });
+  delivery.valor = expectedDeliveryFare(delivery.km, 1, delivery.tipoEntrega, delivery);
+  delivery.precoLabel = isFixedFoodDelivery(delivery.tipoEntrega)
+    ? 'Tabela de alimentos Nexus MotoJa'
+    : 'R$ 2,00 por km';
+  if (!delivery.valor) {
+    const error = new Error('Nao consegui calcular o valor da entrega.');
+    error.status = 422;
+    error.code = 'valor_entrega_invalido';
+    throw error;
+  }
+
+  const deliveryRef = db.collection('entregas').doc(delivery.clientRequestId);
+  let created = false;
+  await db.runTransaction(async (tx) => {
+    const [existingDelivery, companySnap, capturedSnap] = await Promise.all([
+      tx.get(deliveryRef),
+      tx.get(db.collection('empresas').doc(companyId)),
+      tx.get(orderRef)
+    ]);
+    if (existingDelivery.exists || capturedSnap.data()?.deliveryId) return;
+    const latestCompany = companySnap.data() || {};
+    const balance = companyBalance(latestCompany);
+    if (balance.disponivel < delivery.valor) {
+      const error = new Error('Saldo insuficiente para chamar o motoboy. O pedido ficou na fila para revisao.');
+      error.status = 402;
+      error.code = 'saldo_insuficiente';
+      throw error;
+    }
+    if (isDailyPlanDelivery(delivery.tipoEntrega)) {
+      const planSnap = await tx.get(dailyPlanRef(companyId));
+      if (!planSnap.exists || planSnap.data().status !== 'ativo') {
+        const error = new Error('O Plano Diario precisa estar ativo hoje. O pedido ficou na fila.');
+        error.status = 403;
+        error.code = 'plano_diario_inativo';
+        throw error;
+      }
+    }
+    const nextReserved = money(balance.reservado + delivery.valor);
+    tx.set(companySnap.ref, { reservado: nextReserved, atualizadaEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    tx.set(ledgerRef(companyId), {
+      tipo: 'reserva', origem: 'pedido_capturado', entregaId: deliveryRef.id, valor: delivery.valor,
+      saldoAntes: balance.saldo, saldoDepois: balance.saldo, reservadoAntes: balance.reservado,
+      reservadoDepois: nextReserved, criadoEm: admin.firestore.FieldValue.serverTimestamp()
+    });
+    tx.set(deliveryRef, {
+      ...delivery,
+      empresaId: companyId,
+      bairroEntrega: bairroFromAddress(delivery.entregaEncontrada || delivery.entrega),
+      tipo: 'entrega_empresarial', status: 'pendente', pagamento: 'saldo_pre_pago_empresa',
+      saldoReservado: delivery.valor,
+      pedidoProduto: capturedOrderAmounts(captured, config),
+      capturaPedidoId: orderRef.id,
+      criadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    });
+    tx.set(orderRef, {
+      status: 'enviado_motoboy', deliveryId: deliveryRef.id, deliveryFare: delivery.valor,
+      routeKm: delivery.km, dispatchedAtMs: Date.now(),
+      atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    created = true;
+  });
+
+  if (created) {
+    await Promise.allSettled([
+      notifyTelegramAboutDelivery(deliveryRef.id, delivery),
+      notifyDriversAboutDelivery(deliveryRef.id, delivery)
+    ]);
+  }
+  return { deliveryId: deliveryRef.id, deliveryFare: delivery.valor, km: delivery.km, created };
+}
+
 function normalizeText(value) {
   return String(value || '')
     .normalize('NFD')
@@ -532,6 +809,71 @@ function normalizeText(value) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ');
+}
+
+const RIDE_CITY_CENTERS = {
+  conchal: { lat: -22.3308, lon: -47.1724, label: 'Conchal' },
+  aguai: { lat: -22.0572, lon: -46.9781, label: 'Aguai' }
+};
+
+function canonicalRideCity(value, fallback = 'conchal') {
+  const city = normalizeText(value);
+  if (city.includes('aguai')) return 'aguai';
+  if (city.includes('conchal')) return 'conchal';
+  return fallback;
+}
+
+function rideCityLabel(value) {
+  return RIDE_CITY_CENTERS[canonicalRideCity(value)]?.label || 'Conchal';
+}
+
+function driverRideCities(driver = {}) {
+  const saved = driver.cidadesAtivas && typeof driver.cidadesAtivas === 'object'
+    ? driver.cidadesAtivas
+    : {};
+  return {
+    conchal: saved.conchal !== false,
+    aguai: saved.aguai === true
+  };
+}
+
+function rideOperatingCity(ride = {}) {
+  // Corridas antigas nao tinham cidade e pertencem ao mercado original de Conchal.
+  return canonicalRideCity(ride.cidadeOperacao, 'conchal');
+}
+
+function coordinateDistanceKm(a, b) {
+  const lat1 = Number(a?.lat);
+  const lon1 = Number(a?.lon);
+  const lat2 = Number(b?.lat);
+  const lon2 = Number(b?.lon);
+  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return Infinity;
+  const toRad = (degrees) => degrees * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const h = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function inferNewRideOperatingCity(ride = {}, requested = '') {
+  const originText = normalizeText([
+    ride.origem,
+    ride.origemDigitada,
+    ride.origemEncontrada
+  ].filter(Boolean).join(' '));
+  const origin = { lat: Number(ride.origemLat), lon: Number(ride.origemLon) };
+  if (Number.isFinite(origin.lat) && Number.isFinite(origin.lon) && origin.lat && origin.lon) {
+    const conchalKm = coordinateDistanceKm(origin, RIDE_CITY_CENTERS.conchal);
+    const aguaiKm = coordinateDistanceKm(origin, RIDE_CITY_CENTERS.aguai);
+    if (aguaiKm <= 30 && aguaiKm < conchalKm) return 'aguai';
+    if (conchalKm <= 30) return 'conchal';
+  }
+
+  if (originText.includes('aguai')) return 'aguai';
+  if (originText.includes('conchal')) return 'conchal';
+
+  return canonicalRideCity(requested, 'conchal');
 }
 
 function normalizedPersonName(value) {
@@ -950,7 +1292,8 @@ function ridePublicData(ride) {
     km: Number(ride.km || 0),
     valor: money(ride.valor),
     precoLabel: String(ride.precoLabel || ''),
-    origemMapa: String(ride.origemMapa || '')
+    origemMapa: String(ride.origemMapa || ''),
+    cidadeOperacao: canonicalRideCity(ride.cidadeOperacao, '')
   };
 }
 
@@ -997,7 +1340,10 @@ function deliveryPublicData(delivery) {
 
 async function notifyTelegramAboutRide(rideId, ride) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
+  const city = rideOperatingCity(ride);
+  const chatId = city === 'aguai'
+    ? process.env.TELEGRAM_CHAT_ID_AGUAI
+    : process.env.TELEGRAM_CHAT_ID;
   if (!token || !chatId) return { sent: false, skipped: true };
 
   const value = money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -1009,6 +1355,7 @@ async function notifyTelegramAboutRide(rideId, ride) {
   const message = [
     '<b>NOVA CORRIDA TOCANDO</b>',
     '',
+    `<b>Cidade:</b> ${escapeTelegram(rideCityLabel(city))}`,
     `<b>Cliente:</b> ${escapeTelegram(ride.nome || 'Cliente')}`,
     `<b>Valor:</b> ${escapeTelegram(value)}`,
     `<b>Distancia:</b> ${escapeTelegram(km)} km`,
@@ -1435,9 +1782,11 @@ async function getDriverWithMercadoPago(driverCpf) {
 async function notifyDriversAboutRide(rideId, ride) {
   const drivers = await db.collection('motoboys').where('status', '==', 'ativo').get();
   const tokens = [];
+  const city = rideOperatingCity(ride);
 
   drivers.forEach((doc) => {
     const data = doc.data();
+    if (!driverRideCities(data)[city]) return;
     const saved = data.fcmTokens || {};
     Object.entries(saved).forEach(([token, info]) => {
       if (info?.ativo !== false) tokens.push(token);
@@ -1449,7 +1798,7 @@ async function notifyDriversAboutRide(rideId, ride) {
   const response = await admin.messaging().sendEachForMulticast({
     tokens,
     notification: {
-      title: 'Nova corrida MotoJa Conchal',
+      title: `Nova corrida MotoJa ${rideCityLabel(city)}`,
       body: `${ride.nome || 'Cliente'} - ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`
     },
     webpush: {
@@ -1459,7 +1808,8 @@ async function notifyDriversAboutRide(rideId, ride) {
     },
     data: {
       rideId,
-      tipo: 'nova_corrida'
+      tipo: 'nova_corrida',
+      cidadeOperacao: city
     }
   });
 
@@ -2221,6 +2571,7 @@ app.post('/api/drivers/register', async (req, res, next) => {
       motoAno,
       motoPlaca,
       status: 'ativo',
+      cidadesAtivas: driverRideCities(savedDriver),
       ultimoAcesso: admin.firestore.FieldValue.serverTimestamp(),
       atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
     };
@@ -2245,8 +2596,48 @@ app.post('/api/drivers/register', async (req, res, next) => {
       motoModelo,
       motoAno,
       motoPlaca,
-      crlvFoto
+      crlvFoto,
+      cidadesAtivas: driverRideCities(savedDriver)
     });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/drivers/:cpf/cities/status', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    const driver = await getDriverWithProof(driverCpf, req.body);
+    return res.json({ ok: true, cidadesAtivas: driverRideCities(driver) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/drivers/:cpf/cities', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+
+    const cidadesAtivas = {
+      conchal: req.body?.cidadesAtivas?.conchal === true,
+      aguai: req.body?.cidadesAtivas?.aguai === true
+    };
+    if (!cidadesAtivas.conchal && !cidadesAtivas.aguai) {
+      return res.status(400).json({
+        error: 'selecione_uma_cidade',
+        message: 'Deixe pelo menos uma cidade ligada para receber corridas.'
+      });
+    }
+
+    await db.collection('motoboys').doc(driverCpf).set({
+      cidadesAtivas,
+      atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    driverProofCache.clear();
+    return res.json({ ok: true, cidadesAtivas });
   } catch (error) {
     return next(error);
   }
@@ -2259,13 +2650,17 @@ app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
     const scope = req.body.scope === 'mine' ? 'mine' : 'pending';
     const collectionName = kind === 'deliveries' ? 'entregas' : 'corridas';
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
-    await getDriverWithProof(driverCpf, req.body);
+    const driver = await getDriverWithProof(driverCpf, req.body);
 
     const queryRef = scope === 'mine'
       ? db.collection(collectionName).where('motoboyCpf', '==', driverCpf).limit(100)
       : db.collection(collectionName).where('status', '==', 'pendente').limit(100);
     const snapshot = await queryRef.get();
-    const jobs = sortJobs(snapshot.docs.map((docSnap) => {
+    const enabledCities = driverRideCities(driver);
+    const docs = kind === 'rides' && scope === 'pending'
+      ? snapshot.docs.filter((docSnap) => enabledCities[rideOperatingCity(docSnap.data())])
+      : snapshot.docs;
+    const jobs = sortJobs(docs.map((docSnap) => {
       const item = serializeFirestore({ id: docSnap.id, ...docSnap.data() });
       return scope === 'pending' ? publicPendingJob(item) : item;
     }));
@@ -2559,6 +2954,245 @@ app.get('/api/customers/me/rides', createRideLimiter, async (req, res, next) => 
 
 app.get('/api/companies/me', assertCompany, async (req, res) => {
   res.json({ ok: true, company: publicCompany(req.company, req.companyId) });
+});
+
+app.get('/api/companies/me/order-integrations', assertCompany, assertCompanyApproved, async (req, res) => {
+  const baseUrl = BACKEND_BASE_URL || `${req.protocol}://${req.get('host')}`;
+  const integrations = {};
+  for (const platform of CAPTURE_PLATFORMS) {
+    const config = companyCaptureConfig(req.company, platform);
+    integrations[platform] = {
+      ...config,
+      secretConfigured: !!captureSecretHash(req.company, platform, config.captureMode),
+      ingestUrl: `${baseUrl}/api/integrations/orders/${req.companyId}/${platform}`
+    };
+  }
+  res.json({ ok: true, companyId: req.companyId, integrations });
+});
+
+app.post('/api/companies/me/order-integrations/:platform', assertCompany, assertCompanyApproved, async (req, res, next) => {
+  try {
+    const platform = capturePlatform(req.params.platform);
+    if (!platform) return res.status(404).json({ error: 'plataforma_invalida' });
+    if (platform === 'ifood') {
+      return res.status(409).json({ error: 'ifood_em_breve', message: 'iFood esta visivel no painel, mas a captura ainda nao esta liberada.' });
+    }
+    const captureMode = captureSource(req.body.captureMode, platform);
+    if (platform === 'anotaai' && captureMode !== 'whatsapp') {
+      return res.status(400).json({ error: 'modo_captura_invalido' });
+    }
+    const config = {
+      active: req.body.active === true,
+      autoDispatch: req.body.autoDispatch === true,
+      commissionPercent: Math.max(0, Math.min(100, Number(req.body.commissionPercent || 0))),
+      deliveryType: cleanText(req.body.deliveryType || 'Lanche / pizza / pastel / marmita', 80),
+      captureMode,
+      connected: companyCaptureConfig(req.company, platform).connected,
+      updatedAtMs: Date.now()
+    };
+    if (!isPricedDeliveryType(config.deliveryType)) {
+      return res.status(400).json({ error: 'tipo_entrega_sem_preco', message: 'Escolha um tipo de entrega com preco definido.' });
+    }
+    let secret = '';
+    const secretField = captureSecretField(platform, captureMode);
+    if (req.body.regenerateSecret === true || !captureSecretHash(req.company, platform, captureMode)) {
+      secret = crypto.randomBytes(24).toString('hex');
+    }
+    const update = {
+      captureIntegrations: { [platform]: config },
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    };
+    if (secret) update.captureSecretHashes = { [secretField]: hashSecret(secret) };
+    await req.companySnap.ref.set(update, { merge: true });
+    const baseUrl = BACKEND_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    return res.json({
+      ok: true,
+      config,
+      ingestUrl: `${baseUrl}/api/integrations/orders/${req.companyId}/${platform}`,
+      captureKey: secret || undefined,
+      message: secret
+        ? 'Configuracao salva. Guarde a chave agora; ela nao sera mostrada novamente.'
+        : 'Configuracao salva.'
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/companies/me/order-integrations/anotaai/connect', assertCompany, assertCompanyApproved, async (req, res, next) => {
+  try {
+    const baseUrl = String(process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
+    const apiKey = String(process.env.EVOLUTION_API_KEY || '').trim();
+    if (!baseUrl || !apiKey) {
+      return res.status(503).json({ error: 'evolution_nao_configurada', message: 'Configure EVOLUTION_API_URL e EVOLUTION_API_KEY no Render antes de gerar o QR Code.' });
+    }
+    const instanceName = `nexus-${req.companyId}`.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 60);
+    const captureKey = crypto.randomBytes(24).toString('hex');
+    const headers = { 'content-type': 'application/json', apikey: apiKey };
+    let createResponse = await fetch(`${baseUrl}/instance/create`, {
+      method: 'POST', headers, body: JSON.stringify({ instanceName, qrcode: true, integration: 'WHATSAPP-BAILEYS' })
+    });
+    let createData = await createResponse.json().catch(() => ({}));
+    if (!createResponse.ok && createResponse.status !== 409 && !/already|exist/i.test(JSON.stringify(createData))) {
+      return res.status(502).json({ error: 'evolution_instancia_falhou', message: createData.message || 'Nao consegui criar a conexao do WhatsApp.' });
+    }
+    const backendBase = BACKEND_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const webhookUrl = `${backendBase}/api/integrations/orders/${req.companyId}/anotaai?captureKey=${captureKey}`;
+    await fetch(`${baseUrl}/webhook/set/${encodeURIComponent(instanceName)}`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ webhook: { enabled: true, url: webhookUrl, webhookByEvents: false, events: ['MESSAGES_UPSERT'] } })
+    }).catch(() => null);
+    if (!createData.qrcode?.base64 && !createData.base64) {
+      const connectResponse = await fetch(`${baseUrl}/instance/connect/${encodeURIComponent(instanceName)}`, { headers: { apikey: apiKey } });
+      if (connectResponse.ok) createData = await connectResponse.json().catch(() => createData);
+    }
+    await req.companySnap.ref.set({
+      captureIntegrations: {
+        anotaai: {
+          ...companyCaptureConfig(req.company, 'anotaai'),
+          instanceName,
+          connected: false,
+          captureMode: 'whatsapp',
+          updatedAtMs: Date.now()
+        }
+      },
+      captureSecretHashes: { [captureSecretField('anotaai', 'whatsapp')]: hashSecret(captureKey) },
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return res.json({
+      ok: true,
+      instanceName,
+      qrCode: createData.qrcode?.base64 || createData.base64 || createData.qrcode?.code || '',
+      pairingCode: createData.qrcode?.pairingCode || createData.pairingCode || '',
+      message: 'Escaneie o QR Code com o WhatsApp da loja.'
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/companies/me/order-integrations/anotaai/status', assertCompany, assertCompanyApproved, async (req, res, next) => {
+  try {
+    const config = companyCaptureConfig(req.company, 'anotaai');
+    const baseUrl = String(process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
+    const apiKey = String(process.env.EVOLUTION_API_KEY || '').trim();
+    if (!baseUrl || !apiKey || !config.instanceName) return res.json({ ok: true, connected: false, state: 'disconnected' });
+    const response = await fetch(`${baseUrl}/instance/connectionState/${encodeURIComponent(config.instanceName)}`, { headers: { apikey: apiKey } });
+    const data = await response.json().catch(() => ({}));
+    const state = data.instance?.state || data.state || 'disconnected';
+    const connected = state === 'open' || state === 'connected';
+    await req.companySnap.ref.set({ captureIntegrations: { anotaai: { connected, updatedAtMs: Date.now() } } }, { merge: true });
+    return res.json({ ok: true, connected, state });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/integrations/orders/:companyId/:platform', async (req, res, next) => {
+  try {
+    const companyId = onlyDigits(req.params.companyId);
+    const platform = capturePlatform(req.params.platform);
+    const companyRef = companyRefFromPhone(companyId);
+    if (!companyRef || !platform) return res.status(404).json({ error: 'integracao_nao_encontrada' });
+    const companySnap = await companyRef.get();
+    if (!companySnap.exists) return res.status(404).json({ error: 'empresa_nao_encontrada' });
+    const company = companySnap.data() || {};
+    const config = companyCaptureConfig(company, platform);
+    const source = captureSource(req.body.source, platform);
+    const suppliedKey = String(req.header('x-nexus-capture-key') || req.query.captureKey || '').trim();
+    const expectedHash = captureSecretHash(company, platform, source);
+    if (!suppliedKey || !expectedHash || !safeEqual(hashSecret(suppliedKey), expectedHash)) {
+      return res.status(401).json({ error: 'chave_captura_invalida' });
+    }
+    if (!config.active) return res.status(409).json({ error: 'integracao_desligada' });
+    if (platform === 'beefood' && config.captureMode !== source) {
+      return res.status(409).json({ error: 'modo_captura_diferente', message: `A loja esta configurada para captura por ${config.captureMode}.` });
+    }
+    const evolutionFromMe = req.body.data?.key?.fromMe === true;
+    if (platform === 'anotaai' && evolutionFromMe) return res.status(200).json({ ok: true, ignored: true });
+    const order = normalizeCapturedOrder(platform, source, req.body);
+    const orderRef = captureOrderRef(companyId, order);
+    const amounts = capturedOrderAmounts(order, config);
+    let duplicated = false;
+    await db.runTransaction(async (tx) => {
+      const existing = await tx.get(orderRef);
+      if (existing.exists) {
+        duplicated = true;
+        return;
+      }
+      tx.create(orderRef, {
+        ...order,
+        ...amounts,
+        fingerprint: orderRef.id,
+        missing: capturedOrderMissing(order),
+        status: 'revisar',
+        autoDispatchRequested: config.autoDispatch,
+        criadoEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    if (duplicated) return res.status(200).json({ ok: true, duplicated: true, capturedOrderId: orderRef.id });
+
+    let dispatch = null;
+    if (config.autoDispatch && !capturedOrderMissing(order).length) {
+      try {
+        dispatch = await dispatchCapturedOrder(companyId, company, orderRef, order, config);
+      } catch (error) {
+        await orderRef.set({
+          status: 'revisar',
+          reviewReason: cleanText(error.message || 'Falha no envio automatico.', 500),
+          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      }
+    }
+    return res.status(dispatch?.deliveryId ? 201 : 202).json({ ok: true, capturedOrderId: orderRef.id, order, amounts, dispatch });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/companies/me/captured-orders', assertCompany, assertCompanyApproved, async (req, res, next) => {
+  try {
+    const snapshot = await req.companySnap.ref.collection('pedidosCapturados').limit(80).get();
+    const orders = snapshot.docs
+      .map((docSnap) => serializeFirestore({ id: docSnap.id, ...docSnap.data() }))
+      .sort((a, b) => Number(b.receivedAtMs || 0) - Number(a.receivedAtMs || 0));
+    return res.json({ ok: true, orders });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/companies/me/captured-orders/:orderId/dispatch', assertCompany, assertCompanyApproved, createRideLimiter, async (req, res, next) => {
+  const orderRef = req.companySnap.ref.collection('pedidosCapturados').doc(String(req.params.orderId || ''));
+  try {
+    const snapshot = await orderRef.get();
+    if (!snapshot.exists) return res.status(404).json({ error: 'pedido_capturado_nao_encontrado' });
+    if (snapshot.data().status === 'ignorado') return res.status(409).json({ error: 'pedido_ignorado' });
+    const saved = snapshot.data() || {};
+    const order = normalizeCapturedOrder(saved.platform, saved.source, { ...saved, ...req.body });
+    order.receivedAtMs = Number(saved.receivedAtMs || Date.now());
+    const config = companyCaptureConfig(req.company, saved.platform);
+    await orderRef.set({ ...order, ...capturedOrderAmounts(order, config), missing: capturedOrderMissing(order), atualizadoEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    const dispatch = await dispatchCapturedOrder(req.companyId, req.company, orderRef, order, config);
+    return res.json({ ok: true, dispatch });
+  } catch (error) {
+    await orderRef.set({ status: 'revisar', reviewReason: cleanText(error.message, 500), atualizadoEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true }).catch(() => null);
+    return next(error);
+  }
+});
+
+app.post('/api/companies/me/captured-orders/:orderId/dismiss', assertCompany, assertCompanyApproved, async (req, res, next) => {
+  try {
+    const orderRef = req.companySnap.ref.collection('pedidosCapturados').doc(String(req.params.orderId || ''));
+    const snapshot = await orderRef.get();
+    if (!snapshot.exists) return res.status(404).json({ error: 'pedido_capturado_nao_encontrado' });
+    if (snapshot.data().deliveryId) return res.status(409).json({ error: 'pedido_ja_enviado' });
+    await orderRef.set({ status: 'ignorado', ignoradoEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 app.get('/api/companies/me/message-integration', assertCompany, assertCompanyApproved, async (req, res) => {
@@ -3395,6 +4029,7 @@ app.get('/api/drivers/:cpf/mercadopago/status', async (req, res, next) => {
 app.post('/api/rides', createRideLimiter, async (req, res, next) => {
   try {
     const ride = ridePublicData(req.body);
+    ride.cidadeOperacao = inferNewRideOperatingCity(ride, req.body.cidadeOperacao);
     if (!ride.nome || !ride.origem || !ride.destino || ride.telefoneCliente.length < 10 || ride.telefoneCliente.length > 11) {
       return res.status(400).json({ error: 'preencha_nome_telefone_origem_destino' });
     }
@@ -4189,6 +4824,14 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
       if (ride.status !== 'pendente') {
         const error = new Error(`Corrida ja foi aceita por ${ride.motoboy || 'outro motoboy'}.`);
         error.status = 409;
+        throw error;
+      }
+
+      const city = rideOperatingCity(ride);
+      if (!driverRideCities(driver)[city]) {
+        const error = new Error(`Ative ${rideCityLabel(city)} no topo do app para aceitar esta corrida.`);
+        error.status = 403;
+        error.code = 'cidade_desativada';
         throw error;
       }
 

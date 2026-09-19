@@ -1,0 +1,26 @@
+{
+  "name": "nexus-captura-windows",
+  "version": "1.0.0",
+  "description": "Leitor local de pedidos impressos para Nexus MotoJa",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check main.js && node --check preload.js && node --check renderer.js && node --check capture-service.js",
+    "build": "electron-builder --win nsis"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.3",
+    "pdf-parse": "^1.1.1"
+  },
+  "devDependencies": {
+    "electron": "^36.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "br.com.nexusmotoja.captura",
+    "productName": "Nexus Captura",
+    "files": ["*.js", "index.html", "package.json"],
+    "win": { "target": "nsis" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true }
+  }
+}

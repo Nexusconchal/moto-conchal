@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Nexus Captura - BeeFood",
+  "version": "1.0.0",
+  "description": "Envia o pedido aberto no BeeFood para o painel Nexus MotoJa.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["https://motoboy-conchal.onrender.com/*"],
+  "action": {
+    "default_title": "Capturar pedido BeeFood",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html"
+}

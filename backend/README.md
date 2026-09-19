@@ -50,6 +50,7 @@ Obrigatorias:
 - `DRIVER_PASSWORD` com a senha dos motoboys; se nao definir, usa `moto123`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
+- `TELEGRAM_CHAT_ID_AGUAI` opcional, para avisar as corridas de Aguaí em um grupo separado
 - `ALLOWED_ORIGINS` com os dominios autorizados, separados por virgula. Padrao: GitHub Pages do app e Render.
 
 ## Endpoints principais
@@ -59,6 +60,8 @@ GET /health
 GET /api/mercadopago/oauth/start?driverCpf=00000000000
 GET /api/mercadopago/oauth/callback
 POST /api/drivers/:cpf/push-token
+POST /api/drivers/:cpf/cities/status
+POST /api/drivers/:cpf/cities
 POST /api/rides
 POST /api/rides/:rideId/accept
 POST /api/rides/:rideId/notify-client
@@ -83,6 +86,16 @@ O rastreamento usa uma sala Socket.IO autenticada para cada empresa. O motoboy s
 ## Pedidos recebidos por mensagem
 
 O painel da empresa gera uma URL e uma chave de webhook. A integracao autorizada deve enviar o texto em `text` e o cabecalho `x-motoja-webhook-secret`. O backend reconhece endereco, itens e total, calcula a taxa configurada pela empresa, impede mensagens duplicadas e envia o resumo ao grupo pela Evolution API. Configure `EVOLUTION_API_URL`, `EVOLUTION_API_KEY` e `EVOLUTION_INSTANCE` no Render.
+
+## Captura de pedidos Anota AI e BeeFood
+
+O painel da empresa tem configuracoes separadas por plataforma e uma fila de revisao. O valor dos produtos, a comissao da loja e o valor da entrega Nexus sao armazenados separadamente. Um pedido so chama motoboy automaticamente quando nome, WhatsApp, endereco, mapa, tipo de entrega e saldo estiverem validos.
+
+- Anota AI usa uma instancia Evolution por empresa. Configure `EVOLUTION_API_URL`, `EVOLUTION_API_KEY` e `BACKEND_BASE_URL` no Render para gerar o QR Code e registrar o webhook.
+- BeeFood por navegador usa `integrations/beefood-chrome-extension`.
+- BeeFood por impressao usa `integrations/nexus-captura-windows`; a loja instala o programa e configura uma pasta de cupons.
+- Extensao e programa usam o cabecalho `x-nexus-capture-key`. A chave aparece uma unica vez ao ser criada ou renovada no painel.
+- iFood aparece como futuro e permanece bloqueado ate existir um meio de captura autorizado e confiavel.
 
 Para chamar endpoints de dono/manual, envie:
 

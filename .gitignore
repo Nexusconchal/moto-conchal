@@ -1,6 +1,11 @@
 # dependencies
 node_modules/
 .npm-cache/
+.electron-cache/
+.electron-builder-cache/
+.local-appdata/
+.runtime-appdata/
+dist/
 
 # environment and local machine files
 .env
