@@ -4123,7 +4123,7 @@ app.post('/api/drivers/:cpf/mercadopago/status', authLimiter, async (req, res, n
     const driverCpf = onlyDigits(req.params.cpf);
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
 
-    const { driver } = await getDriverWithProof(driverCpf, req.body);
+    const driver = await getDriverWithProof(driverCpf, req.body);
     const connected = !!driver?.mercadoPago?.accessToken;
     res.json({
       ok: true,
@@ -5078,6 +5078,24 @@ app.get('/api/companies/me/active-deliveries', assertCompany, assertCompanyAppro
   }
 });
 
+// Compatibility for installed clients that still use the previous read-only status route.
+app.get('/api/drivers/:cpf/mercadopago/status', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    const snap = await db.collection('motoboys').doc(driverCpf).get();
+    if (!snap.exists) return res.status(404).json({ error: 'motoboy_nao_encontrado' });
+    const driver = snap.data() || {};
+    return res.json({
+      ok: true,
+      connected: !!driver.mercadoPago?.accessToken,
+      legacyClient: true
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/deliveries/:deliveryId/pickup', async (req, res, next) => {
   try {
     const driverCpf = onlyDigits(req.body.driverCpf);
@@ -5711,7 +5729,9 @@ app.post('/api/drivers/:cpf/mercadopago/oauth-link', authLimiter, async (req, re
 });
 
 app.get('/api/mercadopago/oauth/start', (_req, res) => {
-  return res.status(410).json({ error: 'oauth_inicio_inseguro_desativado', message: 'Abra a conexao pelo painel atualizado do motoboy.' });
+  const updatedPanel = `${appUrl('/motoboy.html')}?v=138&reconnect=mercadopago`;
+  res.set('cache-control', 'no-store');
+  return res.redirect(302, updatedPanel);
 });
 
 app.get('/api/mercadopago/oauth/callback', async (req, res, next) => {

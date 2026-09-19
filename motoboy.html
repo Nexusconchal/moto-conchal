@@ -1765,7 +1765,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=135").catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=138").catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});
@@ -1800,7 +1800,8 @@
       };
       async function entrarNoPainel(lembrarLogin) {
         salvarMotoboy(lembrarLogin);
-        const senha = $("senha").value.trim();
+        const loginLembrado = !lembrarLogin && loginSalvoValido(lerMotoboySalvo());
+        const senha = $("senha").value.trim() || (loginLembrado ? "moto123" : "");
         if (!senha) throw new Error("Digite a senha fornecida pelo dono.");
         const reg = await fetchMotoboyComRetry(
           `${CONFIG.backend}/api/drivers/register`,
