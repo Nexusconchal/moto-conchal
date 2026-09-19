@@ -27,6 +27,10 @@ const DRIVER_PROOF_CACHE_MS = 5 * 60 * 1000;
 const COMPANY_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 const MP_OAUTH_STATE_MS = 10 * 60 * 1000;
 const driverProofCache = new Map();
+const ADMIN_STATE_CACHE_MS = 60 * 1000;
+const CLEANUP_INTERVAL_MS = 2 * 60 * 1000;
+let adminStateCache = null;
+let cleanupRunning = false;
 
 function requiredEnv(name) {
   const value = process.env[name];
@@ -1532,6 +1536,14 @@ app.use(cors({
 }));
 app.use(helmet());
 app.use(express.json({ limit: '8mb' }));
+app.use('/api/admin', (req, res, next) => {
+  if (req.method !== 'GET') {
+    res.on('finish', () => {
+      if (res.statusCode < 400) adminStateCache = null;
+    });
+  }
+  next();
+});
 morgan.token('safe-url', (req) => {
   try {
     const parsed = new URL(req.originalUrl || req.url, 'https://local.invalid');
@@ -2320,6 +2332,9 @@ app.post('/api/analytics/event', async (req, res, next) => {
 
 app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
   try {
+    if (adminStateCache && adminStateCache.expiresAt > Date.now()) {
+      return res.json(adminStateCache.payload);
+    }
     const [corridas, entregas, motoboys, depositos, recuperacoesSenhaEmpresa, empresasRaw, eventosFunil] = await Promise.all([
       collectionState('corridas'),
       collectionState('entregas'),
@@ -2330,7 +2345,9 @@ app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
       collectionState('eventosFunil', 2000)
     ]);
     const empresas = empresasRaw.map((empresa) => publicCompany(empresa, empresa.id));
-    return res.json({ ok: true, corridas, entregas, motoboys, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil });
+    const payload = { ok: true, corridas, entregas, motoboys, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil };
+    adminStateCache = { payload, expiresAt: Date.now() + ADMIN_STATE_CACHE_MS };
+    return res.json(payload);
   } catch (error) {
     return next(error);
   }
@@ -6359,9 +6376,19 @@ app.post('/api/jobs/cleanup', assertAdmin, async (_req, res, next) => {
   }
 });
 
-setInterval(() => {
-  cleanupRides().catch((error) => console.error('cleanup failed', error));
-}, 30 * 1000);
+async function scheduledCleanup() {
+  if (cleanupRunning) return;
+  cleanupRunning = true;
+  try {
+    await cleanupRides();
+  } catch (error) {
+    console.error('cleanup failed', error);
+  } finally {
+    cleanupRunning = false;
+  }
+}
+
+setInterval(scheduledCleanup, CLEANUP_INTERVAL_MS);
 
 setInterval(() => {
   runCustomerReminderTick().catch((error) => console.error('customer reminder failed', error));
@@ -6371,6 +6398,13 @@ runCustomerReminderTick().catch((error) => console.error('customer reminder star
 
 app.use((error, _req, res, _next) => {
   console.error(error);
+  const quotaExceeded = Number(error?.code) === 8 || String(error?.code || '').toUpperCase() === 'RESOURCE_EXHAUSTED';
+  if (quotaExceeded) {
+    return res.status(503).json({
+      error: 'banco_temporariamente_indisponivel',
+      message: 'O banco atingiu o limite temporario de uso. Tente novamente mais tarde ou fale com o suporte.'
+    });
+  }
   const status = Number(error.status || 500);
   res.status(status).json({
     error: error.code || 'internal_error',
