@@ -386,7 +386,7 @@
       }
       .city-options {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 10px;
       }
       .city-option {
@@ -438,6 +438,19 @@
       }
       .city-option input:disabled + .city-switch {
         opacity: 0.55;
+      }
+      @media (max-width: 520px) {
+        .city-options {
+          gap: 6px;
+        }
+        .city-option {
+          display: grid;
+          justify-items: center;
+          justify-content: center;
+          padding: 9px 4px;
+          text-align: center;
+          font-size: 0.72rem;
+        }
       }
     </style>
   </head>
@@ -662,12 +675,17 @@
       </section>
     </main>
     <script type="module">
-      let cidadesAtivas = { conchal: true, aguai: false },
+      let cidadesAtivas = {
+          conchal: true,
+          aguai: false,
+          engenheiro_coelho: false,
+        },
         cidadesCarregadasCpf = "";
       function normalizarCidadesAtivas(value) {
         return {
           conchal: value?.conchal !== false,
           aguai: value?.aguai === true,
+          engenheiro_coelho: value?.engenheiro_coelho === true,
         };
       }
       function montarSeletorCidades() {
@@ -676,22 +694,29 @@
         if (!perfil) return;
         perfil.insertAdjacentHTML(
           "afterend",
-          '<div id="cidadeCorridas" class="city-selector"><div class="city-selector-head"><strong>Receber corridas de</strong><span>Toque para ligar ou desligar</span></div><div class="city-options"><label class="city-option"><span>Conchal</span><input id="cidade-conchal" type="checkbox"><span class="city-switch" aria-hidden="true"></span></label><label class="city-option"><span>Aguaí</span><input id="cidade-aguai" type="checkbox"><span class="city-switch" aria-hidden="true"></span></label></div></div>',
+          '<div id="cidadeCorridas" class="city-selector"><div class="city-selector-head"><strong>Receber corridas de</strong><span>Escolha as cidades</span></div><div class="city-options"><label class="city-option"><span>Conchal</span><input id="cidade-conchal" type="checkbox" checked disabled><span class="city-switch" aria-hidden="true"></span></label><label class="city-option"><span>Aguaí</span><input id="cidade-aguai" type="checkbox"><span class="city-switch" aria-hidden="true"></span></label><label class="city-option"><span>Eng. Coelho</span><input id="cidade-engenheiro-coelho" type="checkbox"><span class="city-switch" aria-hidden="true"></span></label></div></div>',
         );
         document.getElementById("cidade-conchal").onchange =
           salvarCidadesAtivas;
         document.getElementById("cidade-aguai").onchange = salvarCidadesAtivas;
+        document.getElementById("cidade-engenheiro-coelho").onchange =
+          salvarCidadesAtivas;
         renderCidadesAtivas();
       }
       function renderCidadesAtivas() {
         montarSeletorCidades();
         const conchal = document.getElementById("cidade-conchal"),
-          aguai = document.getElementById("cidade-aguai");
-        if (conchal) conchal.checked = !!cidadesAtivas.conchal;
+          aguai = document.getElementById("cidade-aguai"),
+          engenheiroCoelho = document.getElementById(
+            "cidade-engenheiro-coelho",
+          );
+        if (conchal) conchal.checked = true;
         if (aguai) aguai.checked = !!cidadesAtivas.aguai;
+        if (engenheiroCoelho)
+          engenheiroCoelho.checked = !!cidadesAtivas.engenheiro_coelho;
       }
       function bloquearSeletorCidades(blocked) {
-        ["cidade-conchal", "cidade-aguai"].forEach((id) => {
+        ["cidade-aguai", "cidade-engenheiro-coelho"].forEach((id) => {
           const input = document.getElementById(id);
           if (input) input.disabled = blocked;
         });
@@ -724,14 +749,12 @@
       async function salvarCidadesAtivas() {
         const anterior = { ...cidadesAtivas },
           proximas = {
-            conchal: !!document.getElementById("cidade-conchal")?.checked,
+            conchal: true,
             aguai: !!document.getElementById("cidade-aguai")?.checked,
+            engenheiro_coelho: !!document.getElementById(
+              "cidade-engenheiro-coelho",
+            )?.checked,
           };
-        if (!proximas.conchal && !proximas.aguai) {
-          alert("Deixe pelo menos uma cidade ligada para receber corridas.");
-          renderCidadesAtivas();
-          return;
-        }
         bloquearSeletorCidades(true);
         try {
           const r = await fetch(
@@ -1204,7 +1227,7 @@
         if (indicar)
           indicar.onclick = () => {
             const msg =
-              "Quer trabalhar no Nexus MotoJa em Conchal ou Aguaí? Cadastre-se como motoboy pelo app: https://nexusmotoja.com.br/motoboy.html";
+              "Quer trabalhar no Nexus MotoJa em Conchal, Aguaí ou Engenheiro Coelho? Cadastre-se como motoboy pelo app: https://nexusmotoja.com.br/motoboy.html";
             location.href = `https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`;
           };
       }
@@ -1256,7 +1279,13 @@
           return `<p><strong>Servico exclusivo:</strong> Motoboy reservado para ${c.empresa || "empresa"}</p><p><strong>Empresa:</strong> ${c.empresa || "-"}</p><p><strong>Valor combinado:</strong> ${moeda(c.valor)}</p><p><strong>Horario:</strong> ${c.horario || c.periodo || "A combinar com o suporte MotoJa"}</p><p class="muted">Aceite somente se voce combinou essa escala com o suporte MotoJa.</p>`;
         if (modoEntrega() || c.tipo === "entrega_empresarial")
           return `<p><strong>Empresa:</strong> ${c.empresa || "-"}</p><p><strong>Responsavel:</strong> ${c.responsavel || "-"}</p><p><strong>Tipo:</strong> ${c.tipoEntrega || "Delivery / encomendas"}</p><p><strong>Retirada:</strong> ${c.retirada || "-"}</p><p><strong>Entrega:</strong> ${c.entrega || "-"}</p>${Array.isArray(c.pontosExtras) && c.pontosExtras.length ? `<p><strong>Pontos extras:</strong><br>${c.pontosExtras.map((p) => `${p.ordem || ""}. ${p.digitado || "-"}<br>Recebe: ${p.recebedor || "-"}<br>WhatsApp: ${p.telefoneRecebedor || "-"}${p.mapa ? `<br><a href="${p.mapa}" target="_blank">Abrir ponto no mapa</a>` : ""}`).join("<br><br>")}</p>` : c.enderecosExtras ? `<p><strong>Pontos extras:</strong><br>${String(c.enderecosExtras).replace(/\n/g, "<br>")}</p>` : ""}<p class="muted"><strong>Encontrado:</strong> ${c.entregaEncontrada || c.entrega || "-"}</p>${c.recebedor ? `<p><strong>Recebedor:</strong> ${c.recebedor}</p>` : ""}${c.telefoneRecebedor ? `<p><strong>WhatsApp recebedor:</strong> ${c.telefoneRecebedor}</p>` : ""}<p><strong>WhatsApp empresa:</strong> ${telefoneCliente(c) || "-"}</p><p><strong>Paradas:</strong> ${c.paradas || 1}</p>${c.descricao ? `<p><strong>Pedido:</strong> ${c.descricao}</p>` : ""}<p><strong>Distancia:</strong> ${String(c.km || "-").replace(".", ",")} km</p><p><strong>Preco:</strong> ${c.precoLabel || "-"}</p>${c.observacao ? `<p><strong>Obs:</strong> ${c.observacao}</p>` : ""}<p><strong>Motoboy recebe:</strong> ${moeda(ganhoMotoboy(c.valor, c))} (${pct(driverPercent(c))}%)</p><p class="muted"><strong>App fica:</strong> ${moeda(ganhoApp(c.valor, c))} (${pct(appPercent(c))}%)</p>`;
-        return `<p><strong>Cidade:</strong> ${c.cidadeOperacao === "aguai" ? "Aguaí" : "Conchal"}</p><p><strong>Origem:</strong> ${c.origem || "-"}</p><p><strong>Destino:</strong> ${c.destino || "-"}</p><p class="muted"><strong>Encontrado:</strong> ${c.destinoEncontrado || c.destino || "-"}</p><p><strong>WhatsApp cliente:</strong> ${telefoneCliente(c) || "-"}</p><p><strong>Distancia:</strong> ${String(c.km || "-").replace(".", ",")} km</p><p><strong>Preco:</strong> ${c.precoLabel || "-"}</p><p><strong>Motoboy recebe:</strong> ${moeda(ganhoMotoboy(c.valor, c))} (${pct(driverPercent(c))}%)</p><p class="muted"><strong>App fica:</strong> ${moeda(ganhoApp(c.valor, c))} (${pct(appPercent(c))}%)</p>`;
+        const cidadeCorrida =
+          c.cidadeOperacao === "aguai"
+            ? "Aguaí"
+            : c.cidadeOperacao === "engenheiro_coelho"
+              ? "Engenheiro Coelho"
+              : "Conchal";
+        return `<p><strong>Cidade:</strong> ${cidadeCorrida}</p><p><strong>Origem:</strong> ${c.origem || "-"}</p><p><strong>Destino:</strong> ${c.destino || "-"}</p><p class="muted"><strong>Encontrado:</strong> ${c.destinoEncontrado || c.destino || "-"}</p><p><strong>WhatsApp cliente:</strong> ${telefoneCliente(c) || "-"}</p><p><strong>Distancia:</strong> ${String(c.km || "-").replace(".", ",")} km</p><p><strong>Preco:</strong> ${c.precoLabel || "-"}</p><p><strong>Motoboy recebe:</strong> ${moeda(ganhoMotoboy(c.valor, c))} (${pct(driverPercent(c))}%)</p><p class="muted"><strong>App fica:</strong> ${moeda(ganhoApp(c.valor, c))} (${pct(appPercent(c))}%)</p>`;
       }
       function cardPendente(id, c) {
         const titulo = servicoExclusivo(c)

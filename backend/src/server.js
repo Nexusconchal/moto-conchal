@@ -813,11 +813,13 @@ function normalizeText(value) {
 
 const RIDE_CITY_CENTERS = {
   conchal: { lat: -22.3308, lon: -47.1724, label: 'Conchal' },
-  aguai: { lat: -22.0572, lon: -46.9781, label: 'Aguai' }
+  aguai: { lat: -22.0572, lon: -46.9781, label: 'Aguai' },
+  engenheiro_coelho: { lat: -22.48805, lon: -47.21572, label: 'Engenheiro Coelho' }
 };
 
 function canonicalRideCity(value, fallback = 'conchal') {
   const city = normalizeText(value);
+  if (city.includes('engenheiro coelho') || /\beng\.?\s*coelho\b/.test(city)) return 'engenheiro_coelho';
   if (city.includes('aguai')) return 'aguai';
   if (city.includes('conchal')) return 'conchal';
   return fallback;
@@ -832,8 +834,9 @@ function driverRideCities(driver = {}) {
     ? driver.cidadesAtivas
     : {};
   return {
-    conchal: saved.conchal !== false,
-    aguai: saved.aguai === true
+    conchal: true,
+    aguai: saved.aguai === true,
+    engenheiro_coelho: saved.engenheiro_coelho === true
   };
 }
 
@@ -864,12 +867,13 @@ function inferNewRideOperatingCity(ride = {}, requested = '') {
   ].filter(Boolean).join(' '));
   const origin = { lat: Number(ride.origemLat), lon: Number(ride.origemLon) };
   if (Number.isFinite(origin.lat) && Number.isFinite(origin.lon) && origin.lat && origin.lon) {
-    const conchalKm = coordinateDistanceKm(origin, RIDE_CITY_CENTERS.conchal);
-    const aguaiKm = coordinateDistanceKm(origin, RIDE_CITY_CENTERS.aguai);
-    if (aguaiKm <= 30 && aguaiKm < conchalKm) return 'aguai';
-    if (conchalKm <= 30) return 'conchal';
+    const nearestCity = Object.entries(RIDE_CITY_CENTERS)
+      .map(([city, center]) => ({ city, km: coordinateDistanceKm(origin, center) }))
+      .sort((a, b) => a.km - b.km)[0];
+    if (nearestCity?.km <= 30) return nearestCity.city;
   }
 
+  if (originText.includes('engenheiro coelho') || /\beng\.?\s*coelho\b/.test(originText)) return 'engenheiro_coelho';
   if (originText.includes('aguai')) return 'aguai';
   if (originText.includes('conchal')) return 'conchal';
 
@@ -1342,8 +1346,10 @@ async function notifyTelegramAboutRide(rideId, ride) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const city = rideOperatingCity(ride);
   const chatId = city === 'aguai'
-    ? process.env.TELEGRAM_CHAT_ID_AGUAI
-    : process.env.TELEGRAM_CHAT_ID;
+    ? process.env.TELEGRAM_CHAT_ID_AGUAI || process.env.TELEGRAM_CHAT_ID
+    : city === 'engenheiro_coelho'
+      ? process.env.TELEGRAM_CHAT_ID_ENGENHEIRO_COELHO || process.env.TELEGRAM_CHAT_ID
+      : process.env.TELEGRAM_CHAT_ID;
   if (!token || !chatId) return { sent: false, skipped: true };
 
   const value = money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -2622,15 +2628,10 @@ app.post('/api/drivers/:cpf/cities', async (req, res, next) => {
     await getDriverWithProof(driverCpf, req.body);
 
     const cidadesAtivas = {
-      conchal: req.body?.cidadesAtivas?.conchal === true,
-      aguai: req.body?.cidadesAtivas?.aguai === true
+      conchal: true,
+      aguai: req.body?.cidadesAtivas?.aguai === true,
+      engenheiro_coelho: req.body?.cidadesAtivas?.engenheiro_coelho === true
     };
-    if (!cidadesAtivas.conchal && !cidadesAtivas.aguai) {
-      return res.status(400).json({
-        error: 'selecione_uma_cidade',
-        message: 'Deixe pelo menos uma cidade ligada para receber corridas.'
-      });
-    }
 
     await db.collection('motoboys').doc(driverCpf).set({
       cidadesAtivas,

@@ -51,6 +51,7 @@ Obrigatorias:
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
 - `TELEGRAM_CHAT_ID_AGUAI` opcional, para avisar as corridas de Aguaí em um grupo separado
+- `TELEGRAM_CHAT_ID_ENGENHEIRO_COELHO` opcional, para avisar as corridas de Engenheiro Coelho em um grupo separado
 - `ALLOWED_ORIGINS` com os dominios autorizados, separados por virgula. Padrao: GitHub Pages do app e Render.
 
 ## Endpoints principais

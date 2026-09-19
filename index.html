@@ -6,10 +6,10 @@
       name="viewport"
       content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"
     />
-    <title>Nexus MotoJá - Corridas em Conchal e Aguaí</title>
+    <title>Nexus MotoJá - Corridas em Conchal, Aguaí e Engenheiro Coelho</title>
     <meta
       name="description"
-      content="Peça sua corrida em Conchal ou Aguaí pelo app Nexus MotoJá."
+      content="Peça sua corrida em Conchal, Aguaí ou Engenheiro Coelho pelo app Nexus MotoJá."
     />
     <meta name="theme-color" content="#ff6b00" />
     <link rel="manifest" href="./cliente.webmanifest" />
@@ -1506,7 +1506,7 @@
           Calcula a distância e abre o WhatsApp com a mensagem pronta
         </p>
       </section>
-      <footer>2026 Nexus MotoJá - Conchal e Aguaí, SP</footer>
+      <footer>2026 Nexus MotoJá - Conchal, Aguaí e Engenheiro Coelho, SP</footer>
     </main>
     <div id="modal" class="modal" aria-hidden="true">
       <div
@@ -1768,9 +1768,21 @@
           local: "rect:-47.25,-22.30,-46.70,-21.82",
           bias: "proximity:-46.978,-22.057",
         },
+        engenheiro_coelho: {
+          nome: "Engenheiro Coelho",
+          lat: -22.48805,
+          lon: -47.21572,
+          local: "rect:-47.40,-22.68,-47.02,-22.30",
+          bias: "proximity:-47.216,-22.488",
+        },
       };
       function cidadeOperacaoPorTexto(txt) {
         const texto = textoBusca(txt || "");
+        if (
+          texto.includes("engenheiro coelho") ||
+          /\beng\.?\s*coelho\b/.test(texto)
+        )
+          return "engenheiro_coelho";
         if (texto.includes("aguai")) return "aguai";
         if (texto.includes("conchal")) return "conchal";
         return "";
@@ -1778,10 +1790,14 @@
       function cidadeOperacaoPorOrigem(origem, endereco = "") {
         if (coordenadaValida(origem)) {
           const ponto = { lat: Number(origem.lat), lon: Number(origem.lon) },
-            conchalKm = distanciaKmMapa(ponto, CIDADES_OPERACAO.conchal),
-            aguaiKm = distanciaKmMapa(ponto, CIDADES_OPERACAO.aguai);
-          if (aguaiKm <= 30 && aguaiKm < conchalKm) return "aguai";
-          if (conchalKm <= 30) return "conchal";
+            cidadeMaisProxima = Object.entries(CIDADES_OPERACAO)
+              .map(([cidade, centro]) => ({
+                cidade,
+                km: distanciaKmMapa(ponto, centro),
+              }))
+              .sort((a, b) => a.km - b.km)[0];
+          if (cidadeMaisProxima?.km <= 30)
+            return cidadeMaisProxima.cidade;
         }
         return (
           cidadeOperacaoPorTexto(`${endereco} ${origem?.texto || ""}`) ||
@@ -2214,7 +2230,7 @@
         );
       }
       function mensagemIndicacao() {
-        return `Use o Nexus MotoJá em Conchal ou Aguaí para pedir corrida rápido pelo celular. Meu link de indicação: ${linkIndicacao()}`;
+        return `Use o Nexus MotoJá em Conchal, Aguaí ou Engenheiro Coelho para pedir corrida rápido pelo celular. Meu link de indicação: ${linkIndicacao()}`;
       }
       function indicarApp() {
         const texto = mensagemIndicacao(),

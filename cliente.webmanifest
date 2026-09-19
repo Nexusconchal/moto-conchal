@@ -2,7 +2,7 @@
   "id": "/moto-conchal/?app=nexus-motoja-cliente",
   "name": "Nexus MotoJÁ",
   "short_name": "Nexus MotoJÁ",
-  "description": "Peca sua corrida em Conchal pelo Nexus MotoJÁ.",
+  "description": "Peca sua corrida em Conchal, Aguai ou Engenheiro Coelho pelo Nexus MotoJÁ.",
   "start_url": "./?app=nexus-motoja-cliente",
   "scope": "./",
   "display": "standalone",
