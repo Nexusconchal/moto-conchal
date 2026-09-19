@@ -28,11 +28,7 @@ Exemplo:
 
 Nao inverter essa regra: **70% e sempre do motoboy; 30% e sempre do dono/app**.
 
-Antes de usar em producao, cada motoboy precisa autorizar a propria conta Mercado Pago pelo link:
-
-```text
-https://SEU-BACKEND.onrender.com/api/mercadopago/oauth/start?driverCpf=CPF_DO_MOTOBOY
-```
+Antes de usar em producao, cada motoboy precisa autorizar a propria conta Mercado Pago pelo botao autenticado dentro do painel do motoboy. A rota antiga com CPF na URL foi desativada por seguranca.
 
 ## Variaveis no Render
 
@@ -47,7 +43,8 @@ Obrigatorias:
 - `MP_OWNER_ACCESS_TOKEN`
 - `ADMIN_API_KEY`
 - `OWNER_PASSWORD` com a senha do painel do dono
-- `DRIVER_PASSWORD` com a senha dos motoboys; se nao definir, usa `moto123`
+- `DRIVER_PASSWORD` com uma senha forte e exclusiva dos motoboys. O fallback legado `moto123` so existe quando essa variavel nao foi configurada; ao defini-la no Render, o fallback e desativado.
+- `DATA_ENCRYPTION_KEY` com uma chave longa e aleatoria, separada das senhas, para proteger tokens de integracao
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
 - `TELEGRAM_CHAT_ID_AGUAI` opcional, para avisar as corridas de Aguaí em um grupo separado
@@ -58,7 +55,8 @@ Obrigatorias:
 
 ```http
 GET /health
-GET /api/mercadopago/oauth/start?driverCpf=00000000000
+POST /api/drivers/:cpf/mercadopago/oauth-link
+POST /api/drivers/:cpf/mercadopago/status
 GET /api/mercadopago/oauth/callback
 POST /api/drivers/:cpf/push-token
 POST /api/drivers/:cpf/cities/status

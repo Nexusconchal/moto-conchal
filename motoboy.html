@@ -1235,7 +1235,12 @@
         try {
           const r = await fetch(
             `${CONFIG.backend}/api/drivers/${motoboyCpf}/mercadopago/status`,
-            { cache: "no-store" },
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(driverProof()),
+              cache: "no-store",
+            },
           );
           const d = await r.json().catch(() => ({}));
           if (r.ok && d.connected) {
@@ -1795,7 +1800,8 @@
       };
       async function entrarNoPainel(lembrarLogin) {
         salvarMotoboy(lembrarLogin);
-        const senha = $("senha").value.trim() || "moto123";
+        const senha = $("senha").value.trim();
+        if (!senha) throw new Error("Digite a senha fornecida pelo dono.");
         const reg = await fetchMotoboyComRetry(
           `${CONFIG.backend}/api/drivers/register`,
           {
@@ -1876,11 +1882,22 @@
           b.disabled = true;
           b.textContent = "Abrindo Mercado Pago...";
           try {
-            await fetch(`${CONFIG.backend}/health`, {
-              cache: "no-store",
-            }).catch(() => {});
-          } finally {
-            location.href = `${CONFIG.backend}/api/mercadopago/oauth/start?driverCpf=${motoboyCpf}`;
+            const r = await fetch(
+              `${CONFIG.backend}/api/drivers/${motoboyCpf}/mercadopago/oauth-link`,
+              {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(driverProof()),
+              },
+            );
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok || !d.url)
+              throw new Error(d.message || "Nao consegui abrir o Mercado Pago.");
+            location.href = d.url;
+          } catch (error) {
+            alert(error.message || "Nao consegui abrir o Mercado Pago.");
+            b.disabled = false;
+            b.textContent = "Conectar Mercado Pago para receber ate 80%";
           }
         };
         checarMercadoPago();

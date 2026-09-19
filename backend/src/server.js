@@ -24,6 +24,8 @@ const OWNER_WHATSAPP = onlyDigits(process.env.OWNER_WHATSAPP || process.env.SUPP
 const OWNER_PIX_KEY = String(process.env.OWNER_PIX_KEY || '94bff0ce-3c37-4e5e-a911-4512651e3d55').trim();
 const GEOAPIFY_API_KEY = process.env.GEOAPIFY_API_KEY || '1361a528dcbe484e8143a19929527781';
 const DRIVER_PROOF_CACHE_MS = 5 * 60 * 1000;
+const COMPANY_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+const MP_OAUTH_STATE_MS = 10 * 60 * 1000;
 const driverProofCache = new Map();
 
 function requiredEnv(name) {
@@ -430,6 +432,16 @@ function cleanText(value, max = 200) {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, max);
+}
+
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[character]);
 }
 
 function parseBrazilianMoney(value) {
@@ -994,7 +1006,7 @@ function driverPasswordValues() {
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
-  return Array.from(new Set(['moto123', ...configured]));
+  return configured.length ? Array.from(new Set(configured)) : ['moto123'];
 }
 
 function isValidDriverPassword(password) {
@@ -1065,8 +1077,11 @@ function verifyPassword(password, saved = {}) {
 
 async function issueCompanySession(ref, tx = null) {
   const token = crypto.randomBytes(32).toString('hex');
+  const now = Date.now();
   const data = {
     sessionTokenHash: hashSecret(token),
+    sessionIssuedAtMs: now,
+    sessionExpiresAtMs: now + COMPANY_SESSION_MS,
     ultimoLoginEm: admin.firestore.FieldValue.serverTimestamp(),
     atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
   };
@@ -1148,7 +1163,13 @@ async function findCompanySession(token) {
   const snap = await db.collection('empresas').where('sessionTokenHash', '==', tokenHash).limit(1).get();
   if (snap.empty) return null;
   const companySnap = snap.docs[0];
-  return { companySnap, company: companySnap.data() || {}, companyId: companySnap.id };
+  const company = companySnap.data() || {};
+  const expiresAt = Number(company.sessionExpiresAtMs || 0);
+  const legacyIssuedAt = timestampMs(company.ultimoLoginEm);
+  if ((expiresAt && expiresAt <= Date.now()) || (!expiresAt && (!legacyIssuedAt || Date.now() - legacyIssuedAt > COMPANY_SESSION_MS))) {
+    return null;
+  }
+  return { companySnap, company, companyId: companySnap.id };
 }
 
 async function assertCompany(req, res, next) {
@@ -1511,7 +1532,18 @@ app.use(cors({
 }));
 app.use(helmet());
 app.use(express.json({ limit: '8mb' }));
-app.use(morgan('tiny'));
+morgan.token('safe-url', (req) => {
+  try {
+    const parsed = new URL(req.originalUrl || req.url, 'https://local.invalid');
+    for (const key of ['captureKey', 'token', 'secret', 'code']) {
+      if (parsed.searchParams.has(key)) parsed.searchParams.set(key, '[REDACTED]');
+    }
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return String(req.path || '/');
+  }
+});
+app.use(morgan(':method :safe-url :status :res[content-length] - :response-time ms'));
 app.use(rateLimit({
   windowMs: 60 * 1000,
   limit: 120,
@@ -1525,6 +1557,23 @@ const createRideLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'muitas_tentativas', message: 'Aguarde um pouco antes de pedir outra corrida.' }
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: { error: 'muitas_tentativas_login', message: 'Muitas tentativas. Aguarde 15 minutos antes de tentar novamente.' }
+});
+
+const integrationLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'muitas_tentativas_integracao', message: 'Integracao temporariamente limitada. Tente novamente em um minuto.' }
 });
 
 const mapLimiter = rateLimit({
@@ -2220,7 +2269,7 @@ app.get('/entrega/:deliveryId', async (req, res, next) => {
   }
 });
 
-app.post('/api/admin/login', (req, res) => {
+app.post('/api/admin/login', authLimiter, (req, res) => {
   const ownerPassword = ownerPasswordValue();
   const password = String(req.body.password || '');
   if (!ownerPassword) {
@@ -2291,8 +2340,8 @@ app.post('/api/admin/companies/password-recovery/:requestId/reset', assertOwner,
   try {
     const requestId = cleanText(req.params.requestId, 120);
     const newPassword = String(req.body.newPassword || req.body.password || '');
-    if (!requestId || newPassword.length < 6) {
-      return res.status(400).json({ error: 'senha_nova_invalida', message: 'Digite uma senha nova com pelo menos 6 caracteres.' });
+    if (!requestId || newPassword.length < 8) {
+      return res.status(400).json({ error: 'senha_nova_invalida', message: 'Digite uma senha nova com pelo menos 8 caracteres.' });
     }
 
     const requestRef = db.collection('recuperacoesSenhaEmpresa').doc(requestId);
@@ -2492,7 +2541,7 @@ app.post('/api/admin/drivers/:cpf/unblock', assertOwner, async (req, res, next) 
   }
 });
 
-app.post('/api/drivers/register', async (req, res, next) => {
+app.post('/api/drivers/register', authLimiter, async (req, res, next) => {
   try {
     const password = String(req.body.password || '');
     const cpf = onlyDigits(req.body.cpf);
@@ -2568,6 +2617,7 @@ app.post('/api/drivers/register', async (req, res, next) => {
       });
     }
 
+    const newDriver = !driverSnap.exists;
     const driverData = {
       nome,
       cpf,
@@ -2576,11 +2626,15 @@ app.post('/api/drivers/register', async (req, res, next) => {
       motoModelo,
       motoAno,
       motoPlaca,
-      status: 'ativo',
+      status: newDriver ? 'bloqueado' : (savedDriver.status || 'ativo'),
       cidadesAtivas: driverRideCities(savedDriver),
       ultimoAcesso: admin.firestore.FieldValue.serverTimestamp(),
       atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
     };
+    if (newDriver) {
+      driverData.motivoBloqueio = 'Cadastro novo aguardando aprovacao do dono';
+      driverData.aguardandoAprovacaoEm = admin.firestore.FieldValue.serverTimestamp();
+    }
     if (fotoMotoboy) {
       driverData.fotoMotoboy = fotoMotoboy;
       driverData.fotoAtualizadaEm = admin.firestore.FieldValue.serverTimestamp();
@@ -2591,6 +2645,14 @@ app.post('/api/drivers/register', async (req, res, next) => {
     }
 
     await driverRef.set(driverData, { merge: true });
+
+    if (newDriver) {
+      driverProofCache.clear();
+      return res.status(403).json({
+        error: 'motoboy_aguardando_aprovacao',
+        message: 'Cadastro recebido. Aguarde o dono conferir seus documentos e liberar seu acesso.'
+      });
+    }
 
     return res.json({
       ok: true,
@@ -2676,7 +2738,7 @@ app.post('/api/drivers/:cpf/telegram-link', async (req, res, next) => {
     const driverCpf = onlyDigits(req.params.cpf);
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
     await getDriverWithProof(driverCpf, req.body);
-    const link = String(process.env.TELEGRAM_GROUP_LINK || 'https://t.me/+M49aycYVf_kyZjUx').trim();
+    const link = String(process.env.TELEGRAM_GROUP_LINK || '').trim();
     if (!/^https:\/\/t\.me\//i.test(link)) {
       return res.status(404).json({
         error: 'telegram_nao_configurado',
@@ -2703,7 +2765,7 @@ app.get('/api/companies/:phone/balance', assertCompany, async (req, res, next) =
   }
 });
 
-app.post('/api/companies/register', createRideLimiter, async (req, res, next) => {
+app.post('/api/companies/register', authLimiter, async (req, res, next) => {
   try {
     const empresa = String(req.body.empresa || '').slice(0, 120).trim();
     const responsavel = String(req.body.responsavel || '').slice(0, 120).trim();
@@ -2711,8 +2773,8 @@ app.post('/api/companies/register', createRideLimiter, async (req, res, next) =>
     const telefoneEmpresa = onlyDigits(req.body.telefoneEmpresa);
     const retirada = String(req.body.retirada || '').slice(0, 300).trim();
     const password = String(req.body.password || '');
-    if (!empresa || !responsavel || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || telefoneEmpresa.length < 10 || telefoneEmpresa.length > 11 || password.length < 6) {
-      return res.status(400).json({ error: 'dados_empresa_invalidos', message: 'Preencha empresa, responsavel, email, WhatsApp e senha com pelo menos 6 caracteres.' });
+    if (!empresa || !responsavel || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || telefoneEmpresa.length < 10 || telefoneEmpresa.length > 11 || password.length < 8) {
+      return res.status(400).json({ error: 'dados_empresa_invalidos', message: 'Preencha empresa, responsavel, email, WhatsApp e senha com pelo menos 8 caracteres.' });
     }
 
     const companyRef = companyRefFromPhone(telefoneEmpresa);
@@ -2751,16 +2813,17 @@ app.post('/api/companies/register', createRideLimiter, async (req, res, next) =>
   }
 });
 
-app.post('/api/companies/login', createRideLimiter, async (req, res, next) => {
+app.post('/api/companies/login', authLimiter, async (req, res, next) => {
   try {
     const email = String(req.body.email || '').trim().toLowerCase().slice(0, 160);
     const password = String(req.body.password || '');
     const snap = await db.collection('empresas').where('email', '==', email).limit(1).get();
     if (snap.empty) {
-      return res.status(404).json({ error: 'empresa_nao_encontrada', message: 'Nao encontrei empresa com este email. Confira o email ou crie a conta.' });
+      passwordHash(password || crypto.randomBytes(12).toString('hex'));
+      return res.status(401).json({ error: 'credenciais_empresa_invalidas', message: 'Email ou senha incorretos.' });
     }
     if (!verifyPassword(password, snap.docs[0].data())) {
-      return res.status(401).json({ error: 'senha_empresa_incorreta', message: 'Senha incorreta para este email. Clique em Esqueci minha senha para o dono trocar e reenviar.' });
+      return res.status(401).json({ error: 'credenciais_empresa_invalidas', message: 'Email ou senha incorretos.' });
     }
     const token = await issueCompanySession(snap.docs[0].ref);
     res.json({ ok: true, token, company: publicCompany(snap.docs[0].data(), snap.docs[0].id) });
@@ -2769,7 +2832,22 @@ app.post('/api/companies/login', createRideLimiter, async (req, res, next) => {
   }
 });
 
-app.post('/api/companies/password-recovery', createRideLimiter, async (req, res, next) => {
+app.post('/api/companies/logout', assertCompany, async (req, res, next) => {
+  try {
+    await req.companySnap.ref.set({
+      sessionTokenHash: admin.firestore.FieldValue.delete(),
+      sessionIssuedAtMs: admin.firestore.FieldValue.delete(),
+      sessionExpiresAtMs: admin.firestore.FieldValue.delete(),
+      ultimoLogoutEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/companies/password-recovery', authLimiter, async (req, res, next) => {
   try {
     const email = String(req.body.email || '').trim().toLowerCase().slice(0, 160);
     const telefoneEmpresa = onlyDigits(req.body.telefoneEmpresa);
@@ -2778,12 +2856,12 @@ app.post('/api/companies/password-recovery', createRideLimiter, async (req, res,
     }
     const snap = await db.collection('empresas').where('email', '==', email).limit(1).get();
     if (snap.empty) {
-      return res.status(404).json({ error: 'empresa_nao_encontrada', message: 'Nao encontrei empresa com este email. Confira o email ou crie a conta.' });
+      return res.status(202).json({ ok: true, message: 'Se os dados conferirem, o pedido sera enviado ao dono.' });
     }
     const doc = snap.docs[0];
     const company = doc.data() || {};
     if (onlyDigits(company.telefoneEmpresa || doc.id) !== telefoneEmpresa) {
-      return res.status(403).json({ error: 'telefone_nao_confere', message: 'O WhatsApp informado nao confere com esta conta. Fale com o suporte MotoJa.' });
+      return res.status(202).json({ ok: true, message: 'Se os dados conferirem, o pedido sera enviado ao dono.' });
     }
     const recoveryRef = db.collection('recuperacoesSenhaEmpresa').doc();
     await recoveryRef.set({
@@ -2796,7 +2874,7 @@ app.post('/api/companies/password-recovery', createRideLimiter, async (req, res,
       criadaEm: admin.firestore.FieldValue.serverTimestamp(),
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     });
-    return res.status(201).json({ ok: true, recoveryId: recoveryRef.id, message: 'Pedido enviado ao dono. Aguarde ele trocar a senha e enviar pelo WhatsApp.' });
+    return res.status(202).json({ ok: true, message: 'Se os dados conferirem, o pedido sera enviado ao dono.' });
   } catch (error) {
     return next(error);
   }
@@ -3089,7 +3167,7 @@ app.get('/api/companies/me/order-integrations/anotaai/status', assertCompany, as
   }
 });
 
-app.post('/api/integrations/orders/:companyId/:platform', async (req, res, next) => {
+app.post('/api/integrations/orders/:companyId/:platform', integrationLimiter, async (req, res, next) => {
   try {
     const companyId = onlyDigits(req.params.companyId);
     const platform = capturePlatform(req.params.platform);
@@ -3268,7 +3346,7 @@ app.post('/api/companies/me/message-order/test', assertCompany, assertCompanyApp
   }
 });
 
-app.post('/api/integrations/message-orders/:companyId', async (req, res, next) => {
+app.post('/api/integrations/message-orders/:companyId', integrationLimiter, async (req, res, next) => {
   try {
     const companyId = onlyDigits(req.params.companyId);
     if (companyId.length < 10) return res.status(404).json({ error: 'empresa_nao_encontrada' });
@@ -4007,13 +4085,12 @@ app.post('/api/drivers/:cpf/push-token', async (req, res, next) => {
   }
 });
 
-app.get('/api/drivers/:cpf/mercadopago/status', async (req, res, next) => {
+app.post('/api/drivers/:cpf/mercadopago/status', authLimiter, async (req, res, next) => {
   try {
     const driverCpf = onlyDigits(req.params.cpf);
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
 
-    const snap = await db.collection('motoboys').doc(driverCpf).get();
-    const driver = snap.exists ? snap.data() : {};
+    const { driver } = await getDriverWithProof(driverCpf, req.body);
     const connected = !!driver?.mercadoPago?.accessToken;
     res.json({
       ok: true,
@@ -4303,6 +4380,8 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
   try {
     const delivery = deliveryPublicData(req.body);
     delivery.telefoneEmpresa = req.companyId;
+    delivery.empresa = cleanText(req.company.empresa || delivery.empresa, 120);
+    delivery.responsavel = cleanText(req.company.responsavel || delivery.responsavel, 120);
     if (!delivery.empresa || !delivery.responsavel || !delivery.retirada || !delivery.entrega || !delivery.recebedor || delivery.telefoneEmpresa.length < 10 || delivery.telefoneEmpresa.length > 11 || delivery.telefoneRecebedor.length < 10 || delivery.telefoneRecebedor.length > 11) {
       return res.status(400).json({ error: 'preencha_empresa_responsavel_telefones_retirada_entrega_recebedor' });
     }
@@ -4326,6 +4405,39 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
     pontosExtras.forEach((point) => {
       ensureResolvedPlaceMatches(point.digitado, point.encontrado || point.digitado, `Ponto ${point.ordem || ''}`.trim());
       ensureResolvedAddressIsSpecific(point.digitado, point.encontrado || point.digitado, `Ponto ${point.ordem || ''}`.trim());
+    });
+    const addressesToVerify = [
+      { label: 'retirada', text: delivery.retirada, point: { lat: delivery.retiradaLat, lon: delivery.retiradaLon } },
+      { label: 'entrega', text: delivery.entrega, point: { lat: delivery.entregaLat, lon: delivery.entregaLon } },
+      ...pontosExtras.map((point, index) => ({
+        label: `ponto ${index + 2}`,
+        text: point.digitado,
+        point: { lat: point.lat, lon: point.lon }
+      }))
+    ];
+    const verifiedAddresses = await Promise.all(addressesToVerify.map(async (item) => {
+      const verified = await geocodeCapturedAddress(item.text);
+      const differenceKm = coordinateDistanceKm(item.point, verified);
+      if (!Number.isFinite(differenceKm) || differenceKm > 2.5) {
+        const error = new Error(`As coordenadas do endereco de ${item.label} nao conferem com o endereco digitado. Calcule novamente.`);
+        error.status = 400;
+        error.code = 'coordenadas_endereco_divergentes';
+        throw error;
+      }
+      return verified;
+    }));
+    delivery.retiradaLat = verifiedAddresses[0].lat;
+    delivery.retiradaLon = verifiedAddresses[0].lon;
+    delivery.retiradaEncontrada = verifiedAddresses[0].text;
+    delivery.entregaLat = verifiedAddresses[1].lat;
+    delivery.entregaLon = verifiedAddresses[1].lon;
+    delivery.entregaEncontrada = verifiedAddresses[1].text;
+    pontosExtras.forEach((point, index) => {
+      const verified = verifiedAddresses[index + 2];
+      point.lat = verified.lat;
+      point.lon = verified.lon;
+      point.encontrado = verified.text;
+      point.mapa = `https://www.google.com/maps?q=${verified.lat},${verified.lon}`;
     });
     if (!isFixedFoodDelivery(delivery.tipoEntrega)) {
       const serverKm = await calculateRouteDistanceKm([
@@ -5179,6 +5291,12 @@ app.post('/api/deliveries/:deliveryId/cancel', async (req, res, next) => {
     if (delivery.status === 'finalizada') {
       return res.status(409).json({ error: 'entrega_ja_finalizada' });
     }
+    if (delivery.status === 'retirada') {
+      return res.status(409).json({
+        error: 'cancelamento_apos_retirada_bloqueado',
+        message: 'Depois de retirar o pedido, o cancelamento precisa ser conferido pelo suporte para proteger a empresa e o motoboy.'
+      });
+    }
 
     await releaseDeliveryReservation(deliveryRef, 'cancelada', {
       motivoCancelamento: reason,
@@ -5424,6 +5542,41 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
         throw error;
       }
 
+      if (!exclusiveService) {
+        const pickupMs = timestampMs(delivery.retiradaConfirmadaEm);
+        if (!pickupMs || Date.now() - pickupMs < 30 * 1000) {
+          const error = new Error('Aguarde alguns segundos apos confirmar a retirada antes de finalizar.');
+          error.status = 409;
+          error.code = 'finalizacao_rapida_demais';
+          throw error;
+        }
+        const location = delivery.motoboyLocalizacao || {};
+        const locationMs = Number(location.serverTimestampMs || timestampMs(delivery.localizacaoAtualizadaEm));
+        if (!locationMs || Date.now() - locationMs > 10 * 60 * 1000) {
+          const error = new Error('Atualize sua localizacao perto do destino antes de finalizar.');
+          error.status = 409;
+          error.code = 'localizacao_finalizacao_desatualizada';
+          throw error;
+        }
+        const finalExtra = Array.isArray(delivery.pontosExtras) && delivery.pontosExtras.length
+          ? delivery.pontosExtras[delivery.pontosExtras.length - 1]
+          : null;
+        const finalDestination = finalExtra
+          ? { lat: finalExtra.lat, lon: finalExtra.lon }
+          : { lat: delivery.entregaLat, lon: delivery.entregaLon };
+        const distanceToDestination = coordinateDistanceKm(
+          { lat: location.latitude, lon: location.longitude },
+          finalDestination
+        );
+        const allowedDistanceKm = Math.max(2, Math.min(5, Number(location.accuracy || 0) / 1000 + 0.5));
+        if (!Number.isFinite(distanceToDestination) || distanceToDestination > allowedDistanceKm) {
+          const error = new Error('Chegue mais perto do endereco de entrega para finalizar.');
+          error.status = 409;
+          error.code = 'motoboy_longe_do_destino';
+          throw error;
+        }
+      }
+
       const valor = money(delivery.saldoReservado || delivery.valor || 0);
       const split = deliverySplit(delivery);
       const quantidadeExclusivo = delivery.tipo === 'servico_exclusivo'
@@ -5439,13 +5592,13 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
 
       const companySnap = await tx.get(companyRef);
       const balance = companyBalance(companySnap.exists ? companySnap.data() : {});
-      if (balance.saldo < valor || balance.reservado < valor) {
-        const error = new Error('Saldo reservado da empresa nao cobre esta entrega. Chame o suporte antes de finalizar.');
+      if (balance.reservado < valor) {
+        const error = new Error('A reserva da empresa nao cobre esta entrega. Chame o suporte antes de finalizar.');
         error.status = 409;
         error.code = 'saldo_reservado_insuficiente';
         throw error;
       }
-      const nextSaldo = money(Math.max(0, balance.saldo - valor));
+      const nextSaldo = money(balance.saldo - valor);
       const nextReserved = money(Math.max(0, balance.reservado - valor));
 
       tx.set(companyRef, {
@@ -5499,27 +5652,39 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
   }
 });
 
-app.get('/api/mercadopago/oauth/start', (req, res) => {
-  const driverCpf = onlyDigits(req.query.driverCpf);
-  if (driverCpf.length !== 11) {
-    return res.status(400).json({ error: 'driverCpf invalido' });
+app.post('/api/drivers/:cpf/mercadopago/oauth-link', authLimiter, async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+
+    const state = crypto.randomBytes(32).toString('hex');
+    await db.collection('mercadoPagoOAuthStates').doc(hashSecret(state)).set({
+      driverCpf,
+      expiresAtMs: Date.now() + MP_OAUTH_STATE_MS,
+      criadaEm: admin.firestore.FieldValue.serverTimestamp()
+    });
+    const params = new URLSearchParams({
+      client_id: requiredEnv('MP_CLIENT_ID'),
+      response_type: 'code',
+      platform_id: 'mp',
+      state,
+      redirect_uri: requiredEnv('MP_REDIRECT_URI')
+    });
+    return res.json({ ok: true, url: `https://auth.mercadopago.com.br/authorization?${params.toString()}` });
+  } catch (error) {
+    return next(error);
   }
+});
 
-  const params = new URLSearchParams({
-    client_id: requiredEnv('MP_CLIENT_ID'),
-    response_type: 'code',
-    platform_id: 'mp',
-    state: driverCpf,
-    redirect_uri: requiredEnv('MP_REDIRECT_URI')
-  });
-
-  return res.redirect(`https://auth.mercadopago.com.br/authorization?${params.toString()}`);
+app.get('/api/mercadopago/oauth/start', (_req, res) => {
+  return res.status(410).json({ error: 'oauth_inicio_inseguro_desativado', message: 'Abra a conexao pelo painel atualizado do motoboy.' });
 });
 
 app.get('/api/mercadopago/oauth/callback', async (req, res, next) => {
   try {
     if (req.query.error) {
-      const detail = String(req.query.error_description || req.query.error || 'Autorizacao recusada pelo Mercado Pago.').slice(0, 400);
+      const detail = escapeHtml(String(req.query.error_description || req.query.error || 'Autorizacao recusada pelo Mercado Pago.').slice(0, 400));
       return res.status(400).send(`
         <html><body style="font-family:Arial,sans-serif;background:#090911;color:#fff;padding:24px">
           <h1>Mercado Pago nao conectou</h1>
@@ -5531,10 +5696,24 @@ app.get('/api/mercadopago/oauth/callback', async (req, res, next) => {
     }
 
     const code = String(req.query.code || '');
-    const driverCpf = onlyDigits(req.query.state);
-    if (!code || driverCpf.length !== 11) {
+    const state = String(req.query.state || '').trim();
+    if (!code || !/^[a-f0-9]{64}$/i.test(state)) {
       return res.status(400).send('Autorizacao invalida.');
     }
+    const stateRef = db.collection('mercadoPagoOAuthStates').doc(hashSecret(state));
+    let driverCpf = '';
+    await db.runTransaction(async (tx) => {
+      const stateSnap = await tx.get(stateRef);
+      const stateData = stateSnap.exists ? stateSnap.data() || {} : {};
+      driverCpf = onlyDigits(stateData.driverCpf);
+      if (!stateSnap.exists || driverCpf.length !== 11 || Number(stateData.expiresAtMs || 0) < Date.now()) {
+        const error = new Error('Autorizacao expirada ou ja utilizada.');
+        error.status = 400;
+        error.code = 'oauth_state_invalido';
+        throw error;
+      }
+      tx.delete(stateRef);
+    });
 
     const params = new URLSearchParams({
       grant_type: 'authorization_code',
@@ -5558,7 +5737,7 @@ app.get('/api/mercadopago/oauth/callback', async (req, res, next) => {
       return res.status(response.status).send(`
         <html><body style="font-family:Arial,sans-serif;background:#090911;color:#fff;padding:24px">
           <h1>Mercado Pago nao conectou</h1>
-          <p>${String(detail).slice(0, 400)}</p>
+          <p>${escapeHtml(String(detail).slice(0, 400))}</p>
           <p>Confira credenciais, Client Secret e Redirect URI da aplicacao Mercado Pago.</p>
           <a style="color:#ff9a00" href="${appUrl('/motoboy.html')}">Voltar para o painel do motoboy</a>
         </body></html>
@@ -5782,38 +5961,89 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
       return res.status(200).json({ ignored: true });
     }
 
-    let paymentToken = requiredEnv('MP_OWNER_ACCESS_TOKEN');
     const webhookDriverCpf = onlyDigits(req.query.driverCpf);
-    if (webhookDriverCpf.length === 11) {
+    let payment;
+    let paymentSource = 'owner';
+    try {
+      payment = await mpFetch(`/v1/payments/${paymentId}`, {
+        token: requiredEnv('MP_OWNER_ACCESS_TOKEN')
+      });
+    } catch (ownerError) {
+      if (webhookDriverCpf.length !== 11) throw ownerError;
       const driverSnap = await db.collection('motoboys').doc(webhookDriverCpf).get();
       const sellerToken = driverSnap.data()?.mercadoPago?.accessToken;
-      if (sellerToken) paymentToken = sellerToken;
+      if (!sellerToken) throw ownerError;
+      payment = await mpFetch(`/v1/payments/${paymentId}`, { token: sellerToken });
+      paymentSource = 'driver';
     }
 
-    const payment = await mpFetch(`/v1/payments/${paymentId}`, {
-      token: paymentToken
-    });
-    const rawRideRef = req.query.rideId || payment.external_reference || payment.metadata?.ride_id;
-    const rideId = String(rawRideRef || '').replace(/^ride_/, '');
+    if (String(payment.id) !== String(paymentId)) {
+      return res.status(409).json({ error: 'mercadopago_payment_id_divergente' });
+    }
+    const externalReference = String(payment.external_reference || '').trim();
+    const metadataRideRef = String(payment.metadata?.ride_id || '').trim();
+    const hintedRideRef = String(req.query.rideId || '').trim();
+    const normalizedRideRef = (value) => String(value || '').replace(/^ride_/, '');
+    if (externalReference && metadataRideRef
+      && normalizedRideRef(externalReference) !== normalizedRideRef(metadataRideRef)) {
+      return res.status(409).json({ error: 'mercadopago_referencia_divergente' });
+    }
+    const authoritativeReference = externalReference || metadataRideRef;
+    if (hintedRideRef && authoritativeReference
+      && normalizedRideRef(hintedRideRef) !== normalizedRideRef(authoritativeReference)) {
+      return res.status(409).json({ error: 'mercadopago_webhook_alvo_divergente' });
+    }
+
     const paymentKind = String(payment.metadata?.payment_kind || '');
-    if (String(rideId || '').startsWith('deposit:') || paymentKind === 'company_deposit') {
-      const depositId = String(rideId || '').startsWith('deposit:')
-        ? String(rideId).replace(/^deposit:/, '')
-        : String(payment.metadata?.deposit_id || '');
+    if (authoritativeReference.startsWith('deposit:') || paymentKind === 'company_deposit') {
+      const depositId = String(payment.metadata?.deposit_id || authoritativeReference.replace(/^deposit:/, '')).trim();
       const paymentStatus = String(payment.status || '');
       if (!depositId) return res.status(200).json({ ignored: true });
+      const expectedReference = `deposit:${depositId}`;
+      if (paymentSource !== 'owner'
+        || paymentKind !== 'company_deposit'
+        || externalReference !== expectedReference
+        || String(payment.metadata?.deposit_id || '') !== depositId
+        || String(payment.currency_id || '').toUpperCase() !== 'BRL') {
+        return res.status(409).json({ error: 'deposito_mercadopago_nao_autentico' });
+      }
 
       const depositRef = db.collection('depositos').doc(depositId);
       await db.runTransaction(async (tx) => {
         const depositSnap = await tx.get(depositRef);
         if (!depositSnap.exists) return;
         const deposit = depositSnap.data() || {};
-        const alreadyCredited = !!deposit.aprovadoEm || deposit.status === 'aprovado';
         const companyRef = companyRefFromPhone(deposit.empresaId || deposit.telefoneEmpresa);
         if (!companyRef) return;
+        if (onlyDigits(payment.metadata?.company_id) !== companyRef.id) {
+          const error = new Error('Pagamento nao pertence a esta empresa.');
+          error.status = 409;
+          error.code = 'deposito_empresa_divergente';
+          throw error;
+        }
+        const usageRef = db.collection('mercadoPagoPagamentos').doc(hashSecret(String(payment.id)));
+        const [usageSnap, companySnap] = await Promise.all([tx.get(usageRef), tx.get(companyRef)]);
+        const expectedTarget = `deposit:${depositId}`;
+        if (usageSnap.exists && usageSnap.data()?.target !== expectedTarget) {
+          const error = new Error('Pagamento Mercado Pago ja vinculado a outra operacao.');
+          error.status = 409;
+          error.code = 'pagamento_mercadopago_reutilizado';
+          throw error;
+        }
+
+        const alreadyCredited = !!deposit.aprovadoEm || deposit.status === 'aprovado';
+        const wasReversed = !!deposit.creditoEstornadoEm;
+        const valor = money(deposit.valor);
+        const totalPago = money(payment.transaction_amount);
+        const taxaMercadoPago = money(payment.fee_details?.reduce?.((sum, fee) => sum + Number(fee.amount || 0), 0) || payment.marketplace_fee || 0);
+        const valorLiquido = money(payment.transaction_details?.net_received_amount || Math.max(0, totalPago - taxaMercadoPago));
+        const amountMatches = Math.abs(totalPago - valor) <= 0.01;
+        const reversalStatuses = new Set(['refunded', 'charged_back', 'cancelled']);
 
         const updateDeposit = {
-          status: paymentStatus === 'approved' ? 'aprovado' : paymentStatus || 'aguardando_pagamento',
+          status: wasReversed
+            ? 'credito_estornado'
+            : paymentStatus === 'approved' && amountMatches ? 'aprovado' : paymentStatus || 'aguardando_pagamento',
           mercadoPago: {
             ...(deposit.mercadoPago || {}),
             paymentId: String(payment.id),
@@ -5827,29 +6057,62 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
           atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
         };
 
-        if (paymentStatus !== 'approved' || alreadyCredited) {
+        if (reversalStatuses.has(paymentStatus) && alreadyCredited && !wasReversed) {
+          const before = companyBalance(companySnap.exists ? companySnap.data() : {});
+          const debit = money(deposit.valorCreditado || valorLiquido || valor);
+          const afterSaldo = money(before.saldo - debit);
+          tx.set(companyRef, {
+            saldo: afterSaldo,
+            reservado: before.reservado,
+            bloqueioFinanceiro: afterSaldo < before.reservado,
+            ultimoEstornoMercadoPagoEm: admin.firestore.FieldValue.serverTimestamp(),
+            atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+          tx.set(ledgerRef(companyRef.id), {
+            tipo: 'debito',
+            origem: 'estorno_deposito_mercadopago',
+            depositoId,
+            paymentId: String(payment.id),
+            valor: debit,
+            saldoAntes: before.saldo,
+            saldoDepois: afterSaldo,
+            reservadoAntes: before.reservado,
+            reservadoDepois: before.reservado,
+            criadoEm: admin.firestore.FieldValue.serverTimestamp()
+          });
+          tx.set(usageRef, {
+            target: expectedTarget,
+            paymentId: String(payment.id),
+            status: paymentStatus,
+            atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+          tx.set(depositRef, {
+            ...updateDeposit,
+            status: 'credito_estornado',
+            creditoEstornadoEm: admin.firestore.FieldValue.serverTimestamp(),
+            valorEstornado: debit
+          }, { merge: true });
+          return;
+        }
+
+        if (paymentStatus !== 'approved' || alreadyCredited || wasReversed) {
           tx.set(depositRef, updateDeposit, { merge: true });
           return;
         }
 
-        const valor = money(deposit.valor);
-        const totalPago = money(payment.transaction_amount);
-        const taxaMercadoPago = money(payment.fee_details?.reduce?.((sum, fee) => sum + Number(fee.amount || 0), 0) || payment.marketplace_fee || 0);
-        const valorLiquido = money(payment.transaction_details?.net_received_amount || Math.max(0, totalPago - taxaMercadoPago));
-        if (totalPago < valor) {
+        if (!amountMatches) {
           tx.set(depositRef, {
             ...updateDeposit,
             status: 'pagamento_divergente',
             divergencia: {
               esperado: valor,
               recebido: totalPago,
-              motivo: 'valor_pago_menor_que_deposito'
+              motivo: 'valor_pago_diferente_do_deposito'
             }
           }, { merge: true });
           return;
         }
 
-        const companySnap = await tx.get(companyRef);
         const before = companyBalance(companySnap.exists ? companySnap.data() : {});
         const afterSaldo = money(before.saldo + valorLiquido);
         tx.set(companyRef, {
@@ -5872,6 +6135,13 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
           reservadoDepois: before.reservado,
           criadoEm: admin.firestore.FieldValue.serverTimestamp()
         });
+        tx.set(usageRef, {
+          target: expectedTarget,
+          paymentId: String(payment.id),
+          status: paymentStatus,
+          criadoEm: admin.firestore.FieldValue.serverTimestamp(),
+          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
         tx.set(depositRef, {
           ...updateDeposit,
           aprovadoEm: admin.firestore.FieldValue.serverTimestamp(),
@@ -5884,38 +6154,76 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
 
       return res.json({ ok: true, kind: 'company_deposit' });
     }
-    if (!rideId) return res.status(200).json({ ignored: true });
+    const rideId = normalizedRideRef(authoritativeReference);
+    if (!rideId || rideId.startsWith('deposit:')) return res.status(200).json({ ignored: true });
+    if (!externalReference || !metadataRideRef
+      || normalizedRideRef(metadataRideRef) !== rideId
+      || String(payment.currency_id || '').toUpperCase() !== 'BRL') {
+      return res.status(409).json({ error: 'corrida_mercadopago_nao_autentica' });
+    }
 
-    const rideRef = db.collection('corridas').doc(String(rideId));
-    const rideSnap = await rideRef.get();
-    const ride = rideSnap.exists ? rideSnap.data() || {} : {};
-    const totalPago = money(payment.transaction_amount);
-    const valorEsperado = money(ride.pagamento?.total || ride.valor || 0);
-    const pagamentoAprovado = payment.status === 'approved';
-    const valorConfere = !valorEsperado || totalPago >= valorEsperado;
+    const rideRef = db.collection('corridas').doc(rideId);
+    const usageRef = db.collection('mercadoPagoPagamentos').doc(hashSecret(String(payment.id)));
+    await db.runTransaction(async (tx) => {
+      const [rideSnap, usageSnap] = await Promise.all([tx.get(rideRef), tx.get(usageRef)]);
+      if (!rideSnap.exists) {
+        const error = new Error('Corrida do pagamento nao encontrada.');
+        error.status = 404;
+        error.code = 'corrida_pagamento_nao_encontrada';
+        throw error;
+      }
+      const ride = rideSnap.data() || {};
+      const target = `ride:${rideId}`;
+      if (usageSnap.exists && usageSnap.data()?.target !== target) {
+        const error = new Error('Pagamento Mercado Pago ja vinculado a outra operacao.');
+        error.status = 409;
+        error.code = 'pagamento_mercadopago_reutilizado';
+        throw error;
+      }
+      const rideDriverCpf = onlyDigits(ride.motoboyCpf);
+      const metadataDriverCpf = onlyDigits(payment.metadata?.driver_cpf);
+      if ((metadataDriverCpf && metadataDriverCpf !== rideDriverCpf)
+        || (webhookDriverCpf && webhookDriverCpf !== rideDriverCpf)
+        || (paymentSource === 'driver' && webhookDriverCpf !== rideDriverCpf)) {
+        const error = new Error('Pagamento nao pertence ao motoboy desta corrida.');
+        error.status = 409;
+        error.code = 'pagamento_motoboy_divergente';
+        throw error;
+      }
 
-    await rideRef.set({
-      pagamento: {
-        ...(ride.pagamento || {}),
-        provider: 'mercadopago',
+      const totalPago = money(payment.transaction_amount);
+      const valorEsperado = money(ride.pagamento?.total || ride.valor || 0);
+      const pagamentoAprovado = payment.status === 'approved';
+      const valorConfere = valorEsperado > 0 && Math.abs(totalPago - valorEsperado) <= 0.01;
+      tx.set(usageRef, {
+        target,
         paymentId: String(payment.id),
-        status: payment.status,
-        statusDetail: payment.status_detail || null,
-        totalPago,
-        valorEsperado: valorEsperado || null,
-        valido: pagamentoAprovado ? valorConfere : false,
-        divergencia: pagamentoAprovado && !valorConfere
-          ? `Valor pago ${totalPago.toFixed(2)} menor que o esperado ${valorEsperado.toFixed(2)}`
-          : null,
-        appFee: money(payment.marketplace_fee || payment.metadata?.app_fee || ride.pagamento?.appFee || 0),
-        driverAmount: money(payment.metadata?.driver_amount || ride.pagamento?.driverAmount || 0),
+        status: String(payment.status || ''),
         atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
-      },
-      pagamentoConfirmadoEm: pagamentoAprovado && valorConfere
-        ? admin.firestore.FieldValue.serverTimestamp()
-        : null,
-      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+      }, { merge: true });
+      tx.update(rideRef, {
+        pagamento: {
+          ...(ride.pagamento || {}),
+          provider: 'mercadopago',
+          paymentId: String(payment.id),
+          status: payment.status,
+          statusDetail: payment.status_detail || null,
+          totalPago,
+          valorEsperado,
+          valido: pagamentoAprovado && valorConfere,
+          divergencia: pagamentoAprovado && !valorConfere
+            ? `Valor pago ${totalPago.toFixed(2)} diferente do esperado ${valorEsperado.toFixed(2)}`
+            : null,
+          appFee: money(payment.marketplace_fee || payment.metadata?.app_fee || ride.pagamento?.appFee || 0),
+          driverAmount: money(payment.metadata?.driver_amount || ride.pagamento?.driverAmount || 0),
+          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+        },
+        pagamentoConfirmadoEm: pagamentoAprovado && valorConfere
+          ? admin.firestore.FieldValue.serverTimestamp()
+          : admin.firestore.FieldValue.delete(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
 
     res.json({ ok: true });
   } catch (error) {
@@ -5943,9 +6251,10 @@ runCustomerReminderTick().catch((error) => console.error('customer reminder star
 
 app.use((error, _req, res, _next) => {
   console.error(error);
-  res.status(error.status || 500).json({
+  const status = Number(error.status || 500);
+  res.status(status).json({
     error: error.code || 'internal_error',
-    message: error.message,
+    message: status >= 500 ? 'Erro interno. Tente novamente ou fale com o suporte.' : error.message,
     currentStatus: error.currentStatus || undefined,
     motoboy: error.motoboy || undefined
   });
