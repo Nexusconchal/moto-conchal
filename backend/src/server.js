@@ -2442,6 +2442,73 @@ app.post('/api/admin/companies/:companyId/block', assertOwner, async (req, res, 
   }
 });
 
+app.post('/api/admin/companies/:companyId/balance', assertOwner, async (req, res, next) => {
+  try {
+    const companyRef = companyRefFromPhone(req.params.companyId);
+    if (!companyRef) return res.status(400).json({ error: 'empresa_invalida', message: 'Empresa invalida.' });
+
+    const requestedBalance = Number(req.body?.saldo);
+    const reason = cleanText(req.body?.reason || req.body?.motivo, 250);
+    if (!Number.isFinite(requestedBalance) || requestedBalance < 0 || requestedBalance > 1000000) {
+      return res.status(400).json({ error: 'saldo_invalido', message: 'Informe um saldo entre R$ 0,00 e R$ 1.000.000,00.' });
+    }
+    if (!reason) {
+      return res.status(400).json({ error: 'motivo_obrigatorio', message: 'Informe o motivo do ajuste de saldo.' });
+    }
+
+    let result;
+    await db.runTransaction(async (tx) => {
+      const companySnap = await tx.get(companyRef);
+      if (!companySnap.exists) {
+        const error = new Error('Empresa nao encontrada.');
+        error.status = 404;
+        error.code = 'empresa_nao_encontrada';
+        throw error;
+      }
+
+      const before = companyBalance(companySnap.data() || {});
+      const nextBalance = money(requestedBalance);
+      if (nextBalance < before.reservado) {
+        const error = new Error(`O saldo nao pode ficar abaixo do valor reservado de R$ ${before.reservado.toFixed(2).replace('.', ',')}.`);
+        error.status = 409;
+        error.code = 'saldo_abaixo_do_reservado';
+        throw error;
+      }
+
+      const difference = money(nextBalance - before.saldo);
+      tx.set(companyRef, {
+        saldo: nextBalance,
+        reservado: before.reservado,
+        ultimoAjusteSaldoMotivo: reason,
+        ultimoAjusteSaldoEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      tx.set(ledgerRef(companyRef.id), {
+        tipo: difference >= 0 ? 'credito' : 'debito',
+        origem: 'ajuste_manual_dono',
+        valor: money(Math.abs(difference)),
+        diferenca: difference,
+        saldoAntes: before.saldo,
+        saldoDepois: nextBalance,
+        reservado: before.reservado,
+        motivo: reason,
+        criadoPor: 'dono',
+        criadoEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+      result = {
+        saldo: nextBalance,
+        reservado: before.reservado,
+        disponivel: money(nextBalance - before.reservado),
+        diferenca: difference
+      };
+    });
+
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/admin/rides/:rideId/cancel', assertOwner, async (req, res, next) => {
   try {
     const rideId = String(req.params.rideId || '').trim();
