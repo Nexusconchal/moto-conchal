@@ -3516,6 +3516,29 @@ function pickFirst(...values) {
   return values.find((value) => String(value || '').trim()) || '';
 }
 
+const CARDAPIO_WEB_NEW_ORDER_STATUSES = new Set([
+  'waiting_confirmation',
+  'pending_confirmation',
+  'awaiting_confirmation',
+  'pending',
+  'new',
+  'novo',
+  'pendente'
+]);
+
+function cardapioWebOrderStatus(order = {}) {
+  return normalizeText(pickFirst(
+    order.status,
+    order.order_status,
+    order.orderStatus,
+    order.state
+  )).replace(/[\s-]+/g, '_');
+}
+
+function isNewCardapioWebOrder(order = {}) {
+  return CARDAPIO_WEB_NEW_ORDER_STATUSES.has(cardapioWebOrderStatus(order));
+}
+
 function normalizeCardapioWebOrder(order = {}, company = {}) {
   const customer = order.customer || order.client || order.consumer || {};
   const delivery = order.delivery || order.delivery_address || order.address || order.shipping || {};
@@ -3538,7 +3561,7 @@ function normalizeCardapioWebOrder(order = {}, company = {}) {
   const recebidoEmMs = externalOrderMs(recebidoEm);
   return {
     externalId: String(order.id || order.order_id || order.uuid || order.code || '').slice(0, 80),
-    status: String(order.status || '').slice(0, 60),
+    status: cardapioWebOrderStatus(order).slice(0, 60),
     origem: 'Cardapio Web',
     empresa: company.empresa || 'Empresa',
     cliente: cleanText(pickFirst(customer.name, customer.nome, order.customer_name, order.client_name, 'Cliente Cardapio Web'), 120),
@@ -3575,7 +3598,7 @@ function integrationPendingRef(companyId, origem, externalId) {
 
 async function fetchCardapioWebLatestOrder(apiKey, storeCode, company, companyId) {
   const base = cardapioWebBaseUrl();
-  const ordersUrl = `${base}/orders`;
+  const ordersUrl = `${base}/orders?${new URLSearchParams({ status: 'waiting_confirmation' }).toString()}`;
   const response = await fetch(ordersUrl, { headers: cardapioWebHeaders(apiKey, storeCode) });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -3592,16 +3615,24 @@ async function fetchCardapioWebLatestOrder(apiKey, storeCode, company, companyId
   const today = dateKeySaoPaulo();
   let sawOld = false;
   let sawImported = false;
+  let sawNotNew = false;
   const availableOrders = [];
   for (const candidate of orders.slice(0, 30)) {
     const orderId = candidate.id || candidate.order_id || candidate.uuid || candidate.code;
     let fullOrder = candidate;
     if (orderId) {
       const detail = await fetch(`${base}/orders/${encodeURIComponent(orderId)}`, { headers: cardapioWebHeaders(apiKey, storeCode) });
-      if (detail.ok) fullOrder = await detail.json().catch(() => candidate);
+      if (detail.ok) {
+        const detailData = await detail.json().catch(() => ({}));
+        fullOrder = { ...candidate, ...(detailData && typeof detailData === 'object' ? detailData : {}) };
+      }
     }
     const preview = normalizeCardapioWebOrder(fullOrder, company);
     if (!preview.externalId) continue;
+    if (!isNewCardapioWebOrder(fullOrder)) {
+      sawNotNew = true;
+      continue;
+    }
     if (!preview.recebidoEmMs || preview.recebidoDia !== today) {
       sawOld = true;
       continue;
@@ -3614,11 +3645,13 @@ async function fetchCardapioWebLatestOrder(apiKey, storeCode, company, companyId
     if (availableOrders.length >= 10) break;
   }
   if (availableOrders.length) return availableOrders;
-  const error = new Error(sawImported
-    ? 'Os pedidos de hoje encontrados na Cardapio Web ja foram enviados para os motoboys.'
-    : sawOld
-      ? 'A Cardapio Web retornou pedido antigo. Por seguranca, o MotoJa so importa pedidos de hoje.'
-      : 'Conectou na Cardapio Web, mas nao encontrei pedido de hoje para importar.');
+  const error = new Error(sawNotNew
+    ? 'A Cardapio Web nao retornou pedido novo aguardando confirmacao. Pedidos em preparo, entregues, concluidos ou cancelados foram ignorados.'
+    : sawImported
+      ? 'Os pedidos novos encontrados na Cardapio Web ja foram enviados para os motoboys.'
+      : sawOld
+        ? 'A Cardapio Web retornou pedido antigo. Por seguranca, o MotoJa so importa pedidos novos de hoje.'
+        : 'Conectou na Cardapio Web, mas nao encontrei pedido novo aguardando confirmacao.');
   error.status = 404;
   throw error;
 }
@@ -3669,8 +3702,8 @@ app.post('/api/companies/me/integration/test', assertCompany, assertCompanyAppro
       mode: 'test_only',
       integracaoAtiva: !!req.company.integracaoAtiva,
       message: orderPreviews.length === 1
-        ? '1 pedido de hoje encontrado na Cardapio Web.'
-        : `${orderPreviews.length} pedidos de hoje encontrados na Cardapio Web.`,
+        ? '1 pedido novo aguardando confirmacao encontrado na Cardapio Web.'
+        : `${orderPreviews.length} pedidos novos aguardando confirmacao encontrados na Cardapio Web.`,
       orderPreview,
       orderPreviews,
       totalPedidos: orderPreviews.length
