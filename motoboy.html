@@ -1996,7 +1996,7 @@
               body: JSON.stringify({ ...driverProof(), kind, scope }),
               cache: "no-store",
             },
-            12000,
+            30000,
           );
           const d = await r.json().catch(() => ({}));
           if (seq !== requestSeq) return;
@@ -2147,7 +2147,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=155", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=156", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});
