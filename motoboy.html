@@ -1535,7 +1535,7 @@
       async function carregarGanhos(atualizar = false) {
         if (!motoboyCpf) return;
         modo = "ganhos";
-        requestSeq += 1;
+        const seq = ++requestSeq;
         atualizarAbas();
         const cached = ganhosCache.get(ganhosPeriodo);
         if (!atualizar && cached && Date.now() - cached.t < 5 * 60 * 1000) {
@@ -1558,6 +1558,7 @@
             25000,
           );
           const d = await r.json().catch(() => ({}));
+          if (modo !== "ganhos" || seq !== requestSeq) return;
           if (!r.ok) throw new Error(d.message || d.error || "Não consegui carregar os ganhos.");
           ganhosResumo = d.summary || {};
           ganhosDias = Array.isArray(d.days) ? d.days : [];
@@ -1565,6 +1566,7 @@
           renderGanhos();
           if (atualizar || !ganhosHistorico.length) await carregarHistoricoGanhos(true);
         } catch (error) {
+          if (modo !== "ganhos" || seq !== requestSeq) return;
           $("lista").innerHTML = `<div class="status danger">${escSeguro(error.message || "Não consegui carregar os ganhos.")}<br><button id="tentar-carregar-ganhos" class="secondary" type="button" style="margin-top:12px">Tentar novamente</button></div>`;
           const retry = $("tentar-carregar-ganhos");
           if (retry) retry.onclick = () => carregarGanhos(true);
@@ -2130,7 +2132,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=151", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=152", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});
