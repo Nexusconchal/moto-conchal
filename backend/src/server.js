@@ -1306,18 +1306,26 @@ function verifyPassword(password, saved = {}) {
   return safeEqual(typed, hash);
 }
 
-async function issueCompanySession(ref, tx = null) {
-  const token = crypto.randomBytes(32).toString('hex');
+async function issueCompanySession(ref) {
+  const token = `v2.${ref.id}.${crypto.randomBytes(32).toString('hex')}`;
   const now = Date.now();
-  const data = {
-    sessionTokenHash: hashSecret(token),
-    sessionIssuedAtMs: now,
-    sessionExpiresAtMs: now + COMPANY_SESSION_MS,
-    ultimoLoginEm: admin.firestore.FieldValue.serverTimestamp(),
-    atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-  };
-  if (tx) tx.set(ref, data, { merge: true });
-  else await ref.set(data, { merge: true });
+  const tokenHash = hashSecret(token);
+  await db.runTransaction(async (tx) => {
+    const snapshot = await tx.get(ref);
+    const saved = snapshot.data()?.companySessions;
+    const sessions = saved && typeof saved === 'object' ? { ...saved } : {};
+    const activeSessions = Object.entries(sessions)
+      .filter(([, session]) => Number(session?.expiresAtMs || 0) > now)
+      .sort((a, b) => Number(b[1]?.issuedAtMs || 0) - Number(a[1]?.issuedAtMs || 0))
+      .slice(0, 4);
+    const nextSessions = Object.fromEntries(activeSessions);
+    nextSessions[tokenHash] = { issuedAtMs: now, expiresAtMs: now + COMPANY_SESSION_MS };
+    tx.set(ref, {
+      companySessions: nextSessions,
+      ultimoLoginEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+  });
   return token;
 }
 
@@ -1430,6 +1438,15 @@ async function findCompanySession(token) {
   const value = String(token || '').trim();
   if (!value) return null;
   const tokenHash = hashSecret(value);
+  const tokenParts = value.split('.');
+  if (tokenParts.length === 3 && tokenParts[0] === 'v2' && /^\d{10,11}$/.test(tokenParts[1])) {
+    const companySnap = await db.collection('empresas').doc(tokenParts[1]).get();
+    if (!companySnap.exists) return null;
+    const company = companySnap.data() || {};
+    const session = company.companySessions?.[tokenHash];
+    if (!session || Number(session.expiresAtMs || 0) <= Date.now()) return null;
+    return { companySnap, company, companyId: companySnap.id, sessionHash: tokenHash };
+  }
   const snap = await db.collection('empresas').where('sessionTokenHash', '==', tokenHash).limit(1).get();
   if (snap.empty) return null;
   const companySnap = snap.docs[0];
@@ -1439,7 +1456,7 @@ async function findCompanySession(token) {
   if ((expiresAt && expiresAt <= Date.now()) || (!expiresAt && (!legacyIssuedAt || Date.now() - legacyIssuedAt > COMPANY_SESSION_MS))) {
     return null;
   }
-  return { companySnap, company, companyId: companySnap.id };
+  return { companySnap, company, companyId: companySnap.id, legacySession: true };
 }
 
 async function assertCompany(req, res, next) {
@@ -1452,6 +1469,8 @@ async function assertCompany(req, res, next) {
     req.companySnap = session.companySnap;
     req.company = session.company;
     req.companyId = session.companyId;
+    req.companySessionHash = session.sessionHash || '';
+    req.companyLegacySession = session.legacySession === true;
     return next();
   } catch (error) {
     return next(error);
@@ -2440,7 +2459,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'driver-jobs-mobile-v153' });
+  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'company-multi-session-v154' });
 });
 
 app.get('/', (_req, res) => {
@@ -2675,7 +2694,10 @@ app.post('/api/admin/companies/password-recovery/:requestId/reset', assertOwner,
       tx.set(companyRef, {
         passwordSalt: auth.salt,
         passwordHash: auth.hash,
+        companySessions: admin.firestore.FieldValue.delete(),
         sessionTokenHash: admin.firestore.FieldValue.delete(),
+        sessionIssuedAtMs: admin.firestore.FieldValue.delete(),
+        sessionExpiresAtMs: admin.firestore.FieldValue.delete(),
         senhaAlteradaEm: admin.firestore.FieldValue.serverTimestamp(),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
@@ -3262,13 +3284,18 @@ app.post('/api/companies/login', authLimiter, async (req, res, next) => {
 
 app.post('/api/companies/logout', assertCompany, async (req, res, next) => {
   try {
-    await req.companySnap.ref.set({
-      sessionTokenHash: admin.firestore.FieldValue.delete(),
-      sessionIssuedAtMs: admin.firestore.FieldValue.delete(),
-      sessionExpiresAtMs: admin.firestore.FieldValue.delete(),
+    const update = {
       ultimoLogoutEm: admin.firestore.FieldValue.serverTimestamp(),
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+    };
+    if (req.companySessionHash) {
+      update[`companySessions.${req.companySessionHash}`] = admin.firestore.FieldValue.delete();
+    } else {
+      update.sessionTokenHash = admin.firestore.FieldValue.delete();
+      update.sessionIssuedAtMs = admin.firestore.FieldValue.delete();
+      update.sessionExpiresAtMs = admin.firestore.FieldValue.delete();
+    }
+    await req.companySnap.ref.update(update);
     return res.json({ ok: true });
   } catch (error) {
     return next(error);
