@@ -704,7 +704,10 @@ async function geocodeCapturedAddress(value) {
     throw error;
   }
   const address = cleanText(value, 300);
-  const query = requestedPlaceHint(address) ? address : `${address}, Conchal, SP, Brasil`;
+  const normalizedAddress = address
+    .replace(/\bzanochett?a\b/gi, 'Zancheta')
+    .replace(/\bzanchett?a\b/gi, 'Zancheta');
+  const query = requestedPlaceHint(normalizedAddress) ? normalizedAddress : `${normalizedAddress}, Conchal, SP, Brasil`;
   const params = new URLSearchParams({ text: query, lang: 'pt', limit: '1', apiKey: GEOAPIFY_API_KEY });
   const response = await fetch(`https://api.geoapify.com/v1/geocode/search?${params.toString()}`);
   const data = await response.json().catch(() => ({}));
