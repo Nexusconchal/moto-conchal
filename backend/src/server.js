@@ -2254,7 +2254,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'motoja-conchal-backend' });
+  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'company-delivery-v2' });
 });
 
 app.get('/', (_req, res) => {
