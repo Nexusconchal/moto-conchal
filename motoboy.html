@@ -1695,7 +1695,7 @@
           )
           .slice(0, 30);
         if (!docs.length) {
-          lista.innerHTML = `<div class="empty">${modoMinhas() ? `Nenhuma ${servico} sua ainda.` : `Nenhuma ${servico} pendente agora.`}</div>`;
+          lista.innerHTML = `<div class="empty">${modoMinhas() ? `Nenhuma ${servico} em andamento.` : `Nenhuma ${servico} pendente agora.`}</div>`;
           return;
         }
         lista.innerHTML = docs
@@ -2147,7 +2147,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=153", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=155", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});

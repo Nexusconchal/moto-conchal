@@ -2459,7 +2459,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'company-multi-session-v154' });
+  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'active-driver-jobs-v155' });
 });
 
 app.get('/', (_req, res) => {
@@ -3166,13 +3166,17 @@ app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
     const driver = await getDriverWithProof(driverCpf, req.body);
 
     const queryRef = scope === 'mine'
-      ? db.collection(collectionName).where('motoboyCpf', '==', driverCpf).limit(100)
+      ? db.collection(collectionName)
+          .where('status', kind === 'deliveries' ? 'in' : '==', kind === 'deliveries' ? ['aceita', 'retirada'] : 'aceita')
+          .limit(50)
       : db.collection(collectionName).where('status', '==', 'pendente').limit(30);
     const snapshot = await queryRef.get();
     const enabledCities = driverRideCities(driver);
-    const docs = kind === 'rides' && scope === 'pending'
-      ? snapshot.docs.filter((docSnap) => enabledCities[rideOperatingCity(docSnap.data())])
-      : snapshot.docs;
+    const docs = scope === 'mine'
+      ? snapshot.docs.filter((docSnap) => onlyDigits(docSnap.data()?.motoboyCpf) === driverCpf)
+      : kind === 'rides'
+        ? snapshot.docs.filter((docSnap) => enabledCities[rideOperatingCity(docSnap.data())])
+        : snapshot.docs;
     const jobs = sortJobs(docs.map((docSnap) => {
       const item = serializeFirestore({ id: docSnap.id, ...docSnap.data() });
       return scope === 'pending' ? publicPendingJob(item) : privateDriverJob(item);
