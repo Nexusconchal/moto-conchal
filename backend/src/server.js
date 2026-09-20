@@ -696,7 +696,7 @@ function captureOrderRef(companyId, order) {
   return db.collection('empresas').doc(companyId).collection('pedidosCapturados').doc(captureFingerprint(companyId, order));
 }
 
-async function geocodeCapturedAddress(value) {
+async function geocodeCapturedAddress(value, referencePoint = null) {
   if (!GEOAPIFY_API_KEY) {
     const error = new Error('Mapa nao configurado no servidor.');
     error.status = 503;
@@ -707,29 +707,54 @@ async function geocodeCapturedAddress(value) {
   const normalizedAddress = address
     .replace(/\bzanochett?a\b/gi, 'Zancheta')
     .replace(/\bzanchett?a\b/gi, 'Zancheta');
-  const query = requestedPlaceHint(normalizedAddress) ? normalizedAddress : `${normalizedAddress}, Conchal, SP, Brasil`;
-  const params = new URLSearchParams({ text: query, lang: 'pt', limit: '1', apiKey: GEOAPIFY_API_KEY });
+  const placeHint = requestedPlaceHint(normalizedAddress);
+  const query = placeHint ? normalizedAddress : `${normalizedAddress}, Conchal, SP, Brasil`;
+  const params = new URLSearchParams({
+    text: query,
+    lang: 'pt',
+    limit: '5',
+    bias: 'proximity:-47.172,-22.330',
+    apiKey: GEOAPIFY_API_KEY
+  });
+  if (!placeHint) params.set('filter', 'rect:-47.45,-22.75,-46.75,-22.15');
   const response = await fetch(`https://api.geoapify.com/v1/geocode/search?${params.toString()}`);
   const data = await response.json().catch(() => ({}));
-  const feature = data.features?.[0];
-  if (!response.ok || !feature) {
+  const features = Array.isArray(data.features) ? data.features : [];
+  if (!response.ok || !features.length) {
     const error = new Error(`Nao consegui localizar o endereco: ${address}. Confira o pedido na fila.`);
     error.status = 422;
     error.code = 'endereco_nao_localizado';
     throw error;
   }
-  const properties = feature.properties || {};
-  const result = {
-    lat: Number(properties.lat ?? feature.geometry?.coordinates?.[1]),
-    lon: Number(properties.lon ?? feature.geometry?.coordinates?.[0]),
-    text: cleanText(properties.formatted || properties.address_line2 || query, 300)
-  };
-  if (!validCoordinate(result)) {
+
+  const candidates = features.map((feature) => {
+    const properties = feature.properties || {};
+    return {
+      lat: Number(properties.lat ?? feature.geometry?.coordinates?.[1]),
+      lon: Number(properties.lon ?? feature.geometry?.coordinates?.[0]),
+      text: cleanText(properties.formatted || properties.address_line2 || query, 300)
+    };
+  }).filter(validCoordinate);
+  if (!candidates.length) {
     const error = new Error(`O mapa nao devolveu coordenadas validas para: ${address}.`);
     error.status = 422;
     error.code = 'coordenadas_invalidas';
     throw error;
   }
+
+  const matching = candidates.filter((candidate) => {
+    try {
+      ensureResolvedPlaceMatches(address, candidate.text, 'Endereco');
+      ensureResolvedAddressIsSpecific(address, candidate.text, 'Endereco');
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  const usable = matching.length ? matching : candidates;
+  const result = validCoordinate(referencePoint)
+    ? usable.slice().sort((a, b) => coordinateDistanceKm(referencePoint, a) - coordinateDistanceKm(referencePoint, b))[0]
+    : usable[0];
   ensureResolvedPlaceMatches(address, result.text, 'Endereco');
   ensureResolvedAddressIsSpecific(address, result.text, 'Endereco');
   return result;
@@ -4817,7 +4842,7 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
       }))
     ];
     const verifiedAddresses = await Promise.all(addressesToVerify.map(async (item) => {
-      const verified = await geocodeCapturedAddress(item.text);
+      const verified = await geocodeCapturedAddress(item.text, item.point);
       const differenceKm = coordinateDistanceKm(item.point, verified);
       if (!Number.isFinite(differenceKm) || differenceKm > 2.5) {
         const error = new Error(`As coordenadas do endereco de ${item.label} nao conferem com o endereco digitado. Calcule novamente.`);
