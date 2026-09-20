@@ -277,6 +277,121 @@
       .tabs button {
         min-height: 42px;
       }
+      .earnings-entry {
+        width: 100%;
+        min-height: 52px;
+        border: 1px solid rgba(255, 154, 0, 0.42);
+      }
+      .earnings-shell {
+        display: grid;
+        gap: 14px;
+      }
+      .earnings-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .earnings-head h2 {
+        font-size: 1.2rem;
+      }
+      .earnings-refresh {
+        width: 44px;
+        min-height: 44px;
+        padding: 0;
+        border-radius: 50%;
+      }
+      .earnings-periods {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 7px;
+      }
+      .earnings-periods button {
+        min-width: 0;
+        min-height: 40px;
+        padding: 8px 5px;
+        font-size: 0.78rem;
+      }
+      .earnings-metrics {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 9px;
+      }
+      .earning-metric {
+        min-width: 0;
+        padding: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.045);
+      }
+      .earning-metric span {
+        display: block;
+        color: #aaa;
+        font-size: 0.76rem;
+        font-weight: 800;
+      }
+      .earning-metric strong {
+        display: block;
+        margin-top: 5px;
+        color: #fff;
+        font-size: 1.35rem;
+        overflow-wrap: anywhere;
+      }
+      .earning-metric.primary strong {
+        color: #ffd700;
+      }
+      .earnings-chart {
+        min-height: 154px;
+        display: flex;
+        align-items: end;
+        gap: 5px;
+        padding: 18px 10px 8px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.035);
+        overflow-x: auto;
+      }
+      .earnings-bar {
+        flex: 1 0 24px;
+        min-width: 24px;
+        height: 122px;
+        display: grid;
+        align-content: end;
+        justify-items: center;
+        gap: 5px;
+      }
+      .earnings-bar i {
+        display: block;
+        width: 100%;
+        min-height: 3px;
+        border-radius: 5px 5px 2px 2px;
+        background: linear-gradient(180deg, #ffd700, #ff6b00);
+      }
+      .earnings-bar small {
+        color: #999;
+        font-size: 0.62rem;
+        white-space: nowrap;
+      }
+      .earning-history {
+        display: grid;
+        gap: 8px;
+      }
+      .earning-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px 14px;
+        padding: 13px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+      }
+      .earning-row strong:last-child {
+        color: #bfffd2;
+      }
+      .earning-route {
+        grid-column: 1 / -1;
+        color: #aaa;
+        font-size: 0.78rem;
+        overflow-wrap: anywhere;
+      }
       @media (max-width: 520px) {
         .top,
         .line {
@@ -285,6 +400,9 @@
         .actions,
         .tabs {
           grid-template-columns: 1fr;
+        }
+        .earnings-periods {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
         }
         .brand h1 {
           font-size: 1.45rem;
@@ -707,6 +825,9 @@
             Minhas entregas
           </button>
         </div>
+        <button id="aba-ganhos" class="secondary earnings-entry" type="button">
+          Meus ganhos
+        </button>
         <div id="lista" class="grid"></div>
       </section>
     </main>
@@ -934,6 +1055,13 @@
             : "pendentes",
         requestSeq = 0,
         jobsRequestsInFlight = 0;
+      let ganhosPeriodo = "today",
+        ganhosResumo = null,
+        ganhosDias = [],
+        ganhosHistorico = [],
+        ganhosCursor = "",
+        ganhosCarregandoHistorico = false;
+      const ganhosCache = new Map();
       const TEMPO_LIMITE_MS = 5 * 60 * 1000,
         TEMPO_AVISO_MS = 3 * 60 * 1000;
       function modoEntrega() {
@@ -968,6 +1096,9 @@
       }
       function limparCache() {
         jobsCache.clear();
+        ganhosCache.clear();
+        ganhosHistorico = [];
+        ganhosCursor = "";
       }
       const MEMORIA_MOTOBOY = "motoJaMotoboyDados",
         LOGIN_MOTOBOY_MS = 3650 * 24 * 60 * 60 * 1000;
@@ -1303,6 +1434,141 @@
           driverTelefone: motoboyTelefone,
           driverName: motoboy,
         };
+      }
+      function escSeguro(value) {
+        return String(value ?? "").replace(
+          /[&<>"']/g,
+          (char) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[char],
+        );
+      }
+      function atualizarAbas() {
+        $("aba-pendentes").className = modo === "pendentes" ? "" : "secondary";
+        $("aba-minhas").className = modo === "minhas" ? "" : "secondary";
+        $("aba-entregas").className = modo === "entregas" ? "" : "secondary";
+        $("aba-minhas-entregas").className =
+          modo === "minhas-entregas" ? "" : "secondary";
+        $("aba-ganhos").className =
+          modo === "ganhos" ? "earnings-entry" : "secondary earnings-entry";
+      }
+      function periodoGanhosLabel(periodo) {
+        return (
+          {
+            today: "Hoje",
+            "7days": "7 dias",
+            "30days": "30 dias",
+            all: "Geral",
+          }[periodo] || "Hoje"
+        );
+      }
+      function renderGanhos() {
+        const lista = $("lista");
+        if (!ganhosResumo) {
+          lista.innerHTML = '<div class="empty">Carregando seus ganhos...</div>';
+          return;
+        }
+        const resumo = ganhosResumo,
+          maior = Math.max(1, ...ganhosDias.map((dia) => Number(dia.ganho || 0))),
+          grafico = ganhosDias.length
+            ? `<div class="earnings-chart" aria-label="Ganhos por dia">${ganhosDias
+                .map((dia) => {
+                  const altura = Math.max(3, Math.round((Number(dia.ganho || 0) / maior) * 94));
+                  return `<div class="earnings-bar" title="${escSeguro(dia.dia)}: ${escSeguro(moeda(dia.ganho))}"><i style="height:${altura}px"></i><small>${escSeguro(String(dia.dia || "").slice(8, 10))}/${escSeguro(String(dia.dia || "").slice(5, 7))}</small></div>`;
+                })
+                .join("")}</div>`
+            : '<div class="empty">O total geral reúne todos os serviços finalizados.</div>',
+          historico = ganhosHistorico.length
+            ? ganhosHistorico
+                .map(
+                  (item) =>
+                    `<div class="earning-row"><div><strong>${item.tipo === "entrega" ? "Entrega" : "Corrida"} · ${escSeguro(item.titulo || "Serviço")}</strong><p class="muted">${new Date(Number(item.finalizadaEmMs || 0)).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}</p></div><strong>${moeda(item.ganho)}</strong><div class="earning-route">${escSeguro(item.origem || "-")} → ${escSeguro(item.destino || "-")}${Number(item.quilometros || 0) ? ` · ${Number(item.quilometros).toFixed(2).replace(".", ",")} km` : ""}</div></div>`,
+                )
+                .join("")
+            : '<div class="empty">Nenhum serviço finalizado no histórico.</div>';
+        lista.innerHTML = `<section class="earnings-shell"><div class="earnings-head"><div><p class="muted">Resumo do período</p><h2>Meus ganhos</h2></div><button id="atualizar-ganhos" class="secondary earnings-refresh" type="button" title="Atualizar" aria-label="Atualizar ganhos">↻</button></div><div class="earnings-periods">${["today", "7days", "30days", "all"].map((periodo) => `<button type="button" data-periodo-ganhos="${periodo}" class="${ganhosPeriodo === periodo ? "" : "secondary"}">${periodoGanhosLabel(periodo)}</button>`).join("")}</div><div class="earnings-metrics"><div class="earning-metric primary"><span>Ganhos</span><strong>${moeda(resumo.ganho)}</strong></div><div class="earning-metric"><span>Serviços</span><strong>${Number(resumo.servicos || 0)}</strong></div><div class="earning-metric"><span>Corridas</span><strong>${Number(resumo.corridas || 0)}</strong></div><div class="earning-metric"><span>Entregas</span><strong>${Number(resumo.entregas || 0)}</strong></div><div class="earning-metric"><span>Média por serviço</span><strong>${moeda(resumo.mediaPorServico)}</strong></div><div class="earning-metric"><span>Distância</span><strong>${Number(resumo.quilometros || 0).toFixed(1).replace(".", ",")} km</strong></div></div>${grafico}<div class="earnings-head"><div><p class="muted">Últimos serviços</p><h2>Histórico</h2></div></div><div class="earning-history">${historico}</div>${ganhosCursor ? '<button id="carregar-mais-ganhos" class="secondary" type="button">Carregar mais 20</button>' : ""}</section>`;
+        lista.querySelectorAll("[data-periodo-ganhos]").forEach(
+          (button) =>
+            (button.onclick = () => {
+              ganhosPeriodo = button.dataset.periodoGanhos;
+              carregarGanhos();
+            }),
+        );
+        const atualizar = $("atualizar-ganhos");
+        if (atualizar) atualizar.onclick = () => carregarGanhos(true);
+        const mais = $("carregar-mais-ganhos");
+        if (mais) mais.onclick = () => carregarHistoricoGanhos(false);
+      }
+      async function carregarHistoricoGanhos(reset = false) {
+        if (ganhosCarregandoHistorico) return;
+        ganhosCarregandoHistorico = true;
+        if (reset) {
+          ganhosHistorico = [];
+          ganhosCursor = "";
+        }
+        try {
+          const r = await fetchMotoboyComRetry(
+            `${CONFIG.backend}/api/drivers/${motoboyCpf}/earnings/history`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ ...driverProof(), cursor: ganhosCursor }),
+            },
+            18000,
+          );
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.message || d.error || "Não consegui carregar o histórico.");
+          ganhosHistorico.push(...(Array.isArray(d.items) ? d.items : []));
+          ganhosCursor = d.nextCursor || "";
+        } catch (error) {
+          alert(error.message || "Não consegui carregar o histórico.");
+        } finally {
+          ganhosCarregandoHistorico = false;
+          if (modo === "ganhos") renderGanhos();
+        }
+      }
+      async function carregarGanhos(atualizar = false) {
+        if (!motoboyCpf) return;
+        modo = "ganhos";
+        requestSeq += 1;
+        atualizarAbas();
+        const cached = ganhosCache.get(ganhosPeriodo);
+        if (!atualizar && cached && Date.now() - cached.t < 5 * 60 * 1000) {
+          ganhosResumo = cached.summary;
+          ganhosDias = cached.days;
+          renderGanhos();
+          if (!ganhosHistorico.length) await carregarHistoricoGanhos(true);
+          return;
+        }
+        ganhosResumo = null;
+        renderGanhos();
+        try {
+          const r = await fetchMotoboyComRetry(
+            `${CONFIG.backend}/api/drivers/${motoboyCpf}/earnings/summary`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ ...driverProof(), period: ganhosPeriodo }),
+            },
+            25000,
+          );
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.message || d.error || "Não consegui carregar os ganhos.");
+          ganhosResumo = d.summary || {};
+          ganhosDias = Array.isArray(d.days) ? d.days : [];
+          ganhosCache.set(ganhosPeriodo, { t: Date.now(), summary: ganhosResumo, days: ganhosDias });
+          renderGanhos();
+          if (atualizar || !ganhosHistorico.length) await carregarHistoricoGanhos(true);
+        } catch (error) {
+          $("lista").innerHTML = `<div class="status danger">${escSeguro(error.message || "Não consegui carregar os ganhos.")}<br><button id="tentar-carregar-ganhos" class="secondary" type="button" style="margin-top:12px">Tentar novamente</button></div>`;
+          const retry = $("tentar-carregar-ganhos");
+          if (retry) retry.onclick = () => carregarGanhos(true);
+        }
       }
       function telefoneCliente(c) {
         return String(c.telefoneCliente || c.telefoneEmpresa || "").replace(
@@ -1690,6 +1956,7 @@
       }
       async function ouvir(silencioso = false) {
         if (!motoboyCpf) return;
+        if (modo === "ganhos") return;
         if (silencioso && jobsRequestsInFlight > 0) return;
         jobsRequestsInFlight += 1;
         const seq = ++requestSeq,
@@ -1698,11 +1965,7 @@
           scope = modoMinhas() ? "mine" : "pending",
           cacheKey = chaveLista(kind, scope),
           cached = jobsCache.get(cacheKey);
-        $("aba-pendentes").className = modo === "pendentes" ? "" : "secondary";
-        $("aba-minhas").className = modo === "minhas" ? "" : "secondary";
-        $("aba-entregas").className = modo === "entregas" ? "" : "secondary";
-        $("aba-minhas-entregas").className =
-          modo === "minhas-entregas" ? "" : "secondary";
+        atualizarAbas();
         if (!silencioso && cached && Date.now() - cached.t < 60000)
           render(cached.jobs);
         else if (!silencioso)
@@ -1759,6 +2022,7 @@
         modo = "minhas-entregas";
         ouvir();
       };
+      $("aba-ganhos").onclick = () => carregarGanhos();
       ["cpf", "cnh", "telefone", "motoAno"].forEach((id) =>
         $(id).addEventListener("input", () => {
           $(id).value = soNumeros($(id).value).slice(
@@ -1775,7 +2039,7 @@
       });
       setInterval(() => {
         const painel = document.getElementById("painel");
-        if (motoboyCpf && document.visibilityState === "visible" && painel && !painel.classList.contains("hidden")) ouvir(true);
+        if (motoboyCpf && modo !== "ganhos" && document.visibilityState === "visible" && painel && !painel.classList.contains("hidden")) ouvir(true);
       }, 60000);
       async function ativarNotificacoes() {
         try {
@@ -1866,7 +2130,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=150", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=151", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});

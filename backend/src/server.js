@@ -36,6 +36,7 @@ const ADMIN_STATE_CACHE_MS = 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 let adminStateCache = null;
 let cleanupRunning = false;
+const driverEarningsInitializations = new Map();
 
 function requiredEnv(name) {
   const value = process.env[name];
@@ -1001,6 +1002,151 @@ function timestampMs(ts) {
 
 function dateKeySaoPaulo(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(date);
+}
+
+function driverEarningsRef(driverCpf) {
+  return db.collection('resumosMotoboy').doc(onlyDigits(driverCpf));
+}
+
+function driverEarningsDayRef(driverCpf, dayKey) {
+  return driverEarningsRef(driverCpf).collection('dias').doc(dayKey);
+}
+
+function driverEarningEventRef(driverCpf, kind, serviceId) {
+  const safeKind = kind === 'entrega' ? 'entrega' : 'corrida';
+  const safeId = String(serviceId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 120);
+  return driverEarningsRef(driverCpf).collection('historico').doc(`${safeKind}_${safeId}`);
+}
+
+function driverEarningEvent(kind, serviceId, job = {}, finishedAtMs = Date.now()) {
+  const isDelivery = kind === 'entrega';
+  const split = isDelivery
+    ? deliverySplit(job)
+    : rideSplitAmounts(job.pagamento?.total || job.valor, job.km);
+  const driverAmount = money(job.ganhoMotoboy ?? job.valorMotoboy ?? split.driverAmount);
+  return {
+    serviceId: String(serviceId || '').slice(0, 120),
+    tipo: isDelivery ? 'entrega' : 'corrida',
+    titulo: cleanText(isDelivery ? (job.empresa || 'Empresa') : (job.nome || 'Cliente'), 100),
+    origem: cleanText(isDelivery ? job.retirada : job.origem, 180),
+    destino: cleanText(isDelivery ? job.entrega : job.destino, 180),
+    ganhoCentavos: Math.max(0, Math.round(driverAmount * 100)),
+    quilometrosMetros: Math.max(0, Math.round(Number(job.km || 0) * 1000)),
+    finalizadaEmMs: Number(finishedAtMs || Date.now()),
+    dia: dateKeySaoPaulo(new Date(Number(finishedAtMs || Date.now())))
+  };
+}
+
+async function recordDriverEarning(tx, driverCpf, event) {
+  const cpf = onlyDigits(driverCpf);
+  if (cpf.length !== 11 || !event?.serviceId || !event?.ganhoCentavos) return false;
+  const eventRef = driverEarningEventRef(cpf, event.tipo, event.serviceId);
+  const eventSnap = await tx.get(eventRef);
+  if (eventSnap.exists) return false;
+  const increments = {
+    ganhoCentavos: admin.firestore.FieldValue.increment(event.ganhoCentavos),
+    servicos: admin.firestore.FieldValue.increment(1),
+    corridas: admin.firestore.FieldValue.increment(event.tipo === 'corrida' ? 1 : 0),
+    entregas: admin.firestore.FieldValue.increment(event.tipo === 'entrega' ? 1 : 0),
+    quilometrosMetros: admin.firestore.FieldValue.increment(event.quilometrosMetros),
+    atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+  };
+  tx.set(eventRef, {
+    ...event,
+    criadaEm: admin.firestore.FieldValue.serverTimestamp()
+  });
+  tx.set(driverEarningsRef(cpf), increments, { merge: true });
+  tx.set(driverEarningsDayRef(cpf, event.dia), { ...increments, dia: event.dia }, { merge: true });
+  return true;
+}
+
+function addDriverEarningToSummary(summary, event) {
+  summary.ganhoCentavos += event.ganhoCentavos;
+  summary.servicos += 1;
+  summary.corridas += event.tipo === 'corrida' ? 1 : 0;
+  summary.entregas += event.tipo === 'entrega' ? 1 : 0;
+  summary.quilometrosMetros += event.quilometrosMetros;
+}
+
+function mergeDriverEarningsSummary(summary, data = {}) {
+  summary.ganhoCentavos += Math.max(0, Number(data.ganhoCentavos || 0));
+  summary.servicos += Math.max(0, Number(data.servicos || 0));
+  summary.corridas += Math.max(0, Number(data.corridas || 0));
+  summary.entregas += Math.max(0, Number(data.entregas || 0));
+  summary.quilometrosMetros += Math.max(0, Number(data.quilometrosMetros || 0));
+}
+
+function emptyDriverEarnings() {
+  return { ganhoCentavos: 0, servicos: 0, corridas: 0, entregas: 0, quilometrosMetros: 0 };
+}
+
+function publicDriverEarnings(data = {}) {
+  const ganhoCentavos = Math.max(0, Number(data.ganhoCentavos || 0));
+  const servicos = Math.max(0, Number(data.servicos || 0));
+  return {
+    ganho: money(ganhoCentavos / 100),
+    servicos,
+    corridas: Math.max(0, Number(data.corridas || 0)),
+    entregas: Math.max(0, Number(data.entregas || 0)),
+    quilometros: Math.round(Math.max(0, Number(data.quilometrosMetros || 0)) / 10) / 100,
+    mediaPorServico: servicos ? money(ganhoCentavos / 100 / servicos) : 0
+  };
+}
+
+async function rebuildDriverEarnings(driverCpf) {
+  const cpf = onlyDigits(driverCpf);
+  const totalRef = driverEarningsRef(cpf);
+  const totalSnap = await totalRef.get();
+  if (Number(totalSnap.data()?.versaoHistorico || 0) >= 1) return;
+
+  const [ridesSnap, deliveriesSnap] = await Promise.all([
+    db.collection('corridas').where('motoboyCpf', '==', cpf).limit(500).get(),
+    db.collection('entregas').where('motoboyCpf', '==', cpf).limit(500).get()
+  ]);
+  const events = [];
+  ridesSnap.docs.forEach((docSnap) => {
+    const job = docSnap.data() || {};
+    if (job.status === 'finalizada') events.push(driverEarningEvent('corrida', docSnap.id, job, timestampMs(job.finalizadaEm) || Date.now()));
+  });
+  deliveriesSnap.docs.forEach((docSnap) => {
+    const job = docSnap.data() || {};
+    if (job.status === 'finalizada') events.push(driverEarningEvent('entrega', docSnap.id, job, timestampMs(job.finalizadaEm) || Date.now()));
+  });
+
+  const total = emptyDriverEarnings();
+  const days = new Map();
+  events.forEach((event) => {
+    addDriverEarningToSummary(total, event);
+    if (!days.has(event.dia)) days.set(event.dia, emptyDriverEarnings());
+    addDriverEarningToSummary(days.get(event.dia), event);
+  });
+
+  const writes = [
+    ...events.map((event) => ({ ref: driverEarningEventRef(cpf, event.tipo, event.serviceId), data: event })),
+    ...Array.from(days.entries()).map(([dia, data]) => ({ ref: driverEarningsDayRef(cpf, dia), data: { ...data, dia } }))
+  ];
+  for (let index = 0; index < writes.length; index += 400) {
+    const batch = db.batch();
+    writes.slice(index, index + 400).forEach((write) => batch.set(write.ref, write.data, { merge: true }));
+    await batch.commit();
+  }
+  await totalRef.set({
+    ...total,
+    versaoHistorico: 1,
+    historicoImportadoEm: admin.firestore.FieldValue.serverTimestamp(),
+    atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
+}
+
+async function initializeDriverEarnings(driverCpf) {
+  const cpf = onlyDigits(driverCpf);
+  if (driverEarningsInitializations.has(cpf)) return driverEarningsInitializations.get(cpf);
+  const task = rebuildDriverEarnings(cpf).catch((error) => {
+    driverEarningsInitializations.delete(cpf);
+    throw error;
+  });
+  driverEarningsInitializations.set(cpf, task);
+  return task;
 }
 
 function externalOrderMs(value) {
@@ -2289,7 +2435,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'firestore-read-optimization-v150' });
+  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'driver-earnings-v151' });
 });
 
 app.get('/', (_req, res) => {
@@ -2914,6 +3060,70 @@ app.post('/api/drivers/:cpf/cities', async (req, res, next) => {
     }, { merge: true });
     driverProofCache.clear();
     return res.json({ ok: true, cidadesAtivas });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/drivers/:cpf/earnings/summary', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+    await initializeDriverEarnings(driverCpf);
+
+    const period = ['today', '7days', '30days', 'all'].includes(req.body.period) ? req.body.period : 'today';
+    if (period === 'all') {
+      const totalSnap = await driverEarningsRef(driverCpf).get();
+      return res.json({ ok: true, period, summary: publicDriverEarnings(totalSnap.data()), days: [] });
+    }
+
+    const count = period === '30days' ? 30 : period === '7days' ? 7 : 1;
+    const dayKeys = Array.from({ length: count }, (_, index) => dateKeySaoPaulo(new Date(Date.now() - index * 86400000))).reverse();
+    const snapshots = await db.getAll(...dayKeys.map((day) => driverEarningsDayRef(driverCpf, day)));
+    const total = emptyDriverEarnings();
+    const days = snapshots.map((snapshot, index) => {
+      const raw = snapshot.exists ? snapshot.data() || {} : emptyDriverEarnings();
+      mergeDriverEarningsSummary(total, raw);
+      return { dia: dayKeys[index], ...publicDriverEarnings(raw) };
+    });
+    return res.json({ ok: true, period, summary: publicDriverEarnings(total), days });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/drivers/:cpf/earnings/history', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+    await initializeDriverEarnings(driverCpf);
+
+    const historyRef = driverEarningsRef(driverCpf).collection('historico');
+    let query = historyRef.orderBy('finalizadaEmMs', 'desc');
+    const cursor = cleanText(req.body.cursor, 140);
+    if (cursor) {
+      const cursorSnap = await historyRef.doc(cursor).get();
+      if (cursorSnap.exists) query = query.startAfter(cursorSnap);
+    }
+    const snapshot = await query.limit(21).get();
+    const hasMore = snapshot.docs.length > 20;
+    const visible = snapshot.docs.slice(0, 20);
+    const items = visible.map((docSnap) => {
+      const data = docSnap.data() || {};
+      return {
+        id: docSnap.id,
+        tipo: data.tipo === 'entrega' ? 'entrega' : 'corrida',
+        titulo: cleanText(data.titulo, 100),
+        origem: cleanText(data.origem, 180),
+        destino: cleanText(data.destino, 180),
+        ganho: money(Number(data.ganhoCentavos || 0) / 100),
+        quilometros: Math.round(Number(data.quilometrosMetros || 0) / 10) / 100,
+        finalizadaEmMs: Number(data.finalizadaEmMs || 0)
+      };
+    });
+    return res.json({ ok: true, items, nextCursor: hasMore && visible.length ? visible[visible.length - 1].id : '' });
   } catch (error) {
     return next(error);
   }
@@ -5771,38 +5981,65 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
     await getDriverWithProof(driverCpf, req.body);
 
     const rideRef = db.collection('corridas').doc(req.params.rideId);
-    const rideSnap = await rideRef.get();
-    if (!rideSnap.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
+    await db.runTransaction(async (tx) => {
+      const rideSnap = await tx.get(rideRef);
+      if (!rideSnap.exists) {
+        const error = new Error('Corrida nao encontrada.');
+        error.status = 404;
+        error.code = 'corrida_nao_encontrada';
+        throw error;
+      }
+      const ride = rideSnap.data() || {};
+      if (onlyDigits(ride.motoboyCpf) !== driverCpf) {
+        const error = new Error('Corrida nao pertence ao motoboy.');
+        error.status = 409;
+        error.code = 'corrida_nao_pertence_ao_motoboy';
+        throw error;
+      }
+      if (ride.status === 'finalizada') {
+        const error = new Error('Corrida ja finalizada.');
+        error.status = 409;
+        error.code = 'corrida_ja_finalizada';
+        throw error;
+      }
+      if (!ride.clienteAvisadoEm) {
+        const error = new Error('Avise o cliente antes de finalizar.');
+        error.status = 409;
+        error.code = 'avise_o_cliente_antes_de_finalizar';
+        throw error;
+      }
+      if (ride.pagamento?.status !== 'approved' || ride.pagamento?.valido === false) {
+        const error = new Error('Pagamento ainda nao aprovado.');
+        error.status = 409;
+        error.code = 'pagamento_ainda_nao_aprovado';
+        throw error;
+      }
+      if (ride.status === 'cancelada') {
+        const error = new Error('Corrida cancelada.');
+        error.status = 409;
+        error.code = 'corrida_cancelada';
+        throw error;
+      }
 
-    const ride = rideSnap.data();
-    if (onlyDigits(ride.motoboyCpf) !== driverCpf) {
-      return res.status(409).json({ error: 'corrida_nao_pertence_ao_motoboy' });
-    }
-    if (!ride.clienteAvisadoEm) {
-      return res.status(409).json({ error: 'avise_o_cliente_antes_de_finalizar' });
-    }
-    if (ride.pagamento?.status !== 'approved' || ride.pagamento?.valido === false) {
-      return res.status(409).json({ error: 'pagamento_ainda_nao_aprovado' });
-    }
-    if (ride.status === 'cancelada') {
-      return res.status(409).json({ error: 'corrida_cancelada' });
-    }
-
-    const split = rideSplitAmounts(ride.pagamento?.total || ride.valor, ride.km);
-    await rideRef.set({
-      status: 'finalizada',
-      rastreamentoAtivo: false,
-      motoboyLocalizacao: admin.firestore.FieldValue.delete(),
-      localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
-      finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
-      ganhoMotoboy: split.driverAmount,
-      ganhoApp: split.appFee,
-      percentualMotoboy: split.driverPercent,
-      percentualApp: split.appPercent,
-      valorMotoboy: split.driverAmount,
-      valorApp: split.appFee,
-      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+      const split = rideSplitAmounts(ride.pagamento?.total || ride.valor, ride.km);
+      const event = driverEarningEvent('corrida', rideRef.id, { ...ride, ganhoMotoboy: split.driverAmount });
+      await recordDriverEarning(tx, driverCpf, event);
+      tx.set(rideRef, {
+        status: 'finalizada',
+        rastreamentoAtivo: false,
+        motoboyLocalizacao: admin.firestore.FieldValue.delete(),
+        localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
+        finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        ganhoContabilizadoEm: admin.firestore.FieldValue.serverTimestamp(),
+        ganhoMotoboy: split.driverAmount,
+        ganhoApp: split.appFee,
+        percentualMotoboy: split.driverPercent,
+        percentualApp: split.appPercent,
+        valorMotoboy: split.driverAmount,
+        valorApp: split.appFee,
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
 
     res.json({ ok: true });
   } catch (error) {
@@ -5887,6 +6124,8 @@ app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (r
       const nextReserved = wasReserved ? money(Math.max(0, balance.reservado - valor)) : balance.reservado;
       const adjustedDelivery = { ...delivery, valor, saldoReservado: valor };
       const split = deliverySplit(adjustedDelivery);
+      const earningEvent = driverEarningEvent('entrega', deliveryRef.id, { ...adjustedDelivery, ganhoMotoboy: split.driverAmount });
+      await recordDriverEarning(tx, driverCpf, earningEvent);
 
       tx.set(companyRef, {
         saldo: nextSaldo,
@@ -5925,6 +6164,7 @@ app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (r
         motoboyTelefone: driverData.telefone,
         motoboyFoto: driverData.fotoMotoboy,
         finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        ganhoContabilizadoEm: admin.firestore.FieldValue.serverTimestamp(),
         finalizadaPeloDonoEm: admin.firestore.FieldValue.serverTimestamp(),
         finalizadaPeloDonoMotivo: reason,
         saldoDebitadoEm: admin.firestore.FieldValue.serverTimestamp(),
@@ -6051,6 +6291,8 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
       }
       const nextSaldo = money(balance.saldo - valor);
       const nextReserved = money(Math.max(0, balance.reservado - valor));
+      const earningEvent = driverEarningEvent('entrega', deliveryRef.id, { ...delivery, valor, ganhoMotoboy: split.driverAmount });
+      await recordDriverEarning(tx, driverCpf, earningEvent);
 
       tx.set(companyRef, {
         saldo: nextSaldo,
@@ -6078,6 +6320,7 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
         motoboyLocalizacao: admin.firestore.FieldValue.delete(),
         localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
         finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        ganhoContabilizadoEm: admin.firestore.FieldValue.serverTimestamp(),
         saldoDebitadoEm: admin.firestore.FieldValue.serverTimestamp(),
         ganhoMotoboy: split.driverAmount,
         ganhoApp: split.appFee,
