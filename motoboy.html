@@ -188,6 +188,42 @@
         font-weight: 900;
         color: #ffd700;
       }
+      .ride-customer {
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .ride-customer-photo,
+      .ride-customer-placeholder {
+        width: 52px;
+        height: 52px;
+        flex: 0 0 52px;
+        border-radius: 50%;
+        border: 2px solid #ff9a00;
+        background: #181820;
+        object-fit: cover;
+      }
+      .ride-customer-placeholder {
+        display: grid;
+        place-items: center;
+        color: #ff9a00;
+        font-weight: 900;
+      }
+      .ride-customer-name {
+        min-width: 0;
+      }
+      .ride-customer-name strong {
+        display: block;
+        overflow-wrap: anywhere;
+      }
+      .verified-customer {
+        display: inline-block;
+        margin-top: 3px;
+        color: #9ff2bb;
+        font-size: 0.72rem;
+        font-weight: 800;
+      }
       .status {
         background: rgba(79, 195, 247, 0.09);
         border-color: rgba(79, 195, 247, 0.22);
@@ -1279,6 +1315,23 @@
         const msg = `Ola, ${c.nome || c.responsavel || "cliente"}. O motoboy ${motoboy} cancelou a ${nomeServico()} da Nexus MotoJa.\n\nMotivo: ${motivo || "Nao informado"}\n\nPor favor, peca novamente pelo app.`;
         return `https://api.whatsapp.com/send?phone=55${tel}&text=${encodeURIComponent(msg)}`;
       }
+      function fotoClienteSegura(c) {
+        const foto = String(c?.fotoCliente || "");
+        return /^data:image\/(?:jpeg|png|webp);base64,[a-z0-9+/=]+$/i.test(foto) && foto.length <= 220000
+          ? foto
+          : "";
+      }
+      function cabecalhoCliente(c, titulo, subtitulo) {
+        const foto = fotoClienteSegura(c),
+          inicial = String(titulo || "C").trim().charAt(0).toUpperCase() || "C",
+          identidade = foto
+            ? `<img class="ride-customer-photo" src="${foto}" alt="Foto do cliente">`
+            : `<span class="ride-customer-placeholder" aria-hidden="true">${inicial}</span>`,
+          verificado = c?.clienteVerificado
+            ? '<span class="verified-customer">Cliente verificado</span>'
+            : "";
+        return `<div class="ride-customer">${identidade}<div class="ride-customer-name"><strong>${titulo}</strong><p class="muted">${subtitulo}</p>${verificado}</div></div>`;
+      }
       function detalhes(c) {
         if (servicoExclusivo(c))
           return `<p><strong>Servico exclusivo:</strong> Motoboy reservado para ${c.empresa || "empresa"}</p><p><strong>Empresa:</strong> ${c.empresa || "-"}</p><p><strong>Valor combinado:</strong> ${moeda(c.valor)}</p><p><strong>Horario:</strong> ${c.horario || c.periodo || "A combinar com o suporte MotoJa"}</p><p class="muted">Aceite somente se voce combinou essa escala com o suporte MotoJa.</p>`;
@@ -1299,7 +1352,10 @@
               ? c.empresa || "Empresa"
               : c.nome || "Cliente",
           servico = nomeServicoCard(c);
-        return `<article class="card"><div class="line"><div><strong>${titulo}</strong><p class="muted">${quando(c.criadaEm)} - expira em ${tempoRestante(c)}</p></div><div class="value">${moeda(c.valor)}</div></div><div>${detalhes(c)}</div><div class="actions"><button class="ok" data-aceitar="${id}">${servicoExclusivo(c) ? "Aceitar escala" : "Aceitar " + nomeServico()}</button><button class="secondary" onclick="location.href='https://api.whatsapp.com/send?phone=5519992306488&text=${encodeURIComponent("Quero falar sobre a " + nomeServico() + " " + id)}'">WhatsApp</button></div></article>`;
+        const cabecalho = modoEntrega() || servicoExclusivo(c)
+          ? `<div><strong>${titulo}</strong><p class="muted">${quando(c.criadaEm)} - expira em ${tempoRestante(c)}</p></div>`
+          : cabecalhoCliente(c, titulo, `${quando(c.criadaEm)} - expira em ${tempoRestante(c)}`);
+        return `<article class="card"><div class="line">${cabecalho}<div class="value">${moeda(c.valor)}</div></div><div>${detalhes(c)}</div><div class="actions"><button class="ok" data-aceitar="${id}">${servicoExclusivo(c) ? "Aceitar escala" : "Aceitar " + nomeServico()}</button><button class="secondary" onclick="location.href='https://api.whatsapp.com/send?phone=5519992306488&text=${encodeURIComponent("Quero falar sobre a " + nomeServico() + " " + id)}'">WhatsApp</button></div></article>`;
       }
       function cardMinha(id, c) {
         const finalizada = c.status === "finalizada",
@@ -1322,7 +1378,11 @@
                       ? "Aguardando pagamento do cliente"
                       : "Pagamento aguardando Mercado Pago",
           titulo = isEntrega ? c.empresa || "Empresa" : c.nome || "Cliente";
-        return `<article class="card"><div class="line"><div><strong>${titulo}</strong><p class="muted">Status: ${cancelada ? "Cancelada" : finalizada ? "Finalizada" : avisado ? "Em andamento" : "Aceita - avise o cliente"}${c.finalizadaEm ? " - " + quando(c.finalizadaEm) : ""}${c.motivoCancelamento ? " - Motivo: " + c.motivoCancelamento : ""}</p></div><div class="value">${moeda(ganhoMotoboy(c.valor, c))}</div></div><div>${detalhes(c)}</div><p class="muted"><strong>${pagamento}</strong></p>${tempoAviso ? `<p class="muted">Tempo para avisar cliente: <strong>${tempoAviso}</strong></p>` : ""}<p class="muted">${isEntrega ? (servicoExclusivo(c) ? "Atencao: escala exclusiva so deve ser aceita se horario e valor foram combinados pelo suporte MotoJa. Abandono pode causar bloqueio." : "Atencao: confira retirada, entrega, quantidade de paradas e observacao antes de sair. Entrega aceita e abandonada pode causar bloqueio.") : "Atencao: depois de aceitar, clique em Avisar cliente e liberar corrida. Esse botao manda seu nome e o link Mercado Pago para o cliente. Se o tempo zerar sem aviso, a corrida volta para pendentes para outro motoboy. Sem esse aviso, o app nao libera finalizar e o motoboy pode ser bloqueado permanentemente."}</p><div class="actions"><button class="done" data-finalizar="${id}" ${finalizada || cancelada || !avisado ? "disabled" : ""}>${cancelada ? "Cancelada" : finalizada ? "Finalizada" : servicoExclusivo(c) ? "Finalizar escala" : isEntrega ? "Finalizar entrega" : "Finalizar corrida"}</button>${isEntrega ? "" : `<button class="secondary" data-avisar="${id}" ${finalizada || cancelada || avisado ? "disabled" : ""}>${avisado ? "Cliente avisado" : "Avisar cliente e liberar corrida"}</button>`}${isEntrega || finalizada || cancelada ? "" : `<button class="secondary" data-point="${id}" ${!avisado || c.pagamento?.status === "approved" || c.pagamento?.presencialManual?.codigo ? "disabled" : ""}>Informar aproximacao</button>`}${isEntrega || finalizada || cancelada || !c.pagamento?.point?.orderId ? "" : `<button class="secondary" data-point-status="${id}">Ver status aproximacao</button>`}<button class="secondary" data-cancelar="${id}" ${finalizada || cancelada ? "disabled" : ""}>Cancelar ${nomeServico()}</button></div></article>`;
+        const statusCorrida = `Status: ${cancelada ? "Cancelada" : finalizada ? "Finalizada" : avisado ? "Em andamento" : "Aceita - avise o cliente"}${c.finalizadaEm ? " - " + quando(c.finalizadaEm) : ""}${c.motivoCancelamento ? " - Motivo: " + c.motivoCancelamento : ""}`,
+          cabecalho = isEntrega
+            ? `<div><strong>${titulo}</strong><p class="muted">${statusCorrida}</p></div>`
+            : cabecalhoCliente(c, titulo, statusCorrida);
+        return `<article class="card"><div class="line">${cabecalho}<div class="value">${moeda(ganhoMotoboy(c.valor, c))}</div></div><div>${detalhes(c)}</div><p class="muted"><strong>${pagamento}</strong></p>${tempoAviso ? `<p class="muted">Tempo para avisar cliente: <strong>${tempoAviso}</strong></p>` : ""}<p class="muted">${isEntrega ? (servicoExclusivo(c) ? "Atencao: escala exclusiva so deve ser aceita se horario e valor foram combinados pelo suporte MotoJa. Abandono pode causar bloqueio." : "Atencao: confira retirada, entrega, quantidade de paradas e observacao antes de sair. Entrega aceita e abandonada pode causar bloqueio.") : "Atencao: depois de aceitar, clique em Avisar cliente e liberar corrida. Esse botao manda seu nome e o link Mercado Pago para o cliente. Se o tempo zerar sem aviso, a corrida volta para pendentes para outro motoboy. Sem esse aviso, o app nao libera finalizar e o motoboy pode ser bloqueado permanentemente."}</p><div class="actions"><button class="done" data-finalizar="${id}" ${finalizada || cancelada || !avisado ? "disabled" : ""}>${cancelada ? "Cancelada" : finalizada ? "Finalizada" : servicoExclusivo(c) ? "Finalizar escala" : isEntrega ? "Finalizar entrega" : "Finalizar corrida"}</button>${isEntrega ? "" : `<button class="secondary" data-avisar="${id}" ${finalizada || cancelada || avisado ? "disabled" : ""}>${avisado ? "Cliente avisado" : "Avisar cliente e liberar corrida"}</button>`}${isEntrega || finalizada || cancelada ? "" : `<button class="secondary" data-point="${id}" ${!avisado || c.pagamento?.status === "approved" || c.pagamento?.presencialManual?.codigo ? "disabled" : ""}>Informar aproximacao</button>`}${isEntrega || finalizada || cancelada || !c.pagamento?.point?.orderId ? "" : `<button class="secondary" data-point-status="${id}">Ver status aproximacao</button>`}<button class="secondary" data-cancelar="${id}" ${finalizada || cancelada ? "disabled" : ""}>Cancelar ${nomeServico()}</button></div></article>`;
       }
       async function aceitarCorrida(id) {
         const r = await fetch(
@@ -1766,7 +1826,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=142").catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=144").catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});

@@ -4480,6 +4480,9 @@ app.post('/api/rides', createRideLimiter, async (req, res, next) => {
     }
     if (authenticated) {
       ride.customerId = customerSession.customerId;
+      ride.nome = cleanText(customerSession.customer.nome, 80) || ride.nome;
+      ride.fotoCliente = validDriverPhoto(customerSession.customer.fotoCliente) || '';
+      ride.clienteVerificado = true;
     }
     const serverKm = await calculateRouteDistanceKm([
       { lat: ride.origemLat, lon: ride.origemLon },
