@@ -665,7 +665,7 @@
         </p>
         <p class="muted">
           Regras obrigatorias: primeiro clique em Aceitar corrida. Depois va em
-          Minhas corridas e clique em Avisar cliente e liberar corrida. So
+          Minhas corridas e clique em Avisar cliente e iniciar corrida com GPS. So
           depois disso inicie a corrida. Nao pegue corrida por fora, nao cobre
           Pix antes do aviso oficial e informe motivo real se cancelar. Golpe,
           mentira ou tentativa de burlar o app pode causar bloqueio permanente.
@@ -1383,7 +1383,7 @@
           cabecalho = isEntrega
             ? `<div><strong>${titulo}</strong><p class="muted">${statusCorrida}</p></div>`
             : cabecalhoCliente(c, titulo, statusCorrida);
-        return `<article class="card"><div class="line">${cabecalho}<div class="value">${moeda(ganhoMotoboy(c.valor, c))}</div></div><div>${detalhes(c)}</div><p class="muted"><strong>${pagamento}</strong></p>${tempoAviso ? `<p class="muted">Tempo para avisar cliente: <strong>${tempoAviso}</strong></p>` : ""}<p class="muted">${isEntrega ? (servicoExclusivo(c) ? "Atencao: escala exclusiva so deve ser aceita se horario e valor foram combinados pelo suporte MotoJa. Abandono pode causar bloqueio." : "Atencao: confira retirada, entrega, quantidade de paradas e observacao antes de sair. Entrega aceita e abandonada pode causar bloqueio.") : "Atencao: depois de aceitar, clique em Avisar cliente e liberar corrida. Esse botao manda seu nome e o link Mercado Pago para o cliente. Se o tempo zerar sem aviso, a corrida volta para pendentes para outro motoboy. Sem esse aviso, o app nao libera finalizar e o motoboy pode ser bloqueado permanentemente."}</p><div class="actions"><button class="done" data-finalizar="${id}" ${finalizada || cancelada || !avisado ? "disabled" : ""}>${cancelada ? "Cancelada" : finalizada ? "Finalizada" : servicoExclusivo(c) ? "Finalizar escala" : isEntrega ? "Finalizar entrega" : "Finalizar corrida"}</button>${isEntrega ? "" : `<button class="secondary" data-avisar="${id}" ${finalizada || cancelada || avisado ? "disabled" : ""}>${avisado ? "Cliente avisado" : "Avisar cliente e liberar corrida"}</button>`}${isEntrega || finalizada || cancelada ? "" : `<button class="secondary" data-point="${id}" ${!avisado || c.pagamento?.status === "approved" || c.pagamento?.presencialManual?.codigo ? "disabled" : ""}>Informar aproximacao</button>`}${isEntrega || finalizada || cancelada || !c.pagamento?.point?.orderId ? "" : `<button class="secondary" data-point-status="${id}">Ver status aproximacao</button>`}<button class="secondary" data-cancelar="${id}" ${finalizada || cancelada ? "disabled" : ""}>Cancelar ${nomeServico()}</button></div></article>`;
+        return `<article class="card"><div class="line">${cabecalho}<div class="value">${moeda(ganhoMotoboy(c.valor, c))}</div></div><div>${detalhes(c)}</div><p class="muted"><strong>${pagamento}</strong></p>${tempoAviso ? `<p class="muted">Tempo para avisar cliente: <strong>${tempoAviso}</strong></p>` : ""}<p class="muted">${isEntrega ? (servicoExclusivo(c) ? "Atencao: escala exclusiva so deve ser aceita se horario e valor foram combinados pelo suporte MotoJa. Abandono pode causar bloqueio." : "Atencao: confira retirada, entrega, quantidade de paradas e observacao antes de sair. Entrega aceita e abandonada pode causar bloqueio.") : "Atencao: depois de aceitar, clique em Avisar cliente e iniciar corrida com GPS. Esse botao envia seu nome, foto, acompanhamento ao vivo e pagamento ao cliente. Mantenha o app aberto durante o trajeto. Se o tempo zerar sem aviso, a corrida volta para pendentes."}</p><div class="actions"><button class="done" data-finalizar="${id}" ${finalizada || cancelada || !avisado ? "disabled" : ""}>${cancelada ? "Cancelada" : finalizada ? "Finalizada" : servicoExclusivo(c) ? "Finalizar escala" : isEntrega ? "Finalizar entrega" : "Finalizar corrida"}</button>${isEntrega ? "" : `<button class="secondary" data-avisar="${id}" ${finalizada || cancelada || avisado ? "disabled" : ""}>${avisado ? "Cliente avisado - GPS ativo" : "Avisar cliente e iniciar corrida com GPS"}</button>`}${isEntrega || finalizada || cancelada ? "" : `<button class="secondary" data-point="${id}" ${!avisado || c.pagamento?.status === "approved" || c.pagamento?.presencialManual?.codigo ? "disabled" : ""}>Informar aproximacao</button>`}${isEntrega || finalizada || cancelada || !c.pagamento?.point?.orderId ? "" : `<button class="secondary" data-point-status="${id}">Ver status aproximacao</button>`}<button class="secondary" data-cancelar="${id}" ${finalizada || cancelada ? "disabled" : ""}>Cancelar ${nomeServico()}</button></div></article>`;
       }
       async function aceitarCorrida(id) {
         const r = await fetch(
@@ -1459,8 +1459,18 @@
           (btn) =>
             (btn.onclick = async () => {
               btn.disabled = true;
-              btn.textContent = "Abrindo WhatsApp...";
+              btn.textContent = "Ativando GPS...";
               try {
+                if (!navigator.geolocation)
+                  throw new Error("Este aparelho nao disponibilizou o GPS.");
+                const position = await new Promise((resolve, reject) =>
+                  navigator.geolocation.getCurrentPosition(resolve, reject, {
+                    enableHighAccuracy: true,
+                    maximumAge: 5000,
+                    timeout: 20000,
+                  }),
+                );
+                btn.textContent = "Avisando cliente...";
                 const r = await fetch(
                   `${CONFIG.backend}/api/rides/${btn.dataset.avisar}/notify-client`,
                   {
@@ -1474,11 +1484,28 @@
                   throw new Error(
                     d.message || d.error || "Nao consegui avisar o cliente.",
                   );
+                const location = {
+                  latitude: position.coords.latitude,
+                  longitude: position.coords.longitude,
+                  accuracy: position.coords.accuracy,
+                  heading: position.coords.heading,
+                  speed: position.coords.speed,
+                  timestamp: position.timestamp || Date.now(),
+                };
+                await fetch(
+                  `${CONFIG.backend}/api/rides/${btn.dataset.avisar}/location`,
+                  {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ ...driverProof(), ...location }),
+                  },
+                ).catch(() => null);
+                window.dispatchEvent(new CustomEvent("motoja:ride-gps-start", { detail: { rideId: btn.dataset.avisar } }));
                 location.href = d.whatsapp;
               } catch (e) {
                 alert(e.message);
                 btn.disabled = false;
-                btn.textContent = "Avisar cliente e liberar corrida";
+                btn.textContent = "Avisar cliente e iniciar corrida com GPS";
               }
             }),
         );
@@ -1836,7 +1863,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=147").catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=148", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});
@@ -2139,6 +2166,6 @@
         }
       };
     </script>
-    <script src="./motoboy-tracking.js?v=147" defer></script>
+    <script src="./motoboy-tracking.js?v=148" defer></script>
   </body>
 </html>

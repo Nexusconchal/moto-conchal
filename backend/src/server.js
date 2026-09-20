@@ -2354,7 +2354,9 @@ app.get('/corrida/:rideId', async (req, res, next) => {
   try {
     const snap = await db.collection('corridas').doc(String(req.params.rideId || '')).get();
     if (!snap.exists) return res.status(404).send('Corrida nao encontrada.');
-    return res.type('html').send(driverStatusHtml('Motoboy da corrida', snap.data() || {}));
+    const nonce = crypto.randomBytes(16).toString('base64');
+    res.set('content-security-policy', `default-src 'self'; script-src 'self' 'nonce-${nonce}' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: https://*.tile.openstreetmap.org https:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'`);
+    return res.type('html').send(rideTrackingHtml(snap.id, snap.data() || {}, nonce));
   } catch (error) {
     return next(error);
   }
@@ -2622,6 +2624,9 @@ app.post('/api/admin/rides/:rideId/cancel', assertOwner, async (req, res, next) 
     if (!rideId || !motivo) return res.status(400).json({ error: 'motivo_obrigatorio' });
     await db.collection('corridas').doc(rideId).update({
       status: 'cancelada',
+      rastreamentoAtivo: false,
+      motoboyLocalizacao: admin.firestore.FieldValue.delete(),
+      localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
       motivoCancelamento: motivo,
       canceladoPor: 'Dono',
       canceladoEm: admin.firestore.FieldValue.serverTimestamp(),
@@ -3812,6 +3817,13 @@ function cardapioWebBaseUrl() {
   return String(process.env.CARDAPIOWEB_API_BASE_URL || 'https://integracao.cardapioweb.com/api/partner/v1').replace(/\/$/, '');
 }
 
+function rideTrackingHtml(rideId, item = {}, nonce = '') {
+  const safeRideId = String(rideId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 120);
+  const name = escapeHtml(cleanText(item.motoboy || 'Motoboy Nexus MotoJa', 80));
+  const photo = validDriverPhoto(item.motoboyFoto) || '';
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Acompanhar corrida</title><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><style>*{box-sizing:border-box}body{margin:0;min-height:100vh;background:#090911;color:#fff;font-family:system-ui,sans-serif;padding:18px}.card{width:min(100%,520px);margin:auto;padding:20px;border-radius:18px;background:#11121c;border:1px solid rgba(255,154,0,.34);box-shadow:0 20px 60px rgba(0,0,0,.42)}header{display:flex;align-items:center;gap:14px}img,.empty{width:72px;height:72px;border-radius:50%;object-fit:cover;border:3px solid #ff9a00;background:#1b1b27}.empty{display:grid;place-items:center;color:#ff9a00;font-size:24px;font-weight:900}small{color:#ff9a00;font-weight:900;text-transform:uppercase}h1{font-size:22px;margin:4px 0}p{color:#c8c8d6;margin:6px 0}.status{margin:18px 0 12px;padding:13px;border-radius:10px;background:rgba(255,154,0,.11);border:1px solid rgba(255,154,0,.28);color:#fff;font-weight:700}.map{display:none;width:100%;height:330px;border-radius:12px;background:#191923;overflow:hidden}.map.show{display:block}.updated{font-size:13px;text-align:center;margin-top:10px}.done{color:#bfffd2}.leaflet-container img{max-width:none!important;max-height:none!important}</style></head><body><main class="card"><header>${photo ? `<img src="${escapeHtml(photo)}" alt="Foto do motoboy">` : '<div class="empty">MJ</div>'}<div><small>Nexus MotoJa</small><h1>${name}</h1><p>Seu motoboy nesta corrida</p></div></header><div id="status" class="status">Aguardando o motoboy iniciar o GPS...</div><div id="map" class="map" aria-label="Localizacao do motoboy"></div><p id="updated" class="updated">Esta pagina atualiza automaticamente.</p></main><script nonce="${escapeHtml(nonce)}" src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script nonce="${escapeHtml(nonce)}">const rideId=${JSON.stringify(safeRideId)};let map,marker,last='';const statusEl=document.getElementById('status'),mapEl=document.getElementById('map'),updatedEl=document.getElementById('updated');function showMap(lat,lon){mapEl.classList.add('show');if(!map){map=L.map(mapEl).setView([lat,lon],16);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);marker=L.marker([lat,lon]).addTo(map).bindPopup('Seu motoboy');new ResizeObserver(()=>map.invalidateSize()).observe(mapEl);}else{marker.setLatLng([lat,lon]);map.panTo([lat,lon]);}requestAnimationFrame(()=>map.invalidateSize());setTimeout(()=>map.invalidateSize(),180);}async function refresh(){try{const r=await fetch('/api/rides/'+encodeURIComponent(rideId)+'/status',{cache:'no-store'}),d=await r.json();if(!r.ok)return;if(d.status==='finalizada'){statusEl.textContent='Corrida finalizada.';statusEl.classList.add('done');return;}if(d.status==='cancelada'){statusEl.textContent='Corrida cancelada.';return;}const p=d.motoboyLocalizacao;if(p&&Number.isFinite(Number(p.latitude))&&Number.isFinite(Number(p.longitude))){const key=Number(p.latitude).toFixed(5)+','+Number(p.longitude).toFixed(5);if(key!==last){showMap(Number(p.latitude),Number(p.longitude));last=key;}statusEl.textContent='Motoboy a caminho - localizacao ao vivo';const age=Math.max(0,Math.round((Date.now()-Number(p.serverTimestampMs||Date.now()))/1000));updatedEl.textContent=age<15?'Localizacao atualizada agora':'Atualizada ha '+age+' segundos';}else{statusEl.textContent=d.clienteAvisado?'GPS iniciado. Aguardando a primeira localizacao...':'Aguardando o motoboy iniciar o GPS...';}}catch(_){updatedEl.textContent='Reconectando ao acompanhamento...';}}refresh();setInterval(refresh,8000);</script></body></html>`;
+}
+
 function cardapioWebHeaders(apiKey, storeCode = '') {
   const headers = {
     accept: 'application/json',
@@ -4565,8 +4577,14 @@ app.get('/api/rides/:rideId/status', async (req, res, next) => {
       expiradaEmMs: timestampMs(ride.expiradaEm),
       aceitaEmMs: timestampMs(ride.aceitaEm),
       motoboy: ride.motoboy || '',
+      motoboyFoto: validDriverPhoto(ride.motoboyFoto) || '',
       valor: money(ride.valor),
-      destino: ride.destino || ''
+      destino: ride.destino || '',
+      clienteAvisado: !!ride.clienteAvisadoEm,
+      rastreamentoAtivo: ride.rastreamentoAtivo === true,
+      motoboyLocalizacao: ride.rastreamentoAtivo === true && ride.status === 'aceita'
+        ? serializeFirestore(ride.motoboyLocalizacao || null)
+        : null
     });
   } catch (error) {
     next(error);
@@ -5611,11 +5629,12 @@ app.post('/api/rides/:rideId/notify-client', async (req, res, next) => {
     }
 
     const driverUrl = BACKEND_BASE_URL ? `${BACKEND_BASE_URL}/corrida/${req.params.rideId}` : '';
-    const message = `Ola, ${ride.nome || 'cliente'}! Seu motoboy ${ride.motoboy || 'MotoJa Conchal'} aceitou a corrida.\n\nValor: ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nOrigem: ${ride.origem || '-'}\nDestino: ${ride.destino || '-'}${driverUrl ? `\n\nVer foto do motoboy:\n${driverUrl}` : ''}\n\n${ridePaymentInstructions(ride)}`;
+    const message = `Ola, ${ride.nome || 'cliente'}! Seu motoboy ${ride.motoboy || 'MotoJa Conchal'} aceitou a corrida e iniciou o trajeto com GPS.\n\nValor: ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nOrigem: ${ride.origem || '-'}\nDestino: ${ride.destino || '-'}${driverUrl ? `\n\nAcompanhe a foto e a localizacao do motoboy ao vivo:\n${driverUrl}` : ''}\n\n${ridePaymentInstructions(ride)}`;
 
     await rideRef.set({
       clienteAvisadoEm: admin.firestore.FieldValue.serverTimestamp(),
       clienteAvisadoPor: ride.motoboy || '',
+      rastreamentoAtivo: true,
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
 
@@ -5648,6 +5667,9 @@ app.post('/api/rides/:rideId/cancel', async (req, res, next) => {
 
     await rideRef.set({
       status: 'cancelada',
+      rastreamentoAtivo: false,
+      motoboyLocalizacao: admin.firestore.FieldValue.delete(),
+      localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
       motivoCancelamento: reason,
       canceladoPor: ride.motoboy || '',
       canceladoPorCpf: driverCpf,
@@ -5734,6 +5756,9 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
     const split = rideSplitAmounts(ride.pagamento?.total || ride.valor, ride.km);
     await rideRef.set({
       status: 'finalizada',
+      rastreamentoAtivo: false,
+      motoboyLocalizacao: admin.firestore.FieldValue.delete(),
+      localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
       finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
       ganhoMotoboy: split.driverAmount,
       ganhoApp: split.appFee,
@@ -6063,6 +6088,52 @@ app.post('/api/drivers/:cpf/mercadopago/oauth-link', authLimiter, async (req, re
       redirect_uri: requiredEnv('MP_REDIRECT_URI')
     });
     return res.json({ ok: true, url: `https://auth.mercadopago.com.br/authorization?${params.toString()}` });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/rides/:rideId/location', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    const latitude = Number(req.body.latitude);
+    const longitude = Number(req.body.longitude);
+    const accuracy = Math.max(0, Number(req.body.accuracy || 0));
+    const clientTimestamp = Number(req.body.timestamp || Date.now());
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+      return res.status(400).json({ error: 'coordenadas_invalidas' });
+    }
+    if (!Number.isFinite(clientTimestamp) || Math.abs(Date.now() - clientTimestamp) > 5 * 60 * 1000) {
+      return res.status(400).json({ error: 'localizacao_fora_do_tempo' });
+    }
+    await getDriverWithProof(driverCpf, req.body);
+
+    const rideRef = db.collection('corridas').doc(req.params.rideId);
+    const rideSnap = await rideRef.get();
+    if (!rideSnap.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
+    const ride = rideSnap.data();
+    if (onlyDigits(ride.motoboyCpf) !== driverCpf) {
+      return res.status(409).json({ error: 'corrida_nao_pertence_ao_motoboy' });
+    }
+    if (ride.status !== 'aceita' || !ride.clienteAvisadoEm || ride.rastreamentoAtivo === false) {
+      return res.status(409).json({ error: 'rastreamento_nao_ativo' });
+    }
+
+    await rideRef.set({
+      motoboyLocalizacao: {
+        latitude,
+        longitude,
+        accuracy: Math.min(5000, accuracy),
+        heading: Number.isFinite(Number(req.body.heading)) ? Number(req.body.heading) : null,
+        speed: Number.isFinite(Number(req.body.speed)) ? Math.max(0, Number(req.body.speed)) : null,
+        clientTimestamp,
+        serverTimestampMs: Date.now()
+      },
+      localizacaoAtualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return res.json({ ok: true });
   } catch (error) {
     return next(error);
   }

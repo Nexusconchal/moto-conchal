@@ -959,6 +959,10 @@
         font-family: Outfit, system-ui, sans-serif;
         background: #101722;
       }
+      .leaflet-container img {
+        max-width: none !important;
+        max-height: none !important;
+      }
       .leaflet-tile {
         filter: invert(1) hue-rotate(172deg) brightness(1.05) contrast(0.96)
           saturate(1.35);
@@ -1970,6 +1974,14 @@
         camadaRota = null,
         marcadorOrigem = null,
         marcadorDestino = null;
+      let mapaAcompanhamento = null,
+        marcadorMotoboy = null,
+        corridaAcompanhadaId = "";
+      function escHtml(valor) {
+        return String(valor ?? "").replace(/[&<>"']/g, (c) => ({
+          "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+        })[c]);
+      }
       function coordenadaValida(p) {
         return (
           p && Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lon))
@@ -3202,6 +3214,50 @@
         } catch (e) {}
         if (pedidoTimer) clearTimeout(pedidoTimer);
         pedidoTimer = null;
+        if (mapaAcompanhamento) mapaAcompanhamento.remove();
+        mapaAcompanhamento = null;
+        marcadorMotoboy = null;
+        corridaAcompanhadaId = "";
+      }
+
+      function mostrarCorridaAceita(pedido, dados) {
+        modal.classList.add("open");
+        modal.setAttribute("aria-hidden", "false");
+        const foto = /^https:\/\//i.test(String(dados.motoboyFoto || ""))
+          ? `<img src="${escHtml(dados.motoboyFoto)}" alt="Foto do motoboy" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:3px solid #ff9a00">`
+          : `<div style="width:64px;height:64px;border-radius:50%;display:grid;place-items:center;border:3px solid #ff9a00;background:#191923;font-weight:900;color:#ff9a00">MJ</div>`;
+        if (!$("mapa-acompanhamento") || corridaAcompanhadaId !== pedido.id) {
+          if (mapaAcompanhamento) mapaAcompanhamento.remove();
+          mapaAcompanhamento = null;
+          marcadorMotoboy = null;
+          corridaAcompanhadaId = pedido.id;
+          resultadoBox.innerHTML = `<div style="text-align:left"><div style="display:flex;align-items:center;gap:12px">${foto}<div><strong style="font-size:1.12rem">${escHtml(dados.motoboy || "MotoJa")}</strong><br><span class="small" style="text-align:left">Seu motoboy aceitou a corrida</span></div></div><div id="gps-cliente-status" style="margin:14px 0;padding:12px;border-radius:12px;background:rgba(255,154,0,.12);border:1px solid rgba(255,154,0,.35);font-weight:800">Aguardando o motoboy iniciar o GPS...</div><div id="mapa-acompanhamento" style="display:none;width:100%;height:300px;border-radius:14px;overflow:hidden;background:#171720;border:1px solid rgba(255,154,0,.3)"></div><div id="gps-cliente-hora" class="small" style="margin-top:8px">Confira também seu WhatsApp para pagamento e contato.</div></div>`;
+          resultadoBox.className = "result show";
+        }
+        const location = dados.motoboyLocalizacao;
+        const lat = Number(location?.latitude), lon = Number(location?.longitude);
+        const gpsStatus = $("gps-cliente-status"), mapEl = $("mapa-acompanhamento");
+        if (!Number.isFinite(lat) || !Number.isFinite(lon) || !window.L) {
+          if (gpsStatus) gpsStatus.textContent = dados.clienteAvisado
+            ? "GPS iniciado. Aguardando a primeira localização..."
+            : "Motoboy aceitou. Aguardando ele avisar e iniciar o GPS...";
+          return;
+        }
+        mapEl.style.display = "block";
+        if (!mapaAcompanhamento) {
+          mapaAcompanhamento = L.map(mapEl).setView([lat, lon], 16);
+          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap" }).addTo(mapaAcompanhamento);
+          marcadorMotoboy = L.marker([lat, lon]).addTo(mapaAcompanhamento).bindPopup("Seu motoboy");
+          new ResizeObserver(() => mapaAcompanhamento?.invalidateSize()).observe(mapEl);
+        } else {
+          marcadorMotoboy.setLatLng([lat, lon]);
+          mapaAcompanhamento.panTo([lat, lon]);
+        }
+        requestAnimationFrame(() => mapaAcompanhamento?.invalidateSize());
+        setTimeout(() => mapaAcompanhamento?.invalidateSize(), 180);
+        if (gpsStatus) gpsStatus.textContent = "Motoboy a caminho - localização ao vivo";
+        const age = Math.max(0, Math.round((Date.now() - Number(location.serverTimestampMs || Date.now())) / 1000));
+        if ($("gps-cliente-hora")) $("gps-cliente-hora").textContent = age < 15 ? "Localização atualizada agora" : `Localização atualizada há ${age} segundos`;
       }
       function mostrarPedidoAguardando(pedido, restante) {
         modal.classList.add("open");
@@ -3277,7 +3333,7 @@
             ) {
               resultadoBox.innerHTML = `Motoboy <strong>${d.motoboy || "MotoJa"}</strong> ja aceitou sua corrida. Confira o WhatsApp para combinar e pagar depois do aceite.`;
               resultadoBox.className = "result show";
-              limparPedidoAtivo();
+              verificarPedidoAtivo(true);
               return;
             }
             throw new Error(d.message || "Não consegui cancelar o pedido.");
@@ -3309,9 +3365,11 @@
           const d = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(d.message || "");
           if (["aceita", "finalizada", "cancelada"].includes(d.status)) {
-            if (d.status === "aceita")
-              resultadoBox.innerHTML = `Motoboy <strong>${d.motoboy || "MotoJa"}</strong> aceitou sua corrida. Confira o WhatsApp para pagamento e combinação.`;
-            else if (d.status === "finalizada") {
+            if (d.status === "aceita") {
+              mostrarCorridaAceita(pedido, d);
+              pedidoTimer = setTimeout(() => verificarPedidoAtivo(true), 8000);
+              return;
+            } else if (d.status === "finalizada") {
               resultadoBox.innerHTML = `<div style="text-align:left"><strong style="font-size:1.12rem">Corrida finalizada. Obrigado por usar a MotoJá!</strong><br><span class="small">Gostou do atendimento? Indique para um amigo e concorra a 1 corrida grátis.</span><div class="actions" style="margin-top:12px"><button id="btn-indicar-finalizada" class="btn-main" type="button">Indicar e concorrer</button><button id="btn-pedir-novamente-finalizada" class="btn-secondary" type="button">Pedir outra corrida</button></div></div>`;
               setTimeout(() => {
                 $("btn-indicar-finalizada") &&
@@ -3526,7 +3584,7 @@
         abrirWhatsApp("Olá, esqueci a senha da minha conta de cliente Nexus MotoJá e preciso de ajuda."),
       );
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=144").catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=148", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
       }
       verificarAcessoCliente(true);
       verificarPedidoAtivo(false);

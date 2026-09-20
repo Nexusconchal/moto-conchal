@@ -10,6 +10,7 @@
   let destinationMarker = null;
   let socket = null;
   let lastToken = '';
+  let mapResizeObserver = null;
 
   function token() {
     return localStorage.getItem(TOKEN_KEY) || '';
@@ -64,12 +65,23 @@
       maxZoom: 19,
       attribution: '&copy; OpenStreetMap'
     }).addTo(map);
+    const element = document.getElementById('mapaEntregaEmpresa');
+    if (element && window.ResizeObserver) {
+      mapResizeObserver = new ResizeObserver(() => {
+        requestAnimationFrame(() => map?.invalidateSize({ pan: false }));
+      });
+      mapResizeObserver.observe(element);
+    }
+    requestAnimationFrame(() => map.invalidateSize({ pan: false }));
+    setTimeout(() => map?.invalidateSize({ pan: false }), 200);
   }
 
   function updateMap() {
     ensureMap();
     if (!map) return;
-    map.invalidateSize();
+    map.invalidateSize({ pan: false });
+    requestAnimationFrame(() => map?.invalidateSize({ pan: false }));
+    setTimeout(() => map?.invalidateSize({ pan: false }), 180);
     const delivery = deliveries.get(selectedId);
     const location = locationOf(delivery);
     const mapStatus = document.getElementById('mapaEntregaStatus');
@@ -193,7 +205,7 @@
 
   window.addEventListener('DOMContentLoaded', async () => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js?v=142', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
+      navigator.serviceWorker.register('./sw.js?v=148', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
     }
     try {
       await ensureLibraries();
