@@ -2264,7 +2264,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'customer-live-gps-v1' });
+  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'driver-mobile-loading-v149' });
 });
 
 app.get('/', (_req, res) => {
