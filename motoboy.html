@@ -932,7 +932,8 @@
           new URLSearchParams(location.search).get("aba") === "entregas"
             ? "entregas"
             : "pendentes",
-        requestSeq = 0;
+        requestSeq = 0,
+        jobsRequestsInFlight = 0;
       const TEMPO_LIMITE_MS = 5 * 60 * 1000,
         TEMPO_AVISO_MS = 3 * 60 * 1000;
       function modoEntrega() {
@@ -1662,6 +1663,8 @@
       }
       async function ouvir(silencioso = false) {
         if (!motoboyCpf) return;
+        if (silencioso && jobsRequestsInFlight > 0) return;
+        jobsRequestsInFlight += 1;
         const seq = ++requestSeq,
           servico = nomeServico(),
           kind = recursoAtual(),
@@ -1697,10 +1700,17 @@
           const jobs = Array.isArray(d.jobs) ? d.jobs : [];
           jobsCache.set(cacheKey, { t: Date.now(), jobs });
           render(jobs);
+          window.dispatchEvent(
+            new CustomEvent("motoja:jobs-rendered", {
+              detail: { kind, scope },
+            }),
+          );
         } catch (err) {
           if (seq === requestSeq && !silencioso)
             $("lista").innerHTML =
               `<div class="status danger">Erro ao carregar ${servico}s: ${err.message}</div>`;
+        } finally {
+          jobsRequestsInFlight = Math.max(0, jobsRequestsInFlight - 1);
         }
       }
       $("aba-pendentes").onclick = () => {
@@ -1826,7 +1836,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=144").catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=147").catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});
@@ -2129,6 +2139,6 @@
         }
       };
     </script>
-    <script src="./motoboy-tracking.js?v=142" defer></script>
+    <script src="./motoboy-tracking.js?v=147" defer></script>
   </body>
 </html>

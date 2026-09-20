@@ -195,11 +195,14 @@
   const observer = new MutationObserver(() => decorateCards());
   window.addEventListener('DOMContentLoaded', () => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js?v=142', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
+      navigator.serviceWorker.register('./sw.js?v=147', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
     }
     const list = document.getElementById('lista');
     if (list) observer.observe(list, { childList: true, subtree: true });
     refreshJobs();
+    window.addEventListener('motoja:jobs-rendered', (event) => {
+      if (event.detail?.kind === 'deliveries' && event.detail?.scope === 'mine') refreshJobs();
+    });
     setInterval(() => {
       if (document.visibilityState === 'visible') refreshJobs();
     }, 60000);

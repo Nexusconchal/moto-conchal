@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexus-motoja-v146-company-address';
+const CACHE_NAME = 'nexus-motoja-v147-driver-delivery-actions';
 const ARQUIVOS = ['./', './index.html', './motoboy.html', './motoboy-tracking.js', './dono.html', './empresa.html', './empresa-tracking.js', './empresa-pedidos.js', './privacy.html', './cliente.webmanifest', './motorista.webmanifest', './dono.webmanifest', './empresa.webmanifest', './firebase-messaging-sw.js', './nexus-motoja-logo-mark.png', './nexus-motoja-site-logo.png', './motorista-icon.svg', './nexus-motoja-icon-180.png', './nexus-motoja-icon-192.png', './nexus-motoja-icon-512.png'];
 
 self.addEventListener('install', (event) => {
