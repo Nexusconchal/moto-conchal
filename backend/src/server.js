@@ -1100,8 +1100,8 @@ async function rebuildDriverEarnings(driverCpf) {
   if (Number(totalSnap.data()?.versaoHistorico || 0) >= 1) return;
 
   const [ridesSnap, deliveriesSnap] = await Promise.all([
-    db.collection('corridas').where('motoboyCpf', '==', cpf).limit(500).get(),
-    db.collection('entregas').where('motoboyCpf', '==', cpf).limit(500).get()
+    db.collection('corridas').where('motoboyCpf', '==', cpf).where('status', '==', 'finalizada').limit(500).get(),
+    db.collection('entregas').where('motoboyCpf', '==', cpf).where('status', '==', 'finalizada').limit(500).get()
   ]);
   const events = [];
   ridesSnap.docs.forEach((docSnap) => {
