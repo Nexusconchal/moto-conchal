@@ -1062,8 +1062,14 @@
         ganhosCursor = "",
         ganhosCarregandoHistorico = false;
       const ganhosCache = new Map();
-      const TEMPO_LIMITE_MS = 5 * 60 * 1000,
+      const TEMPO_CORRIDA_MS = 5 * 60 * 1000,
+        TEMPO_ENTREGA_MS = 15 * 60 * 1000,
         TEMPO_AVISO_MS = 3 * 60 * 1000;
+      function tempoLimiteMs(c) {
+        return c?.tipo === "entrega_empresarial" || modoEntrega()
+          ? TEMPO_ENTREGA_MS
+          : TEMPO_CORRIDA_MS;
+      }
       function modoEntrega() {
         return modo === "entregas" || modo === "minhas-entregas";
       }
@@ -1257,7 +1263,7 @@
         return (
           c.status === "pendente" &&
           c.criadaEm?.seconds &&
-          idadeMs(c) > TEMPO_LIMITE_MS
+          idadeMs(c) > tempoLimiteMs(c)
         );
       }
       function avisoAtrasado(c) {
@@ -1269,8 +1275,9 @@
         );
       }
       function tempoRestante(c) {
-        if (!c.criadaEm?.seconds) return "5 min";
-        const ms = Math.max(0, TEMPO_LIMITE_MS - idadeMs(c));
+        if (!c.criadaEm?.seconds)
+          return `${Math.round(tempoLimiteMs(c) / 60000)} min`;
+        const ms = Math.max(0, tempoLimiteMs(c) - idadeMs(c));
         const m = Math.floor(ms / 60000),
           s = Math.ceil((ms % 60000) / 1000);
         return `${m}:${String(s).padStart(2, "0")}`;
@@ -2147,7 +2154,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=156", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=157", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});

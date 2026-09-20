@@ -2459,7 +2459,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'active-driver-jobs-v155' });
+  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'delivery-expiry-v156' });
 });
 
 app.get('/', (_req, res) => {
