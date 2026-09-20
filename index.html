@@ -708,6 +708,207 @@
       .history-status.cancelada {
         color: #ffd700;
       }
+      body.auth-locked {
+        overflow: hidden;
+      }
+      .customer-auth {
+        position: fixed;
+        inset: 0;
+        z-index: 1200;
+        display: none;
+        overflow-y: auto;
+        background: #050505;
+        color: #fff;
+      }
+      .customer-auth.open {
+        display: block;
+      }
+      .customer-auth-shell {
+        width: min(100%, 440px);
+        min-height: 100%;
+        margin: 0 auto;
+        padding: 22px 22px 32px;
+        display: grid;
+        align-content: start;
+        gap: 18px;
+      }
+      .customer-auth-logo {
+        width: 164px;
+        height: auto;
+        margin: 0 auto 2px;
+        display: block;
+      }
+      .customer-auth-close {
+        position: fixed;
+        top: 14px;
+        right: max(14px, calc((100vw - 440px) / 2 + 14px));
+        width: 42px;
+        height: 42px;
+        border: 1px solid rgba(255, 107, 0, 0.55);
+        border-radius: 8px;
+        background: #111;
+        color: #ff7900;
+        font-size: 1.5rem;
+        line-height: 1;
+        z-index: 2;
+      }
+      .customer-auth[data-required="true"] .customer-auth-close {
+        display: none;
+      }
+      .auth-view {
+        display: none;
+        gap: 15px;
+      }
+      .auth-view.active {
+        display: grid;
+      }
+      .auth-view h2 {
+        margin: 0;
+        color: #fff;
+        font-size: 2rem;
+        line-height: 1.05;
+        text-align: center;
+        letter-spacing: 0;
+      }
+      .auth-lead {
+        color: #cfcfd4;
+        text-align: center;
+        font-size: 0.98rem;
+        line-height: 1.45;
+      }
+      .auth-progress {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+        margin: 2px 0 4px;
+      }
+      .auth-progress span {
+        height: 5px;
+        border-radius: 3px;
+        background: #292929;
+      }
+      .auth-progress span.on {
+        background: #ff7900;
+      }
+      .auth-field {
+        display: grid;
+        gap: 7px;
+        color: #fff;
+        font-size: 0.88rem;
+        font-weight: 800;
+      }
+      .auth-field input {
+        width: 100%;
+        min-height: 58px;
+        border: 2px solid #ff7900;
+        border-radius: 8px;
+        background: #0d0d0d;
+        color: #fff;
+        padding: 0 15px;
+        font: 700 1rem Outfit, sans-serif;
+        letter-spacing: 0;
+        outline: none;
+      }
+      .auth-field input:focus {
+        border-color: #ffb000;
+        box-shadow: 0 0 0 3px rgba(255, 121, 0, 0.16);
+      }
+      .auth-primary,
+      .auth-secondary,
+      .auth-whatsapp {
+        width: 100%;
+        min-height: 58px;
+        border-radius: 8px;
+        font: 900 1rem Outfit, sans-serif;
+        letter-spacing: 0;
+      }
+      .auth-primary {
+        border: 0;
+        background: #ff7900;
+        color: #090909;
+      }
+      .auth-secondary {
+        border: 2px solid #ff7900;
+        background: #080808;
+        color: #ff8a00;
+      }
+      .auth-whatsapp {
+        border: 2px solid #25d366;
+        background: #080808;
+        color: #fff;
+      }
+      .auth-link {
+        border: 0;
+        background: transparent;
+        color: #ff8a00;
+        font: 800 0.92rem Outfit, sans-serif;
+        text-decoration: underline;
+      }
+      .auth-register-callout {
+        margin-top: 5px;
+        padding: 16px 0 0;
+        border-top: 1px solid rgba(255, 121, 0, 0.5);
+        display: grid;
+        gap: 10px;
+        text-align: center;
+      }
+      .auth-register-callout strong {
+        color: #fff;
+        font-size: 1.08rem;
+      }
+      .auth-register-callout p,
+      .auth-note {
+        color: #bdbdc5;
+        font-size: 0.82rem;
+        line-height: 1.4;
+        text-align: center;
+      }
+      .auth-code {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 7px;
+      }
+      .auth-code input {
+        min-width: 0;
+        height: 58px;
+        border: 2px solid #ff7900;
+        border-radius: 8px;
+        background: #0d0d0d;
+        color: #fff;
+        text-align: center;
+        font: 900 1.25rem Outfit, sans-serif;
+      }
+      .auth-photo {
+        min-height: 150px;
+        border: 2px dashed #ff7900;
+        border-radius: 8px;
+        background: #0d0d0d;
+        display: grid;
+        place-items: center;
+        gap: 8px;
+        padding: 14px;
+        color: #fff;
+        text-align: center;
+        font-weight: 800;
+        overflow: hidden;
+      }
+      .auth-photo img {
+        width: 116px;
+        height: 116px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 3px solid #ff7900;
+      }
+      .auth-status {
+        min-height: 20px;
+        color: #ffd0ad;
+        font-size: 0.84rem;
+        line-height: 1.35;
+        text-align: center;
+      }
+      .auth-status.ok {
+        color: #9ff2bb;
+      }
       .ride-map-shell {
         height: 220px;
         margin: -1rem -1rem 1rem;
@@ -1323,6 +1524,74 @@
     </style>
   </head>
   <body>
+    <section id="customer-auth" class="customer-auth" data-required="false" aria-hidden="true">
+      <button id="customer-auth-close" class="customer-auth-close" type="button" aria-label="Fechar">×</button>
+      <div class="customer-auth-shell">
+        <img class="customer-auth-logo" src="./nexus-motoja-site-logo.png?v=143" alt="Nexus MotoJá" />
+
+        <div class="auth-view active" data-auth-view="login">
+          <h2>Entre na sua conta</h2>
+          <p class="auth-lead">Continue pedindo suas corridas com segurança.</p>
+          <label class="auth-field">CPF<input id="auth-login-cpf" inputmode="numeric" autocomplete="username" placeholder="000.000.000-00" maxlength="14" /></label>
+          <label class="auth-field">Senha<input id="auth-login-password" type="password" autocomplete="current-password" placeholder="Digite sua senha" /></label>
+          <button id="auth-login-submit" class="auth-primary" type="button">Entrar</button>
+          <button id="auth-forgot" class="auth-link" type="button">Esqueci minha senha</button>
+          <div class="auth-register-callout">
+            <strong>Já fez 3 corridas?</strong>
+            <p>Para continuar usando a Nexus MotoJá, confirme seus dados e proteja sua conta.</p>
+            <button id="auth-start-register" class="auth-secondary" type="button">Fazer meu cadastro</button>
+          </div>
+        </div>
+
+        <div class="auth-view" data-auth-view="phone">
+          <div class="auth-progress"><span class="on"></span><span></span><span></span><span></span></div>
+          <h2>Confirme seu WhatsApp</h2>
+          <p class="auth-lead">Vamos enviar um código de 6 números para confirmar que o telefone é seu.</p>
+          <label class="auth-field">Número do WhatsApp<input id="auth-register-phone" inputmode="tel" autocomplete="tel" placeholder="(19) 99999-9999" maxlength="15" /></label>
+          <button id="auth-send-code" class="auth-whatsapp" type="button">Enviar código pelo WhatsApp</button>
+          <button class="auth-link" data-auth-back="login" type="button">Já tenho cadastro</button>
+        </div>
+
+        <div class="auth-view" data-auth-view="code">
+          <div class="auth-progress"><span class="on"></span><span class="on"></span><span></span><span></span></div>
+          <h2>Digite o código</h2>
+          <p class="auth-lead">Enviamos o código para o WhatsApp informado. Ele vence em 10 minutos.</p>
+          <div id="auth-code" class="auth-code">
+            <input inputmode="numeric" maxlength="1" aria-label="Primeiro número" /><input inputmode="numeric" maxlength="1" aria-label="Segundo número" /><input inputmode="numeric" maxlength="1" aria-label="Terceiro número" /><input inputmode="numeric" maxlength="1" aria-label="Quarto número" /><input inputmode="numeric" maxlength="1" aria-label="Quinto número" /><input inputmode="numeric" maxlength="1" aria-label="Sexto número" />
+          </div>
+          <button id="auth-verify-code" class="auth-primary" type="button">Confirmar código</button>
+          <button id="auth-resend-code" class="auth-link" type="button">Enviar outro código</button>
+        </div>
+
+        <div class="auth-view" data-auth-view="details">
+          <div class="auth-progress"><span class="on"></span><span class="on"></span><span class="on"></span><span></span></div>
+          <h2>Complete seu cadastro</h2>
+          <p class="auth-lead">Esses dados protegem sua conta e não aparecem para o motoboy.</p>
+          <label class="auth-field">Nome completo<input id="auth-register-name" autocomplete="name" placeholder="Digite seu nome completo" /></label>
+          <label class="auth-field">CPF<input id="auth-register-cpf" inputmode="numeric" placeholder="000.000.000-00" maxlength="14" /></label>
+          <label class="auth-field">Data de nascimento<input id="auth-register-birth" type="date" autocomplete="bday" /></label>
+          <label class="auth-field">Crie sua senha<input id="auth-register-password" type="password" autocomplete="new-password" placeholder="Mínimo de 6 caracteres" /></label>
+          <label class="auth-field">Confirme sua senha<input id="auth-register-password-confirm" type="password" autocomplete="new-password" placeholder="Digite novamente" /></label>
+          <button id="auth-details-next" class="auth-primary" type="button">Continuar</button>
+        </div>
+
+        <div class="auth-view" data-auth-view="photo">
+          <div class="auth-progress"><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span></div>
+          <h2>Adicione sua foto</h2>
+          <p class="auth-lead">A foto é obrigatória para aumentar a segurança da sua conta.</p>
+          <label class="auth-photo" for="auth-register-photo">
+            <img id="auth-photo-preview" alt="Prévia da foto" hidden />
+            <span id="auth-photo-label">Tirar ou escolher foto</span>
+          </label>
+          <input id="auth-register-photo" type="file" accept="image/*" capture="user" hidden />
+          <button id="auth-register-submit" class="auth-primary" type="button">Concluir cadastro</button>
+          <button class="auth-link" data-auth-back="details" type="button">Voltar e conferir dados</button>
+          <p class="auth-note">Seu CPF é protegido e a foto não será exibida publicamente.</p>
+        </div>
+
+        <p id="customer-auth-status" class="auth-status" role="status"></p>
+      </div>
+    </section>
     <button
       id="menu-open"
       class="menu-btn"
@@ -1389,48 +1658,12 @@
         </div>
         <div class="profile-actions">
           <button id="btn-editar-perfil" class="btn-secondary" type="button">
-            Editar perfil</button
+            Conta e segurança</button
           ><button id="btn-indicar" class="btn-secondary" type="button">
             Indique e ganhe
           </button>
         </div>
-        <div id="perfil-editor" class="profile-editor" hidden>
-          <label
-            >Foto opcional<input
-              id="fotoCliente"
-              type="file"
-              accept="image/*"
-              capture="user" /></label
-          ><label
-            >Nome completo<input
-              id="perfilNome"
-              autocomplete="name"
-              placeholder="Ex: Daniela Maiara" /></label
-          ><label
-            >WhatsApp<input
-              id="perfilTelefone"
-              inputmode="tel"
-              autocomplete="tel"
-              placeholder="Ex: 19999999999" /></label
-          ><label
-            >Senha opcional para salvar no servidor<input
-              id="senhaCliente"
-              type="password"
-              inputmode="numeric"
-              autocomplete="new-password"
-              placeholder="4 números ou mais"
-          /></label>
-          <div class="profile-actions">
-            <button id="btn-salvar-perfil" class="btn-primary" type="button">
-              Salvar perfil</button
-            ><button id="btn-entrar-perfil" class="btn-secondary" type="button">
-              Entrar
-            </button>
-          </div>
-          <p id="perfil-status" class="small">
-            Sem conta também pode pedir corrida normal.
-          </p>
-        </div>
+        <p id="perfil-status" class="small">Seu acesso fica salvo com segurança neste aparelho.</p>
         <div id="historico-cliente" class="profile-history" hidden></div>
       </section>
       <section id="precos-section">
@@ -2057,7 +2290,124 @@
           URL.revokeObjectURL(url);
         }
       }
-      const TOKEN_CLIENTE = "motoJaClienteToken";
+      const TOKEN_CLIENTE = "motoJaClienteToken",
+        CLIENT_DEVICE_KEY = "motoJaClienteDeviceV1";
+      let cadastroClienteObrigatorio = false,
+        clienteAutenticado = false,
+        authDraft = {};
+
+      function clienteDeviceId() {
+        try {
+          let id = localStorage.getItem(CLIENT_DEVICE_KEY) || "";
+          if (!/^[a-zA-Z0-9_-]{20,100}$/.test(id)) {
+            id = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}-${Math.random()}`).replace(/[^a-zA-Z0-9]/g, "");
+            localStorage.setItem(CLIENT_DEVICE_KEY, id);
+          }
+          return id;
+        } catch (e) {
+          return `device${Date.now()}${Math.random().toString(36).slice(2, 14)}`;
+        }
+      }
+
+      function authStatus(texto, ok = false) {
+        const el = $("customer-auth-status");
+        if (!el) return;
+        el.textContent = texto || "";
+        el.classList.toggle("ok", !!ok);
+      }
+
+      function authView(nome) {
+        document.querySelectorAll("[data-auth-view]").forEach((view) =>
+          view.classList.toggle("active", view.dataset.authView === nome),
+        );
+        authStatus("");
+        const foco = document.querySelector(`[data-auth-view="${nome}"] input`);
+        setTimeout(() => foco?.focus(), 80);
+      }
+
+      function abrirAuthCliente(view = "login", obrigatorio = cadastroClienteObrigatorio) {
+        const auth = $("customer-auth");
+        if (!auth) return;
+        auth.dataset.required = obrigatorio ? "true" : "false";
+        auth.classList.add("open");
+        auth.setAttribute("aria-hidden", "false");
+        document.body.classList.add("auth-locked");
+        authView(view);
+      }
+
+      function fecharAuthCliente() {
+        const auth = $("customer-auth");
+        if (!auth || auth.dataset.required === "true") return;
+        auth.classList.remove("open");
+        auth.setAttribute("aria-hidden", "true");
+        document.body.classList.remove("auth-locked");
+      }
+
+      function encerrarAuthCliente() {
+        const auth = $("customer-auth");
+        if (!auth) return;
+        auth.dataset.required = "false";
+        auth.classList.remove("open");
+        auth.setAttribute("aria-hidden", "true");
+        document.body.classList.remove("auth-locked");
+      }
+
+      function telefoneMemorizado() {
+        try {
+          const memo = JSON.parse(localStorage.getItem(MEMORIA_CLIENTE) || "{}");
+          return String(memo.telefoneCliente || $("telefoneCliente")?.value || "").replace(/\D/g, "").slice(0, 11);
+        } catch (e) {
+          return String($("telefoneCliente")?.value || "").replace(/\D/g, "").slice(0, 11);
+        }
+      }
+
+      async function customerApi(path, body = {}, includeToken = true) {
+        const token = includeToken ? localStorage.getItem(TOKEN_CLIENTE) || "" : "";
+        const response = await fetch(`${CONFIG.backend}${path}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(token ? { authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(body),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const error = new Error(data.message || "Não foi possível continuar agora.");
+          error.code = data.error || "customer_request_failed";
+          throw error;
+        }
+        return data;
+      }
+
+      async function verificarAcessoCliente(mostrarObrigatorio = true) {
+        try {
+          const data = await customerApi("/api/customers/device-status", {
+            deviceId: clienteDeviceId(),
+            telefoneCliente: telefoneMemorizado(),
+          });
+          clienteAutenticado = !!data.authenticated;
+          cadastroClienteObrigatorio = !!data.registrationRequired;
+          if (clienteAutenticado && data.customer) {
+            aplicarCliente(data.customer);
+            encerrarAuthCliente();
+          } else if (localStorage.getItem(TOKEN_CLIENTE)) {
+            localStorage.removeItem(TOKEN_CLIENTE);
+          }
+          if (cadastroClienteObrigatorio && mostrarObrigatorio) abrirAuthCliente("login", true);
+          return data;
+        } catch (e) {
+          return { authenticated: clienteAutenticado, registrationRequired: cadastroClienteObrigatorio };
+        }
+      }
+
+      async function podeContinuarCorrida() {
+        if (cadastroClienteObrigatorio && !clienteAutenticado) {
+          abrirAuthCliente("login", true);
+          return false;
+        }
+        return true;
+      }
       function aplicarCliente(d = {}) {
         if (d.nome) $("nome").value = d.nome;
         if (d.telefoneCliente)
@@ -2090,74 +2440,6 @@
           el.style.color = erro ? "#ffd6d6" : "#9a9aa4";
         }
       }
-      async function salvarPerfilServidor(criar = true) {
-        const senha = $("senhaCliente")?.value || "",
-          nomePerfil = (
-            $("perfilNome")?.value ||
-            $("nome")?.value ||
-            ""
-          ).trim(),
-          telefoneCliente = (
-            $("perfilTelefone")?.value ||
-            $("telefoneCliente")?.value ||
-            ""
-          ).replace(/\D/g, ""),
-          payload = {
-            nome: nomePerfil,
-            telefoneCliente,
-            origem: $("origem")?.value?.trim() || "",
-          };
-        try {
-          const antigo = JSON.parse(
-            localStorage.getItem(MEMORIA_CLIENTE) || "{}",
-          );
-          payload.fotoCliente = antigo.fotoCliente || "";
-        } catch (e) {}
-        if (
-          !payload.nome ||
-          telefoneCliente.length < 10 ||
-          telefoneCliente.length > 11
-        ) {
-          statusPerfil(
-            "Preencha nome completo e WhatsApp para salvar o perfil.",
-            true,
-          );
-          return;
-        }
-        aplicarCliente(payload);
-        if (!senha) {
-          statusPerfil(
-            "Perfil salvo neste aparelho. Coloque senha se quiser salvar no servidor também.",
-          );
-          return;
-        }
-        if (senha.length < 4) {
-          statusPerfil(
-            "Digite uma senha com pelo menos 4 números para salvar no servidor.",
-            true,
-          );
-          return;
-        }
-        statusPerfil(criar ? "Salvando perfil no servidor..." : "Entrando...");
-        const rota = criar ? "/api/customers/register" : "/api/customers/login";
-        const r = await fetch(`${CONFIG.backend}${rota}`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ ...payload, password: senha }),
-        });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          statusPerfil(
-            d.message || "Não consegui salvar o perfil agora.",
-            true,
-          );
-          return;
-        }
-        if (d.token) localStorage.setItem(TOKEN_CLIENTE, d.token);
-        aplicarCliente(d.customer || payload);
-        statusPerfil(criar ? "Perfil salvo no servidor." : "Perfil carregado.");
-        mostrarHistoricoCliente().catch(() => {});
-      }
       function dataClienteTxt(ts) {
         const ms = ts && ts.seconds ? ts.seconds * 1000 : Date.parse(ts || "");
         return ms ? new Date(ms).toLocaleString("pt-BR") : "-";
@@ -2169,12 +2451,11 @@
         if (!token) {
           box.hidden = false;
           box.innerHTML =
-            '<div class="history-item"><strong>Entre no perfil com WhatsApp e senha</strong><br>Assim suas corridas aparecem aqui mesmo em outro celular.</div>';
-          const editor = $("perfil-editor");
-          if (editor) editor.hidden = false;
+            '<div class="history-item"><strong>Entre com CPF e senha</strong><br>Assim suas corridas aparecem aqui mesmo em outro celular.</div>';
           statusPerfil(
-            "Entre com WhatsApp e senha para ver o histórico salvo no servidor.",
+            "Entre com CPF e senha para ver o histórico salvo no servidor.",
           );
+          abrirAuthCliente("login", false);
           verificarPedidoAtivo(true);
           return;
         }
@@ -2822,18 +3103,24 @@
         const ctrl = new AbortController(),
           timer = setTimeout(() => ctrl.abort(), 20000);
         try {
+          const token = localStorage.getItem(TOKEN_CLIENTE) || "";
           const r = await fetch(`${CONFIG.backend}/api/rides`, {
             method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(dados),
+            headers: {
+              "content-type": "application/json",
+              ...(token ? { authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({ ...dados, clienteDeviceId: clienteDeviceId() }),
             signal: ctrl.signal,
           });
           const d = await r.json().catch(() => ({}));
-          if (!r.ok)
-            throw new Error(
-              d.message ||
-                "Não consegui salvar a corrida no servidor. Tente novamente.",
+          if (!r.ok) {
+            const error = new Error(
+              d.message || "Não consegui salvar a corrida no servidor. Tente novamente.",
             );
+            error.code = d.error || "ride_request_failed";
+            throw error;
+          }
           return { id: d.rideId, push: d.push };
         } catch (e) {
           if (e.name === "AbortError")
@@ -3076,9 +3363,172 @@
             : "Para salvar no Android: toque no menu do navegador e escolha Instalar app ou Adicionar a tela inicial.",
         );
       }
-      if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=135").catch(() => {});
+      function mascaraCpf(valor) {
+        const n = String(valor || "").replace(/\D/g, "").slice(0, 11);
+        return n
+          .replace(/^(\d{3})(\d)/, "$1.$2")
+          .replace(/^(\d{3})\.(\d{3})(\d)/, "$1.$2.$3")
+          .replace(/\.(\d{3})(\d)/, ".$1-$2");
       }
+      function mascaraTelefone(valor) {
+        const n = String(valor || "").replace(/\D/g, "").slice(0, 11);
+        if (n.length <= 2) return n ? `(${n}` : "";
+        if (n.length <= 6) return `(${n.slice(0, 2)}) ${n.slice(2)}`;
+        if (n.length <= 10) return `(${n.slice(0, 2)}) ${n.slice(2, 6)}-${n.slice(6)}`;
+        return `(${n.slice(0, 2)}) ${n.slice(2, 7)}-${n.slice(7)}`;
+      }
+      $("customer-auth-close")?.addEventListener("click", fecharAuthCliente);
+      document.querySelectorAll("[data-auth-back]").forEach((button) =>
+        button.addEventListener("click", () => authView(button.dataset.authBack)),
+      );
+      [$("auth-login-cpf"), $("auth-register-cpf")].forEach((input) =>
+        input?.addEventListener("input", () => {
+          input.value = mascaraCpf(input.value);
+        }),
+      );
+      $("auth-register-phone")?.addEventListener("input", (event) => {
+        event.target.value = mascaraTelefone(event.target.value);
+      });
+      $("auth-start-register")?.addEventListener("click", () => {
+        const telefone = telefoneMemorizado();
+        if (telefone) $("auth-register-phone").value = mascaraTelefone(telefone);
+        authView("phone");
+      });
+      $("auth-send-code")?.addEventListener("click", async () => {
+        const telefoneCliente = String($("auth-register-phone")?.value || "").replace(/\D/g, "");
+        if (telefoneCliente.length < 10) return authStatus("Digite seu WhatsApp com DDD.");
+        const button = $("auth-send-code");
+        button.disabled = true;
+        button.textContent = "Enviando código...";
+        try {
+          await customerApi("/api/customers/otp/request", { telefoneCliente, deviceId: clienteDeviceId() }, false);
+          authDraft = { telefoneCliente };
+          authView("code");
+          authStatus("Código enviado. Confira seu WhatsApp.", true);
+        } catch (e) {
+          authStatus(e.message);
+        } finally {
+          button.disabled = false;
+          button.textContent = "Enviar código pelo WhatsApp";
+        }
+      });
+      const authCodeInputs = Array.from(document.querySelectorAll("#auth-code input"));
+      authCodeInputs.forEach((input, index) => {
+        input.addEventListener("input", () => {
+          input.value = input.value.replace(/\D/g, "").slice(-1);
+          if (input.value && authCodeInputs[index + 1]) authCodeInputs[index + 1].focus();
+        });
+        input.addEventListener("keydown", (event) => {
+          if (event.key === "Backspace" && !input.value && authCodeInputs[index - 1]) authCodeInputs[index - 1].focus();
+        });
+        input.addEventListener("paste", (event) => {
+          const digits = event.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+          if (digits.length !== 6) return;
+          event.preventDefault();
+          authCodeInputs.forEach((box, boxIndex) => { box.value = digits[boxIndex] || ""; });
+          authCodeInputs[5].focus();
+        });
+      });
+      $("auth-verify-code")?.addEventListener("click", async () => {
+        const code = authCodeInputs.map((input) => input.value).join("");
+        if (code.length !== 6) return authStatus("Digite os 6 números do código.");
+        const button = $("auth-verify-code");
+        button.disabled = true;
+        try {
+          const data = await customerApi("/api/customers/otp/verify", {
+            telefoneCliente: authDraft.telefoneCliente,
+            deviceId: clienteDeviceId(),
+            code,
+          }, false);
+          authDraft.verificationToken = data.verificationToken;
+          authView("details");
+        } catch (e) {
+          authStatus(e.message);
+        } finally {
+          button.disabled = false;
+        }
+      });
+      $("auth-resend-code")?.addEventListener("click", () => authView("phone"));
+      $("auth-details-next")?.addEventListener("click", () => {
+        const nome = String($("auth-register-name")?.value || "").trim(),
+          cpf = String($("auth-register-cpf")?.value || "").replace(/\D/g, ""),
+          dataNascimento = String($("auth-register-birth")?.value || ""),
+          password = String($("auth-register-password")?.value || ""),
+          confirmation = String($("auth-register-password-confirm")?.value || "");
+        if (nome.split(/\s+/).length < 2) return authStatus("Digite seu nome completo.");
+        if (cpf.length !== 11) return authStatus("Digite um CPF válido.");
+        if (!dataNascimento) return authStatus("Informe sua data de nascimento.");
+        if (password.length < 6) return authStatus("Crie uma senha com pelo menos 6 caracteres.");
+        if (password !== confirmation) return authStatus("As senhas não são iguais.");
+        authDraft = { ...authDraft, nome, cpf, dataNascimento, password };
+        authView("photo");
+      });
+      $("auth-register-photo")?.addEventListener("change", async (event) => {
+        try {
+          const foto = await comprimirFotoCliente(event.target.files?.[0]);
+          if (!foto) return;
+          authDraft.fotoCliente = foto;
+          const preview = $("auth-photo-preview");
+          preview.src = foto;
+          preview.hidden = false;
+          $("auth-photo-label").textContent = "Foto pronta. Toque para trocar";
+          authStatus("Foto adicionada.", true);
+        } catch (e) {
+          authStatus(e.message || "Não consegui preparar a foto.");
+        }
+      });
+      $("auth-register-submit")?.addEventListener("click", async () => {
+        if (!authDraft.fotoCliente) return authStatus("Adicione uma foto para concluir.");
+        const button = $("auth-register-submit");
+        button.disabled = true;
+        button.textContent = "Criando sua conta...";
+        try {
+          const data = await customerApi("/api/customers/register", {
+            ...authDraft,
+            deviceId: clienteDeviceId(),
+            origem: $("origem")?.value?.trim() || "",
+          }, false);
+          localStorage.setItem(TOKEN_CLIENTE, data.token);
+          aplicarCliente(data.customer || { ...authDraft, telefoneCliente: authDraft.telefoneCliente });
+          clienteAutenticado = true;
+          cadastroClienteObrigatorio = false;
+          authStatus("Cadastro concluído!", true);
+          setTimeout(encerrarAuthCliente, 500);
+        } catch (e) {
+          authStatus(e.message);
+        } finally {
+          button.disabled = false;
+          button.textContent = "Concluir cadastro";
+        }
+      });
+      $("auth-login-submit")?.addEventListener("click", async () => {
+        const cpf = String($("auth-login-cpf")?.value || "").replace(/\D/g, ""),
+          password = String($("auth-login-password")?.value || "");
+        if (cpf.length !== 11 || password.length < 6) return authStatus("Digite seu CPF e sua senha.");
+        const button = $("auth-login-submit");
+        button.disabled = true;
+        button.textContent = "Entrando...";
+        try {
+          const data = await customerApi("/api/customers/login", { cpf, password, deviceId: clienteDeviceId() }, false);
+          localStorage.setItem(TOKEN_CLIENTE, data.token);
+          aplicarCliente(data.customer || {});
+          clienteAutenticado = true;
+          cadastroClienteObrigatorio = false;
+          encerrarAuthCliente();
+        } catch (e) {
+          authStatus(e.message);
+        } finally {
+          button.disabled = false;
+          button.textContent = "Entrar";
+        }
+      });
+      $("auth-forgot")?.addEventListener("click", () =>
+        abrirWhatsApp("Olá, esqueci a senha da minha conta de cliente Nexus MotoJá e preciso de ajuda."),
+      );
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("./sw.js?v=143").catch(() => {});
+      }
+      verificarAcessoCliente(true);
       verificarPedidoAtivo(false);
       lembrarLembretesNaSegundaAbertura();
       $("menu-open")?.addEventListener("click", abrirDrawer);
@@ -3091,11 +3541,12 @@
           fecharDrawer();
           if (a === "pedir") abrirModal();
           if (a === "perfil") {
-            const perfil = $("perfil-cliente"),
-              editor = $("perfil-editor");
-            if (perfil) perfil.classList.remove("hidden");
-            if (editor) editor.hidden = false;
-            perfil?.scrollIntoView({ behavior: "smooth", block: "start" });
+            if (!clienteAutenticado) abrirAuthCliente("login", false);
+            else {
+              const perfil = $("perfil-cliente");
+              if (perfil) perfil.classList.remove("hidden");
+              perfil?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
           }
           if (a === "minhas")
             mostrarHistoricoCliente().catch((err) =>
@@ -3109,58 +3560,23 @@
           if (a === "ajuda" || a === "falar")
             abrirWhatsApp("Olá, preciso de ajuda no app MotoJá.");
           if (a === "sair") {
-            localStorage.removeItem(MEMORIA_CLIENTE);
+            const token = localStorage.getItem(TOKEN_CLIENTE) || "";
+            if (token)
+              fetch(`${CONFIG.backend}/api/customers/logout`, {
+                method: "POST",
+                headers: { authorization: `Bearer ${token}` },
+              }).catch(() => {});
             localStorage.removeItem(TOKEN_CLIENTE);
-            location.reload();
+            clienteAutenticado = false;
+            verificarAcessoCliente(true);
           }
         }),
       );
       $("btn-editar-perfil")?.addEventListener("click", () => {
-        carregarCliente();
-        const box = $("perfil-editor");
-        if (box) box.hidden = !box.hidden;
+        if (!clienteAutenticado) abrirAuthCliente("login", false);
+        else alert("Sua conta está conectada e protegida neste aparelho.");
       });
       $("btn-indicar")?.addEventListener("click", indicarApp);
-      $("btn-salvar-perfil")?.addEventListener("click", () =>
-        salvarPerfilServidor(true).catch((e) =>
-          statusPerfil(e.message || "Erro ao salvar perfil.", true),
-        ),
-      );
-      $("btn-entrar-perfil")?.addEventListener("click", () =>
-        salvarPerfilServidor(false).catch((e) =>
-          statusPerfil(e.message || "Erro ao entrar.", true),
-        ),
-      );
-      $("fotoCliente")?.addEventListener("change", async (e) => {
-        try {
-          const foto = await comprimirFotoCliente(
-            e.target.files && e.target.files[0],
-          );
-          if (!foto) return;
-          const antigo = JSON.parse(
-            localStorage.getItem(MEMORIA_CLIENTE) || "{}",
-          );
-          localStorage.setItem(
-            MEMORIA_CLIENTE,
-            JSON.stringify({
-              ...antigo,
-              fotoCliente: foto,
-              nome: $("nome").value.trim() || antigo.nome || "",
-              telefoneCliente:
-                $("telefoneCliente").value.trim() ||
-                antigo.telefoneCliente ||
-                "",
-              origem: $("origem").value.trim() || antigo.origem || "",
-            }),
-          );
-          atualizarPerfilCliente();
-          statusPerfil(
-            "Foto salva neste aparelho. Para salvar no servidor, toque em Salvar perfil.",
-          );
-        } catch (err) {
-          statusPerfil(err.message || "Não consegui salvar a foto.", true);
-        }
-      });
       $("btn-instalar").addEventListener("click", salvarNaTelaInicial);
       $("btn-lembretes")?.addEventListener("click", ativarLembretesCliente);
       $("btn-pedir").addEventListener("click", abrirModal);
@@ -3219,6 +3635,7 @@
       });
       $("form-corrida").addEventListener("submit", async (e) => {
         e.preventDefault();
+        if (!(await podeContinuarCorrida())) return;
         delete $("btn-confirmar-corrida").dataset.fallbackMsg;
         salvarCliente();
         limparStatus();
@@ -3392,6 +3809,12 @@
         } catch (err) {
           enviandoCorrida = false;
           btn.disabled = false;
+          if (err.code === "cadastro_cliente_obrigatorio") {
+            cadastroClienteObrigatorio = true;
+            btn.textContent = "Chamar motoboy";
+            abrirAuthCliente("login", true);
+            return;
+          }
           btn.textContent = "Chamar suporte no WhatsApp";
           const d = corridaCalculada;
           const msg = d
