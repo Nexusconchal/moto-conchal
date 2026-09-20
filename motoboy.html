@@ -824,7 +824,7 @@
         const painel = document.getElementById("painel");
         if (painel && !painel.classList.contains("hidden"))
           carregarCidadesAtivas();
-      }, 5000);
+      }, 60000);
       const firebaseConfig = {
         apiKey: "AIzaSyAWY3l9heJJqKL_iTA2jCr4Zw3AQ39jB-Q",
         authDomain: "moto-conchal.firebaseapp.com",
@@ -1730,7 +1730,7 @@
           render(jobs);
           window.dispatchEvent(
             new CustomEvent("motoja:jobs-rendered", {
-              detail: { kind, scope },
+              detail: { kind, scope, jobs },
             }),
           );
         } catch (err) {
@@ -1776,7 +1776,7 @@
       setInterval(() => {
         const painel = document.getElementById("painel");
         if (motoboyCpf && document.visibilityState === "visible" && painel && !painel.classList.contains("hidden")) ouvir(true);
-      }, 30000);
+      }, 60000);
       async function ativarNotificacoes() {
         try {
           const ua = navigator.userAgent.toLowerCase(),
@@ -1866,7 +1866,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=149", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=150", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});
@@ -2169,6 +2169,6 @@
         }
       };
     </script>
-    <script src="./motoboy-tracking.js?v=148" defer></script>
+    <script src="./motoboy-tracking.js?v=150" defer></script>
   </body>
 </html>

@@ -33,7 +33,7 @@ const CUSTOMER_REGISTRATION_ENFORCED = String(process.env.CUSTOMER_REGISTRATION_
 const MP_OAUTH_STATE_MS = 10 * 60 * 1000;
 const driverProofCache = new Map();
 const ADMIN_STATE_CACHE_MS = 60 * 1000;
-const CLEANUP_INTERVAL_MS = 2 * 60 * 1000;
+const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 let adminStateCache = null;
 let cleanupRunning = false;
 
@@ -2264,7 +2264,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'driver-mobile-loading-v149' });
+  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'firestore-read-optimization-v150' });
 });
 
 app.get('/', (_req, res) => {

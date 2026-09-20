@@ -274,13 +274,32 @@
   });
   window.addEventListener('DOMContentLoaded', () => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js?v=149', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
+      navigator.serviceWorker.register('./sw.js?v=150', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
     }
     const list = document.getElementById('lista');
     if (list) observer.observe(list, { childList: true, subtree: true });
     refreshJobs();
     window.addEventListener('motoja:jobs-rendered', (event) => {
-      if (event.detail?.scope === 'mine') refreshJobs();
+      if (event.detail?.scope !== 'mine' || !Array.isArray(event.detail?.jobs)) return;
+      const incoming = event.detail.jobs;
+      if (event.detail.kind === 'deliveries') {
+        jobs.clear();
+        incoming.forEach((job) => jobs.set(job.id, job));
+        for (const deliveryId of watches.keys()) {
+          if (jobs.get(deliveryId)?.status !== 'retirada') stopTracking(deliveryId);
+        }
+        decorateCards();
+        return;
+      }
+      if (event.detail.kind === 'rides') {
+        rideJobs.clear();
+        incoming.forEach((job) => rideJobs.set(job.id, job));
+        for (const rideId of rideWatches.keys()) {
+          const ride = rideJobs.get(rideId);
+          if (!ride || ride.status !== 'aceita' || !ride.clienteAvisadoEm) stopRideTracking(rideId);
+        }
+        decorateRideCards();
+      }
     });
     window.addEventListener('motoja:ride-gps-start', (event) => {
       const rideId = String(event.detail?.rideId || '');
@@ -291,7 +310,7 @@
       startRideTracking(rideId);
     });
     setInterval(() => {
-      if (document.visibilityState === 'visible') refreshJobs();
-    }, 60000);
+      if (document.visibilityState === 'visible' && (watches.size > 0 || rideWatches.size > 0)) refreshJobs();
+    }, 5 * 60 * 1000);
   });
 })();
