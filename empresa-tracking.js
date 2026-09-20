@@ -193,7 +193,7 @@
 
   window.addEventListener('DOMContentLoaded', async () => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js?v=133', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
+      navigator.serviceWorker.register('./sw.js?v=142', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
     }
     try {
       await ensureLibraries();
@@ -204,8 +204,8 @@
     }
     refresh();
     setInterval(() => {
-      if (token()) refresh();
-    }, 15000);
+      if (token() && document.visibilityState === 'visible') refresh();
+    }, 5 * 60 * 1000);
     window.addEventListener('storage', (event) => {
       if (event.key === TOKEN_KEY) refresh();
     });

@@ -788,7 +788,7 @@
         const painel = document.getElementById("painel");
         if (painel && !painel.classList.contains("hidden"))
           carregarCidadesAtivas();
-      }, 500);
+      }, 5000);
       const firebaseConfig = {
         apiKey: "AIzaSyAWY3l9heJJqKL_iTA2jCr4Zw3AQ39jB-Q",
         authDomain: "moto-conchal.firebaseapp.com",
@@ -1674,8 +1674,9 @@
           .slice(0, 7);
       });
       setInterval(() => {
-        if (motoboyCpf) ouvir(true);
-      }, 12000);
+        const painel = document.getElementById("painel");
+        if (motoboyCpf && document.visibilityState === "visible" && painel && !painel.classList.contains("hidden")) ouvir(true);
+      }, 30000);
       async function ativarNotificacoes() {
         try {
           const ua = navigator.userAgent.toLowerCase(),
@@ -1765,7 +1766,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=138").catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=142").catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});
@@ -2068,6 +2069,6 @@
         }
       };
     </script>
-    <script src="./motoboy-tracking.js?v=133" defer></script>
+    <script src="./motoboy-tracking.js?v=142" defer></script>
   </body>
 </html>
