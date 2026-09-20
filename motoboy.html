@@ -1709,7 +1709,7 @@
           $("lista").innerHTML =
             `<div class="empty">Carregando ${servico}s...</div>`;
         try {
-          const r = await fetch(
+          const r = await fetchMotoboyComRetry(
             `${CONFIG.backend}/api/drivers/${motoboyCpf}/jobs`,
             {
               method: "POST",
@@ -1717,6 +1717,7 @@
               body: JSON.stringify({ ...driverProof(), kind, scope }),
               cache: "no-store",
             },
+            12000,
           );
           const d = await r.json().catch(() => ({}));
           if (seq !== requestSeq) return;
@@ -1733,9 +1734,11 @@
             }),
           );
         } catch (err) {
-          if (seq === requestSeq && !silencioso)
-            $("lista").innerHTML =
-              `<div class="status danger">Erro ao carregar ${servico}s: ${err.message}</div>`;
+          if (seq === requestSeq && !silencioso) {
+            $("lista").innerHTML = `<div class="status danger">Erro ao carregar ${servico}s: ${err.message}<br><button id="tentar-carregar-jobs" class="secondary" type="button" style="margin-top:12px">Tentar novamente</button></div>`;
+            const retry = $("tentar-carregar-jobs");
+            if (retry) retry.onclick = () => ouvir();
+          }
         } finally {
           jobsRequestsInFlight = Math.max(0, jobsRequestsInFlight - 1);
         }
@@ -1863,7 +1866,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=148", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=149", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});

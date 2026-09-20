@@ -1054,6 +1054,16 @@ function driverPasswordValues() {
   return configured.length ? Array.from(new Set(configured)) : ['moto123'];
 }
 
+function privateDriverJob(job = {}) {
+  const copy = { ...job };
+  // A foto do proprio motoboy ja fica salva no perfil. Repeti-la em cada
+  // corrida ou entrega torna a listagem muito pesada em conexoes moveis.
+  delete copy.motoboyFoto;
+  delete copy.motoboyCnh;
+  delete copy.crlvFoto;
+  return copy;
+}
+
 function isValidDriverPassword(password) {
   const typed = String(password || '');
   return driverPasswordValues().some((allowed) => safeEqual(typed, allowed));
@@ -2903,7 +2913,7 @@ app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
       : snapshot.docs;
     const jobs = sortJobs(docs.map((docSnap) => {
       const item = serializeFirestore({ id: docSnap.id, ...docSnap.data() });
-      return scope === 'pending' ? publicPendingJob(item) : item;
+      return scope === 'pending' ? publicPendingJob(item) : privateDriverJob(item);
     }));
     return res.json({ ok: true, jobs });
   } catch (error) {

@@ -274,7 +274,7 @@
   });
   window.addEventListener('DOMContentLoaded', () => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js?v=148', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
+      navigator.serviceWorker.register('./sw.js?v=149', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
     }
     const list = document.getElementById('lista');
     if (list) observer.observe(list, { childList: true, subtree: true });
