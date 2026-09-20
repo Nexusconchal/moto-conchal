@@ -1202,7 +1202,12 @@ function publicPendingJob(job = {}) {
 }
 
 function sortJobs(items = []) {
-  return items.sort((a, b) => timestampMs(b.finalizadaEm || b.aceitaEm || b.criadaEm) - timestampMs(a.finalizadaEm || a.aceitaEm || a.criadaEm));
+  return items.sort((a, b) => {
+    const activeA = a.status === 'pendente' || a.status === 'aceita' ? 1 : 0;
+    const activeB = b.status === 'pendente' || b.status === 'aceita' ? 1 : 0;
+    if (activeA !== activeB) return activeB - activeA;
+    return timestampMs(b.finalizadaEm || b.aceitaEm || b.criadaEm) - timestampMs(a.finalizadaEm || a.aceitaEm || a.criadaEm);
+  });
 }
 
 function assertAdmin(req, res, next) {
@@ -2435,7 +2440,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'driver-earnings-v151' });
+  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'driver-jobs-mobile-v153' });
 });
 
 app.get('/', (_req, res) => {
@@ -3140,7 +3145,7 @@ app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
 
     const queryRef = scope === 'mine'
       ? db.collection(collectionName).where('motoboyCpf', '==', driverCpf).limit(100)
-      : db.collection(collectionName).where('status', '==', 'pendente').limit(100);
+      : db.collection(collectionName).where('status', '==', 'pendente').limit(30);
     const snapshot = await queryRef.get();
     const enabledCities = driverRideCities(driver);
     const docs = kind === 'rides' && scope === 'pending'
@@ -3149,7 +3154,7 @@ app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
     const jobs = sortJobs(docs.map((docSnap) => {
       const item = serializeFirestore({ id: docSnap.id, ...docSnap.data() });
       return scope === 'pending' ? publicPendingJob(item) : privateDriverJob(item);
-    }));
+    })).slice(0, 30);
     return res.json({ ok: true, jobs });
   } catch (error) {
     return next(error);

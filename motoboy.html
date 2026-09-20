@@ -1684,9 +1684,16 @@
               !(d.data.motoboyCpf === motoboyCpf && avisoAtrasado(d.data)),
           )
           .sort(
-            (a, b) =>
-              (b.data.criadaEm?.seconds || 0) - (a.data.criadaEm?.seconds || 0),
-          );
+            (a, b) => {
+              const ativoA = ["pendente", "aceita"].includes(a.data.status) ? 1 : 0,
+                ativoB = ["pendente", "aceita"].includes(b.data.status) ? 1 : 0;
+              if (ativoA !== ativoB) return ativoB - ativoA;
+              const tempoA = a.data.finalizadaEm?.seconds || a.data.aceitaEm?.seconds || a.data.criadaEm?.seconds || 0,
+                tempoB = b.data.finalizadaEm?.seconds || b.data.aceitaEm?.seconds || b.data.criadaEm?.seconds || 0;
+              return tempoB - tempoA;
+            },
+          )
+          .slice(0, 30);
         if (!docs.length) {
           lista.innerHTML = `<div class="empty">${modoMinhas() ? `Nenhuma ${servico} sua ainda.` : `Nenhuma ${servico} pendente agora.`}</div>`;
           return;
@@ -1973,6 +1980,13 @@
         else if (!silencioso)
           $("lista").innerHTML =
             `<div class="empty">Carregando ${servico}s...</div>`;
+        const avisoDemora = !silencioso && !(cached && Date.now() - cached.t < 60000)
+          ? setTimeout(() => {
+              if (seq === requestSeq) {
+                $("lista").innerHTML = `<div class="empty">O servidor está iniciando. Aguarde mais alguns segundos...</div>`;
+              }
+            }, 7000)
+          : null;
         try {
           const r = await fetchMotoboyComRetry(
             `${CONFIG.backend}/api/drivers/${motoboyCpf}/jobs`,
@@ -2005,6 +2019,7 @@
             if (retry) retry.onclick = () => ouvir();
           }
         } finally {
+          if (avisoDemora) clearTimeout(avisoDemora);
           jobsRequestsInFlight = Math.max(0, jobsRequestsInFlight - 1);
         }
       }
@@ -2132,7 +2147,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=152", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=153", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});
