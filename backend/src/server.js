@@ -2469,7 +2469,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'driver-jobs-stability-v166' });
+  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'company-approval-auth-v167' });
 });
 
 app.get('/', (_req, res) => {
@@ -2737,6 +2737,7 @@ app.post('/api/admin/companies/:companyId/approve', assertOwner, async (req, res
       aprovadaEm: admin.firestore.FieldValue.serverTimestamp(),
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
+    adminStateCache = null;
 
     const updated = await companyRef.get();
     return res.json({ ok: true, company: publicCompany(updated.data() || {}, companyRef.id) });
@@ -2760,6 +2761,7 @@ app.post('/api/admin/companies/:companyId/block', assertOwner, async (req, res, 
       bloqueadaEm: admin.firestore.FieldValue.serverTimestamp(),
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
+    adminStateCache = null;
 
     const updated = await companyRef.get();
     return res.json({ ok: true, company: publicCompany(updated.data() || {}, companyRef.id) });
@@ -3262,7 +3264,6 @@ app.post('/api/companies/register', authLimiter, async (req, res, next) => {
     }
 
     const auth = passwordHash(password);
-    const token = await issueCompanySession(companyRef);
     const companyData = {
       empresa,
       responsavel,
@@ -3279,8 +3280,14 @@ app.post('/api/companies/register', authLimiter, async (req, res, next) => {
       ultimoLoginEm: admin.firestore.FieldValue.serverTimestamp()
     };
     await companyRef.set(companyData, { merge: true });
+    adminStateCache = null;
 
-    res.status(201).json({ ok: true, token, company: publicCompany({ empresa, responsavel, email, telefoneEmpresa, retirada, status: 'aguardando_aprovacao' }, telefoneEmpresa) });
+    res.status(201).json({
+      ok: true,
+      pendingApproval: true,
+      message: 'Cadastro enviado. Aguarde a aprovação da MotoJÁ para acessar o painel.',
+      company: publicCompany({ empresa, responsavel, email, telefoneEmpresa, retirada, status: 'aguardando_aprovacao' }, telefoneEmpresa)
+    });
   } catch (error) {
     next(error);
   }
@@ -3295,11 +3302,21 @@ app.post('/api/companies/login', authLimiter, async (req, res, next) => {
       passwordHash(password || crypto.randomBytes(12).toString('hex'));
       return res.status(401).json({ error: 'credenciais_empresa_invalidas', message: 'Email ou senha incorretos.' });
     }
-    if (!verifyPassword(password, snap.docs[0].data())) {
+    const company = snap.docs[0].data() || {};
+    if (!verifyPassword(password, company)) {
       return res.status(401).json({ error: 'credenciais_empresa_invalidas', message: 'Email ou senha incorretos.' });
     }
+    const status = companyStatus(company);
+    if (status !== 'aprovada') {
+      return res.status(403).json({
+        error: status === 'bloqueada' ? 'empresa_bloqueada' : 'empresa_aguardando_aprovacao',
+        message: status === 'bloqueada'
+          ? 'Esta empresa está bloqueada. Fale com o suporte MotoJÁ.'
+          : 'Seu cadastro ainda está aguardando aprovação da MotoJÁ.'
+      });
+    }
     const token = await issueCompanySession(snap.docs[0].ref);
-    res.json({ ok: true, token, company: publicCompany(snap.docs[0].data(), snap.docs[0].id) });
+    res.json({ ok: true, token, company: publicCompany(company, snap.docs[0].id) });
   } catch (error) {
     next(error);
   }

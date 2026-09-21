@@ -252,6 +252,151 @@
           font-size: 2rem;
         }
       }
+      body:not(.company-authenticated) {
+        background: #080a0f;
+      }
+      body:not(.company-authenticated) .app {
+        max-width: 720px;
+        padding-top: 30px;
+        gap: 18px;
+      }
+      body:not(.company-authenticated) .brand {
+        gap: 4px;
+      }
+      body:not(.company-authenticated) .brand .logo.site-logo {
+        width: min(220px, 72vw);
+      }
+      body:not(.company-authenticated) .brand h1 {
+        margin-top: -26px;
+        font-size: 1.72rem;
+        letter-spacing: 0;
+      }
+      body:not(.company-authenticated) .brand > .muted {
+        display: none;
+      }
+      .auth-panel {
+        border-radius: 8px;
+        border-color: rgba(255, 121, 0, 0.6);
+        background: #11151b;
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+        padding: 28px;
+        gap: 18px;
+      }
+      .auth-view {
+        display: grid;
+        gap: 15px;
+      }
+      .auth-heading {
+        display: grid;
+        gap: 6px;
+        padding-bottom: 4px;
+      }
+      .auth-heading h2 {
+        font-size: clamp(1.55rem, 4vw, 2rem);
+        letter-spacing: 0;
+      }
+      .auth-heading p {
+        color: #aeb4c0;
+        line-height: 1.45;
+      }
+      .auth-panel input {
+        border-radius: 6px;
+        min-height: 52px;
+        background: #0d1117;
+      }
+      .auth-panel button {
+        border-radius: 6px;
+        min-height: 52px;
+        box-shadow: none;
+      }
+      .auth-primary {
+        width: 100%;
+        background: #ff7900;
+      }
+      .auth-secondary {
+        width: 100%;
+        background: #151a21 !important;
+        border: 1px solid #ff7900 !important;
+      }
+      .auth-link {
+        width: auto;
+        min-height: 30px !important;
+        justify-self: center;
+        padding: 3px 0;
+        border: 0 !important;
+        background: transparent !important;
+        color: #ff8a18;
+        text-decoration: underline;
+        box-shadow: none !important;
+      }
+      .auth-divider {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        align-items: center;
+        gap: 12px;
+        color: #9da4b0;
+        font-size: 0.84rem;
+      }
+      .auth-divider:before,
+      .auth-divider:after {
+        content: "";
+        height: 1px;
+        background: rgba(255, 255, 255, 0.14);
+      }
+      .auth-approval-note {
+        border: 1px solid rgba(255, 154, 0, 0.55);
+        border-radius: 6px;
+        padding: 12px 14px;
+        background: rgba(255, 154, 0, 0.1);
+        color: #ffd166;
+        font-weight: 800;
+        line-height: 1.4;
+      }
+      .auth-feedback {
+        border: 1px solid rgba(255, 82, 82, 0.32);
+        border-radius: 6px;
+        padding: 11px 13px;
+        background: rgba(255, 82, 82, 0.09);
+        color: #ffd6d6;
+        line-height: 1.4;
+      }
+      .auth-feedback:empty {
+        display: none;
+      }
+      .auth-success {
+        min-height: 420px;
+        align-content: center;
+        justify-items: center;
+        text-align: center;
+      }
+      .auth-success-mark {
+        width: 58px;
+        height: 58px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        border: 2px solid #ff7900;
+        color: #ff9a00;
+        font-size: 1.65rem;
+        font-weight: 900;
+      }
+      .login-support {
+        max-width: 720px;
+        width: 100%;
+        justify-self: center;
+        border-radius: 6px;
+      }
+      @media (max-width: 620px) {
+        body:not(.company-authenticated) .app {
+          padding: 18px 12px 34px;
+        }
+        .auth-panel {
+          padding: 18px 14px;
+        }
+        .auth-panel .grid2 {
+          grid-template-columns: 1fr;
+        }
+      }
     </style>
     <link
       rel="stylesheet"
@@ -1030,9 +1175,6 @@
           roupas, tenis, farmacia, acai, sorvete e marmitas.
         </p>
       </header>
-      <button id="suporte" type="button" class="green">
-        Chamar suporte MotoJa
-      </button>
       <button
         id="sairContaEmpresa"
         type="button"
@@ -1040,71 +1182,152 @@
       >
         Sair da conta
       </button>
-      <section id="contaSection" class="box">
-        <h2>Conta da empresa</h2>
-        <p id="contaStatus" class="muted">
-          Crie uma conta para abrir no celular e no computador com os mesmos
-          dados, saldo e relatorio.
-        </p>
-        <div class="grid2">
+      <section id="contaSection" class="box auth-panel">
+        <p id="contaStatus" class="auth-feedback"></p>
+
+        <div id="telaLoginEmpresa" class="auth-view">
+          <div class="auth-heading">
+            <h2>Entrar na conta da empresa</h2>
+            <p>Acesse seus pedidos, saldo, entregas e integrações.</p>
+          </div>
           <label
-            >Empresa<input
-              id="loginEmpresa"
-              placeholder="Ex: Empresa Tal"
-              autocomplete="organization"
+            >E-mail da empresa<input
+              id="emailEmpresa"
+              type="email"
+              placeholder="Ex: empresa@seuemail.com"
+              autocomplete="email"
           /></label>
           <label
-            >Responsavel<input
-              id="loginResponsavel"
-              placeholder="Ex: Joao"
-              autocomplete="name"
+            >Senha<input
+              id="senhaEmpresa"
+              type="password"
+              minlength="8"
+              placeholder="Digite sua senha"
+              autocomplete="current-password"
           /></label>
-        </div>
-        <label
-          >WhatsApp da empresa<input
-            id="loginTelefoneEmpresa"
-            inputmode="tel"
-            placeholder="Ex: 19999999999"
-            autocomplete="tel"
-        /></label>
-        <label
-          >Endereco de retirada<input
-            id="loginRetirada"
-            placeholder="Rua, numero, bairro"
-        /></label>
-        <p class="small">
-          Para entrar em uma conta ja criada, use apenas email e senha. Para
-          criar conta, preencha tambem os dados da empresa.
-        </p>
-        <label
-          >Email da empresa<input
-            id="emailEmpresa"
-            type="email"
-            placeholder="empresa@email.com"
-            autocomplete="email"
-        /></label>
-        <label
-          >Senha<input
-            id="senhaEmpresa"
-            type="password"
-            minlength="8"
-            placeholder="Minimo 8 caracteres"
-            autocomplete="current-password"
-        /></label>
-        <div class="grid2">
-          <button id="entrarEmpresa" type="button" class="secondary">
+          <button id="recuperarSenhaEmpresa" type="button" class="auth-link">
+            Esqueci minha senha
+          </button>
+          <button id="entrarEmpresa" type="button" class="auth-primary">
             Entrar
           </button>
-          <button id="cadastrarEmpresa" type="button">Criar conta</button>
+          <div class="auth-divider">Ainda não tem conta?</div>
+          <button id="abrirCadastroEmpresa" type="button" class="auth-secondary">
+            Criar conta da empresa
+          </button>
+          <p class="small">Cadastros novos passam pela aprovação da MotoJÁ.</p>
         </div>
-        <button id="recuperarSenhaEmpresa" type="button" class="secondary">
-          Esqueci minha senha
-        </button>
-        <p class="small">
-          Para recuperar, digite o email e o WhatsApp cadastrados. O pedido
-          aparece para o dono trocar a senha com seguranca.
-        </p>
+
+        <div id="telaCadastroEmpresa" class="auth-view hidden">
+          <div class="auth-heading">
+            <h2>Cadastrar empresa</h2>
+            <p>Envie os dados do seu estabelecimento para análise.</p>
+          </div>
+          <div class="grid2">
+            <label
+              >Nome do estabelecimento<input
+                id="loginEmpresa"
+                placeholder="Ex: Mercado do Joao"
+                autocomplete="organization"
+            /></label>
+            <label
+              >Responsável<input
+                id="loginResponsavel"
+                placeholder="Ex: Joao Silva"
+                autocomplete="name"
+            /></label>
+          </div>
+          <div class="grid2">
+            <label
+              >WhatsApp da empresa<input
+                id="loginTelefoneEmpresa"
+                inputmode="tel"
+                placeholder="Ex: 19999999999"
+                autocomplete="tel"
+            /></label>
+            <label
+              >Endereço de retirada<input
+                id="loginRetirada"
+                placeholder="Rua, numero, bairro"
+            /></label>
+          </div>
+          <label
+            >E-mail da empresa<input
+              id="cadastroEmailEmpresa"
+              type="email"
+              placeholder="Ex: empresa@seuemail.com"
+              autocomplete="email"
+          /></label>
+          <label
+            >Crie uma senha<input
+              id="cadastroSenhaEmpresa"
+              type="password"
+              minlength="8"
+              placeholder="Mínimo de 8 caracteres"
+              autocomplete="new-password"
+          /></label>
+          <label
+            >Confirmar senha<input
+              id="confirmarSenhaEmpresa"
+              type="password"
+              minlength="8"
+              placeholder="Digite a senha novamente"
+              autocomplete="new-password"
+          /></label>
+          <div class="auth-approval-note">
+            Após enviar, aguarde a aprovação da MotoJÁ para acessar o painel.
+          </div>
+          <button id="cadastrarEmpresa" type="button" class="auth-primary">
+            Enviar cadastro para aprovação
+          </button>
+          <button id="voltarLoginEmpresa" type="button" class="auth-link">
+            Já tenho uma conta - Entrar
+          </button>
+        </div>
+
+        <div id="telaRecuperacaoEmpresa" class="auth-view hidden">
+          <div class="auth-heading">
+            <h2>Recuperar senha</h2>
+            <p>O pedido será conferido pela MotoJÁ antes da troca.</p>
+          </div>
+          <label
+            >E-mail cadastrado<input
+              id="recuperacaoEmailEmpresa"
+              type="email"
+              placeholder="empresa@seuemail.com"
+              autocomplete="email"
+          /></label>
+          <label
+            >WhatsApp cadastrado<input
+              id="recuperacaoTelefoneEmpresa"
+              inputmode="tel"
+              placeholder="Com DDD"
+              autocomplete="tel"
+          /></label>
+          <button id="enviarRecuperacaoEmpresa" type="button" class="auth-primary">
+            Enviar pedido de recuperação
+          </button>
+          <button id="voltarLoginRecuperacao" type="button" class="auth-link">
+            Voltar para entrar
+          </button>
+        </div>
+
+        <div id="telaCadastroEnviado" class="auth-view auth-success hidden">
+          <div class="auth-success-mark">OK</div>
+          <div class="auth-heading">
+            <h2 id="tituloCadastroEnviado">Cadastro enviado</h2>
+            <p id="mensagemCadastroEnviado">
+              Aguarde a aprovação da MotoJÁ para acessar o painel.
+            </p>
+          </div>
+          <button id="voltarLoginAposCadastro" type="button" class="auth-primary">
+            Voltar para o login
+          </button>
+        </div>
       </section>
+      <button id="suporte" type="button" class="secondary login-support">
+        Chamar suporte MotoJÁ
+      </button>
       <section class="box app-area hidden tracking-panel">
         <h2>Entregas em andamento</h2>
         <p class="muted">
@@ -1665,13 +1888,26 @@
         pagamentoModo = "pix_manual",
         planoDiarioAtivo = false,
         empresaStatus = "aprovada",
-        empresaAprovada = false;
+        empresaAprovada = false,
+        contaTela = "login";
       const PLANO_DIARIO_TIPO = "Plano Diario MotoJa Pro";
       const MEMORIA_EMPRESA = "nexusEmpresaDados",
         MEMORIA_PEDIDOS_PREPARADOS = "nexusEmpresaPedidosPreparados",
         TOKEN_EMPRESA = "nexusEmpresaToken";
       let empresaToken = localStorage.getItem(TOKEN_EMPRESA) || "";
-      if (empresaToken) empresaAprovada = true;
+      function mostrarTelaConta(tela, mensagem = "") {
+        contaTela = tela;
+        const telas = {
+          login: "telaLoginEmpresa",
+          cadastro: "telaCadastroEmpresa",
+          recuperacao: "telaRecuperacaoEmpresa",
+          enviado: "telaCadastroEnviado",
+        };
+        Object.values(telas).forEach((id) =>
+          $(id)?.classList.toggle("hidden", id !== telas[tela]),
+        );
+        if ($("contaStatus")) $("contaStatus").textContent = mensagem;
+      }
       function atualizarTelaEmpresa() {
         const logada = !!empresaToken,
           liberada = logada && empresaAprovada;
@@ -2544,6 +2780,7 @@
         preencherCampo("retirada", c.retirada);
         preencherCampo("loginRetirada", c.retirada);
         preencherCampo("emailEmpresa", c.email);
+        preencherCampo("cadastroEmailEmpresa", c.email);
         empresaStatus = c.status || "aprovada";
         empresaAprovada = c.aprovada !== false && empresaStatus === "aprovada";
         pagamentoModo =
@@ -2563,6 +2800,17 @@
               ? `Conta bloqueada: ${c.empresa}. Fale com o suporte MotoJa para regularizar.`
               : `Conta criada: ${c.empresa}. Aguarde o dono aprovar no painel para liberar deposito, plano e chamadas de motoboy.`
           : "Crie uma conta para abrir no celular e no computador com os mesmos dados, saldo e relatorio.";
+        if (!empresaAprovada && c.empresa) {
+          $("tituloCadastroEnviado").textContent =
+            empresaStatus === "bloqueada"
+              ? "Conta bloqueada"
+              : "Cadastro em analise";
+          $("mensagemCadastroEnviado").textContent =
+            empresaStatus === "bloqueada"
+              ? "Esta conta esta bloqueada. Fale com o suporte MotoJÁ."
+              : "Seu cadastro foi recebido. Aguarde a aprovação da MotoJÁ para acessar o painel.";
+          mostrarTelaConta("enviado");
+        }
         atualizarTelaEmpresa();
         salvarEmpresa();
         pedidosPreparadosCarregados = false;
@@ -2640,21 +2888,33 @@
         atualizarCampoExtras();
       }
       async function autenticarEmpresa(modo) {
-        const payload = {
-          empresa: valorCampo("loginEmpresa") || valorCampo("empresa"),
-          responsavel:
-            valorCampo("loginResponsavel") || valorCampo("responsavel"),
-          telefoneEmpresa: soNumeros(
-            valorCampo("loginTelefoneEmpresa") || valorCampo("telefoneEmpresa"),
-          ),
-          retirada: valorCampo("loginRetirada") || valorCampo("retirada"),
-          email: valorCampo("emailEmpresa"),
-          password: $("senhaEmpresa").value,
-        };
+        const cadastro = modo === "register";
+        const payload = cadastro
+          ? {
+              empresa: valorCampo("loginEmpresa"),
+              responsavel: valorCampo("loginResponsavel"),
+              telefoneEmpresa: soNumeros(valorCampo("loginTelefoneEmpresa")),
+              retirada: valorCampo("loginRetirada"),
+              email: valorCampo("cadastroEmailEmpresa"),
+              password: $("cadastroSenhaEmpresa").value,
+            }
+          : {
+              email: valorCampo("emailEmpresa"),
+              password: $("senhaEmpresa").value,
+            };
+        if (
+          cadastro &&
+          $("cadastroSenhaEmpresa").value !== $("confirmarSenhaEmpresa").value
+        ) {
+          mostrarTelaConta("cadastro", "As senhas digitadas não são iguais.");
+          $("confirmarSenhaEmpresa").focus();
+          return;
+        }
         const btn =
           modo === "login" ? $("entrarEmpresa") : $("cadastrarEmpresa");
         btn.disabled = true;
-        btn.textContent = modo === "login" ? "Entrando..." : "Criando...";
+        btn.textContent =
+          modo === "login" ? "Entrando..." : "Enviando cadastro...";
         try {
           const rota =
             modo === "login"
@@ -2670,10 +2930,26 @@
             15000,
           );
           const d = await r.json().catch(() => ({}));
-          if (!r.ok)
-            throw new Error(
+          if (!r.ok) {
+            const error = new Error(
               d.message || d.error || "Nao consegui autenticar a empresa.",
             );
+            error.code = d.error || "";
+            error.status = r.status;
+            throw error;
+          }
+          if (cadastro) {
+            empresaToken = "";
+            empresaAprovada = false;
+            localStorage.removeItem(TOKEN_EMPRESA);
+            $("tituloCadastroEnviado").textContent = "Cadastro enviado";
+            $("mensagemCadastroEnviado").textContent =
+              d.message ||
+              "Aguarde a aprovação da MotoJÁ para acessar o painel.";
+            mostrarTelaConta("enviado");
+            atualizarTelaEmpresa();
+            return;
+          }
           empresaToken = d.token;
           localStorage.setItem(TOKEN_EMPRESA, empresaToken);
           preencherEmpresa(d.company || {});
@@ -2686,12 +2962,27 @@
               : "Conta criada. Aguarde o dono aprovar para liberar deposito, plano e chamadas.",
           );
         } catch (e) {
-          $("contaStatus").textContent =
-            e.message || "Erro ao entrar na empresa.";
+          if (
+            e.code === "empresa_aguardando_aprovacao" ||
+            e.code === "empresa_bloqueada"
+          ) {
+            $("tituloCadastroEnviado").textContent =
+              e.code === "empresa_bloqueada"
+                ? "Conta bloqueada"
+                : "Cadastro em analise";
+            $("mensagemCadastroEnviado").textContent = e.message;
+            mostrarTelaConta("enviado");
+          } else {
+            mostrarTelaConta(
+              cadastro ? "cadastro" : "login",
+              e.message || "Erro ao entrar na empresa.",
+            );
+          }
           mostrarStatus(e.message || "Erro ao entrar na empresa.", true);
         } finally {
           btn.disabled = false;
-          btn.textContent = modo === "login" ? "Entrar" : "Criar conta";
+          btn.textContent =
+            modo === "login" ? "Entrar" : "Enviar cadastro para aprovação";
         }
       }
       atualizarTelaEmpresa();
@@ -2708,7 +2999,12 @@
         "loginResponsavel",
         "loginRetirada",
       ].forEach((id) => $(id).addEventListener("input", salvarEmpresa));
-      ["telefoneEmpresa", "telefoneRecebedor", "loginTelefoneEmpresa"].forEach(
+      [
+        "telefoneEmpresa",
+        "telefoneRecebedor",
+        "loginTelefoneEmpresa",
+        "recuperacaoTelefoneEmpresa",
+      ].forEach(
         (id) =>
           $(id).addEventListener("input", () => {
             $(id).value = soNumeros($(id).value).slice(0, 11);
@@ -2823,17 +3119,36 @@
         }
       };
       $("verRelatorioDia").onclick = carregarRelatorioDia;
+      $("abrirCadastroEmpresa").onclick = () =>
+        mostrarTelaConta("cadastro");
+      $("voltarLoginEmpresa").onclick = () => mostrarTelaConta("login");
+      $("voltarLoginRecuperacao").onclick = () =>
+        mostrarTelaConta("login");
+      $("voltarLoginAposCadastro").onclick = () =>
+        mostrarTelaConta("login");
       $("entrarEmpresa").onclick = () => autenticarEmpresa("login");
       $("cadastrarEmpresa").onclick = () => autenticarEmpresa("register");
-      $("recuperarSenhaEmpresa").onclick = async () => {
-        const email = valorCampo("emailEmpresa"),
+      $("senhaEmpresa").addEventListener("keydown", (event) => {
+        if (event.key === "Enter") autenticarEmpresa("login");
+      });
+      $("confirmarSenhaEmpresa").addEventListener("keydown", (event) => {
+        if (event.key === "Enter") autenticarEmpresa("register");
+      });
+      $("recuperarSenhaEmpresa").onclick = () => {
+        preencherCampo("recuperacaoEmailEmpresa", valorCampo("emailEmpresa"));
+        mostrarTelaConta("recuperacao");
+      };
+      $("enviarRecuperacaoEmpresa").onclick = async () => {
+        const email = valorCampo("recuperacaoEmailEmpresa"),
           telefoneEmpresa = soNumeros(
-            valorCampo("loginTelefoneEmpresa") || valorCampo("telefoneEmpresa"),
+            valorCampo("recuperacaoTelefoneEmpresa"),
           ),
-          btn = $("recuperarSenhaEmpresa");
+          btn = $("enviarRecuperacaoEmpresa");
         if (!email || telefoneEmpresa.length < 10) {
-          $("contaStatus").textContent =
-            "Digite o email e o WhatsApp cadastrados para pedir recuperacao.";
+          mostrarTelaConta(
+            "recuperacao",
+            "Digite o e-mail e o WhatsApp cadastrados.",
+          );
           return;
         }
         btn.disabled = true;
@@ -2853,15 +3168,19 @@
             throw new Error(
               d.message || d.error || "Nao consegui pedir recuperacao.",
             );
-          $("contaStatus").textContent =
+          $("tituloCadastroEnviado").textContent = "Pedido enviado";
+          $("mensagemCadastroEnviado").textContent =
             d.message ||
-            "Pedido enviado ao dono. Aguarde a nova senha pelo WhatsApp.";
+            "Aguarde a MotoJÁ enviar a nova senha pelo WhatsApp cadastrado.";
+          mostrarTelaConta("enviado");
         } catch (e) {
-          $("contaStatus").textContent =
-            e.message || "Erro ao pedir recuperacao.";
+          mostrarTelaConta(
+            "recuperacao",
+            e.message || "Erro ao pedir recuperacao.",
+          );
         } finally {
           btn.disabled = false;
-          btn.textContent = "Esqueci minha senha";
+          btn.textContent = "Enviar pedido de recuperação";
         }
       };
       $("sairContaEmpresa").onclick = () => {
@@ -3727,7 +4046,7 @@
       };
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker
-          .register("./sw.js?v=165", { updateViaCache: "none" })
+          .register("./sw.js?v=167", { updateViaCache: "none" })
           .then((r) => r.update())
           .catch(() => {});
       }
@@ -3754,7 +4073,7 @@
           }
         };
     </script>
-    <script src="./empresa-tracking.js?v=165" defer></script>
+    <script src="./empresa-tracking.js?v=167" defer></script>
     <script src="./empresa-pedidos.js?v=134" defer></script>
     <script>
       (() => {
