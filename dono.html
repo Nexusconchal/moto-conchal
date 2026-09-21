@@ -9,7 +9,7 @@ function renderFunil(){const box=$('funilMarketing');if(!box)return;const evento
 document.addEventListener('click',async e=>{const aprovarPagamento=e.target.closest('[data-aprovar-pagamento-presencial]');if(aprovarPagamento){if(!confirm('Aprovar pagamento por aproximacao somente se o valor caiu/conferiu no extrato. Confirma?'))return;aprovarPagamento.disabled=true;aprovarPagamento.textContent='Aprovando...';try{const r=await fetch(`${CONFIG.backend}/api/admin/rides/${aprovarPagamento.dataset.aprovarPagamentoPresencial}/payment/presential/approve`,{method:'POST',headers:{'content-type':'application/json','x-owner-password':senhaDono}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||d.error||'Erro ao aprovar pagamento.');await carregarPainel()}catch(err){alert(err.message||'Erro ao aprovar pagamento.');aprovarPagamento.disabled=false;aprovarPagamento.textContent='Aprovar aproximacao'}return}const aprovarEmpresa=e.target.closest('[data-aprovar-empresa]');if(aprovarEmpresa){if(!confirm('Aprovar esta empresa para depositar saldo e chamar motoboy?'))return;aprovarEmpresa.disabled=true;aprovarEmpresa.textContent='Aprovando...';try{const r=await fetch(`${CONFIG.backend}/api/admin/companies/${aprovarEmpresa.dataset.aprovarEmpresa}/approve`,{method:'POST',headers:{'content-type':'application/json','x-owner-password':senhaDono}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||d.error||'Erro ao aprovar empresa.');await carregarPainel()}catch(err){alert(err.message||'Erro ao aprovar empresa.');aprovarEmpresa.disabled=false;aprovarEmpresa.textContent='Aprovar'}return}const editarSaldoEmpresa=e.target.closest('[data-editar-saldo-empresa]');if(editarSaldoEmpresa){const saldoAtual=Number(editarSaldoEmpresa.dataset.saldoAtual||0),reservado=Number(editarSaldoEmpresa.dataset.reservado||0),novo=prompt(`Novo saldo total da empresa:` ,saldoAtual.toFixed(2).replace('.',','));if(novo===null)return;const textoValor=String(novo).trim().replace(/\s/g,'').replace(/^R\$/i,''),valor=textoValor.includes(',')?Number(textoValor.replace(/\./g,'').replace(',','.')):Number(textoValor);if(!Number.isFinite(valor)||valor<0){alert('Informe um saldo valido, igual ou maior que zero.');return}if(valor<reservado){alert(`O saldo nao pode ficar abaixo do valor reservado de ${moeda(reservado)}.`);return}const motivo=prompt('Motivo obrigatorio do ajuste:','Duas entregas realizadas por fora durante indisponibilidade do app');if(!motivo||!motivo.trim()){alert('Informe o motivo para registrar no livro-caixa.');return}if(!confirm(`Alterar o saldo de ${moeda(saldoAtual)} para ${moeda(valor)}?\n\nMotivo: ${motivo.trim()}`))return;editarSaldoEmpresa.disabled=true;editarSaldoEmpresa.textContent='Salvando...';try{const r=await fetch(`${CONFIG.backend}/api/admin/companies/${editarSaldoEmpresa.dataset.editarSaldoEmpresa}/balance`,{method:'POST',headers:{'content-type':'application/json','x-owner-password':senhaDono},body:JSON.stringify({saldo:valor,reason:motivo.trim()})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||d.error||'Erro ao editar saldo.');alert(`Saldo atualizado.\nNovo saldo: ${moeda(d.saldo)}\nDisponivel: ${moeda(d.disponivel)}`);await carregarPainel()}catch(err){alert(err.message||'Erro ao editar saldo.');editarSaldoEmpresa.disabled=false;editarSaldoEmpresa.textContent='Editar saldo'}return}const bloquearEmpresa=e.target.closest('[data-bloquear-empresa]');if(bloquearEmpresa){const motivo=prompt('Motivo do bloqueio:','Bloqueada pelo dono');if(!motivo||!motivo.trim())return;if(!confirm('Bloquear esta empresa? Ela nao vai conseguir depositar saldo nem chamar motoboy.'))return;bloquearEmpresa.disabled=true;bloquearEmpresa.textContent='Bloqueando...';try{const r=await fetch(`${CONFIG.backend}/api/admin/companies/${bloquearEmpresa.dataset.bloquearEmpresa}/block`,{method:'POST',headers:{'content-type':'application/json','x-owner-password':senhaDono},body:JSON.stringify({reason:motivo.trim()})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||d.error||'Erro ao bloquear empresa.');await carregarPainel()}catch(err){alert(err.message||'Erro ao bloquear empresa.');bloquearEmpresa.disabled=false;bloquearEmpresa.textContent='Bloquear'}return}const bloquearMotoboy=e.target.closest('[data-bloquear-motoboy]');if(bloquearMotoboy){const cpf=bloquearMotoboy.dataset.bloquearMotoboy;const motivo=prompt('Motivo do bloqueio:','Bloqueado pelo dono');if(!motivo||!motivo.trim())return;if(!confirm('Bloquear este motoboy? Ele nao vai conseguir entrar nem pegar servico.'))return;bloquearMotoboy.disabled=true;bloquearMotoboy.textContent='Bloqueando...';try{const r=await fetch(`${CONFIG.backend}/api/admin/drivers/${cpf}/block`,{method:'POST',headers:{'content-type':'application/json','x-owner-password':senhaDono},body:JSON.stringify({reason:motivo.trim()})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||d.error||'Erro ao bloquear motoboy.');await carregarPainel()}catch(err){alert(err.message||'Erro ao bloquear motoboy.');bloquearMotoboy.disabled=false;bloquearMotoboy.textContent='Bloquear'}return}const desbloquearMotoboy=e.target.closest('[data-desbloquear-motoboy]');if(desbloquearMotoboy){const cpf=desbloquearMotoboy.dataset.desbloquearMotoboy;if(!confirm('Desbloquear este motoboy e liberar login novamente?'))return;desbloquearMotoboy.disabled=true;desbloquearMotoboy.textContent='Desbloqueando...';try{const r=await fetch(`${CONFIG.backend}/api/admin/drivers/${cpf}/unblock`,{method:'POST',headers:{'content-type':'application/json','x-owner-password':senhaDono}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||d.error||'Erro ao desbloquear motoboy.');await carregarPainel()}catch(err){alert(err.message||'Erro ao desbloquear motoboy.');desbloquearMotoboy.disabled=false;desbloquearMotoboy.textContent='Desbloquear'}return}const editarDeposito=e.target.closest('[data-editar-deposito]');if(editarDeposito){const valorAtual=String(editarDeposito.dataset.valorAtual||'').replace('.',','),novo=prompt('Novo valor do deposito:',valorAtual);if(!novo)return;const valor=Number(String(novo).replace(/[^0-9,.]/g,'').replace(',','.'));if(!valor||valor<10){alert('Valor minimo R$ 10,00.');return}editarDeposito.disabled=true;editarDeposito.textContent='Salvando...';try{const r=await fetch(`${CONFIG.backend}/api/admin/deposits/${editarDeposito.dataset.editarDeposito}/update-value`,{method:'POST',headers:{'content-type':'application/json','x-owner-password':senhaDono},body:JSON.stringify({valor})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||d.error||'Erro ao editar deposito.');await carregarPainel()}catch(err){alert(err.message||'Erro ao editar deposito.');editarDeposito.disabled=false;editarDeposito.textContent='Editar valor'}return}const renovarEntrega=e.target.closest('[data-renovar-entrega]');if(renovarEntrega){if(!confirm('Chamar esta entrega novamente por mais 15 minutos? O saldo da empresa sera reservado de novo.'))return;renovarEntrega.disabled=true;renovarEntrega.textContent='Chamando...';try{const r=await fetch(`${CONFIG.backend}/api/admin/deliveries/${renovarEntrega.dataset.renovarEntrega}/renew`,{method:'POST',headers:{'content-type':'application/json','x-owner-password':senhaDono}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||d.error||'Erro ao chamar entrega novamente.');await carregarPainel()}catch(err){alert(err.message||'Erro ao chamar entrega novamente.');renovarEntrega.disabled=false;renovarEntrega.textContent='Chamar novamente'}return}const finalizarEntrega=e.target.closest('[data-finalizar-entrega]');if(finalizarEntrega){const entrega=entregas.find(item=>item.id===finalizarEntrega.dataset.finalizarEntrega)||{};const motivo=prompt('Motivo para marcar como finalizada e abater saldo:','Motoboy realizou por fora na correria');if(!motivo||!motivo.trim()){alert('Informe o motivo.');return}let driverCpf='';if(!String(entrega.motoboyCpf||'').replace(/\D/g,'').length){const listaMotoboys=motoboys.length?'\n\nMotoboys cadastrados:\n'+motoboys.map(m=>`${m.nome||'-'} - CPF ${m.cpf||'-'}`).join('\n'):'';driverCpf=prompt('Esta entrega nao tem motoboy vinculado. Digite o CPF do motoboy que fez:'+listaMotoboys);driverCpf=String(driverCpf||'').replace(/\D/g,'');if(driverCpf.length!==11){alert('CPF do motoboy precisa ter 11 numeros e estar cadastrado.');return}}const valorAtual=Number(entrega.valor||entrega.saldoReservado||0);const valorDigitado=prompt('Valor para abater do saldo da empresa:',String(valorAtual||'').replace('.',','));const valor=Number(String(valorDigitado||'').replace(/[^0-9,.]/g,'').replace(',','.'));if(!valor||valor<=0){alert('Informe um valor valido para abater.');return}if(!confirm(`Isso vai abater ${moeda(valor)} do saldo da empresa e entrar no relatorio do motoboy/app. Confirma?`))return;finalizarEntrega.disabled=true;finalizarEntrega.textContent='Finalizando...';try{const r=await fetch(`${CONFIG.backend}/api/admin/deliveries/${finalizarEntrega.dataset.finalizarEntrega}/force-finish`,{method:'POST',headers:{'content-type':'application/json','x-owner-password':senhaDono},body:JSON.stringify({reason:motivo.trim(),driverCpf,valor})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||d.error||'Erro ao finalizar entrega.');await carregarPainel()}catch(err){alert(err.message||'Erro ao finalizar entrega.');finalizarEntrega.disabled=false;finalizarEntrega.textContent='Marcar finalizada'}return}const resetSenha=e.target.closest('[data-reset-senha-empresa]');if(resetSenha){const nova=prompt('Digite a nova senha da empresa (minimo 6 caracteres):');if(!nova||nova.length<6){alert('A senha nova precisa ter pelo menos 6 caracteres.');return}if(!confirm('Trocar a senha desta empresa e derrubar sessoes antigas?'))return;resetSenha.disabled=true;resetSenha.textContent='Alterando...';try{const r=await fetch(`${CONFIG.backend}/api/admin/companies/password-recovery/${resetSenha.dataset.resetSenhaEmpresa}/reset`,{method:'POST',headers:{'content-type':'application/json','x-owner-password':senhaDono},body:JSON.stringify({newPassword:nova})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||d.error||'Erro ao alterar senha.');const telEmpresa=String(d.company?.telefoneEmpresa||'').replace(/\D/g,'');alert(`Senha alterada. Agora envie para a empresa pelo WhatsApp: ${telEmpresa||'telefone nao informado'}`);await carregarPainel()}catch(err){alert(err.message||'Erro ao alterar senha.');resetSenha.disabled=false;resetSenha.textContent='Alterar senha'}return}const aprovar=e.target.closest('[data-aprovar-deposito]');if(aprovar){if(!confirm('Aprovar este deposito somente se o dinheiro caiu mesmo. Confirma?'))return;aprovar.disabled=true;aprovar.textContent='Aprovando...';try{const r=await fetch(`${CONFIG.backend}/api/admin/deposits/${aprovar.dataset.aprovarDeposito}/approve`,{method:'POST',headers:{'content-type':'application/json','x-owner-password':senhaDono}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||d.error||'Erro ao aprovar deposito.');alert(`Deposito aprovado. Saldo disponivel: ${moeda(d.disponivel)}`);await carregarPainel()}catch(err){alert(err.message||'Erro ao aprovar deposito.');aprovar.disabled=false;aprovar.textContent='Aprovar'}return}const cancelarCredito=e.target.closest('[data-cancelar-credito]');if(cancelarCredito){const reason=prompt('Motivo para cancelar este credito aprovado:');if(!reason||!reason.trim()){alert('Precisa informar o motivo.');return}if(!confirm('Isso vai tirar esse valor do saldo da empresa se ainda estiver disponivel. Confirma?'))return;cancelarCredito.disabled=true;cancelarCredito.textContent='Cancelando...';try{const r=await fetch(`${CONFIG.backend}/api/admin/deposits/${cancelarCredito.dataset.cancelarCredito}/cancel-credit`,{method:'POST',headers:{'content-type':'application/json','x-owner-password':senhaDono},body:JSON.stringify({reason:reason.trim()})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||d.error||'Erro ao cancelar credito.');alert(`Credito cancelado. Saldo disponivel: ${moeda(d.disponivel)}`);await carregarPainel()}catch(err){alert(err.message||'Erro ao cancelar credito.');cancelarCredito.disabled=false;cancelarCredito.textContent='Cancelar credito'}return}const recusar=e.target.closest('[data-recusar-deposito]');if(recusar){const reason=prompt('Motivo da recusa:')||'Recusado pelo dono';recusar.disabled=true;recusar.textContent='Recusando...';try{const r=await fetch(`${CONFIG.backend}/api/admin/deposits/${recusar.dataset.recusarDeposito}/reject`,{method:'POST',headers:{'content-type':'application/json','x-owner-password':senhaDono},body:JSON.stringify({reason})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||d.error||'Erro ao recusar deposito.');await carregarPainel()}catch(err){alert(err.message||'Erro ao recusar deposito.');recusar.disabled=false;recusar.textContent='Recusar'}return}const b=e.target.closest('[data-cancelar]');if(!b)return;const motivo=prompt('Motivo do cancelamento:');if(!motivo||!motivo.trim()){alert('Cancelamento precisa de motivo.');return}b.disabled=true;b.textContent='Cancelando...';try{const r=await fetch(`${CONFIG.backend}/api/admin/rides/${b.dataset.cancelar}/cancel`,{method:'POST',headers:{'content-type':'application/json','x-owner-password':senhaDono},body:JSON.stringify({reason:motivo.trim()})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||d.error||'Erro ao cancelar corrida.');await carregarPainel()}catch(err){alert(err.message||'Erro ao cancelar corrida.');b.disabled=false;b.textContent='Cancelar'}});$('periodo').onchange=()=>{renderFunil();render();renderEntregas();renderDepositos();renderContasEmpresas()};$('status').onchange=()=>{renderFunil();render();renderEntregas()};['depositoData','depositoStatus','depositoLimite','dataInicio','dataFim'].forEach(id=>{const el=$(id);if(el)el.onchange=()=>{renderFunil();render();renderEntregas();renderDepositos();renderContasEmpresas()}});async function carregarPainel(){const r=await fetch(`${CONFIG.backend}/api/admin/state`,{headers:{'x-owner-password':senhaDono},cache:'no-store'});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||d.error||'Erro ao carregar painel do dono.');corridas=Array.isArray(d.corridas)?d.corridas:[];entregas=Array.isArray(d.entregas)?d.entregas:[];motoboys=Array.isArray(d.motoboys)?d.motoboys:[];depositos=Array.isArray(d.depositos)?d.depositos:[];recuperacoesSenhaEmpresa=Array.isArray(d.recuperacoesSenhaEmpresa)?d.recuperacoesSenhaEmpresa:[];empresas=Array.isArray(d.empresas)?d.empresas:[];eventosFunil=Array.isArray(d.eventosFunil)?d.eventosFunil:[];renderFunil();render();renderEntregas();renderMotoboys();renderDepositos();renderContasEmpresas();renderRecuperacoesSenha()}function abrirPainel(){ $('login').classList.add('hidden');$('painel').classList.remove('hidden');carregarPainel().catch(err=>alert(err.message||'Erro ao carregar painel do dono.'));if(painelTimer){clearInterval(painelTimer);painelTimer=null}}$('entrar').onclick=async()=>{const btn=$('entrar'),senha=$('senha').value.trim();senhaDono=senha;if(!senha){alert('Digite a senha do dono.');return}btn.disabled=true;btn.textContent='Entrando...';try{const r=await fetch(`${CONFIG.backend}/api/admin/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:senha})});const d=await r.json().catch(()=>({}));if(!r.ok){throw new Error(d.error==='owner_password_not_configured'?'Senha do dono ainda nao foi configurada no Render. Configure OWNER_PASSWORD.':'Senha incorreta')}abrirPainel()}catch(e){alert(e.message||'Nao consegui confirmar a senha agora.');btn.disabled=false;btn.textContent='Entrar'}};
 </script>
 <style>
-  .delivery-report-toolbar{display:grid;grid-template-columns:minmax(220px,360px) auto;align-items:end;justify-content:space-between;gap:10px}
+  .delivery-report-toolbar{display:grid;grid-template-columns:repeat(2,minmax(220px,360px)) auto;align-items:end;justify-content:space-between;gap:10px}
   .delivery-report-toolbar button{padding:0 18px;white-space:nowrap}
   .delivery-filter-status{grid-column:1/-1;color:var(--muted);font-size:.8rem}
   #entregas-section:fullscreen,#entregas-section.report-expanded{background:#090b13;padding:18px;border:0;border-radius:0;width:100vw;height:100vh;max-width:none}
@@ -26,10 +26,11 @@ document.addEventListener('click',async e=>{const aprovarPagamento=e.target.clos
 
     const toolbar = document.createElement('div');
     toolbar.className = 'delivery-report-toolbar';
-    toolbar.innerHTML = '<label>Filtrar por motoboy<select id="filtroMotoboyEntregas"><option value="todos">Todos os motoboys</option></select></label><button id="telaCheiaEntregas" type="button">Tela cheia</button><div id="statusFiltroEntregas" class="delivery-filter-status">Mostrando todas as entregas.</div>';
+    toolbar.innerHTML = '<label>Filtrar por motoboy<select id="filtroMotoboyEntregas"><option value="todos">Todos os motoboys</option></select></label><label>Filtrar por empresa<select id="filtroEmpresaEntregas"><option value="todas">Todas as empresas</option></select></label><button id="telaCheiaEntregas" type="button">Tela cheia</button><div id="statusFiltroEntregas" class="delivery-filter-status">Mostrando todas as entregas.</div>';
     report.before(toolbar);
 
     const select = document.getElementById('filtroMotoboyEntregas');
+    const companySelect = document.getElementById('filtroEmpresaEntregas');
     const fullscreenButton = document.getElementById('telaCheiaEntregas');
     const filterStatus = document.getElementById('statusFiltroEntregas');
     const normalize = (value) => String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('pt-BR');
@@ -38,7 +39,7 @@ document.addEventListener('click',async e=>{const aprovarPagamento=e.target.clos
       return tables.length > 1 ? tables[tables.length - 1] : null;
     };
 
-    function applyDriverFilter() {
+    function applyDeliveryFilters() {
       const table = detailTable();
       const summaryTable = report.querySelector('table');
       if (!table) {
@@ -46,32 +47,52 @@ document.addEventListener('click',async e=>{const aprovarPagamento=e.target.clos
         return;
       }
       const rows = [...table.querySelectorAll('tbody tr')];
-      const selected = select.value;
+      const selectedDriver = select.value;
+      const selectedCompany = companySelect.value;
       let visible = 0;
       rows.forEach((row) => {
-        const name = row.cells[7]?.textContent.trim() || '-';
-        const matches = selected === 'todos' || (selected === 'sem' ? name === '-' : normalize(name) === selected);
+        const driverName = row.cells[7]?.textContent.trim() || '-';
+        const companyName = row.cells[2]?.textContent.trim() || '-';
+        const matchesDriver = selectedDriver === 'todos' || (selectedDriver === 'sem' ? driverName === '-' : normalize(driverName) === selectedDriver);
+        const matchesCompany = selectedCompany === 'todas' || normalize(companyName) === selectedCompany;
+        const matches = matchesDriver && matchesCompany;
         row.hidden = !matches;
         if (matches) visible += 1;
       });
-      if (summaryTable && summaryTable !== table) summaryTable.hidden = selected !== 'todos';
-      const label = select.options[select.selectedIndex]?.textContent || 'Todos os motoboys';
-      filterStatus.textContent = selected === 'todos'
-        ? `Mostrando todas as ${visible} entregas.`
-        : `Mostrando ${visible} entrega${visible === 1 ? '' : 's'} de ${label}.`;
+      if (summaryTable && summaryTable !== table) summaryTable.hidden = selectedDriver !== 'todos' || selectedCompany !== 'todas';
+      const driverLabel = select.options[select.selectedIndex]?.textContent || 'Todos os motoboys';
+      const companyLabel = companySelect.options[companySelect.selectedIndex]?.textContent || 'Todas as empresas';
+      const quantity = `${visible} entrega${visible === 1 ? '' : 's'}`;
+      if (selectedDriver === 'todos' && selectedCompany === 'todas') {
+        filterStatus.textContent = `Mostrando todas as ${quantity}.`;
+      } else if (selectedDriver !== 'todos' && selectedCompany !== 'todas') {
+        filterStatus.textContent = `${driverLabel} fez ${quantity} para ${companyLabel}.`;
+      } else if (selectedDriver !== 'todos') {
+        filterStatus.textContent = `${driverLabel} fez ${quantity} no total.`;
+      } else {
+        filterStatus.textContent = `${companyLabel} teve ${quantity} no total.`;
+      }
     }
 
-    function refreshDriverOptions() {
+    function refreshFilterOptions() {
       const table = detailTable();
-      const current = select.value;
+      const currentDriver = select.value;
+      const currentCompany = companySelect.value;
       const names = table
         ? [...table.querySelectorAll('tbody tr')].map((row) => row.cells[7]?.textContent.trim() || '-').filter((name) => name !== '-')
         : [];
+      const companies = table
+        ? [...table.querySelectorAll('tbody tr')].map((row) => row.cells[2]?.textContent.trim() || '-').filter((name) => name !== '-')
+        : [];
       const uniqueNames = [...new Map(names.map((name) => [normalize(name), name])).entries()].sort((a, b) => a[1].localeCompare(b[1], 'pt-BR'));
+      const uniqueCompanies = [...new Map(companies.map((name) => [normalize(name), name])).entries()].sort((a, b) => a[1].localeCompare(b[1], 'pt-BR'));
       select.replaceChildren(new Option('Todos os motoboys', 'todos'), new Option('Sem motoboy', 'sem'));
       uniqueNames.forEach(([value, label]) => select.add(new Option(label, value)));
-      select.value = [...select.options].some((option) => option.value === current) ? current : 'todos';
-      applyDriverFilter();
+      companySelect.replaceChildren(new Option('Todas as empresas', 'todas'));
+      uniqueCompanies.forEach(([value, label]) => companySelect.add(new Option(label, value)));
+      select.value = [...select.options].some((option) => option.value === currentDriver) ? currentDriver : 'todos';
+      companySelect.value = [...companySelect.options].some((option) => option.value === currentCompany) ? currentCompany : 'todas';
+      applyDeliveryFilters();
     }
 
     function updateFullscreenButton() {
@@ -79,7 +100,8 @@ document.addEventListener('click',async e=>{const aprovarPagamento=e.target.clos
       fullscreenButton.textContent = expanded ? 'Sair da tela cheia' : 'Tela cheia';
     }
 
-    select.addEventListener('change', applyDriverFilter);
+    select.addEventListener('change', applyDeliveryFilters);
+    companySelect.addEventListener('change', applyDeliveryFilters);
     fullscreenButton.addEventListener('click', async () => {
       if (document.fullscreenElement === section) {
         await document.exitFullscreen();
@@ -107,13 +129,13 @@ document.addEventListener('click',async e=>{const aprovarPagamento=e.target.clos
       refreshQueued = true;
       queueMicrotask(() => {
         refreshQueued = false;
-        refreshDriverOptions();
+        refreshFilterOptions();
       });
     }).observe(report, { childList: true, subtree: true });
 
-    refreshDriverOptions();
+    refreshFilterOptions();
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js?v=158', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
+      navigator.serviceWorker.register('./sw.js?v=161', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
     }
   })();
 </script>
