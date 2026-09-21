@@ -138,7 +138,7 @@ function dailyPlanRef(companyId, dayKey = todayKeySaoPaulo()) {
 }
 
 function isFixedFoodDelivery(type) {
-  return /lanche|comida|pizza|pastel|acai|sorvete|marmita/i.test(String(type || ''));
+  return /lanche|comida|pizza|pastel|acai|sorvete|marmita|farmacia/i.test(String(type || ''));
 }
 
 function isDailyPlanDelivery(type) {
@@ -247,7 +247,7 @@ function fixedFoodDeliveryFare(delivery = {}) {
 
   let total = 0;
   for (let index = 0; index < deliveryStops; index += 1) {
-    total += isSpecialFoodDestination(destinations[index] || '') ? 14 : 5.5;
+    total += isSpecialFoodDestination(destinations[index] || '') ? 16 : 6.5;
   }
   return money(total);
 }

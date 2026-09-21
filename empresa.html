@@ -1720,16 +1720,16 @@
               Plano Diario MotoJa Pro - R$ 4,00 por entrega/ponto
             </option>
             <option value="Lanche / pizza / pastel / marmita">
-              Lanche / pizza / pastel / marmita - R$ 5,50 ou R$ 14,00
+              Lanche / pizza / pastel / marmita - R$ 6,50 ou R$ 16,00
             </option>
             <option value="Acai / pote de sorvete">
-              Acai / pote de sorvete - R$ 5,50 ou R$ 14,00
+              Acai / pote de sorvete - R$ 6,50 ou R$ 16,00
             </option>
             <option value="Encomendas">Encomendas - R$ 2,00/km</option>
             <option value="Roupa / tenis / acessorio">
               Roupa / tenis / acessorio - R$ 2,00/km
             </option>
-            <option value="Farmacia">Farmacia - R$ 2,00/km</option>
+            <option value="Farmacia">Farmacia - R$ 6,50 ou R$ 16,00</option>
             <option value="Outro">Outro - R$ 2,00/km</option>
           </select>
         </label>
@@ -1822,9 +1822,10 @@
           Confirmar e chamar motoboy
         </button>
         <p class="small">
-          Lanche, pizza, pastel, marmita, acai e pote de sorvete: R$ 5,50 por
-          entrega. Para Martinho Prado, Tujuguaba ou Iate: R$ 14,00 por entrega.
-          Encomendas, produtos e farmacia: R$ 2,00 por km.
+          Lanche, pizza, pastel, marmita, acai, pote de sorvete e farmacia:
+          R$ 6,50 por entrega. Para Martinho Prado, Tujuguaba ou Iate:
+          R$ 16,00 por entrega. Encomendas, roupas, acessorios e outros:
+          R$ 2,00 por km.
         </p>
       </section>
       <section class="box app-area hidden">
@@ -2220,7 +2221,7 @@
         return !!tipo && tipo !== "Delivery / encomendas";
       }
       function comidaFixa(tipo) {
-        return /lanche|comida|pizza|pastel|acai|sorvete|marmita/i.test(tipo);
+        return /lanche|comida|pizza|pastel|acai|sorvete|marmita|farmacia/i.test(tipo);
       }
       function textoBusca(v) {
         return String(v || "")
@@ -2395,7 +2396,7 @@
         if (comidaFixa(tipo)) {
           let total = 0;
           for (let i = 0; i < qtd; i++) {
-            total += destinoComidaEspecial(pontos[i] || "") ? 14 : 5.5;
+            total += destinoComidaEspecial(pontos[i] || "") ? 16 : 6.5;
           }
           return Math.round(total * 100) / 100;
         }
@@ -2407,7 +2408,7 @@
         if (!comidaFixa(tipo)) return "R$ 2,00 por km";
         const especiais = pontos.filter(destinoComidaEspecial).length,
           normais = Math.max(0, Math.max(1, paradas) - especiais);
-        return `R$ 5,50 por entrega${especiais ? ` + ${especiais} ponto(s) distante(s) a R$ 14,00` : ""} (${normais} normal / ${especiais} distante)`;
+        return `R$ 6,50 por entrega${especiais ? ` + ${especiais} ponto(s) distante(s) a R$ 16,00` : ""} (${normais} normal / ${especiais} distante)`;
       }
       function quantidadePontos() {
         const valor = $("paradas").value;
@@ -4046,7 +4047,7 @@
       };
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker
-          .register("./sw.js?v=167", { updateViaCache: "none" })
+          .register("./sw.js?v=169", { updateViaCache: "none" })
           .then((r) => r.update())
           .catch(() => {});
       }
