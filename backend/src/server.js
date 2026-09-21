@@ -1642,6 +1642,15 @@ function deliveryPublicData(delivery) {
     })) : [],
     descricao: String(delivery.descricao || '').slice(0, 500).trim(),
     observacao: String(delivery.observacao || '').slice(0, 500).trim(),
+    dadosNaNota: delivery.dadosNaNota === true || (
+      !String(delivery.recebedor || '').trim()
+      && !onlyDigits(delivery.telefoneRecebedor)
+      && !String(delivery.descricao || '').trim()
+      && !String(delivery.observacao || '').trim()
+      && (!Array.isArray(delivery.pontosExtras) || delivery.pontosExtras.every((p) => (
+        !String(p?.recebedor || '').trim() && !onlyDigits(p?.telefoneRecebedor)
+      )))
+    ),
     integracaoOrigem: String(delivery.integracaoOrigem || '').slice(0, 60).trim(),
     integracaoPedidoId: String(delivery.integracaoPedidoId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80),
     integracaoPedidoRecebidoEm: String(delivery.integracaoPedidoRecebidoEm || '').slice(0, 80).trim(),
@@ -1734,6 +1743,7 @@ async function notifyTelegramAboutDelivery(deliveryId, delivery) {
     delivery.telefoneRecebedor ? `<b>WhatsApp recebedor:</b> ${escapeTelegram(delivery.telefoneRecebedor)}` : '',
     delivery.descricao ? `<b>Pedido:</b> ${escapeTelegram(delivery.descricao)}` : '',
     delivery.observacao ? `<b>Obs:</b> ${escapeTelegram(delivery.observacao)}` : '',
+    delivery.dadosNaNota ? '<b>Dados do cliente:</b> conferir na nota impressa' : '',
     '',
     `<b>Expira em:</b> ${DELIVERY_EXPIRE_MINUTES} minutos`,
     '',
@@ -2459,7 +2469,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'driver-company-stability-v159' });
+  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'company-quick-order-v160' });
 });
 
 app.get('/', (_req, res) => {
@@ -5054,8 +5064,11 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
     delivery.telefoneEmpresa = req.companyId;
     delivery.empresa = cleanText(req.company.empresa || delivery.empresa, 120);
     delivery.responsavel = cleanText(req.company.responsavel || delivery.responsavel, 120);
-    if (!delivery.empresa || !delivery.responsavel || !delivery.retirada || !delivery.entrega || !delivery.recebedor || delivery.telefoneEmpresa.length < 10 || delivery.telefoneEmpresa.length > 11 || delivery.telefoneRecebedor.length < 10 || delivery.telefoneRecebedor.length > 11) {
-      return res.status(400).json({ error: 'preencha_empresa_responsavel_telefones_retirada_entrega_recebedor' });
+    if (!delivery.empresa || !delivery.responsavel || !delivery.retirada || !delivery.entrega || delivery.telefoneEmpresa.length < 10 || delivery.telefoneEmpresa.length > 11) {
+      return res.status(400).json({ error: 'preencha_empresa_responsavel_telefone_retirada_entrega' });
+    }
+    if (delivery.telefoneRecebedor && (delivery.telefoneRecebedor.length < 10 || delivery.telefoneRecebedor.length > 11)) {
+      return res.status(400).json({ error: 'telefone_recebedor_invalido', message: 'Confira o WhatsApp opcional de quem recebe ou deixe o campo vazio.' });
     }
     if (!isPricedDeliveryType(delivery.tipoEntrega)) {
       return res.status(400).json({ error: 'tipo_entrega_sem_preco', message: 'Selecione um tipo de entrega com preco definido.' });
@@ -5067,8 +5080,11 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
     if (delivery.paradas > 1 && pontosExtras.length !== delivery.paradas - 1) {
       return res.status(400).json({ error: 'pontos_extras_invalidos', message: `Informe exatamente ${delivery.paradas - 1} ponto(s) extra(s).` });
     }
-    if (pontosExtras.some((p) => !String(p.digitado || '').trim() || !String(p.recebedor || '').trim() || onlyDigits(p.telefoneRecebedor).length < 10 || onlyDigits(p.telefoneRecebedor).length > 11 || !validCoordinate(p))) {
-      return res.status(400).json({ error: 'pontos_extras_invalidos', message: 'Confira endereco, nome e WhatsApp de todos os pontos extras antes de chamar o motoboy.' });
+    if (pontosExtras.some((p) => {
+      const telefone = onlyDigits(p.telefoneRecebedor);
+      return !String(p.digitado || '').trim() || (telefone && (telefone.length < 10 || telefone.length > 11)) || !validCoordinate(p);
+    })) {
+      return res.status(400).json({ error: 'pontos_extras_invalidos', message: 'Confira o endereco de cada ponto extra e qualquer WhatsApp opcional preenchido.' });
     }
     ensureResolvedPlaceMatches(delivery.retirada, delivery.retiradaEncontrada || delivery.retirada, 'Endereco de retirada');
     ensureResolvedAddressIsSpecific(delivery.retirada, delivery.retiradaEncontrada || delivery.retirada, 'Endereco de retirada');

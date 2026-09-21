@@ -714,6 +714,8 @@
       .delivery-form > #cadastroLoja,
       .delivery-form > #tipoEntregaAviso,
       .delivery-form > .grid2,
+      .delivery-form > #toggleDetalhesEntrega,
+      .delivery-form > #detalhesEntrega,
       .delivery-form > #campoEnderecosExtras,
       .delivery-form > #status,
       .delivery-form > #resultado,
@@ -727,6 +729,38 @@
         width: auto;
         min-height: 40px;
         padding: 0 15px;
+      }
+      .quick-order-note {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 12px 14px;
+        border: 1px solid rgba(255, 121, 0, 0.35);
+        border-radius: 6px;
+        background: rgba(255, 121, 0, 0.08);
+        color: #d7dbe2;
+        font-size: 0.86rem;
+        line-height: 1.45;
+      }
+      .quick-order-note strong {
+        color: #ff9b3d;
+      }
+      .delivery-details {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        padding: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        background: #0d1117;
+      }
+      .delivery-details > p,
+      .delivery-details > .grid2 {
+        grid-column: 1 / -1;
+      }
+      .delivery-details.hidden {
+        display: none !important;
       }
       .company-authenticated input,
       .company-authenticated textarea,
@@ -871,6 +905,12 @@
           grid-template-columns: 1fr;
         }
         .delivery-form > * {
+          grid-column: 1 !important;
+        }
+        .delivery-details {
+          grid-template-columns: 1fr;
+        }
+        .delivery-details > * {
           grid-column: 1 !important;
         }
         .company-authenticated .box,
@@ -1385,21 +1425,6 @@
             id="entrega"
             placeholder="Rua, numero, bairro"
         /></label>
-        <div class="grid2">
-          <label
-            >Nome de quem recebe<input
-              id="recebedor"
-              placeholder="Ex: Maria"
-              required
-          /></label>
-          <label
-            >WhatsApp de quem recebe<input
-              id="telefoneRecebedor"
-              inputmode="tel"
-              placeholder="Obrigatorio com DDD"
-              required
-          /></label>
-        </div>
         <label
           >Quantidade de entregas / pontos
           <select id="paradas">
@@ -1423,24 +1448,47 @@
         </label>
         <div id="campoEnderecosExtras" style="display: none">
           <p class="muted">
-            <strong>Pontos extras</strong> - preencha endereco, nome e WhatsApp
-            de cada entrega.
+            <strong>Pontos extras</strong> - informe o endereco de cada entrega.
+            Nome e WhatsApp sao opcionais.
           </p>
           <div id="pontosExtrasCampos" style="display: grid; gap: 10px"></div>
           <textarea id="enderecosExtras" class="hidden"></textarea>
         </div>
-        <label
-          >Descricao do pedido<textarea
-            id="descricao"
-            placeholder="Ex: 2 camisetas e 1 tenis / 3 lanches / encomenda em pacote"
-          ></textarea>
-        </label>
-        <label
-          >Observacao<textarea
-            id="observacao"
-            placeholder="Ex: cobrar na entrega, cuidado com pacote, precisa voltar com maquininha..."
-          ></textarea>
-        </label>
+        <div class="quick-order-note">
+          <strong>Chamada rapida</strong>
+          <span>Se os dados do cliente ja estiverem na nota impressa, basta informar o endereco e calcular.</span>
+        </div>
+        <button id="toggleDetalhesEntrega" type="button" class="secondary" aria-expanded="false">
+          Adicionar nome, WhatsApp e observacoes
+        </button>
+        <div id="detalhesEntrega" class="delivery-details hidden">
+          <p class="muted">Tudo aqui e opcional. Preencha apenas quando o motoboy precisar dessas informacoes fora da nota.</p>
+          <div class="grid2">
+            <label
+              >Nome de quem recebe (opcional)<input
+                id="recebedor"
+                placeholder="Ex: Maria"
+            /></label>
+            <label
+              >WhatsApp de quem recebe (opcional)<input
+                id="telefoneRecebedor"
+                inputmode="tel"
+                placeholder="Com DDD"
+            /></label>
+          </div>
+          <label
+            >Descricao do pedido (opcional)<textarea
+              id="descricao"
+              placeholder="Ex: 3 lanches ou encomenda em pacote"
+            ></textarea>
+          </label>
+          <label
+            >Observacao (opcional)<textarea
+              id="observacao"
+              placeholder="Ex: cobrar na entrega ou voltar com maquininha"
+            ></textarea>
+          </label>
+        </div>
         <div id="status" class="status"></div>
         <div id="resultado" class="result"></div>
         <button id="calcular" type="button">Calcular entrega</button>
@@ -2047,7 +2095,7 @@
         }
         let html = "";
         for (let i = 2; i <= pontos; i++) {
-          html += `<div class="box" style="padding:12px;gap:10px"><strong>Ponto ${i}</strong><label>Endereco do ponto ${i}<input class="extra-endereco" data-ordem="${i}" placeholder="Rua, numero, bairro"></label><div class="grid2"><label>Nome de quem recebe<input class="extra-recebedor" data-ordem="${i}" placeholder="Ex: Maria"></label><label>WhatsApp de quem recebe<input class="extra-telefone" data-ordem="${i}" inputmode="tel" placeholder="Obrigatorio com DDD"></label></div></div>`;
+          html += `<div class="box" style="padding:12px;gap:10px"><strong>Ponto ${i}</strong><label>Endereco do ponto ${i}<input class="extra-endereco" data-ordem="${i}" placeholder="Rua, numero, bairro"></label><div class="grid2"><label>Nome de quem recebe (opcional)<input class="extra-recebedor" data-ordem="${i}" placeholder="Ex: Maria"></label><label>WhatsApp de quem recebe (opcional)<input class="extra-telefone" data-ordem="${i}" inputmode="tel" placeholder="Com DDD"></label></div></div>`;
         }
         box.innerHTML = html;
         box.querySelectorAll("input").forEach((input) =>
@@ -2299,6 +2347,17 @@
         }
       }
 
+      function mostrarDetalhesEntrega(mostrar) {
+        const detalhes = $("detalhesEntrega"),
+          botao = $("toggleDetalhesEntrega");
+        if (!detalhes || !botao) return;
+        detalhes.classList.toggle("hidden", !mostrar);
+        botao.setAttribute("aria-expanded", mostrar ? "true" : "false");
+        botao.textContent = mostrar
+          ? "Ocultar dados opcionais"
+          : "Adicionar nome, WhatsApp e observacoes";
+      }
+
       function prepararNovaEntrega() {
         [
           "entrega",
@@ -2319,6 +2378,7 @@
         $("confirmar").disabled = false;
         $("confirmar").style.display = "none";
         $("confirmar").textContent = "Confirmar e chamar motoboy";
+        mostrarDetalhesEntrega(false);
         atualizarCampoManual();
         atualizarCampoExtras();
       }
@@ -2709,6 +2769,7 @@
         if (o.telefoneCliente) $("telefoneRecebedor").value = o.telefoneCliente;
         const itens = itensPedidoApi(o);
         if (itens) $("descricao").value = itens;
+        if (o.cliente || o.telefoneCliente || itens) mostrarDetalhesEntrega(true);
         if (o.externalId)
           $("observacao").value =
             `Pedido Cardapio Web ${o.externalId}${o.complemento ? " - " + o.complemento : ""}`;
@@ -3067,6 +3128,11 @@
           );
       };
       $("valorDeposito").addEventListener("input", () => mostrarBotaoPix(""));
+      $("toggleDetalhesEntrega").onclick = () => {
+        const abrir = $("detalhesEntrega").classList.contains("hidden");
+        mostrarDetalhesEntrega(abrir);
+        if (abrir) $("recebedor").focus();
+      };
       carregarSaldo();
       [
         "empresa",
@@ -3107,12 +3173,21 @@
           !responsavel ||
           telefoneEmpresa.length < 10 ||
           !retiradaTxt ||
-          !entregaTxt ||
-          !recebedor ||
-          telefoneRecebedor.length < 10
+          !entregaTxt
         ) {
           mostrarStatus(
-            "Preencha empresa, responsavel, WhatsApp, retirada, entrega, nome e WhatsApp de quem recebe.",
+            "Confira os dados da empresa e informe o endereco de entrega.",
+            true,
+          );
+          return;
+        }
+        if (
+          telefoneRecebedor &&
+          (telefoneRecebedor.length < 10 || telefoneRecebedor.length > 11)
+        ) {
+          mostrarDetalhesEntrega(true);
+          mostrarStatus(
+            "Confira o WhatsApp opcional de quem recebe ou deixe o campo vazio.",
             true,
           );
           return;
@@ -3161,11 +3236,14 @@
           if (
             extrasDigitados.some(
               (p) =>
-                !p.endereco || !p.recebedor || p.telefoneRecebedor.length < 10,
+                !p.endereco ||
+                (p.telefoneRecebedor &&
+                  (p.telefoneRecebedor.length < 10 ||
+                    p.telefoneRecebedor.length > 11)),
             )
           ) {
             mostrarStatus(
-              "Preencha endereco, nome e WhatsApp de todos os pontos extras.",
+              "Confira o endereco de cada ponto extra. Se preencher WhatsApp, use DDD e numero completos.",
               true,
             );
             return;
@@ -3293,6 +3371,14 @@
                 })),
                 descricao: d.descricao,
                 observacao: d.observacao,
+                dadosNaNota:
+                  !d.recebedor &&
+                  !d.telefoneRecebedor &&
+                  !d.descricao &&
+                  !d.observacao &&
+                  (d.extras || []).every(
+                    (p) => !p.recebedor && !p.telefoneRecebedor,
+                  ),
               }),
             });
           const data = await r.json().catch(() => ({}));
@@ -3354,7 +3440,7 @@
           }
         };
     </script>
-    <script src="./empresa-tracking.js?v=143" defer></script>
+    <script src="./empresa-tracking.js?v=164" defer></script>
     <script src="./empresa-pedidos.js?v=134" defer></script>
     <script>
       (() => {

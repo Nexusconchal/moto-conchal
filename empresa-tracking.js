@@ -296,7 +296,7 @@
 
   window.addEventListener('DOMContentLoaded', async () => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js?v=163', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
+      navigator.serviceWorker.register('./sw.js?v=164', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
     }
     try {
       await ensureLibraries();
