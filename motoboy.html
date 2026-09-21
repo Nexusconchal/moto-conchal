@@ -1013,11 +1013,17 @@
           vapidKey:
             "BBAc8wjH-aMr3NFRG7zglJxcLgkWk7osJR_FvZ_C3nA9nH8mlKc-pW4LPFPB_9NZfJhlxLyOyTXBeMnGN3CsWRY",
         };
-      async function fetchMotoboyComRetry(url, opcoes = {}, ms = 18000) {
+      async function fetchMotoboyComRetry(url, opcoes = {}, ms = 18000, tentativas = 2) {
         let ultimo;
-        for (let i = 0; i < 2; i++) {
+        const sinalExterno = opcoes.signal;
+        for (let i = 0; i < tentativas; i++) {
           const ctrl = new AbortController(),
             timer = setTimeout(() => ctrl.abort(), ms);
+          const cancelar = () => ctrl.abort();
+          if (sinalExterno) {
+            if (sinalExterno.aborted) ctrl.abort();
+            else sinalExterno.addEventListener("abort", cancelar, { once: true });
+          }
           try {
             return await fetch(url, {
               ...opcoes,
@@ -1026,9 +1032,12 @@
             });
           } catch (e) {
             ultimo = e;
-            await new Promise((r) => setTimeout(r, 900));
+            if (sinalExterno?.aborted) throw e;
+            if (i + 1 < tentativas)
+              await new Promise((r) => setTimeout(r, 900));
           } finally {
             clearTimeout(timer);
+            sinalExterno?.removeEventListener("abort", cancelar);
           }
         }
         const msg =
@@ -1054,7 +1063,8 @@
             ? "entregas"
             : "pendentes",
         requestSeq = 0,
-        jobsRequestsInFlight = 0;
+        jobsRequestsInFlight = 0,
+        jobsRequestController = null;
       let ganhosPeriodo = "today",
         ganhosResumo = null,
         ganhosDias = [],
@@ -2019,7 +2029,11 @@
         if (!motoboyCpf) return;
         if (modo === "ganhos") return;
         if (silencioso && jobsRequestsInFlight > 0) return;
+        if (jobsRequestController) jobsRequestController.abort();
+        const requestController = new AbortController();
+        jobsRequestController = requestController;
         jobsRequestsInFlight += 1;
+        window.__motojaJobsLoading = true;
         const seq = ++requestSeq,
           servico = nomeServico(),
           kind = recursoAtual(),
@@ -2027,12 +2041,12 @@
           cacheKey = chaveLista(kind, scope),
           cached = jobsCache.get(cacheKey);
         atualizarAbas();
-        if (!silencioso && cached && Date.now() - cached.t < 60000)
+        if (!silencioso && cached)
           render(cached.jobs);
         else if (!silencioso)
           $("lista").innerHTML =
             `<div class="empty">Carregando ${servico}s...</div>`;
-        const avisoDemora = !silencioso && !(cached && Date.now() - cached.t < 60000)
+        const avisoDemora = !silencioso && !cached
           ? setTimeout(() => {
               if (seq === requestSeq) {
                 $("lista").innerHTML = `<div class="empty">O servidor está iniciando. Aguarde mais alguns segundos...</div>`;
@@ -2047,8 +2061,10 @@
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ ...driverProof(), kind, scope }),
               cache: "no-store",
+              signal: requestController.signal,
             },
-            30000,
+            15000,
+            1,
           );
           const d = await r.json().catch(() => ({}));
           if (seq !== requestSeq) return;
@@ -2065,6 +2081,7 @@
             }),
           );
         } catch (err) {
+          if (requestController.signal.aborted && seq !== requestSeq) return;
           if (seq === requestSeq && !silencioso) {
             $("lista").innerHTML = `<div class="status danger">Erro ao carregar ${servico}s: ${err.message}<br><button id="tentar-carregar-jobs" class="secondary" type="button" style="margin-top:12px">Tentar novamente</button></div>`;
             const retry = $("tentar-carregar-jobs");
@@ -2072,7 +2089,10 @@
           }
         } finally {
           if (avisoDemora) clearTimeout(avisoDemora);
+          if (jobsRequestController === requestController)
+            jobsRequestController = null;
           jobsRequestsInFlight = Math.max(0, jobsRequestsInFlight - 1);
+          window.__motojaJobsLoading = jobsRequestsInFlight > 0;
         }
       }
       $("aba-pendentes").onclick = () => {
@@ -2199,7 +2219,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=165", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=166", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});
@@ -2502,6 +2522,6 @@
         }
       };
     </script>
-    <script src="./motoboy-tracking.js?v=150" defer></script>
+    <script src="./motoboy-tracking.js?v=166" defer></script>
   </body>
 </html>

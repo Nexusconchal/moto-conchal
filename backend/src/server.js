@@ -2469,7 +2469,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'company-quick-order-v160' });
+  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'driver-jobs-stability-v166' });
 });
 
 app.get('/', (_req, res) => {
@@ -3175,18 +3175,27 @@ app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
     const driver = await getDriverWithProof(driverCpf, req.body);
 
-    const queryRef = scope === 'mine'
-      ? db.collection(collectionName)
-          .where('status', kind === 'deliveries' ? 'in' : '==', kind === 'deliveries' ? ['aceita', 'retirada'] : 'aceita')
-          .limit(50)
-      : db.collection(collectionName).where('status', '==', 'pendente').limit(30);
-    const snapshot = await queryRef.get();
     const enabledCities = driverRideCities(driver);
-    const docs = scope === 'mine'
-      ? snapshot.docs.filter((docSnap) => onlyDigits(docSnap.data()?.motoboyCpf) === driverCpf)
-      : kind === 'rides'
+    let docs = [];
+    if (scope === 'mine') {
+      const activeStatuses = kind === 'deliveries' ? ['aceita', 'retirada'] : ['aceita'];
+      const snapshots = await Promise.all(activeStatuses.map((status) => (
+        db.collection(collectionName)
+          .where('motoboyCpf', '==', driverCpf)
+          .where('status', '==', status)
+          .limit(15)
+          .get()
+      )));
+      docs = snapshots.flatMap((snapshot) => snapshot.docs);
+    } else {
+      const snapshot = await db.collection(collectionName)
+        .where('status', '==', 'pendente')
+        .limit(30)
+        .get();
+      docs = kind === 'rides'
         ? snapshot.docs.filter((docSnap) => enabledCities[rideOperatingCity(docSnap.data())])
         : snapshot.docs;
+    }
     const jobs = sortJobs(docs.map((docSnap) => {
       const item = serializeFirestore({ id: docSnap.id, ...docSnap.data() });
       return scope === 'pending' ? publicPendingJob(item) : privateDriverJob(item);

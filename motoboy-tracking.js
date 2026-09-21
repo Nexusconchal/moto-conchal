@@ -8,6 +8,8 @@
   const rideWatches = new Map();
   const rideJobs = new Map();
   let loading = false;
+  let mineDeliveriesLoaded = false;
+  let mineRidesLoaded = false;
 
   function savedDriver() {
     try {
@@ -28,15 +30,25 @@
   }
 
   async function post(path, body) {
-    const response = await fetch(`${BACKEND}${path}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      cache: 'no-store'
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.message || data.error || 'Nao consegui atualizar a entrega.');
-    return data;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(`${BACKEND}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        cache: 'no-store',
+        signal: controller.signal
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || data.error || 'Nao consegui atualizar a entrega.');
+      return data;
+    } catch (error) {
+      if (error?.name === 'AbortError') throw new Error('O servidor demorou para responder. Tente novamente.');
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   function distanceMeters(a, b) {
@@ -236,31 +248,38 @@
     if (loading) return;
     const credentials = proof();
     if (credentials.driverCpf.length !== 11 || credentials.driverCnh.length !== 11 || credentials.driverTelefone.length < 10) return;
+    if (mineDeliveriesLoaded && mineRidesLoaded) return;
     loading = true;
     try {
-      const data = await post(`/api/drivers/${credentials.driverCpf}/jobs`, {
-        ...credentials,
-        kind: 'deliveries',
-        scope: 'mine'
-      });
-      jobs.clear();
-      (data.jobs || []).forEach((job) => jobs.set(job.id, job));
-      for (const deliveryId of watches.keys()) {
-        if (jobs.get(deliveryId)?.status !== 'retirada') stopTracking(deliveryId);
+      if (!mineDeliveriesLoaded) {
+        const data = await post(`/api/drivers/${credentials.driverCpf}/jobs`, {
+          ...credentials,
+          kind: 'deliveries',
+          scope: 'mine'
+        });
+        jobs.clear();
+        (data.jobs || []).forEach((job) => jobs.set(job.id, job));
+        mineDeliveriesLoaded = true;
+        for (const deliveryId of watches.keys()) {
+          if (jobs.get(deliveryId)?.status !== 'retirada') stopTracking(deliveryId);
+        }
+        decorateCards();
       }
-      decorateCards();
-      const rides = await post(`/api/drivers/${credentials.driverCpf}/jobs`, {
-        ...credentials,
-        kind: 'rides',
-        scope: 'mine'
-      });
-      rideJobs.clear();
-      (rides.jobs || []).forEach((job) => rideJobs.set(job.id, job));
-      for (const rideId of rideWatches.keys()) {
-        const ride = rideJobs.get(rideId);
-        if (!ride || ride.status !== 'aceita' || !ride.clienteAvisadoEm) stopRideTracking(rideId);
+      if (!mineRidesLoaded) {
+        const rides = await post(`/api/drivers/${credentials.driverCpf}/jobs`, {
+          ...credentials,
+          kind: 'rides',
+          scope: 'mine'
+        });
+        rideJobs.clear();
+        (rides.jobs || []).forEach((job) => rideJobs.set(job.id, job));
+        mineRidesLoaded = true;
+        for (const rideId of rideWatches.keys()) {
+          const ride = rideJobs.get(rideId);
+          if (!ride || ride.status !== 'aceita' || !ride.clienteAvisadoEm) stopRideTracking(rideId);
+        }
+        decorateRideCards();
       }
-      decorateRideCards();
     } catch (_) {
       // O painel principal ja mostra erros de conexao; aqui mantemos o GPS atual sem interromper.
     } finally {
@@ -274,15 +293,25 @@
   });
   window.addEventListener('DOMContentLoaded', () => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js?v=150', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
+      navigator.serviceWorker.register('./sw.js?v=166', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
     }
     const list = document.getElementById('lista');
     if (list) observer.observe(list, { childList: true, subtree: true });
-    refreshJobs();
+    // O painel principal entrega os trabalhos pelo evento abaixo. A consulta de
+    // recuperacao fica atrasada para nao competir com o primeiro carregamento.
+    const recoverWhenIdle = () => {
+      if (window.__motojaJobsLoading || loading) {
+        setTimeout(recoverWhenIdle, 3000);
+        return;
+      }
+      refreshJobs();
+    };
+    setTimeout(recoverWhenIdle, 12000);
     window.addEventListener('motoja:jobs-rendered', (event) => {
       if (event.detail?.scope !== 'mine' || !Array.isArray(event.detail?.jobs)) return;
       const incoming = event.detail.jobs;
       if (event.detail.kind === 'deliveries') {
+        mineDeliveriesLoaded = true;
         jobs.clear();
         incoming.forEach((job) => jobs.set(job.id, job));
         for (const deliveryId of watches.keys()) {
@@ -292,6 +321,7 @@
         return;
       }
       if (event.detail.kind === 'rides') {
+        mineRidesLoaded = true;
         rideJobs.clear();
         incoming.forEach((job) => rideJobs.set(job.id, job));
         for (const rideId of rideWatches.keys()) {
