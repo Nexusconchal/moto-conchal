@@ -607,28 +607,181 @@
         }
       }
     </style>
+    <style>
+      :root {
+        --driver-bg: #07080d;
+        --driver-surface: #111319;
+        --driver-surface-2: #181a21;
+        --driver-line: rgba(255, 255, 255, 0.09);
+        --driver-orange: #ff7200;
+        --driver-orange-2: #ff9d00;
+        --driver-green: #35c979;
+      }
+      body {
+        background:
+          radial-gradient(circle at 50% -10%, rgba(255, 114, 0, 0.13), transparent 38%),
+          var(--driver-bg);
+      }
+      html, body { overflow-x: hidden; }
+      body:before { display: none; }
+      .app { max-width: 560px; padding: 18px 16px 104px; gap: 18px; }
+      .top {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        margin: 0 -16px;
+        padding: 12px 16px;
+        background: rgba(7, 8, 13, 0.92);
+        border-bottom: 1px solid var(--driver-line);
+        backdrop-filter: blur(18px);
+      }
+      .brand { gap: 10px; min-width: 0; }
+      .brand > div:last-child { min-width: 0; }
+      .logo {
+        width: 52px;
+        height: 52px;
+        border-radius: 14px;
+        background: #050505;
+        border: 1px solid rgba(255, 157, 0, 0.42);
+        overflow: hidden;
+        box-shadow: 0 8px 26px rgba(255, 114, 0, 0.2);
+      }
+      .logo img { width: 100%; height: 100%; object-fit: contain; }
+      .brand small { font-size: 0.7rem; letter-spacing: 1.1px; }
+      .brand h1 { font-size: 1.28rem; color: #fff; background: none; }
+      .pill { background: rgba(53, 201, 121, 0.1); border-color: rgba(53, 201, 121, 0.34); }
+      .login,
+      .card,
+      .status {
+        border-color: var(--driver-line);
+        border-radius: 16px;
+        background: var(--driver-surface);
+        box-shadow: 0 16px 42px rgba(0, 0, 0, 0.24);
+      }
+      .login { padding: 20px; gap: 15px; }
+      .driver-onboarding-head { display: grid; gap: 6px; }
+      .driver-onboarding-head h2 { font-size: 1.45rem; }
+      .driver-onboarding-head p { color: #a8abb5; line-height: 1.45; }
+      .driver-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 2px 0 4px; }
+      .driver-step { display: grid; gap: 6px; color: #737680; font-size: 0.68rem; font-weight: 800; text-align: center; }
+      .driver-step:before { content: ""; height: 4px; border-radius: 999px; background: #2a2c33; }
+      .driver-step.active { color: #fff; }
+      .driver-step.active:before { background: linear-gradient(90deg, var(--driver-orange), var(--driver-orange-2)); }
+      .driver-step.done { color: #b9bbc4; }
+      .driver-step.done:before { background: var(--driver-green); }
+      .driver-step-panel { display: grid; gap: 14px; }
+      .driver-step-panel.step-hidden { display: none; }
+      .step-actions { display: grid; grid-template-columns: 0.8fr 1.2fr; gap: 8px; }
+      .form-section-title { margin-top: 3px; color: var(--driver-orange-2); font-size: 0.72rem; font-weight: 900; letter-spacing: 0.7px; text-transform: uppercase; }
+      .driver-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .driver-form-grid .wide { grid-column: 1 / -1; }
+      label { color: #e8e9ed; font-size: 0.78rem; }
+      input {
+        min-height: 50px;
+        border-radius: 12px;
+        background: #0c0e13;
+        border-color: var(--driver-line);
+        padding: 13px;
+      }
+      input:focus { border-color: var(--driver-orange); box-shadow: 0 0 0 3px rgba(255, 114, 0, 0.12); }
+      input[type="file"] { padding: 9px; color: #a8abb5; }
+      button { border-radius: 12px; background: linear-gradient(135deg, var(--driver-orange), var(--driver-orange-2)); }
+      button.secondary { background: #1a1c23; border-color: var(--driver-line); }
+      .access-code-box {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+        border: 1px solid rgba(255, 114, 0, 0.3);
+        border-radius: 14px;
+        background: rgba(255, 114, 0, 0.06);
+      }
+      .access-code-note { color: #b9bbc4; font-size: 0.78rem; line-height: 1.4; }
+      .quick-login { padding: 14px; box-shadow: none; }
+      .quick-login summary { color: #fff; }
+      #painel { gap: 14px; }
+      #perfilMotoboy { padding: 16px; background: linear-gradient(145deg, #17191f, #101116); }
+      .driver-profile img, .driver-profile .ph { border-radius: 50%; width: 58px; height: 58px; }
+      .driver-profile h2 { font-size: 1.18rem; }
+      .driver-tags { margin-top: 2px; }
+      .driver-tags span { background: #1a1c22; border-color: var(--driver-line); color: #d7d9df; }
+      .city-selector { padding: 16px; border: 1px solid var(--driver-line); border-radius: 16px; background: var(--driver-surface); }
+      .city-options { grid-template-columns: repeat(3, 1fr); }
+      .city-option { background: #181a20; border-color: var(--driver-line); }
+      .driver-home-title { display: flex; align-items: end; justify-content: space-between; gap: 12px; }
+      .driver-home-title h2 { font-size: 1.25rem; }
+      .driver-home-title span { color: #8e919b; font-size: 0.75rem; }
+      .driver-service-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .driver-service-group { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--driver-line); border-radius: 16px; background: var(--driver-surface); }
+      .driver-service-group p { color: #a7a9b2; font-size: 0.76rem; font-weight: 800; }
+      .driver-service-group .tabs { grid-template-columns: 1fr; }
+      .driver-service-group button { min-height: 46px; text-align: left; padding: 0 14px; }
+      .driver-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .driver-tools button { min-height: 46px; font-size: 0.78rem; }
+      .driver-tools #sair-conta { grid-column: 1 / -1; }
+      .driver-rule { font-size: 0.78rem; line-height: 1.45; }
+      #lista { min-height: 128px; }
+      #lista > .card { border-color: var(--driver-line); }
+      .driver-bottom-nav {
+        position: fixed;
+        z-index: 40;
+        left: 50%;
+        bottom: 10px;
+        transform: translateX(-50%);
+        width: min(calc(100% - 20px), 540px);
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 4px;
+        padding: 7px;
+        border: 1px solid var(--driver-line);
+        border-radius: 18px;
+        background: rgba(15, 16, 21, 0.96);
+        box-shadow: 0 -10px 34px rgba(0, 0, 0, 0.4);
+        backdrop-filter: blur(18px);
+      }
+      .driver-bottom-nav button {
+        min-height: 55px;
+        display: grid;
+        place-items: center;
+        gap: 2px;
+        padding: 5px 3px;
+        color: #898c96;
+        background: transparent;
+        border: 0;
+        border-radius: 12px;
+        font-size: 0.65rem;
+        box-shadow: none;
+      }
+      .driver-bottom-nav button:before { font-size: 1.08rem; color: #a4a7b0; }
+      .driver-bottom-nav button:nth-child(1):before { content: "⌂"; }
+      .driver-bottom-nav button:nth-child(2):before { content: "▤"; }
+      .driver-bottom-nav button:nth-child(3):before { content: "$"; }
+      .driver-bottom-nav button:nth-child(4):before { content: "●"; }
+      .driver-bottom-nav button.active { color: var(--driver-orange-2); background: rgba(255, 114, 0, 0.1); }
+      .driver-bottom-nav button.active:before { color: var(--driver-orange-2); }
+      .boot-logo { padding: 6px; background: #050505; border: 1px solid rgba(255, 157, 0, 0.42); overflow: hidden; }
+      .boot-logo img { width: 100%; height: 100%; object-fit: contain; }
+      @media (max-width: 520px) {
+        .app { padding: 10px 12px 100px; }
+        .top { display: flex; margin: 0 -12px; padding: 10px 12px; }
+        .brand h1 { font-size: 1.05rem; }
+        .brand small { font-size: 0.6rem; }
+        .pill { flex: 0 0 auto; padding: 7px 9px; font-size: 0.68rem; }
+        .logo { width: 46px; height: 46px; border-radius: 12px; }
+        .driver-form-grid { grid-template-columns: 1fr; }
+        .driver-form-grid .wide { grid-column: auto; }
+        .driver-service-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+        .driver-service-group { padding: 11px; }
+        .driver-tools { grid-template-columns: 1fr; }
+        .driver-tools #sair-conta { grid-column: auto; }
+        .login { padding: 16px; }
+        .driver-step { min-width: 0; font-size: 0.61rem; }
+      }
+    </style>
   </head>
   <body>
     <div id="boot" class="boot" aria-live="polite">
       <div class="boot-card">
-        <div class="boot-logo">
-          <svg viewBox="0 0 110 70" fill="none" aria-hidden="true">
-            <circle cx="20" cy="50" r="13" stroke="white" stroke-width="5" />
-            <circle cx="88" cy="50" r="13" stroke="white" stroke-width="5" />
-            <path
-              d="M23 48 L31 26 L51 20 L66 24 L78 30 L68 44 L40 48 Z"
-              fill="white"
-            />
-            <path
-              d="M32 26 Q48 16 62 20 L60 28 Q46 24 34 32 Z"
-              fill="#ff9a00"
-            />
-            <path
-              d="M77 30 Q82 18 90 20 Q96 22 92 34 Q88 40 82 38 Z"
-              fill="white"
-            />
-          </svg>
-        </div>
+        <div class="boot-logo"><img src="./nexus-motoja-logo-mark.png?v=167" alt="Nexus MotoJÁ" /></div>
         <div class="boot-title">Nexus MotoJÁ Motorista</div>
         <div class="boot-text">Carregando painel do motoboy</div>
         <div class="boot-spinner" aria-hidden="true"></div>
@@ -637,24 +790,7 @@
     <main class="app">
       <header class="top">
         <div class="brand">
-          <div class="logo">
-            <svg viewBox="0 0 110 70" fill="none" aria-hidden="true">
-              <circle cx="20" cy="50" r="13" stroke="white" stroke-width="5" />
-              <circle cx="88" cy="50" r="13" stroke="white" stroke-width="5" />
-              <path
-                d="M23 48 L31 26 L51 20 L66 24 L78 30 L68 44 L40 48 Z"
-                fill="white"
-              />
-              <path
-                d="M32 26 Q48 16 62 20 L60 28 Q46 24 34 32 Z"
-                fill="#ff9a00"
-              />
-              <path
-                d="M77 30 Q82 18 90 20 Q96 22 92 34 Q88 40 82 38 Z"
-                fill="white"
-              />
-            </svg>
-          </div>
+          <div class="logo"><img src="./nexus-motoja-logo-mark.png?v=167" alt="Nexus MotoJÁ" /></div>
           <div>
             <small>Nexus MotoJÁ</small>
             <h1>
@@ -670,8 +806,20 @@
         <div id="online" class="pill">Aguardando</div>
       </header>
       <section id="login" class="login">
-        <label
-          >Nome completo do motoboy<input
+        <div class="driver-onboarding-head">
+          <h2>Cadastro do motoboy</h2>
+          <p>Faça seu cadastro para receber corridas e entregas da MotoJÁ.</p>
+        </div>
+        <div class="driver-steps" aria-label="Etapas do cadastro">
+          <span class="driver-step active" data-step-marker="1">Dados</span>
+          <span class="driver-step" data-step-marker="2">Moto</span>
+          <span class="driver-step" data-step-marker="3">Documentos</span>
+        </div>
+        <div class="driver-step-panel" data-step-panel="1">
+        <p class="form-section-title">Seus dados</p>
+        <div class="driver-form-grid">
+        <label class="wide"
+          >Nome completo<input
             id="nome"
             placeholder="Ex: Rafael Silva"
             autocomplete="name"
@@ -697,6 +845,12 @@
             inputmode="tel"
             maxlength="13"
         /></label>
+        </div>
+        <button type="button" data-step-next="2">Continuar</button>
+        </div>
+        <div class="driver-step-panel step-hidden" data-step-panel="2">
+        <p class="form-section-title">Sua moto</p>
+        <div class="driver-form-grid">
         <label
           >Modelo da moto<input
             id="motoModelo"
@@ -718,6 +872,12 @@
             autocomplete="off"
             maxlength="8"
         /></label>
+        </div>
+        <div class="step-actions"><button class="secondary" type="button" data-step-back="1">Voltar</button><button type="button" data-step-next="3">Continuar</button></div>
+        </div>
+        <div class="driver-step-panel step-hidden" data-step-panel="3">
+        <p class="form-section-title">Documentos</p>
+        <div class="driver-form-grid">
         <label
           >Foto do CRLV da moto<input
             id="crlvFoto"
@@ -731,17 +891,28 @@
             accept="image/*"
             capture="user"
         /></label>
+        </div>
+        <div class="access-code-box">
         <label
-          >Senha<input
+          >Código de acesso<input
             id="senha"
-            placeholder="Pegue a senha com o dono ou no grupo"
+            placeholder="Peça o código no grupo"
             type="password"
         /></label>
+        <p class="access-code-note">O código é fornecido no grupo oficial e serve para autorizar o cadastro de novos motoboys.</p>
+        <button
+          class="secondary"
+          type="button"
+          onclick="location.href='https://chat.whatsapp.com/HNDcqL2PZEl3KScGrhnigd'"
+        >Entrar no grupo e pedir o código</button>
+        </div>
         <button id="entrar" type="button">
-          Enviar cadastro / Entrar no painel
+          Enviar cadastro
         </button>
+        <button class="secondary" type="button" data-step-back="2">Voltar</button>
+        </div>
         <details class="status quick-login">
-          <summary>Exibir/Entrar com CPF</summary>
+          <summary>Já sou cadastrado</summary>
           <div class="quick-login-fields">
             <label
               >CPF<input
@@ -751,9 +922,9 @@
                 maxlength="14"
             /></label>
             <label
-              >Senha<input
+              >Código de acesso<input
                 id="loginSenha"
-                placeholder="Ex: senha158"
+                placeholder="Digite o código"
                 type="password"
             /></label>
             <button
@@ -764,13 +935,6 @@
             </button>
           </div>
         </details>
-        <button
-          class="secondary"
-          type="button"
-          onclick="location.href='https://chat.whatsapp.com/HNDcqL2PZEl3KScGrhnigd'"
-        >
-          Entrar no grupo e pedir a senha
-        </button>
         <button id="btn-instalar" class="secondary" type="button">
           Salvar app no celular
         </button>
@@ -778,7 +942,7 @@
           Limpar dados salvos
         </button>
         <p class="muted">
-          Motoboy ja cadastrado pode entrar so com CPF e senha. O app busca o
+          Motoboy já cadastrado pode entrar só com CPF e código. O app busca o
           cadastro salvo no servidor e grava neste aparelho.
         </p>
         <p class="muted">
@@ -791,11 +955,13 @@
       </section>
       <section id="painel" class="hidden grid">
         <div id="perfilMotoboy" class="card"></div>
-        <div class="status">
+        <div class="status driver-rule">
           Ordem certa: aceite somente o servico que voce vai fazer. Corrida e
           entrega ficam separadas. Corrida nao avisada ou entrega aceita e
           abandonada pode causar bloqueio.
         </div>
+        <div class="driver-home-title"><h2>Seu trabalho</h2><span>Atualização automática</span></div>
+        <div class="driver-tools">
         <button id="btn-mp" class="secondary" type="button">
           Conectar Mercado Pago para receber ate 80%</button
         ><button id="btn-push" class="secondary" type="button">
@@ -805,19 +971,22 @@
         ><button id="sair-conta" class="secondary" type="button">
           Sair da conta
         </button>
+        </div>
         <p class="muted">
           Para nao perder chamada, deixe as duas opcoes ativas: o Telegram avisa
           corridas e entregas pelo grupo, e a notificacao do aparelho ajuda como
           reforco. Se uma falhar, a outra te ajuda a ver o servico a tempo.
         </p>
-        <p class="muted"><strong>Corridas de mototaxi</strong></p>
+        <div class="driver-service-grid">
+        <div class="driver-service-group"><p>Corridas de mototáxi</p>
         <div class="tabs">
           <button id="aba-pendentes" type="button">Corridas pendentes</button
           ><button id="aba-minhas" class="secondary" type="button">
             Minhas corridas
           </button>
         </div>
-        <p class="muted"><strong>Novidade: entregas para comercios</strong></p>
+        </div>
+        <div class="driver-service-group"><p>Entregas para comércios</p>
         <div class="tabs">
           <button id="aba-entregas" class="secondary" type="button">
             Entregas pendentes</button
@@ -825,10 +994,16 @@
             Minhas entregas
           </button>
         </div>
-        <button id="aba-ganhos" class="secondary earnings-entry" type="button">
-          Meus ganhos
-        </button>
+        </div>
+        </div>
+        <button id="aba-ganhos" class="secondary earnings-entry" type="button">Ver meus ganhos</button>
         <div id="lista" class="grid"></div>
+        <nav class="driver-bottom-nav" aria-label="Navegação principal">
+          <button id="nav-inicio" class="active" type="button">Início</button>
+          <button id="nav-servicos" type="button">Serviços</button>
+          <button id="nav-ganhos" type="button">Ganhos</button>
+          <button id="nav-perfil" type="button">Perfil</button>
+        </nav>
       </section>
     </main>
     <script type="module">
@@ -1013,6 +1188,24 @@
           vapidKey:
             "BBAc8wjH-aMr3NFRG7zglJxcLgkWk7osJR_FvZ_C3nA9nH8mlKc-pW4LPFPB_9NZfJhlxLyOyTXBeMnGN3CsWRY",
         };
+      function mostrarEtapaCadastro(etapa) {
+        const atual = Math.max(1, Math.min(3, Number(etapa) || 1));
+        document.querySelectorAll("[data-step-panel]").forEach((painel) =>
+          painel.classList.toggle("step-hidden", Number(painel.dataset.stepPanel) !== atual),
+        );
+        document.querySelectorAll("[data-step-marker]").forEach((marcador) => {
+          const numero = Number(marcador.dataset.stepMarker);
+          marcador.classList.toggle("active", numero === atual);
+          marcador.classList.toggle("done", numero < atual);
+        });
+        document.querySelector(".driver-steps")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+      document.querySelectorAll("[data-step-next]").forEach((botao) => {
+        botao.addEventListener("click", () => mostrarEtapaCadastro(botao.dataset.stepNext));
+      });
+      document.querySelectorAll("[data-step-back]").forEach((botao) => {
+        botao.addEventListener("click", () => mostrarEtapaCadastro(botao.dataset.stepBack));
+      });
       async function fetchMotoboyComRetry(url, opcoes = {}, ms = 18000, tentativas = 2) {
         let ultimo;
         const sinalExterno = opcoes.signal;
@@ -1473,6 +1666,16 @@
           modo === "minhas-entregas" ? "" : "secondary";
         $("aba-ganhos").className =
           modo === "ganhos" ? "earnings-entry" : "secondary earnings-entry";
+        const navInicio = $("nav-inicio"),
+          navServicos = $("nav-servicos"),
+          navGanhos = $("nav-ganhos"),
+          navPerfil = $("nav-perfil");
+        [navInicio, navServicos, navGanhos, navPerfil].forEach((item) =>
+          item?.classList.remove("active"),
+        );
+        if (modo === "ganhos") navGanhos?.classList.add("active");
+        else if (modoEntrega()) navServicos?.classList.add("active");
+        else navInicio?.classList.add("active");
       }
       function periodoGanhosLabel(periodo) {
         return (
@@ -2112,6 +2315,28 @@
         ouvir();
       };
       $("aba-ganhos").onclick = () => carregarGanhos();
+      $("nav-inicio").onclick = () => {
+        modo = "pendentes";
+        ouvir();
+        $("lista").scrollIntoView({ behavior: "smooth", block: "start" });
+      };
+      $("nav-servicos").onclick = () => {
+        modo = "entregas";
+        ouvir();
+        $("lista").scrollIntoView({ behavior: "smooth", block: "start" });
+      };
+      $("nav-ganhos").onclick = () => {
+        carregarGanhos();
+        $("lista").scrollIntoView({ behavior: "smooth", block: "start" });
+      };
+      $("nav-perfil").onclick = () => {
+        atualizarAbas();
+        $("nav-inicio")?.classList.remove("active");
+        $("nav-servicos")?.classList.remove("active");
+        $("nav-ganhos")?.classList.remove("active");
+        $("nav-perfil")?.classList.add("active");
+        $("perfilMotoboy").scrollIntoView({ behavior: "smooth", block: "start" });
+      };
       ["cpf", "cnh", "telefone", "motoAno"].forEach((id) =>
         $(id).addEventListener("input", () => {
           $(id).value = soNumeros($(id).value).slice(
@@ -2219,7 +2444,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=166", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=168", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});
