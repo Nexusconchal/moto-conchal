@@ -10,6 +10,13 @@
   let loading = false;
   let mineDeliveriesLoaded = false;
   let mineRidesLoaded = false;
+  let decorationScheduled = false;
+
+  function setButtonState(button, disabled, text) {
+    if (!button) return;
+    if (button.disabled !== disabled) button.disabled = disabled;
+    if (button.textContent !== text) button.textContent = text;
+  }
 
   function savedDriver() {
     try {
@@ -213,18 +220,16 @@
 
       if (exclusive) return;
       if (job.status === 'aceita') {
-        pickupButton.disabled = false;
-        pickupButton.textContent = 'Confirmei a retirada e iniciar GPS';
-        finishButton.disabled = true;
+        setButtonState(pickupButton, false, 'Confirmei a retirada e iniciar GPS');
+        if (!finishButton.disabled) finishButton.disabled = true;
         setTrackingMessage(deliveryId, 'Ao retirar o pedido, confirme aqui para liberar a entrega e o rastreamento.', false);
       } else if (job.status === 'retirada') {
-        pickupButton.disabled = true;
-        pickupButton.textContent = 'Pedido retirado - GPS ativo';
-        finishButton.disabled = false;
+        setButtonState(pickupButton, true, 'Pedido retirado - GPS ativo');
+        if (finishButton.disabled) finishButton.disabled = false;
         startTracking(deliveryId);
         setTrackingMessage(deliveryId, 'GPS ativo: mantenha o app aberto durante o trajeto.', false);
       } else {
-        pickupButton.disabled = true;
+        if (!pickupButton.disabled) pickupButton.disabled = true;
         stopTracking(deliveryId);
       }
     });
@@ -287,16 +292,25 @@
     }
   }
 
-  const observer = new MutationObserver(() => {
-    decorateCards();
-    decorateRideCards();
-  });
+  function scheduleDecoration() {
+    if (decorationScheduled) return;
+    decorationScheduled = true;
+    requestAnimationFrame(() => {
+      decorationScheduled = false;
+      decorateCards();
+      decorateRideCards();
+    });
+  }
+
+  const observer = new MutationObserver(scheduleDecoration);
   window.addEventListener('DOMContentLoaded', () => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js?v=166', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
+      navigator.serviceWorker.register('./sw.js?v=170', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
     }
     const list = document.getElementById('lista');
-    if (list) observer.observe(list, { childList: true, subtree: true });
+    // O painel troca os cards diretamente dentro de #lista. Observar toda a
+    // subarvore faria as decoracoes de GPS dispararem o proprio observer.
+    if (list) observer.observe(list, { childList: true });
     // O painel principal entrega os trabalhos pelo evento abaixo. A consulta de
     // recuperacao fica atrasada para nao competir com o primeiro carregamento.
     const recoverWhenIdle = () => {
