@@ -2469,7 +2469,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'company-approval-auth-v167' });
+  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'company-delivery-prices-v169' });
 });
 
 app.get('/', (_req, res) => {
