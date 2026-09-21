@@ -1661,21 +1661,48 @@
         return `<article class="card"><div class="line">${cabecalho}<div class="value">${moeda(ganhoMotoboy(c.valor, c))}</div></div><div>${detalhes(c)}</div><p class="muted"><strong>${pagamento}</strong></p>${tempoAviso ? `<p class="muted">Tempo para avisar cliente: <strong>${tempoAviso}</strong></p>` : ""}<p class="muted">${isEntrega ? (servicoExclusivo(c) ? "Atencao: escala exclusiva so deve ser aceita se horario e valor foram combinados pelo suporte MotoJa. Abandono pode causar bloqueio." : "Atencao: confira retirada, entrega, quantidade de paradas e observacao antes de sair. Entrega aceita e abandonada pode causar bloqueio.") : "Atencao: depois de aceitar, clique em Avisar cliente e iniciar corrida com GPS. Esse botao envia seu nome, foto, acompanhamento ao vivo e pagamento ao cliente. Mantenha o app aberto durante o trajeto. Se o tempo zerar sem aviso, a corrida volta para pendentes."}</p><div class="actions"><button class="done" data-finalizar="${id}" ${finalizada || cancelada || !avisado ? "disabled" : ""}>${cancelada ? "Cancelada" : finalizada ? "Finalizada" : servicoExclusivo(c) ? "Finalizar escala" : isEntrega ? "Finalizar entrega" : "Finalizar corrida"}</button>${isEntrega ? "" : `<button class="secondary" data-avisar="${id}" ${finalizada || cancelada || avisado ? "disabled" : ""}>${avisado ? "Cliente avisado - GPS ativo" : "Avisar cliente e iniciar corrida com GPS"}</button>`}${isEntrega || finalizada || cancelada ? "" : `<button class="secondary" data-point="${id}" ${!avisado || c.pagamento?.status === "approved" || c.pagamento?.presencialManual?.codigo ? "disabled" : ""}>Informar aproximacao</button>`}${isEntrega || finalizada || cancelada || !c.pagamento?.point?.orderId ? "" : `<button class="secondary" data-point-status="${id}">Ver status aproximacao</button>`}<button class="secondary" data-cancelar="${id}" ${finalizada || cancelada ? "disabled" : ""}>Cancelar ${nomeServico()}</button></div></article>`;
       }
       async function aceitarCorrida(id) {
-        const r = await fetch(
-          `${CONFIG.backend}/api/${recursoAtual()}/${id}/accept`,
+        const kind = recursoAtual();
+        const r = await fetchMotoboyComRetry(
+          `${CONFIG.backend}/api/${kind}/${id}/accept`,
           {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify(driverProof()),
           },
+          20000,
         );
         const d = await r.json().catch(() => ({}));
-        if (!r.ok)
+        if (!r.ok) {
+          if (r.status === 409) {
+            const confirmacao = await fetchMotoboyComRetry(
+              `${CONFIG.backend}/api/drivers/${motoboyCpf}/jobs`,
+              {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  ...driverProof(),
+                  kind: kind === "deliveries" ? "deliveries" : "rides",
+                  scope: "mine",
+                }),
+              },
+              12000,
+            ).catch(() => null);
+            const confirmado = confirmacao
+              ? await confirmacao.json().catch(() => ({}))
+              : {};
+            if (
+              confirmacao?.ok &&
+              Array.isArray(confirmado.jobs) &&
+              confirmado.jobs.some((job) => job.id === id)
+            )
+              return { ok: true, alreadyAccepted: true };
+          }
           throw new Error(
             d.message ||
               d.error ||
               `Nao consegui aceitar essa ${nomeServico()} pelo servidor.`,
           );
+        }
         return d;
       }
       function render(jobs = []) {
@@ -1723,17 +1750,35 @@
               btn.disabled = true;
               btn.textContent = "Aceitando...";
               try {
-                await aceitarCorrida(btn.dataset.aceitar);
+                const aceitandoEntrega = modo === "entregas";
+                const aceite = await aceitarCorrida(btn.dataset.aceitar);
                 limparCache();
                 btn.textContent = `${servico[0].toUpperCase() + servico.slice(1)} aceita`;
-                modo = modoEntrega() ? "minhas-entregas" : "minhas";
-                ouvir();
+                if (aceitandoEntrega) {
+                  btn.closest(".card")?.remove();
+                  if (!$('lista').querySelector('.card'))
+                    $('lista').innerHTML = '<div class="empty">Entrega aceita. Nenhuma outra entrega pendente agora.</div>';
+                  ouvir(true);
+                } else {
+                  modo = "minhas";
+                  atualizarAbas();
+                  if (aceite?.job) {
+                    jobsCache.set(chaveLista("rides", "mine"), {
+                      t: Date.now(),
+                      jobs: [aceite.job],
+                    });
+                    render([aceite.job]);
+                  } else {
+                    ouvir();
+                  }
+                }
               } catch (e) {
                 alert(
                   e.message ||
                     `Outro motoboy aceitou essa ${servico} primeiro.`,
                 );
-                btn.textContent = "Indisponivel";
+                btn.disabled = false;
+                btn.textContent = `Tentar aceitar ${servico}`;
               }
             }),
         );
@@ -2154,7 +2199,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=157", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=160", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});

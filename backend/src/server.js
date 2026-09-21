@@ -2459,7 +2459,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'owner-delivery-filters-v157' });
+  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'driver-company-stability-v159' });
 });
 
 app.get('/', (_req, res) => {
@@ -5595,6 +5595,7 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
 
     const driver = await getDriverWithProof(driverCpf, req.body);
     let acceptedRide = null;
+    let alreadyAccepted = false;
     const rideRef = db.collection('corridas').doc(req.params.rideId);
 
     await db.runTransaction(async (tx) => {
@@ -5606,6 +5607,11 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
       }
 
       const ride = rideSnap.data();
+      if (ride.status === 'aceita' && onlyDigits(ride.motoboyCpf) === driverCpf) {
+        acceptedRide = ride;
+        alreadyAccepted = true;
+        return;
+      }
       if (ride.status !== 'pendente') {
         const error = new Error(`Corrida ja foi aceita por ${ride.motoboy || 'outro motoboy'}.`);
         error.status = 409;
@@ -5632,6 +5638,15 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
     });
+
+    if (alreadyAccepted) {
+      return res.json({
+        ok: true,
+        alreadyAccepted: true,
+        payment: acceptedRide?.pagamento || null,
+        job: privateDriverJob(serializeFirestore({ id: rideRef.id, ...acceptedRide }))
+      });
+    }
 
     let payment = null;
     try {
@@ -5695,7 +5710,30 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
       }
     }
 
-    res.json({ ok: true, payment });
+    res.json({
+      ok: true,
+      payment,
+      job: privateDriverJob(serializeFirestore({
+        id: rideRef.id,
+        ...acceptedRide,
+        status: 'aceita',
+        motoboy: driver.nome || req.body.driverName || '',
+        motoboyCpf: driverCpf,
+        motoboyCnh: driver.cnh || '',
+        motoboyTelefone: driver.telefone || '',
+        motoboyFoto: driver.fotoMotoboy || '',
+        pagamento: payment ? {
+          provider: 'mercadopago',
+          preferenceId: payment.preferenceId,
+          initPoint: payment.initPoint,
+          sandboxInitPoint: payment.sandboxInitPoint,
+          status: 'preference_created',
+          total: payment.total,
+          appFee: payment.appFee,
+          driverAmount: payment.driverAmount
+        } : acceptedRide?.pagamento || null
+      }))
+    });
   } catch (error) {
     next(error);
   }
@@ -5855,6 +5893,8 @@ app.post('/api/deliveries/:deliveryId/accept', async (req, res, next) => {
     const deliveryRef = db.collection('entregas').doc(req.params.deliveryId);
 
     let companyId = '';
+    let acceptedDelivery = null;
+    let alreadyAccepted = false;
     await db.runTransaction(async (tx) => {
       const deliverySnap = await tx.get(deliveryRef);
       if (!deliverySnap.exists) {
@@ -5864,7 +5904,12 @@ app.post('/api/deliveries/:deliveryId/accept', async (req, res, next) => {
       }
 
       const delivery = deliverySnap.data();
+      acceptedDelivery = delivery;
       companyId = onlyDigits(delivery.empresaId || delivery.telefoneEmpresa);
+      if (delivery.status === 'aceita' && onlyDigits(delivery.motoboyCpf) === driverCpf) {
+        alreadyAccepted = true;
+        return;
+      }
       if (delivery.status !== 'pendente') {
         const error = new Error(`Entrega ja foi aceita por ${delivery.motoboy || 'outro motoboy'}.`);
         error.status = 409;
@@ -5883,12 +5928,32 @@ app.post('/api/deliveries/:deliveryId/accept', async (req, res, next) => {
       });
     });
 
+    if (alreadyAccepted) {
+      return res.json({
+        ok: true,
+        alreadyAccepted: true,
+        job: privateDriverJob(serializeFirestore({ id: deliveryRef.id, ...acceptedDelivery }))
+      });
+    }
+
     emitDeliveryTracking(companyId, {
       deliveryId: req.params.deliveryId,
       status: 'aceita',
       rastreamentoAtivo: false
     });
-    res.json({ ok: true });
+    res.json({
+      ok: true,
+      job: privateDriverJob(serializeFirestore({
+        id: deliveryRef.id,
+        ...acceptedDelivery,
+        status: 'aceita',
+        motoboy: driver.nome || req.body.driverName || '',
+        motoboyCpf: driverCpf,
+        motoboyCnh: driver.cnh || '',
+        motoboyTelefone: driver.telefone || '',
+        motoboyFoto: driver.fotoMotoboy || ''
+      }))
+    });
   } catch (error) {
     next(error);
   }
