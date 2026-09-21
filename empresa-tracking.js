@@ -8,6 +8,10 @@
   let map = null;
   let driverMarker = null;
   let destinationMarker = null;
+  let pickupMarker = null;
+  let routeLayer = null;
+  let lastRouteKey = '';
+  let routeRequestVersion = 0;
   let socket = null;
   let lastToken = '';
   let mapResizeObserver = null;
@@ -76,6 +80,76 @@
     setTimeout(() => map?.invalidateSize({ pan: false }), 200);
   }
 
+  function deliveryPoint(delivery, prefix) {
+    const latitude = Number(delivery?.[`${prefix}Lat`]);
+    const longitude = Number(delivery?.[`${prefix}Lon`]);
+    return Number.isFinite(latitude) && Number.isFinite(longitude) ? [latitude, longitude] : null;
+  }
+
+  function markerIcon(className, label, ariaLabel, centered = false) {
+    return window.L.divIcon({
+      className,
+      html: `<span aria-label="${ariaLabel}"><b>${label}</b></span>`,
+      iconSize: [42, 42],
+      iconAnchor: centered ? [21, 21] : [21, 38]
+    });
+  }
+
+  function clearRoute() {
+    routeRequestVersion += 1;
+    lastRouteKey = '';
+    if (routeLayer && map) map.removeLayer(routeLayer);
+    routeLayer = null;
+  }
+
+  async function updateDeliveryRoute(delivery) {
+    const pickup = deliveryPoint(delivery, 'retirada');
+    const destination = deliveryPoint(delivery, 'entrega');
+    if (!pickup || !destination || !map) {
+      clearRoute();
+      return;
+    }
+    const routeKey = `${delivery.id}:${pickup.join(',')}:${destination.join(',')}`;
+    if (routeKey === lastRouteKey) return;
+    lastRouteKey = routeKey;
+    const requestVersion = ++routeRequestVersion;
+    try {
+      const response = await fetch(`${BACKEND}/api/maps/route`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          points: [
+            { lat: pickup[0], lon: pickup[1] },
+            { lat: destination[0], lon: destination[1] }
+          ]
+        }),
+        cache: 'no-store'
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !Array.isArray(data.geometry) || data.geometry.length < 2) throw new Error('route_unavailable');
+      if (requestVersion !== routeRequestVersion || routeKey !== lastRouteKey) return;
+      if (routeLayer) map.removeLayer(routeLayer);
+      routeLayer = window.L.polyline(data.geometry, {
+        color: '#ff6b00',
+        weight: 5,
+        opacity: 0.95,
+        lineCap: 'round',
+        lineJoin: 'round'
+      }).addTo(map);
+      map.fitBounds(routeLayer.getBounds(), { padding: [34, 34], maxZoom: 16, animate: true });
+    } catch (_) {
+      if (requestVersion !== routeRequestVersion || routeKey !== lastRouteKey) return;
+      if (routeLayer) map.removeLayer(routeLayer);
+      routeLayer = window.L.polyline([pickup, destination], {
+        color: '#ff6b00',
+        weight: 4,
+        opacity: 0.78,
+        dashArray: '8 10'
+      }).addTo(map);
+      map.fitBounds(routeLayer.getBounds(), { padding: [34, 34], maxZoom: 16, animate: true });
+    }
+  }
+
   function updateMap() {
     ensureMap();
     if (!map) return;
@@ -86,24 +160,46 @@
     const location = locationOf(delivery);
     const mapStatus = document.getElementById('mapaEntregaStatus');
     if (!delivery) {
+      clearRoute();
+      [driverMarker, destinationMarker, pickupMarker].forEach((marker) => {
+        if (marker) map.removeLayer(marker);
+      });
+      driverMarker = null;
+      destinationMarker = null;
+      pickupMarker = null;
       if (mapStatus) mapStatus.textContent = 'Nenhuma entrega em andamento agora.';
       return;
     }
 
-    const destinationLat = Number(delivery.entregaLat);
-    const destinationLon = Number(delivery.entregaLon);
-    if (Number.isFinite(destinationLat) && Number.isFinite(destinationLon)) {
-      const point = [destinationLat, destinationLon];
-      if (!destinationMarker) destinationMarker = window.L.marker(point).addTo(map).bindPopup('Destino da entrega');
-      else destinationMarker.setLatLng(point);
+    const pickupPoint = deliveryPoint(delivery, 'retirada');
+    const destinationPoint = deliveryPoint(delivery, 'entrega');
+    if (pickupPoint) {
+      if (!pickupMarker) pickupMarker = window.L.marker(pickupPoint, {
+        icon: markerIcon('motoja-pickup-marker', 'L', 'Local de retirada')
+      }).addTo(map).bindPopup('Retirada na loja');
+      else pickupMarker.setLatLng(pickupPoint);
+    } else if (pickupMarker) {
+      map.removeLayer(pickupMarker);
+      pickupMarker = null;
     }
+    if (destinationPoint) {
+      if (!destinationMarker) destinationMarker = window.L.marker(destinationPoint, {
+        icon: markerIcon('motoja-destination-marker', 'D', 'Destino da entrega')
+      }).addTo(map).bindPopup('Destino da entrega');
+      else destinationMarker.setLatLng(destinationPoint);
+    } else if (destinationMarker) {
+      map.removeLayer(destinationMarker);
+      destinationMarker = null;
+    }
+    updateDeliveryRoute(delivery);
 
     if (!location) {
       if (driverMarker) {
         map.removeLayer(driverMarker);
         driverMarker = null;
       }
-      if (destinationMarker) map.setView(destinationMarker.getLatLng(), 15);
+      if (routeLayer) map.fitBounds(routeLayer.getBounds(), { padding: [34, 34], maxZoom: 16 });
+      else if (destinationMarker) map.setView(destinationMarker.getLatLng(), 15);
       if (mapStatus) mapStatus.textContent = delivery.status === 'aceita'
         ? 'O motoboy aceitou. O mapa comeca a se mover quando ele confirmar a retirada.'
         : 'Aguardando o primeiro sinal de GPS do motoboy.';
@@ -111,15 +207,10 @@
     }
 
     const point = [location.latitude, location.longitude];
-    const icon = window.L.divIcon({
-      className: 'motoja-driver-marker',
-      html: '<span aria-label="Motoboy">M</span>',
-      iconSize: [40, 40],
-      iconAnchor: [20, 20]
-    });
+    const icon = markerIcon('motoja-driver-marker', '🏍', 'Motoboy em rota', true);
     if (!driverMarker) driverMarker = window.L.marker(point, { icon }).addTo(map).bindPopup('Motoboy');
     else driverMarker.setLatLng(point);
-    map.panTo(point, { animate: true, duration: 0.5 });
+    if (!routeLayer) map.panTo(point, { animate: true, duration: 0.5 });
     if (mapStatus) mapStatus.textContent = `Localizacao atualizada ${relativeTime(location.serverTimestampMs || location.clientTimestamp)}.`;
   }
 
@@ -205,7 +296,7 @@
 
   window.addEventListener('DOMContentLoaded', async () => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js?v=148', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
+      navigator.serviceWorker.register('./sw.js?v=163', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
     }
     try {
       await ensureLibraries();

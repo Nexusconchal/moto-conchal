@@ -313,6 +313,30 @@
         font-weight: 900;
         box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
       }
+      .motoja-pickup-marker span,
+      .motoja-destination-marker span {
+        width: 38px;
+        height: 38px;
+        border-radius: 50% 50% 50% 8px;
+        transform: rotate(-45deg);
+        display: grid;
+        place-items: center;
+        border: 3px solid #fff;
+        color: #fff;
+        font-weight: 900;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.42);
+      }
+      .motoja-pickup-marker span {
+        background: #ff6b00;
+      }
+      .motoja-destination-marker span {
+        background: #19a653;
+      }
+      .motoja-pickup-marker span b,
+      .motoja-destination-marker span b {
+        display: block;
+        transform: rotate(45deg);
+      }
       .integration-list {
         display: grid;
         gap: 10px;
@@ -3303,7 +3327,7 @@
       };
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker
-          .register("./sw.js?v=162", { updateViaCache: "none" })
+          .register("./sw.js?v=163", { updateViaCache: "none" })
           .then((r) => r.update())
           .catch(() => {});
       }
@@ -3330,7 +3354,7 @@
           }
         };
     </script>
-    <script src="./empresa-tracking.js?v=142" defer></script>
+    <script src="./empresa-tracking.js?v=143" defer></script>
     <script src="./empresa-pedidos.js?v=134" defer></script>
     <script>
       (() => {
