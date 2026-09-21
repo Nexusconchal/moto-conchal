@@ -762,6 +762,94 @@
       .delivery-details.hidden {
         display: none !important;
       }
+      .prepared-orders-board {
+        display: grid;
+        gap: 12px;
+      }
+      .prepared-orders-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .prepared-orders-head h3 {
+        margin: 0;
+        font-size: 1rem;
+      }
+      .prepared-orders-head p {
+        margin: 3px 0 0;
+      }
+      .prepared-orders-head button {
+        width: auto;
+        min-height: 38px;
+        padding: 0 13px;
+      }
+      .prepared-orders-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .prepared-order-card {
+        display: grid;
+        gap: 11px;
+        padding: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-left: 3px solid #ff7900;
+        border-radius: 6px;
+        background: #0d1117;
+      }
+      .prepared-order-card.is-sent {
+        border-left-color: #2aba68;
+        opacity: 0.82;
+      }
+      .prepared-order-header,
+      .prepared-order-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .prepared-order-header strong {
+        font-size: 0.95rem;
+      }
+      .prepared-order-status {
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: rgba(255, 121, 0, 0.14);
+        color: #ffab5c;
+        font-size: 0.72rem;
+        font-weight: 800;
+      }
+      .prepared-order-card.is-sent .prepared-order-status {
+        background: rgba(42, 186, 104, 0.14);
+        color: #7be0a7;
+      }
+      .prepared-order-details {
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        padding-top: 10px;
+      }
+      .prepared-order-details summary {
+        cursor: pointer;
+        color: #b8bec8;
+        font-size: 0.82rem;
+        font-weight: 700;
+      }
+      .prepared-order-details-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 10px;
+      }
+      .prepared-order-details-grid .full {
+        grid-column: 1 / -1;
+      }
+      .prepared-order-actions button {
+        min-height: 40px;
+      }
+      .prepared-order-actions .secondary {
+        width: auto;
+        flex: 0 0 auto;
+      }
       .company-authenticated input,
       .company-authenticated textarea,
       .company-authenticated select {
@@ -912,6 +1000,13 @@
         }
         .delivery-details > * {
           grid-column: 1 !important;
+        }
+        .prepared-orders-grid,
+        .prepared-order-details-grid {
+          grid-template-columns: 1fr;
+        }
+        .prepared-order-details-grid .full {
+          grid-column: 1;
         }
         .company-authenticated .box,
         .company-authenticated .wallet {
@@ -1420,24 +1515,24 @@
           class="status error"
           aria-live="polite"
         ></div>
-        <label
+        <label id="campoEntregaPrincipal"
           >Endereco de entrega<input
             id="entrega"
             placeholder="Rua, numero, bairro"
         /></label>
         <label
-          >Quantidade de entregas / pontos
+          >Pedidos para preparar
           <select id="paradas">
-            <option value="1">1 ponto</option>
-            <option value="2">2 pontos</option>
-            <option value="3">3 pontos</option>
-            <option value="4">4 pontos</option>
-            <option value="5">5 pontos</option>
-            <option value="manual">Mais de 5 pontos</option>
+            <option value="1">1 pedido</option>
+            <option value="2">2 pedidos separados</option>
+            <option value="3">3 pedidos separados</option>
+            <option value="4">4 pedidos separados</option>
+            <option value="5">5 pedidos separados</option>
+            <option value="manual">Mais de 5 pedidos</option>
           </select>
         </label>
         <label id="campoParadasManual" style="display: none"
-          >Digite a quantidade de pontos
+          >Digite a quantidade de pedidos
           <input
             id="paradasManual"
             inputmode="numeric"
@@ -1446,15 +1541,18 @@
             max="30"
           />
         </label>
-        <div id="campoEnderecosExtras" style="display: none">
-          <p class="muted">
-            <strong>Pontos extras</strong> - informe o endereco de cada entrega.
-            Nome e WhatsApp sao opcionais.
-          </p>
-          <div id="pontosExtrasCampos" style="display: grid; gap: 10px"></div>
+        <div id="campoEnderecosExtras" class="prepared-orders-board" style="display: none">
+          <div class="prepared-orders-head">
+            <div>
+              <h3>Pedidos preparados</h3>
+              <p class="muted">Monte todos agora e chame cada entrega separadamente.</p>
+            </div>
+            <button id="limparPedidosEnviados" type="button" class="secondary">Limpar enviados</button>
+          </div>
+          <div id="pontosExtrasCampos" class="prepared-orders-grid"></div>
           <textarea id="enderecosExtras" class="hidden"></textarea>
         </div>
-        <div class="quick-order-note">
+        <div id="avisoChamadaRapida" class="quick-order-note">
           <strong>Chamada rapida</strong>
           <span>Se os dados do cliente ja estiverem na nota impressa, basta informar o endereco e calcular.</span>
         </div>
@@ -1556,6 +1654,10 @@
         enviando = false,
         ultimoDepositoWhatsapp = "",
         pedidoIntegracaoAtual = null,
+        pedidoPreparadoAtivoId = "",
+        pedidosPreparados = [],
+        pedidosPreparadosCarregados = false,
+        pedidosPreparadosChave = "",
         pedidosIntegracaoAtual = [],
         saldoEmpresa = { saldo: 0, reservado: 0, disponivel: 0 },
         integracaoAtiva = false,
@@ -1566,6 +1668,7 @@
         empresaAprovada = false;
       const PLANO_DIARIO_TIPO = "Plano Diario MotoJa Pro";
       const MEMORIA_EMPRESA = "nexusEmpresaDados",
+        MEMORIA_PEDIDOS_PREPARADOS = "nexusEmpresaPedidosPreparados",
         TOKEN_EMPRESA = "nexusEmpresaToken";
       let empresaToken = localStorage.getItem(TOKEN_EMPRESA) || "";
       if (empresaToken) empresaAprovada = true;
@@ -2083,31 +2186,200 @@
         $("campoParadasManual").style.display = manual ? "grid" : "none";
         if (!manual) $("paradasManual").value = "";
       }
+      function chavePedidosPreparados() {
+        const empresaId = soNumeros($("telefoneEmpresa").value) || "local";
+        return `${MEMORIA_PEDIDOS_PREPARADOS}:${empresaId}`;
+      }
+      function pedidoPreparadoVazio(ordem) {
+        return {
+          id: `prep_${Date.now()}_${ordem}_${Math.random().toString(36).slice(2, 7)}`,
+          ordem,
+          endereco: "",
+          recebedor: "",
+          telefoneRecebedor: "",
+          descricao: "",
+          observacao: "",
+          status: "rascunho",
+          deliveryId: "",
+        };
+      }
+      function salvarPedidosPreparados() {
+        if (!pedidosPreparadosCarregados) return;
+        try {
+          localStorage.setItem(
+            chavePedidosPreparados(),
+            JSON.stringify(pedidosPreparados.slice(0, 30)),
+          );
+        } catch (_) {}
+      }
+      function carregarPedidosPreparados(forcar = false) {
+        const chave = chavePedidosPreparados();
+        if (!forcar && pedidosPreparadosCarregados && pedidosPreparadosChave === chave)
+          return;
+        pedidosPreparadosCarregados = true;
+        pedidosPreparadosChave = chave;
+        try {
+          const salvos = JSON.parse(localStorage.getItem(chave) || "[]");
+          pedidosPreparados = Array.isArray(salvos)
+            ? salvos.slice(0, 30).map((pedido, index) => ({
+                ...pedidoPreparadoVazio(index + 1),
+                ...pedido,
+                ordem: index + 1,
+                telefoneRecebedor: soNumeros(pedido.telefoneRecebedor).slice(0, 11),
+                status: pedido.status === "enviado" ? "enviado" : "rascunho",
+              }))
+            : [];
+        } catch (_) {
+          pedidosPreparados = [];
+        }
+        if (pedidosPreparados.length > 1) {
+          if (pedidosPreparados.length <= 5) {
+            $("paradas").value = String(pedidosPreparados.length);
+          } else {
+            $("paradas").value = "manual";
+            $("paradasManual").value = String(pedidosPreparados.length);
+            $("campoParadasManual").style.display = "grid";
+          }
+        }
+      }
+      function estadoPedidoPreparado(pedido) {
+        if (pedido.status === "enviado") return "Enviado";
+        if (pedido.id === pedidoPreparadoAtivoId && entregaCalculada)
+          return "Calculado";
+        return pedido.endereco ? "Pronto" : "Aguardando endereco";
+      }
+      function renderizarPedidosPreparados() {
+        const box = $("pontosExtrasCampos");
+        box.innerHTML = pedidosPreparados
+          .map((pedido, index) => {
+            const enviado = pedido.status === "enviado";
+            return `<article class="prepared-order-card${enviado ? " is-sent" : ""}" data-prepared-id="${esc(pedido.id)}">
+              <div class="prepared-order-header"><strong>Pedido ${index + 1}</strong><span class="prepared-order-status">${esc(estadoPedidoPreparado(pedido))}</span></div>
+              <label>Endereco de entrega<input class="prepared-address" value="${esc(pedido.endereco)}" placeholder="Rua, numero, bairro" ${enviado ? "disabled" : ""}></label>
+              <details class="prepared-order-details" ${pedido.recebedor || pedido.telefoneRecebedor || pedido.descricao || pedido.observacao ? "open" : ""}>
+                <summary>Nome, WhatsApp e observacoes (opcional)</summary>
+                <div class="prepared-order-details-grid">
+                  <label>Nome<input class="prepared-recipient" value="${esc(pedido.recebedor)}" placeholder="Ex: Maria" ${enviado ? "disabled" : ""}></label>
+                  <label>WhatsApp<input class="prepared-phone" value="${esc(pedido.telefoneRecebedor)}" inputmode="tel" placeholder="Com DDD" ${enviado ? "disabled" : ""}></label>
+                  <label class="full">Descricao<input class="prepared-description" value="${esc(pedido.descricao)}" placeholder="Ex: 3 lanches" ${enviado ? "disabled" : ""}></label>
+                  <label class="full">Observacao<input class="prepared-note" value="${esc(pedido.observacao)}" placeholder="Ex: cobrar na entrega" ${enviado ? "disabled" : ""}></label>
+                </div>
+              </details>
+              <div class="prepared-order-actions">
+                <button type="button" class="${enviado ? "secondary" : ""}" data-prepared-calculate="${esc(pedido.id)}">${enviado ? "Preparar novo pedido" : "Calcular este pedido"}</button>
+                <button type="button" class="secondary" data-prepared-clear="${esc(pedido.id)}" title="Limpar este cartao">Limpar</button>
+              </div>
+              ${enviado && pedido.deliveryId ? `<span class="muted">Codigo enviado: ${esc(pedido.deliveryId)}</span>` : ""}
+            </article>`;
+          })
+          .join("");
+        box.querySelectorAll(".prepared-order-card").forEach((card) => {
+          const id = card.dataset.preparedId,
+            pedido = pedidosPreparados.find((item) => item.id === id);
+          if (!pedido) return;
+          const sincronizar = () => {
+            pedido.endereco = card.querySelector(".prepared-address")?.value.trim() || "";
+            pedido.recebedor = card.querySelector(".prepared-recipient")?.value.trim() || "";
+            pedido.telefoneRecebedor = soNumeros(card.querySelector(".prepared-phone")?.value || "").slice(0, 11);
+            pedido.descricao = card.querySelector(".prepared-description")?.value.trim() || "";
+            pedido.observacao = card.querySelector(".prepared-note")?.value.trim() || "";
+            pedido.status = "rascunho";
+            pedido.deliveryId = "";
+            salvarPedidosPreparados();
+            card.querySelector(".prepared-order-status").textContent = pedido.endereco
+              ? "Pronto"
+              : "Aguardando endereco";
+          };
+          card.querySelectorAll("input").forEach((input) =>
+            input.addEventListener("input", () => {
+              if (input.classList.contains("prepared-phone"))
+                input.value = soNumeros(input.value).slice(0, 11);
+              sincronizar();
+            }),
+          );
+        });
+        box.querySelectorAll("[data-prepared-calculate]").forEach((botao) => {
+          botao.onclick = () => {
+            const pedido = pedidosPreparados.find(
+              (item) => item.id === botao.dataset.preparedCalculate,
+            );
+            if (!pedido) return;
+            if (pedido.status === "enviado") {
+              Object.assign(pedido, pedidoPreparadoVazio(pedido.ordem), {
+                id: pedido.id,
+                ordem: pedido.ordem,
+              });
+              salvarPedidosPreparados();
+              renderizarPedidosPreparados();
+              return;
+            }
+            if (!pedido.endereco) {
+              mostrarStatus(`Informe o endereco do Pedido ${pedido.ordem}.`, true);
+              cardDoPedido(pedido.id)?.querySelector(".prepared-address")?.focus();
+              return;
+            }
+            if (
+              pedido.telefoneRecebedor &&
+              (pedido.telefoneRecebedor.length < 10 || pedido.telefoneRecebedor.length > 11)
+            ) {
+              mostrarStatus(`Confira o WhatsApp opcional do Pedido ${pedido.ordem}.`, true);
+              return;
+            }
+            pedidoPreparadoAtivoId = pedido.id;
+            $("entrega").value = pedido.endereco;
+            $("recebedor").value = pedido.recebedor;
+            $("telefoneRecebedor").value = pedido.telefoneRecebedor;
+            $("descricao").value = pedido.descricao;
+            $("observacao").value = pedido.observacao;
+            entregaCalculada = null;
+            $("confirmar").style.display = "none";
+            $("calcular").click();
+          };
+        });
+        box.querySelectorAll("[data-prepared-clear]").forEach((botao) => {
+          botao.onclick = () => {
+            const pedido = pedidosPreparados.find(
+              (item) => item.id === botao.dataset.preparedClear,
+            );
+            if (!pedido) return;
+            Object.assign(pedido, pedidoPreparadoVazio(pedido.ordem), {
+              id: pedido.id,
+              ordem: pedido.ordem,
+            });
+            if (pedidoPreparadoAtivoId === pedido.id) pedidoPreparadoAtivoId = "";
+            salvarPedidosPreparados();
+            renderizarPedidosPreparados();
+          };
+        });
+      }
+      function cardDoPedido(id) {
+        return Array.from(document.querySelectorAll(".prepared-order-card")).find(
+          (card) => card.dataset.preparedId === id,
+        );
+      }
       function atualizarCampoExtras() {
+        carregarPedidosPreparados();
         const pontos = quantidadePontos();
         const mostrar = Number.isFinite(pontos) && pontos > 1;
         $("campoEnderecosExtras").style.display = mostrar ? "grid" : "none";
-        const box = $("pontosExtrasCampos");
+        $("campoEntregaPrincipal").style.display = mostrar ? "none" : "grid";
+        $("avisoChamadaRapida").style.display = mostrar ? "none" : "flex";
+        $("toggleDetalhesEntrega").style.display = mostrar ? "none" : "block";
+        if (mostrar) mostrarDetalhesEntrega(false);
+        $("calcular").style.display = mostrar ? "none" : "block";
         if (!mostrar) {
-          box.innerHTML = "";
+          $("pontosExtrasCampos").innerHTML = "";
           $("enderecosExtras").value = "";
+          pedidoPreparadoAtivoId = "";
           return;
         }
-        let html = "";
-        for (let i = 2; i <= pontos; i++) {
-          html += `<div class="box" style="padding:12px;gap:10px"><strong>Ponto ${i}</strong><label>Endereco do ponto ${i}<input class="extra-endereco" data-ordem="${i}" placeholder="Rua, numero, bairro"></label><div class="grid2"><label>Nome de quem recebe (opcional)<input class="extra-recebedor" data-ordem="${i}" placeholder="Ex: Maria"></label><label>WhatsApp de quem recebe (opcional)<input class="extra-telefone" data-ordem="${i}" inputmode="tel" placeholder="Com DDD"></label></div></div>`;
-        }
-        box.innerHTML = html;
-        box.querySelectorAll("input").forEach((input) =>
-          input.addEventListener("input", () => {
-            if (input.classList.contains("extra-telefone"))
-              input.value = soNumeros(input.value).slice(0, 11);
-            atualizarEnderecosExtrasValue();
-            entregaCalculada = null;
-            $("confirmar").style.display = "none";
-          }),
-        );
-        atualizarEnderecosExtrasValue();
+        while (pedidosPreparados.length < pontos)
+          pedidosPreparados.push(pedidoPreparadoVazio(pedidosPreparados.length + 1));
+        if (pedidosPreparados.length > pontos)
+          pedidosPreparados = pedidosPreparados.slice(0, pontos);
+        pedidosPreparados.forEach((pedido, index) => (pedido.ordem = index + 1));
+        salvarPedidosPreparados();
+        renderizarPedidosPreparados();
       }
       function limparEnderecoExtra(v) {
         return String(v || "")
@@ -2115,29 +2387,10 @@
           .trim();
       }
       function listaEnderecosExtras() {
-        const box = $("pontosExtrasCampos");
-        return Array.from(box.querySelectorAll(".extra-endereco"))
-          .map((input) => {
-            const ordem = Number(input.dataset.ordem || 0),
-              card = input.closest(".box");
-            return {
-              ordem,
-              endereco: limparEnderecoExtra(input.value),
-              recebedor:
-                card.querySelector(".extra-recebedor")?.value.trim() || "",
-              telefoneRecebedor: soNumeros(
-                card.querySelector(".extra-telefone")?.value || "",
-              ),
-            };
-          })
-          .filter((p) => p.endereco || p.recebedor || p.telefoneRecebedor);
+        return [];
       }
       function atualizarEnderecosExtrasValue() {
-        const linhas = listaEnderecosExtras().map(
-          (p) =>
-            `Ponto ${p.ordem}: ${p.endereco} - ${p.recebedor} - ${p.telefoneRecebedor}`,
-        );
-        $("enderecosExtras").value = linhas.join("\n");
+        $("enderecosExtras").value = "";
       }
       async function geocodificar(endereco) {
         const base = endereco.trim();
@@ -2312,6 +2565,10 @@
           : "Crie uma conta para abrir no celular e no computador com os mesmos dados, saldo e relatorio.";
         atualizarTelaEmpresa();
         salvarEmpresa();
+        pedidosPreparadosCarregados = false;
+        carregarPedidosPreparados(true);
+        atualizarCampoManual();
+        atualizarCampoExtras();
       }
       async function carregarMinhaEmpresa() {
         atualizarTelaEmpresa();
@@ -2764,6 +3021,10 @@
           .join(", ");
       }
       function preencherPedidoIntegracao(o) {
+        pedidoPreparadoAtivoId = "";
+        $("paradas").value = "1";
+        atualizarCampoManual();
+        atualizarCampoExtras();
         if (o.enderecoEntrega) $("entrega").value = o.enderecoEntrega;
         if (o.cliente) $("recebedor").value = o.cliente;
         if (o.telefoneCliente) $("telefoneRecebedor").value = o.telefoneCliente;
@@ -3017,6 +3278,9 @@
         atualizarIntegracaoUI();
       });
       $("paradas").addEventListener("change", () => {
+        pedidoPreparadoAtivoId = "";
+        entregaCalculada = null;
+        $("confirmar").style.display = "none";
         atualizarCampoManual();
         atualizarCampoExtras();
       });
@@ -3027,6 +3291,18 @@
         );
         atualizarCampoExtras();
       });
+      $("limparPedidosEnviados").onclick = () => {
+        pedidosPreparados.forEach((pedido) => {
+          if (pedido.status !== "enviado") return;
+          Object.assign(pedido, pedidoPreparadoVazio(pedido.ordem), {
+            id: pedido.id,
+            ordem: pedido.ordem,
+          });
+        });
+        pedidoPreparadoAtivoId = "";
+        salvarPedidosPreparados();
+        renderizarPedidosPreparados();
+      };
       atualizarCampoManual();
       atualizarCampoExtras();
       $("suporte").onclick = () => {
@@ -3156,18 +3432,25 @@
       $("calcular").onclick = async () => {
         limparStatus();
         resultadoBox.className = "result";
-        const empresa = $("empresa").value.trim(),
+        const pedidoPreparadoAtivo = pedidosPreparados.find(
+            (pedido) => pedido.id === pedidoPreparadoAtivoId,
+          ),
+          empresa = $("empresa").value.trim(),
           responsavel = $("responsavel").value.trim(),
           telefoneEmpresa = soNumeros($("telefoneEmpresa").value),
           tipoEntrega = $("tipoEntrega").value,
           retiradaTxt = $("retirada").value.trim(),
-          entregaTxt = $("entrega").value.trim(),
-          recebedor = $("recebedor").value.trim(),
-          telefoneRecebedor = soNumeros($("telefoneRecebedor").value),
-          paradas = quantidadePontos(),
-          enderecosExtras = $("enderecosExtras").value.trim(),
-          descricao = $("descricao").value.trim(),
-          observacao = $("observacao").value.trim();
+          entregaTxt = (pedidoPreparadoAtivo?.endereco || $("entrega").value).trim(),
+          recebedor = (pedidoPreparadoAtivo?.recebedor || $("recebedor").value).trim(),
+          telefoneRecebedor = soNumeros(
+            pedidoPreparadoAtivo?.telefoneRecebedor || $("telefoneRecebedor").value,
+          ),
+          paradas = pedidoPreparadoAtivo ? 1 : quantidadePontos(),
+          enderecosExtras = pedidoPreparadoAtivo
+            ? ""
+            : $("enderecosExtras").value.trim(),
+          descricao = (pedidoPreparadoAtivo?.descricao || $("descricao").value).trim(),
+          observacao = (pedidoPreparadoAtivo?.observacao || $("observacao").value).trim();
         if (
           !empresa ||
           !responsavel ||
@@ -3206,11 +3489,15 @@
           return;
         }
         if (!Number.isFinite(paradas) || paradas < 1 || paradas > 30) {
-          mostrarStatus("Informe uma quantidade de pontos entre 1 e 30.", true);
+          mostrarStatus("Informe uma quantidade de pedidos entre 1 e 30.", true);
           return;
         }
-        if ($("paradas").value === "manual" && paradas < 6) {
-          mostrarStatus("No campo manual, digite 6 pontos ou mais.", true);
+        if (
+          !pedidoPreparadoAtivo &&
+          $("paradas").value === "manual" &&
+          paradas < 6
+        ) {
+          mostrarStatus("No campo manual, digite 6 pedidos ou mais.", true);
           return;
         }
         if (paradas > 1 && !enderecosExtras) {
@@ -3272,6 +3559,8 @@
             precoLabel = labelPreco(tipoEntrega, paradas, pontosCobranca),
             retiradaMapa = `https://www.google.com/maps?q=${retirada.lat},${retirada.lon}`;
           entregaCalculada = {
+            pedidoPreparadoId: pedidoPreparadoAtivo?.id || "",
+            pedidoPreparadoOrdem: pedidoPreparadoAtivo?.ordem || 0,
             empresa,
             responsavel,
             telefoneEmpresa,
@@ -3299,6 +3588,7 @@
               paradas,
             }),
           };
+          if (pedidoPreparadoAtivo) renderizarPedidosPreparados();
           const saldoBaixo = saldoEmpresa.disponivel < valor;
           if (saldoBaixo) {
             mostrarStatus(
@@ -3306,7 +3596,7 @@
               true,
             );
           }
-          resultadoBox.innerHTML = `Entrega ficou em <strong>${moeda(valor)}</strong><br>Distancia: <strong>${km.toFixed(2).replace(".", ",")} km</strong><br>Paradas: <strong>${paradas}</strong><br>Tipo: <strong>${esc(tipoEntrega)}</strong><br>Preco: <strong>${esc(precoLabel)}</strong><br>Ponto 1 encontrado: <strong>${esc(entrega.texto || entregaTxt)}</strong><br>${extras.length ? `Pontos extras:<br><strong>${extras.map((e, i) => `Ponto ${i + 2}: ${esc(e.digitado)}`).join("<br>")}</strong><br>` : ""}${descricao ? `Pedido: <strong>${esc(descricao)}</strong><br>` : ""}<br>Podemos chamar um motoboy agora?`;
+          resultadoBox.innerHTML = `${pedidoPreparadoAtivo ? `<strong>Pedido ${pedidoPreparadoAtivo.ordem}</strong><br>` : ""}Entrega ficou em <strong>${moeda(valor)}</strong><br>Distancia: <strong>${km.toFixed(2).replace(".", ",")} km</strong><br>${pedidoPreparadoAtivo ? "Chamada: <strong>entrega separada</strong>" : `Paradas: <strong>${paradas}</strong>`}<br>Tipo: <strong>${esc(tipoEntrega)}</strong><br>Preco: <strong>${esc(precoLabel)}</strong><br>Endereco encontrado: <strong>${esc(entrega.texto || entregaTxt)}</strong><br>${extras.length ? `Pontos extras:<br><strong>${extras.map((e, i) => `Ponto ${i + 2}: ${esc(e.digitado)}`).join("<br>")}</strong><br>` : ""}${descricao ? `Pedido: <strong>${esc(descricao)}</strong><br>` : ""}<br>Podemos chamar um motoboy agora?`;
           resultadoBox.className = "result show";
           $("confirmar").style.display = "block";
           if (!saldoBaixo) limparStatus();
@@ -3386,15 +3676,39 @@
             throw new Error(
               data.message || data.error || "Nao consegui chamar motoboy.",
             );
-          prepararNovaEntrega();
-          resultadoBox.innerHTML = `Entrega enviada para os motoboys.<br>Codigo: <strong>${data.deliveryId}</strong><br>A entrega fica disponivel por ate 15 minutos para os motoboys aceitarem.<br><button id="novaEntrega" type="button" class="green" style="margin-top:12px">Fazer outra entrega</button>`;
+          const pedidoPreparadoEnviado = d.pedidoPreparadoId
+            ? pedidosPreparados.find(
+                (pedido) => pedido.id === d.pedidoPreparadoId,
+              )
+            : null;
+          if (pedidoPreparadoEnviado) {
+            pedidoPreparadoEnviado.status = "enviado";
+            pedidoPreparadoEnviado.deliveryId = data.deliveryId || "";
+            pedidoPreparadoAtivoId = "";
+            entregaCalculada = null;
+            enviando = false;
+            $("confirmar").disabled = false;
+            $("confirmar").style.display = "none";
+            $("confirmar").textContent = "Confirmar e chamar motoboy";
+            salvarPedidosPreparados();
+            renderizarPedidosPreparados();
+          } else {
+            prepararNovaEntrega();
+          }
+          resultadoBox.innerHTML = `${pedidoPreparadoEnviado ? `Pedido ${pedidoPreparadoEnviado.ordem} enviado separadamente.<br>` : "Entrega enviada para os motoboys.<br>"}Codigo: <strong>${data.deliveryId}</strong><br>A entrega fica disponivel por ate 15 minutos para os motoboys aceitarem.<br><button id="novaEntrega" type="button" class="green" style="margin-top:12px">${pedidoPreparadoEnviado ? "Continuar com os outros pedidos" : "Fazer outra entrega"}</button>`;
           resultadoBox.className = "result show";
           $("novaEntrega").onclick = () => {
             limparStatus();
             resultadoBox.className = "result";
             resultadoBox.textContent = "";
-            $("entrega").focus();
-            $("entrega").scrollIntoView({
+            const proximoPedido = pedidoPreparadoEnviado
+              ? pedidosPreparados.find((pedido) => pedido.status !== "enviado")
+              : null;
+            const foco = proximoPedido
+              ? cardDoPedido(proximoPedido.id)?.querySelector(".prepared-address")
+              : $("entrega");
+            foco?.focus();
+            foco?.scrollIntoView({
               behavior: "smooth",
               block: "center",
             });
@@ -3413,7 +3727,7 @@
       };
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker
-          .register("./sw.js?v=163", { updateViaCache: "none" })
+          .register("./sw.js?v=165", { updateViaCache: "none" })
           .then((r) => r.update())
           .catch(() => {});
       }
@@ -3440,7 +3754,7 @@
           }
         };
     </script>
-    <script src="./empresa-tracking.js?v=164" defer></script>
+    <script src="./empresa-tracking.js?v=165" defer></script>
     <script src="./empresa-pedidos.js?v=134" defer></script>
     <script>
       (() => {
