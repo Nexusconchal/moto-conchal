@@ -1586,7 +1586,7 @@
           <article class="integration-card" data-platform="cardapioweb">
             <button class="integration-head" type="button" data-expand="cardapioweb">
               <span class="integration-icon">C</span
-              ><strong class="integration-title">Conversa Web / Cardápio Web</strong
+              ><strong class="integration-title">Cardápio Web</strong
               ><span id="cardapioWebBadge" class="integration-badge">Inativo</span
               ><span class="integration-arrow">⌄</span>
             </button>
@@ -4073,7 +4073,7 @@
       };
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker
-          .register("./sw.js?v=171", { updateViaCache: "none" })
+          .register("./sw.js?v=172", { updateViaCache: "none" })
           .then((r) => r.update())
           .catch(() => {});
       }
@@ -4182,7 +4182,7 @@
         ordersView.append(lead("Pedidos capturados", "Confira pedidos recebidos das plataformas conectadas."), captured);
 
         const integrationsView = makeView("integrations");
-        integrationsView.append(lead("Integracoes", "Gerencie Anota AI, BeeFood, Conversa Web e as capturas automaticas da loja."), integrations);
+        integrationsView.append(lead("Integracoes", "Gerencie Anota AI, BeeFood, Cardápio Web e as capturas automaticas da loja."), integrations);
 
         const financeView = makeView("finance", "finance-grid");
         financeView.append(lead("Financeiro", "Adicione saldo, confira a forma de pagamento e gerencie o plano diario."), wallet, payment, dailyPlan);
