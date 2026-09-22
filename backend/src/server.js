@@ -1174,6 +1174,7 @@ async function initializeDriverEarnings(driverCpf) {
 }
 
 const MANUAL_DELIVERY_DATE_MIGRATION_ID = 'manual_delivery_operational_date_v1';
+let manualDeliveryDateMigrationStatus = { status: 'pending' };
 
 async function repairManualDeliveryEarningDate(deliverySnap) {
   const delivery = deliverySnap.data() || {};
@@ -2576,7 +2577,12 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'manual-delivery-date-v175' });
+  res.json({
+    ok: true,
+    service: 'motoja-conchal-backend',
+    release: 'manual-delivery-date-v176',
+    manualDeliveryDateMigration: manualDeliveryDateMigrationStatus
+  });
 });
 
 app.get('/', (_req, res) => {
@@ -7273,7 +7279,14 @@ app.use((error, _req, res, _next) => {
 
 httpServer.listen(PORT, () => {
   console.log(`MotoJa Conchal backend listening on ${PORT}`);
+  manualDeliveryDateMigrationStatus = { status: 'running' };
   migrateManualDeliveryEarningDates()
-    .then((result) => console.log('manual delivery date migration', result))
-    .catch((error) => console.error('manual delivery date migration failed', error));
+    .then((result) => {
+      manualDeliveryDateMigrationStatus = { status: 'completed', ...result };
+      console.log('manual delivery date migration', result);
+    })
+    .catch((error) => {
+      manualDeliveryDateMigrationStatus = { status: 'error' };
+      console.error('manual delivery date migration failed', error);
+    });
 });
