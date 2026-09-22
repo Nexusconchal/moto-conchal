@@ -1688,7 +1688,7 @@
               <div class="km">Até 3 km</div>
               <div class="lbl">Corrida curta na cidade</div>
             </div>
-            <span class="val">R$ 5,50</span>
+            <span class="val">R$ 6,50</span>
           </div>
           <div class="price">
             <span class="ico">2</span>
@@ -1696,7 +1696,7 @@
               <div class="km">Até 5 km</div>
               <div class="lbl">Corrida média</div>
             </div>
-            <span class="val">R$ 8,50</span>
+            <span class="val">R$ 9,50</span>
           </div>
           <div class="price">
             <span class="ico">3</span>
@@ -1704,7 +1704,7 @@
               <div class="km">Até 8 km</div>
               <div class="lbl">Corrida longa</div>
             </div>
-            <span class="val">R$ 13,00</span>
+            <span class="val">R$ 14,00</span>
           </div>
           <div class="price gps">
             <span class="ico">GPS</span>
@@ -1933,9 +1933,9 @@
             desc: "Valores locais da Nexus MotoJá",
             kmExtra: 2.5,
             faixas: [
-              { limite: 3, valor: 5.5, label: "Até 3 km" },
-              { limite: 5, valor: 8.5, label: "Até 5 km" },
-              { limite: 8, valor: 13, label: "Até 8 km" },
+              { limite: 3, valor: 6.5, label: "Até 3 km" },
+              { limite: 5, valor: 9.5, label: "Até 5 km" },
+              { limite: 8, valor: 14, label: "Até 8 km" },
             ],
           },
           noite: {
@@ -1945,9 +1945,9 @@
             desc: "Tarifa especial para corridas noturnas",
             kmExtra: 3,
             faixas: [
-              { limite: 3, valor: 7, label: "Até 3 km - modo noite" },
-              { limite: 5, valor: 11, label: "Até 5 km - modo noite" },
-              { limite: 8, valor: 16, label: "Até 8 km - modo noite" },
+              { limite: 3, valor: 8, label: "Até 3 km - modo noite" },
+              { limite: 5, valor: 12, label: "Até 5 km - modo noite" },
+              { limite: 8, valor: 17, label: "Até 8 km - modo noite" },
             ],
           },
           madrugada: {
@@ -1957,9 +1957,9 @@
             desc: "Tarifa especial de madrugada",
             kmExtra: 3.5,
             faixas: [
-              { limite: 3, valor: 9, label: "Até 3 km - modo madrugada" },
-              { limite: 5, valor: 13, label: "Até 5 km - modo madrugada" },
-              { limite: 8, valor: 19, label: "Até 8 km - modo madrugada" },
+              { limite: 3, valor: 10, label: "Até 3 km - modo madrugada" },
+              { limite: 5, valor: 14, label: "Até 5 km - modo madrugada" },
+              { limite: 8, valor: 20, label: "Até 8 km - modo madrugada" },
             ],
           },
         },
@@ -3584,7 +3584,7 @@
         abrirWhatsApp("Olá, esqueci a senha da minha conta de cliente Nexus MotoJá e preciso de ajuda."),
       );
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=148", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=171", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
       }
       verificarAcessoCliente(true);
       verificarPedidoAtivo(false);

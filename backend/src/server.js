@@ -79,21 +79,21 @@ function expectedFare(km) {
   if (!Number.isFinite(distance) || distance <= 0) return 0;
   const period = rideFarePeriod();
   if (period === 'madrugada') {
-    if (distance <= 3) return 9;
-    if (distance <= 5) return 13;
-    if (distance <= 8) return 19;
+    if (distance <= 3) return 10;
+    if (distance <= 5) return 14;
+    if (distance <= 8) return 20;
     return money(Math.ceil(distance) * 3.5);
   }
   if (period === 'noite') {
-    if (distance <= 3) return 7;
-    if (distance <= 5) return 11;
-    if (distance <= 8) return 16;
+    if (distance <= 3) return 8;
+    if (distance <= 5) return 12;
+    if (distance <= 8) return 17;
     return money(Math.ceil(distance) * 3);
   }
   let value;
-  if (distance <= 3) value = 5.5;
-  else if (distance <= 5) value = 8.5;
-  else if (distance <= 8) value = 13;
+  if (distance <= 3) value = 6.5;
+  else if (distance <= 5) value = 9.5;
+  else if (distance <= 8) value = 14;
   else value = Math.ceil(distance) * 2.5;
   return money(value);
 }
@@ -1176,8 +1176,10 @@ function serializeFirestore(value) {
   return value;
 }
 
-async function collectionState(name, limit = 500) {
-  const snapshot = await db.collection(name).limit(limit).get();
+async function collectionState(name, limit = 500, orderField = '') {
+  let query = db.collection(name);
+  if (orderField) query = query.orderBy(orderField, 'desc');
+  const snapshot = await query.limit(limit).get();
   return snapshot.docs
     .map((docSnap) => serializeFirestore({ id: docSnap.id, ...docSnap.data() }))
     .sort((a, b) => timestampMs(b.finalizadaEm || b.aceitaEm || b.criadaEm || b.ultimoAcesso) - timestampMs(a.finalizadaEm || a.aceitaEm || a.criadaEm || a.ultimoAcesso));
@@ -2469,7 +2471,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'company-delivery-prices-v169' });
+  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'full-fixes-v171' });
 });
 
 app.get('/', (_req, res) => {
@@ -2643,7 +2645,7 @@ app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
     }
     const [corridas, entregas, motoboys, depositos, recuperacoesSenhaEmpresa, empresasRaw, eventosFunil] = await Promise.all([
       collectionState('corridas'),
-      collectionState('entregas'),
+      collectionState('entregas', 500, 'criadaEm'),
       collectionState('motoboys'),
       collectionState('depositos'),
       collectionState('recuperacoesSenhaEmpresa'),
@@ -6092,13 +6094,6 @@ app.post('/api/deliveries/:deliveryId/cancel', async (req, res, next) => {
     if (delivery.status === 'finalizada') {
       return res.status(409).json({ error: 'entrega_ja_finalizada' });
     }
-    if (delivery.status === 'retirada') {
-      return res.status(409).json({
-        error: 'cancelamento_apos_retirada_bloqueado',
-        message: 'Depois de retirar o pedido, o cancelamento precisa ser conferido pelo suporte para proteger a empresa e o motoboy.'
-      });
-    }
-
     await releaseDeliveryReservation(deliveryRef, 'cancelada', {
       motivoCancelamento: reason,
       canceladoPor: delivery.motoboy || '',

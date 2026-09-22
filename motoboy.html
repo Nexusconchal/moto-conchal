@@ -161,6 +161,13 @@
       button.ok {
         background: linear-gradient(135deg, #25d366, #128c3e);
       }
+      .status.quick-login-green {
+        background: linear-gradient(135deg, #25d366, #128c3e);
+        border-color: rgba(37, 211, 102, 0.82);
+      }
+      .quick-login-green summary {
+        color: #fff;
+      }
       button.done {
         background: linear-gradient(135deg, #4fc3f7, #0288d1);
       }
@@ -901,7 +908,7 @@
         /></label>
         <p class="access-code-note">O código é fornecido no grupo oficial e serve para autorizar o cadastro de novos motoboys.</p>
         <button
-          class="secondary"
+          class="ok"
           type="button"
           onclick="location.href='https://chat.whatsapp.com/HNDcqL2PZEl3KScGrhnigd'"
         >Entrar no grupo e pedir o código</button>
@@ -911,7 +918,7 @@
         </button>
         <button class="secondary" type="button" data-step-back="2">Voltar</button>
         </div>
-        <details class="status quick-login">
+        <details class="status quick-login quick-login-green">
           <summary>Já sou cadastrado</summary>
           <div class="quick-login-fields">
             <label
@@ -2140,11 +2147,13 @@
                 alert("Cancelamento precisa de motivo.");
                 return;
               }
+              const recurso = recursoAtual();
+              const itemId = btn.dataset.cancelar;
               btn.disabled = true;
               btn.textContent = "Cancelando...";
               try {
                 const r = await fetch(
-                  `${CONFIG.backend}/api/${recursoAtual()}/${btn.dataset.cancelar}/cancel`,
+                  `${CONFIG.backend}/api/${recurso}/${itemId}/cancel`,
                   {
                     method: "POST",
                     headers: { "content-type": "application/json" },
@@ -2165,9 +2174,9 @@
                 if (d.whatsapp) location.href = d.whatsapp;
                 else ouvir();
               } catch (e) {
-                alert(e.message);
                 btn.disabled = false;
                 btn.textContent = `Cancelar ${servico}`;
+                alert(e.message || "Erro ao cancelar.");
               }
             }),
         );
@@ -2444,7 +2453,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=170", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=171", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});

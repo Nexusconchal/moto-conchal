@@ -1325,7 +1325,7 @@
           </button>
         </div>
       </section>
-      <button id="suporte" type="button" class="secondary login-support">
+      <button id="suporte" type="button" class="green login-support">
         Chamar suporte MotoJÁ
       </button>
       <section class="box app-area hidden tracking-panel">
@@ -1420,53 +1420,6 @@
           class="status error"
           aria-live="polite"
         ></div>
-      </section>
-      <section
-        class="box app-area hidden"
-        style="display: none"
-        aria-hidden="true"
-      >
-        <h2>Painel de integracao</h2>
-        <p class="muted">
-          Use quando a empresa tiver um sistema de pedidos. O codigo fica salvo
-          no servidor e nao aparece para motoboy nem cliente.
-        </p>
-        <div id="integracaoStatus" class="status show">
-          Modo manual ligado. Pedidos automaticos desligados.
-        </div>
-        <label
-          >Nome da integracao<input
-            id="integracaoNome"
-            placeholder="Ex: Sistema de pedidos"
-        /></label>
-        <label
-          >Codigo da loja<input
-            id="integracaoCodigoLoja"
-            inputmode="numeric"
-            placeholder="Ex: 00000"
-        /></label>
-        <label
-          >Chave/API da empresa<textarea
-            id="integracaoToken"
-            placeholder="Cole a chave/API aqui. Se precisar, use 00000 na primeira linha e o token na linha de baixo"
-          ></textarea>
-        </label>
-        <div class="grid2">
-          <button id="toggleIntegracao" type="button" class="secondary">
-            Ligar automatico</button
-          ><button id="salvarIntegracao" type="button" class="secondary">
-            Salvar chave/API
-          </button>
-        </div>
-        <button
-          id="editarIntegracao"
-          type="button"
-          class="secondary"
-          style="display: none"
-        >
-          Editar/trocar API salva</button
-        ><button id="testarIntegracao" type="button">Testar integracao</button>
-        <div id="resultadoIntegracao" class="result"></div>
       </section>
       <section class="box app-area hidden" id="integracoesPedidosSection">
         <h2>Captura automatica de pedidos</h2>
@@ -1628,6 +1581,67 @@
               <div class="status show capture-secret" data-status="beefood">
                 Carregando configuracao...
               </div>
+            </div>
+          </article>
+          <article class="integration-card" data-platform="cardapioweb">
+            <button class="integration-head" type="button" data-expand="cardapioweb">
+              <span class="integration-icon">C</span
+              ><strong class="integration-title">Conversa Web / Cardápio Web</strong
+              ><span id="cardapioWebBadge" class="integration-badge">Inativo</span
+              ><span class="integration-arrow">⌄</span>
+            </button>
+            <div class="integration-body">
+              <p class="muted">
+                Para lojas que possuem a chave da API. A chave fica criptografada
+                no servidor e nunca aparece para o motoboy ou cliente.
+              </p>
+              <div id="integracaoStatus" class="status show">
+                Modo manual ligado. Pedidos automaticos desligados.
+              </div>
+              <div class="grid2">
+                <label
+                  >Nome da integração<input
+                    id="integracaoNome"
+                    placeholder="Ex: Canto do Açaí"
+                /></label>
+                <label
+                  >Código da loja<input
+                    id="integracaoCodigoLoja"
+                    inputmode="numeric"
+                    placeholder="Ex: 00000"
+                /></label>
+              </div>
+              <label
+                >Tipo da entrega<select id="integracaoTipoEntrega">
+                  <option value="">Selecione o tipo de entrega</option>
+                  <option>Lanche / pizza / pastel / marmita</option>
+                  <option>Acai / pote de sorvete</option>
+                  <option>Encomendas</option>
+                  <option>Farmacia</option>
+                </select></label
+              >
+              <label
+                >Chave/API da empresa<textarea
+                  id="integracaoToken"
+                  placeholder="Cole a chave/API aqui. Se precisar, use o código da loja na primeira linha e o token na linha de baixo"
+                ></textarea>
+              </label>
+              <div class="grid2 compact-buttons">
+                <button id="toggleIntegracao" type="button" class="secondary">
+                  Ligar automático</button
+                ><button id="salvarIntegracao" type="button" class="secondary">
+                  Salvar chave/API
+                </button>
+              </div>
+              <button
+                id="editarIntegracao"
+                type="button"
+                class="secondary"
+                style="display: none"
+              >
+                Editar/trocar API salva</button
+              ><button id="testarIntegracao" type="button">Testar conexão e buscar pedidos</button>
+              <div id="resultadoIntegracao" class="result"></div>
             </div>
           </article>
           <article class="integration-card" data-platform="ifood">
@@ -2715,8 +2729,11 @@
       function authHeaders() {
         return empresaToken ? { authorization: `Bearer ${empresaToken}` } : {};
       }
+      function integracaoTipoValor() {
+        return $("integracaoTipoEntrega")?.value || "";
+      }
       function integracaoTipoOk() {
-        return tipoPrecificado($("tipoEntrega")?.value || "");
+        return tipoPrecificado(integracaoTipoValor());
       }
       function atualizarIntegracaoUI() {
         const box = $("integracaoStatus"),
@@ -2725,6 +2742,7 @@
           editar = $("editarIntegracao"),
           testar = $("testarIntegracao"),
           token = $("integracaoToken"),
+          badge = $("cardapioWebBadge"),
           tipoOk = integracaoTipoOk();
         if (!box || !btn) return;
         box.className = "status show";
@@ -2737,6 +2755,10 @@
         if (token && integracaoProtegida && !token.value)
           token.placeholder =
             "API salva protegida. Para trocar, cole a nova chave aqui";
+        if (badge) {
+          badge.textContent = integracaoAtiva ? "Ativo" : "Inativo";
+          badge.classList.toggle("active", integracaoAtiva);
+        }
         btn.disabled = !tipoOk && !integracaoAtiva;
         if (testar) testar.disabled = !tipoOk;
         if (!tipoOk) {
@@ -2791,8 +2813,11 @@
         integracaoProtegida = !!c.integracaoProtegida;
         preencherCampo("integracaoNome", c.integracaoNome);
         preencherCampo("integracaoCodigoLoja", c.integracaoCodigoLoja);
-        if (c.integracaoTipoEntrega && !$("tipoEntrega").value)
-          $("tipoEntrega").value = c.integracaoTipoEntrega;
+        if (c.integracaoTipoEntrega) {
+          $("integracaoTipoEntrega").value = c.integracaoTipoEntrega;
+          if (!$("tipoEntrega").value)
+            $("tipoEntrega").value = c.integracaoTipoEntrega;
+        }
         atualizarIntegracaoUI();
         $("contaStatus").textContent = c.empresa
           ? empresaAprovada
@@ -3211,7 +3236,7 @@
               body: JSON.stringify({
                 nome: $("integracaoNome").value,
                 codigoLoja: $("integracaoCodigoLoja").value,
-                tipoEntrega: $("tipoEntrega").value,
+                tipoEntrega: integracaoTipoValor(),
                 token: $("integracaoToken").value,
                 ativo: integracaoAtiva || !!$("integracaoToken").value.trim(),
               }),
@@ -3295,7 +3320,7 @@
               body: JSON.stringify({
                 nome: $("integracaoNome").value,
                 codigoLoja: $("integracaoCodigoLoja").value,
-                tipoEntrega: $("tipoEntrega").value,
+                tipoEntrega: integracaoTipoValor(),
                 token,
                 ativo: ligar,
               }),
@@ -3546,6 +3571,7 @@
         }
         const btn = $("testarIntegracao"),
           box = $("resultadoIntegracao");
+        $("tipoEntrega").value = integracaoTipoValor();
         btn.disabled = true;
         btn.textContent = "Testando...";
         box.className = "result";
@@ -3595,8 +3621,8 @@
       };
       $("tipoEntrega").addEventListener("change", () => {
         mostrarTipoEntregaAviso("");
-        atualizarIntegracaoUI();
       });
+      $("integracaoTipoEntrega").addEventListener("change", atualizarIntegracaoUI);
       $("paradas").addEventListener("change", () => {
         pedidoPreparadoAtivoId = "";
         entregaCalculada = null;
@@ -4047,7 +4073,7 @@
       };
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker
-          .register("./sw.js?v=169", { updateViaCache: "none" })
+          .register("./sw.js?v=171", { updateViaCache: "none" })
           .then((r) => r.update())
           .catch(() => {});
       }
@@ -4156,7 +4182,7 @@
         ordersView.append(lead("Pedidos capturados", "Confira pedidos recebidos das plataformas conectadas."), captured);
 
         const integrationsView = makeView("integrations");
-        integrationsView.append(lead("Integracoes", "Gerencie Anota AI, BeeFood e as capturas automaticas da loja."), integrations);
+        integrationsView.append(lead("Integracoes", "Gerencie Anota AI, BeeFood, Conversa Web e as capturas automaticas da loja."), integrations);
 
         const financeView = makeView("finance", "finance-grid");
         financeView.append(lead("Financeiro", "Adicione saldo, confira a forma de pagamento e gerencie o plano diario."), wallet, payment, dailyPlan);
@@ -4165,8 +4191,8 @@
         reportsView.append(lead("Relatorios", "Confira os valores e entregas realizadas pela empresa."), report);
 
         footer.append(support, logout);
-        support.classList.remove("green");
-        support.classList.add("secondary");
+        support.classList.remove("secondary");
+        support.classList.add("green");
 
         const titles = {
           operations: "Visao geral",

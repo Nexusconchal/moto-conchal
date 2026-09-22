@@ -10,7 +10,7 @@ document.addEventListener('click',async e=>{const aprovarPagamento=e.target.clos
 comidaEntrega = function(e){return /lanche|comida|pizza|pastel|acai|sorvete|marmita|farmacia/i.test(String(e.tipoEntrega||''))};
 </script>
 <style>
-  .delivery-report-toolbar{display:grid;grid-template-columns:repeat(2,minmax(220px,360px)) auto;align-items:end;justify-content:space-between;gap:10px}
+  .delivery-report-toolbar{display:grid;grid-template-columns:repeat(3,minmax(190px,1fr)) auto;align-items:end;justify-content:space-between;gap:10px}
   .delivery-report-toolbar button{padding:0 18px;white-space:nowrap}
   .delivery-filter-status{grid-column:1/-1;color:var(--muted);font-size:.8rem}
   #entregas-section:fullscreen,#entregas-section.report-expanded{background:#090b13;padding:18px;border:0;border-radius:0;width:100vw;height:100vh;max-width:none}
@@ -27,9 +27,11 @@ comidaEntrega = function(e){return /lanche|comida|pizza|pastel|acai|sorvete|marm
 
     const toolbar = document.createElement('div');
     toolbar.className = 'delivery-report-toolbar';
-    toolbar.innerHTML = '<label>Filtrar por motoboy<select id="filtroMotoboyEntregas"><option value="todos">Todos os motoboys</option></select></label><label>Filtrar por empresa<select id="filtroEmpresaEntregas"><option value="todas">Todas as empresas</option></select></label><button id="telaCheiaEntregas" type="button">Tela cheia</button><div id="statusFiltroEntregas" class="delivery-filter-status">Mostrando todas as entregas.</div>';
+    toolbar.innerHTML = '<label>Período<select id="filtroPeriodoEntregas"><option value="hoje">Hoje</option><option value="ontem">Ontem</option><option value="7dias">Últimos 7 dias</option><option value="30dias">Últimos 30 dias</option><option value="todos">Todos os registros</option></select></label><label>Filtrar por motoboy<select id="filtroMotoboyEntregas"><option value="todos">Todos os motoboys</option></select></label><label>Filtrar por empresa<select id="filtroEmpresaEntregas"><option value="todas">Todas as empresas</option></select></label><button id="telaCheiaEntregas" type="button">Tela cheia</button><div id="statusFiltroEntregas" class="delivery-filter-status">Mostrando todas as entregas.</div>';
     report.before(toolbar);
 
+    const periodSelect = document.getElementById('filtroPeriodoEntregas');
+    const globalPeriod = document.getElementById('periodo');
     const select = document.getElementById('filtroMotoboyEntregas');
     const companySelect = document.getElementById('filtroEmpresaEntregas');
     const fullscreenButton = document.getElementById('telaCheiaEntregas');
@@ -103,6 +105,21 @@ comidaEntrega = function(e){return /lanche|comida|pizza|pastel|acai|sorvete|marm
 
     select.addEventListener('change', applyDeliveryFilters);
     companySelect.addEventListener('change', applyDeliveryFilters);
+    periodSelect.value = ['hoje', 'ontem', '7dias', 'todos'].includes(globalPeriod?.value) ? globalPeriod.value : 'hoje';
+    periodSelect.addEventListener('change', () => {
+      if (!globalPeriod) return;
+      if (periodSelect.value === '30dias') {
+        const start = new Date();
+        start.setDate(start.getDate() - 29);
+        const localDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        globalPeriod.value = 'personalizado';
+        document.getElementById('dataInicio').value = localDate(start);
+        document.getElementById('dataFim').value = localDate(new Date());
+      } else {
+        globalPeriod.value = periodSelect.value;
+      }
+      globalPeriod.dispatchEvent(new Event('change'));
+    });
     fullscreenButton.addEventListener('click', async () => {
       if (document.fullscreenElement === section) {
         await document.exitFullscreen();
@@ -136,7 +153,7 @@ comidaEntrega = function(e){return /lanche|comida|pizza|pastel|acai|sorvete|marm
 
     refreshFilterOptions();
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js?v=169', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
+      navigator.serviceWorker.register('./sw.js?v=171', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
     }
   })();
 </script>
