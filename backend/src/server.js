@@ -1037,6 +1037,25 @@ function driverEarningEvent(kind, serviceId, job = {}, finishedAtMs = Date.now()
   };
 }
 
+function manualDeliveryPerformedAtMs(delivery = {}) {
+  return timestampMs(delivery.retiradaConfirmadaEm)
+    || timestampMs(delivery.aceitaEm)
+    || timestampMs(delivery.criadaEm)
+    || timestampMs(delivery.finalizadaEm)
+    || Date.now();
+}
+
+function driverEarningDayIncrements(event, direction = 1) {
+  return {
+    ganhoCentavos: admin.firestore.FieldValue.increment(direction * Number(event.ganhoCentavos || 0)),
+    servicos: admin.firestore.FieldValue.increment(direction),
+    corridas: admin.firestore.FieldValue.increment(direction * (event.tipo === 'corrida' ? 1 : 0)),
+    entregas: admin.firestore.FieldValue.increment(direction * (event.tipo === 'entrega' ? 1 : 0)),
+    quilometrosMetros: admin.firestore.FieldValue.increment(direction * Number(event.quilometrosMetros || 0)),
+    atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+  };
+}
+
 async function recordDriverEarning(tx, driverCpf, event) {
   const cpf = onlyDigits(driverCpf);
   if (cpf.length !== 11 || !event?.serviceId || !event?.ganhoCentavos) return false;
@@ -1110,7 +1129,12 @@ async function rebuildDriverEarnings(driverCpf) {
   });
   deliveriesSnap.docs.forEach((docSnap) => {
     const job = docSnap.data() || {};
-    if (job.status === 'finalizada') events.push(driverEarningEvent('entrega', docSnap.id, job, timestampMs(job.finalizadaEm) || Date.now()));
+    if (job.status === 'finalizada') {
+      const finishedAtMs = job.finalizadaPeloDonoEm
+        ? manualDeliveryPerformedAtMs(job)
+        : timestampMs(job.finalizadaEm) || Date.now();
+      events.push(driverEarningEvent('entrega', docSnap.id, job, finishedAtMs));
+    }
   });
 
   const total = emptyDriverEarnings();
@@ -1147,6 +1171,87 @@ async function initializeDriverEarnings(driverCpf) {
   });
   driverEarningsInitializations.set(cpf, task);
   return task;
+}
+
+const MANUAL_DELIVERY_DATE_MIGRATION_ID = 'manual_delivery_operational_date_v1';
+
+async function repairManualDeliveryEarningDate(deliverySnap) {
+  const delivery = deliverySnap.data() || {};
+  const driverCpf = onlyDigits(delivery.motoboyCpf);
+  const performedAtMs = manualDeliveryPerformedAtMs(delivery);
+  const performedAt = admin.firestore.Timestamp.fromMillis(performedAtMs);
+  const expectedDay = dateKeySaoPaulo(new Date(performedAtMs));
+  let movedDay = false;
+
+  await db.runTransaction(async (tx) => {
+    const eventRef = driverCpf.length === 11
+      ? driverEarningEventRef(driverCpf, 'entrega', deliverySnap.id)
+      : null;
+    const eventSnap = eventRef ? await tx.get(eventRef) : null;
+
+    tx.set(deliverySnap.ref, {
+      finalizadaEm: performedAt,
+      realizadaEm: performedAt,
+      dataOperacionalCorrigidaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    if (!eventSnap?.exists) return;
+
+    const event = eventSnap.data() || {};
+    const eventFinishedAtMs = Number(event.finalizadaEmMs || performedAtMs);
+    const previousDay = String(event.dia || dateKeySaoPaulo(new Date(eventFinishedAtMs)));
+    if (previousDay !== expectedDay) {
+      tx.set(driverEarningsDayRef(driverCpf, previousDay), driverEarningDayIncrements(event, -1), { merge: true });
+      tx.set(driverEarningsDayRef(driverCpf, expectedDay), {
+        ...driverEarningDayIncrements(event, 1),
+        dia: expectedDay
+      }, { merge: true });
+      movedDay = true;
+    }
+
+    tx.set(eventRef, {
+      dia: expectedDay,
+      finalizadaEmMs: performedAtMs,
+      dataOperacionalCorrigidaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+  });
+
+  return { movedDay };
+}
+
+async function migrateManualDeliveryEarningDates() {
+  const migrationRef = db.collection('migrations').doc(MANUAL_DELIVERY_DATE_MIGRATION_ID);
+  const migrationSnap = await migrationRef.get();
+  if (migrationSnap.data()?.completed) return { skipped: true };
+
+  let lastDocument = null;
+  let scanned = 0;
+  let moved = 0;
+  do {
+    let query = db.collection('entregas')
+      .where('finalizadaPeloDonoEm', '>', admin.firestore.Timestamp.fromMillis(0))
+      .orderBy('finalizadaPeloDonoEm')
+      .limit(100);
+    if (lastDocument) query = query.startAfter(lastDocument);
+    const snapshot = await query.get();
+    if (snapshot.empty) break;
+
+    for (const deliverySnap of snapshot.docs) {
+      const result = await repairManualDeliveryEarningDate(deliverySnap);
+      scanned += 1;
+      if (result.movedDay) moved += 1;
+    }
+    lastDocument = snapshot.docs[snapshot.docs.length - 1];
+    if (snapshot.size < 100) break;
+  } while (lastDocument);
+
+  await migrationRef.set({
+    completed: true,
+    scanned,
+    moved,
+    completedAt: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
+  return { skipped: false, scanned, moved };
 }
 
 function externalOrderMs(value) {
@@ -2471,7 +2576,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'full-fixes-v171' });
+  res.json({ ok: true, service: 'motoja-conchal-backend', release: 'manual-delivery-date-v175' });
 });
 
 app.get('/', (_req, res) => {
@@ -6262,7 +6367,14 @@ app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (r
       const nextReserved = wasReserved ? money(Math.max(0, balance.reservado - valor)) : balance.reservado;
       const adjustedDelivery = { ...delivery, valor, saldoReservado: valor };
       const split = deliverySplit(adjustedDelivery);
-      const earningEvent = driverEarningEvent('entrega', deliveryRef.id, { ...adjustedDelivery, ganhoMotoboy: split.driverAmount });
+      const performedAtMs = manualDeliveryPerformedAtMs(delivery);
+      const performedAt = admin.firestore.Timestamp.fromMillis(performedAtMs);
+      const earningEvent = driverEarningEvent(
+        'entrega',
+        deliveryRef.id,
+        { ...adjustedDelivery, ganhoMotoboy: split.driverAmount },
+        performedAtMs
+      );
       await recordDriverEarning(tx, driverCpf, earningEvent);
 
       tx.set(companyRef, {
@@ -6284,6 +6396,7 @@ app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (r
         saldoDepois: nextSaldo,
         reservadoAntes: balance.reservado,
         reservadoDepois: nextReserved,
+        competenciaEm: performedAt,
         criadoEm: admin.firestore.FieldValue.serverTimestamp()
       });
 
@@ -6301,7 +6414,8 @@ app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (r
         motoboyCnh: driverData.cnh,
         motoboyTelefone: driverData.telefone,
         motoboyFoto: driverData.fotoMotoboy,
-        finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        finalizadaEm: performedAt,
+        realizadaEm: performedAt,
         ganhoContabilizadoEm: admin.firestore.FieldValue.serverTimestamp(),
         finalizadaPeloDonoEm: admin.firestore.FieldValue.serverTimestamp(),
         finalizadaPeloDonoMotivo: reason,
@@ -7159,4 +7273,7 @@ app.use((error, _req, res, _next) => {
 
 httpServer.listen(PORT, () => {
   console.log(`MotoJa Conchal backend listening on ${PORT}`);
+  migrateManualDeliveryEarningDates()
+    .then((result) => console.log('manual delivery date migration', result))
+    .catch((error) => console.error('manual delivery date migration failed', error));
 });
