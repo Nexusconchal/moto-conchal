@@ -788,7 +788,7 @@
   <body>
     <div id="boot" class="boot" aria-live="polite">
       <div class="boot-card">
-        <div class="boot-logo"><img src="./nexus-motoja-logo-mark.png?v=167" alt="Nexus MotoJÁ" /></div>
+        <div class="boot-logo"><img src="./nexus-motoja-icon-192.png?v=173" alt="Nexus MotoJÁ" /></div>
         <div class="boot-title">Nexus MotoJÁ Motorista</div>
         <div class="boot-text">Carregando painel do motoboy</div>
         <div class="boot-spinner" aria-hidden="true"></div>
@@ -797,7 +797,7 @@
     <main class="app">
       <header class="top">
         <div class="brand">
-          <div class="logo"><img src="./nexus-motoja-logo-mark.png?v=167" alt="Nexus MotoJÁ" /></div>
+          <div class="logo"><img src="./nexus-motoja-icon-192.png?v=173" alt="Nexus MotoJÁ" /></div>
           <div>
             <small>Nexus MotoJÁ</small>
             <h1>
@@ -2453,7 +2453,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=171", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=172", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});
