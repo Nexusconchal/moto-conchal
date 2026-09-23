@@ -38,6 +38,12 @@
       description: "Confira cadastros, situação dos motoboys e produção por profissional.",
       targets: ["motoboys-section", "resumo-section"],
     },
+    support: {
+      title: "Equipe de suporte",
+      eyebrow: "Controle de acesso",
+      description: "Aprove profissionais, confira a identificação e encerre acessos imediatamente.",
+      targets: ["suporte-contas-section"],
+    },
     funnel: {
       title: "Funil e marketing",
       eyebrow: "Inteligência",
@@ -53,8 +59,111 @@
     ["Depósitos", "deposits", "04", "Financeiro"],
     ["Empresas", "companies", "05", "Gestão"],
     ["Motoboys", "drivers", "06", ""],
-    ["Funil", "funnel", "07", "Análise"],
+    ["Equipe suporte", "support", "07", ""],
+    ["Funil", "funnel", "08", "Análise"],
   ];
+
+  let supportAccountsLoading = false;
+
+  function escapeHtml(value) {
+    return String(value || "").replace(/[&<>'"]/g, (character) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
+    })[character]);
+  }
+
+  function supportDate(value) {
+    const seconds = Number(value?.seconds || 0);
+    return seconds ? new Date(seconds * 1000).toLocaleString("pt-BR") : "-";
+  }
+
+  function supportStatusLabel(status) {
+    if (status === "aprovada") return "Aprovada";
+    if (status === "bloqueada") return "Bloqueada";
+    return "Aguardando aprovação";
+  }
+
+  function ensureSupportSection(panel) {
+    if (document.getElementById("suporte-contas-section")) return;
+    const section = document.createElement("section");
+    section.id = "suporte-contas-section";
+    section.className = "box owner-support-management";
+    section.innerHTML = `
+      <div class="owner-support-heading">
+        <div><h2>Contas da equipe de suporte</h2><p class="muted">O site operacional é separado. Aqui você apenas aprova, bloqueia e encerra sessões.</p></div>
+        <a href="./suporte/" target="_blank" rel="noopener">Abrir site do suporte</a>
+      </div>
+      <div class="owner-support-security"><strong>Acesso protegido</strong><span>CPF, nascimento e foto ficam disponíveis somente nesta área do dono. O suporte não recebe dados financeiros.</span></div>
+      <div id="ownerSupportAccounts" class="owner-support-list"><div class="owner-support-empty">Abra esta página para carregar as contas.</div></div>`;
+    panel.appendChild(section);
+    section.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-support-action]");
+      if (!button) return;
+      const action = button.dataset.supportAction;
+      const accountId = button.dataset.accountId;
+      let reason = "";
+      if (action === "block") {
+        reason = prompt("Motivo do bloqueio:", "Acesso encerrado pelo dono") || "";
+        if (!reason.trim()) return;
+        if (!confirm("Bloquear esta conta e encerrar todas as sessões agora?")) return;
+      } else if (!confirm("Aprovar esta pessoa para acessar o site de suporte?")) return;
+      button.disabled = true;
+      try {
+        const response = await fetch(`${CONFIG.backend}/api/admin/support/accounts/${accountId}/${action}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-owner-password": senhaDono },
+          body: action === "block" ? JSON.stringify({ reason: reason.trim() }) : "{}",
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.message || data.error || "Não foi possível atualizar a conta.");
+        await loadSupportAccounts();
+      } catch (error) {
+        alert(error.message || "Não foi possível atualizar a conta.");
+        button.disabled = false;
+      }
+    });
+  }
+
+  function renderSupportAccounts(accounts) {
+    const root = document.getElementById("ownerSupportAccounts");
+    if (!root) return;
+    if (!accounts.length) {
+      root.innerHTML = '<div class="owner-support-empty">Nenhum cadastro de suporte recebido.</div>';
+      return;
+    }
+    root.innerHTML = accounts.map((account) => {
+      const status = account.status || "aguardando_aprovacao";
+      const primaryAction = status === "aprovada"
+        ? `<button class="danger" data-support-action="block" data-account-id="${account.id}">Bloquear e desconectar</button>`
+        : `<button class="approve" data-support-action="approve" data-account-id="${account.id}">${status === "bloqueada" ? "Reativar conta" : "Aprovar acesso"}</button>`;
+      return `<article class="owner-support-card">
+        <div class="owner-support-person">${account.foto ? `<img src="${account.foto}" alt="Foto de ${escapeHtml(account.nome)}">` : '<span>MJ</span>'}<div><strong>${escapeHtml(account.nome)}</strong><small>${escapeHtml(account.telefone || "Sem telefone")}</small></div></div>
+        <div class="owner-support-detail"><span>CPF</span><strong>${escapeHtml(account.cpf || `***.***.***-${account.cpfFinal || "**"}`)}</strong></div>
+        <div class="owner-support-detail"><span>Nascimento</span><strong>${escapeHtml(account.dataNascimento || "-")}</strong></div>
+        <div class="owner-support-detail"><span>Cadastro</span><strong>${supportDate(account.cadastradaEm)}</strong></div>
+        <div class="owner-support-state ${status}"><strong>${supportStatusLabel(status)}</strong><small>${escapeHtml(account.motivoBloqueio || (account.ultimoLoginEm ? `Último login: ${supportDate(account.ultimoLoginEm)}` : "Ainda não entrou"))}</small></div>
+        <div class="owner-support-actions">${primaryAction}</div>
+      </article>`;
+    }).join("");
+  }
+
+  async function loadSupportAccounts() {
+    if (supportAccountsLoading || !senhaDono) return;
+    supportAccountsLoading = true;
+    const root = document.getElementById("ownerSupportAccounts");
+    if (root) root.innerHTML = '<div class="owner-support-empty">Carregando contas protegidas...</div>';
+    try {
+      const response = await fetch(`${CONFIG.backend}/api/admin/support/accounts`, {
+        headers: { "x-owner-password": senhaDono }, cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || data.error || "Erro ao carregar equipe.");
+      renderSupportAccounts(Array.isArray(data.accounts) ? data.accounts : []);
+    } catch (error) {
+      if (root) root.innerHTML = `<div class="owner-support-empty error">${escapeHtml(error.message || "Erro ao carregar equipe.")}</div>`;
+    } finally {
+      supportAccountsLoading = false;
+    }
+  }
 
   function currentPageFromHash() {
     const hash = window.location.hash.replace("#", "");
@@ -92,6 +201,7 @@
     if (options.scroll !== false) {
       document.querySelector(".owner-workspace-head")?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
+    if (name === "support") loadSupportAccounts();
   }
 
   function buildNavigation(nav) {
@@ -121,6 +231,7 @@
     const nav = panel?.querySelector(":scope > .dash-nav");
     const overview = document.getElementById("visao-section");
     if (!panel || !nav || !overview || document.getElementById("ownerWorkspace")) return;
+    ensureSupportSection(panel);
 
     const originalChildren = [...panel.children];
     const globalFilters = originalChildren.find((element) => element.querySelector?.("#periodo"));

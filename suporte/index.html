@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0a0c11">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.socket.io; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://motoboy-conchal.onrender.com wss://motoboy-conchal.onrender.com; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <title>Central de Suporte MotoJÁ</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="../nexus-motoja-icon-192.png">
+  <link rel="stylesheet" href="./style.css?v=177">
+</head>
+<body>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <main id="authShell" class="auth-shell">
+    <section class="auth-brand" aria-label="MotoJÁ Suporte">
+      <img src="../nexus-motoja-site-logo.png" alt="Nexus MotoJÁ">
+      <div><span>OPERAÇÃO PROTEGIDA</span><h1>Central de Suporte</h1><p>Acesso exclusivo para profissionais aprovados pela administração.</p></div>
+      <aside><strong>Ambiente restrito</strong><small>Todas as ações são registradas.</small></aside>
+    </section>
+
+    <section class="auth-card">
+      <div class="auth-tabs" role="tablist">
+        <button id="showLogin" class="active" type="button" role="tab">Entrar</button>
+        <button id="showRegister" type="button" role="tab">Solicitar acesso</button>
+      </div>
+
+      <form id="loginForm" class="auth-form" autocomplete="on">
+        <header><span>CONTA DA EQUIPE</span><h2>Bem-vindo de volta</h2></header>
+        <label>CPF<input id="loginCpf" inputmode="numeric" autocomplete="username" maxlength="14" placeholder="000.000.000-00" required></label>
+        <label>Senha<input id="loginPassword" type="password" autocomplete="current-password" maxlength="128" required></label>
+        <button class="primary" type="submit">Entrar na central</button>
+        <p id="loginFeedback" class="feedback" aria-live="polite"></p>
+      </form>
+
+      <form id="registerForm" class="auth-form hidden" autocomplete="off">
+        <header><span>NOVO PROFISSIONAL</span><h2>Solicitar acesso</h2></header>
+        <div class="photo-row">
+          <label class="photo-picker" for="registerPhoto"><img id="photoPreview" alt="Prévia da foto"><span id="photoPlaceholder">Adicionar foto</span></label>
+          <div><strong>Foto de identificação</strong><small>Use uma foto atual e nítida do rosto.</small><input id="registerPhoto" type="file" accept="image/jpeg,image/png,image/webp" required></div>
+        </div>
+        <label>Nome completo<input id="registerName" autocomplete="name" maxlength="100" required></label>
+        <div class="form-grid">
+          <label>CPF<input id="registerCpf" inputmode="numeric" maxlength="14" required></label>
+          <label>Data de nascimento<input id="registerBirth" type="date" required></label>
+        </div>
+        <label>WhatsApp<input id="registerPhone" inputmode="tel" autocomplete="tel" maxlength="15" placeholder="(19) 99999-9999" required></label>
+        <div class="form-grid">
+          <label>Senha<input id="registerPassword" type="password" autocomplete="new-password" maxlength="128" required></label>
+          <label>Confirmar senha<input id="registerPasswordConfirm" type="password" autocomplete="new-password" maxlength="128" required></label>
+        </div>
+        <p class="password-rule">Mínimo de 10 caracteres, com maiúscula, minúscula e número.</p>
+        <label class="consent"><input id="registerConsent" type="checkbox" required><span>Autorizo o uso destes dados para identificação, segurança e controle de acesso à central.</span></label>
+        <button class="primary" type="submit">Enviar para aprovação</button>
+        <p id="registerFeedback" class="feedback" aria-live="polite"></p>
+      </form>
+    </section>
+  </main>
+
+  <main id="supportApp" class="support-app hidden">
+    <header class="app-header">
+      <div class="app-brand"><img src="../nexus-motoja-icon-192.png" alt="MotoJÁ"><div><span>NEXUS MOTOJÁ</span><strong>Central de Suporte</strong></div></div>
+      <div class="operator"><img id="operatorPhoto" alt="Foto do profissional"><div><strong id="operatorName">Suporte</strong><span><i></i> Operação online</span></div><button id="logoutButton" type="button">Sair</button></div>
+    </header>
+
+    <section id="alarmBanner" class="alarm-banner quiet">
+      <div><span id="alarmPulse"></span><strong id="alarmTitle">Nenhum alerta aguardando</strong><small id="alarmText">A central está acompanhando os chamados ativos.</small></div>
+      <button id="enableSound" type="button">Ativar som</button>
+    </section>
+
+    <section class="toolbar">
+      <div class="metrics">
+        <article><span>Novos alertas</span><strong id="metricAlerts">0</strong></article>
+        <article><span>Aguardando motoboy</span><strong id="metricPending">0</strong></article>
+        <article><span>Em andamento</span><strong id="metricActive">0</strong></article>
+      </div>
+      <div class="tools"><label>Buscar<input id="searchInput" type="search" placeholder="Nome, endereço ou motoboy"></label><button id="refreshButton" type="button">Atualizar</button></div>
+    </section>
+
+    <section class="operations-head"><div><span>OPERAÇÃO EM TEMPO REAL</span><h2>Chamados ativos</h2></div><p id="lastUpdated">Conectando...</p></section>
+    <section id="operationsList" class="operations-list"><div class="empty-state">Carregando chamados...</div></section>
+  </main>
+
+  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js" crossorigin="anonymous" defer></script>
+  <script src="./app.js?v=177" defer></script>
+</body>
+</html>

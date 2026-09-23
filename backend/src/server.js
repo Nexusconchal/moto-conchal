@@ -25,6 +25,7 @@ const OWNER_PIX_KEY = String(process.env.OWNER_PIX_KEY || '94bff0ce-3c37-4e5e-a9
 const GEOAPIFY_API_KEY = process.env.GEOAPIFY_API_KEY || '1361a528dcbe484e8143a19929527781';
 const DRIVER_PROOF_CACHE_MS = 5 * 60 * 1000;
 const COMPANY_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+const SUPPORT_SESSION_MS = 12 * 60 * 60 * 1000;
 const CUSTOMER_SESSION_MS = 90 * 24 * 60 * 60 * 1000;
 const CUSTOMER_OTP_MS = 10 * 60 * 1000;
 const CUSTOMER_VERIFICATION_MS = 20 * 60 * 1000;
@@ -35,6 +36,7 @@ const driverProofCache = new Map();
 const ADMIN_STATE_CACHE_MS = 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 let adminStateCache = null;
+let supportOperationsCache = null;
 let cleanupRunning = false;
 const driverEarningsInitializations = new Map();
 
@@ -877,6 +879,7 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
   });
 
   if (created) {
+    emitSupportOperationsRefresh();
     await Promise.allSettled([
       notifyTelegramAboutDelivery(deliveryRef.id, delivery),
       notifyDriversAboutDelivery(deliveryRef.id, delivery)
@@ -1348,6 +1351,48 @@ function privateDriverJob(job = {}) {
   return copy;
 }
 
+function supportAlertVersion(job = {}) {
+  return timestampMs(job.criadaEm) || timestampMs(job.renovadaEm) || timestampMs(job.atualizadaEm);
+}
+
+function supportOperation(kind, id, job = {}) {
+  const isDelivery = kind === 'entrega';
+  const alertVersion = supportAlertVersion(job);
+  const receiverPhone = isDelivery ? onlyDigits(job.telefoneRecebedor).slice(0, 11) : '';
+  const extraStops = Array.isArray(job.pontosExtras)
+    ? job.pontosExtras.slice(0, 8).map((point) => ({
+      ordem: Number(point.ordem || 0),
+      endereco: cleanText(point.digitado || point.encontrado, 180),
+      recebedor: cleanText(point.recebedor, 100),
+      telefone: onlyDigits(point.telefoneRecebedor).slice(0, 11)
+    }))
+    : [];
+  return {
+    id,
+    tipo: isDelivery ? 'entrega' : 'corrida',
+    status: cleanText(job.status, 30),
+    titulo: cleanText(isDelivery ? job.empresa : job.nome, 100) || (isDelivery ? 'Empresa' : 'Cliente'),
+    responsavel: cleanText(isDelivery ? job.responsavel : job.nome, 100),
+    telefonePrincipal: onlyDigits(isDelivery ? job.telefoneEmpresa : job.telefoneCliente).slice(0, 11),
+    recebedor: cleanText(job.recebedor, 100),
+    telefoneRecebedor: receiverPhone,
+    origem: cleanText(isDelivery ? job.retirada : job.origem, 180),
+    destino: cleanText(isDelivery ? job.entrega : job.destino, 180),
+    tipoEntrega: isDelivery ? cleanText(job.tipoEntrega, 100) : '',
+    paradas: isDelivery ? Math.max(1, Number(job.paradas || 1)) : 1,
+    pontosExtras: extraStops,
+    motoboy: cleanText(job.motoboy, 100),
+    telefoneMotoboy: onlyDigits(job.motoboyTelefone).slice(0, 11),
+    criadaEm: serializeFirestore(job.criadaEm),
+    aceitaEm: serializeFirestore(job.aceitaEm),
+    retiradaEm: serializeFirestore(job.retiradaConfirmadaEm),
+    alertVersion,
+    alertaAssumido: Number(job.suporteAlertaVersao || 0) === alertVersion,
+    alertaAssumidoPor: cleanText(job.suporteAssumidoPor, 100),
+    alertaAssumidoEm: serializeFirestore(job.suporteAssumidoEm)
+  };
+}
+
 function isValidDriverPassword(password) {
   const typed = String(password || '');
   return driverPasswordValues().some((allowed) => safeEqual(typed, allowed));
@@ -1412,6 +1457,135 @@ function verifyPassword(password, saved = {}) {
   if (!salt || !hash) return false;
   const typed = passwordHash(password, salt).hash;
   return safeEqual(typed, hash);
+}
+
+function supportPasswordHash(password, salt = crypto.randomBytes(16).toString('hex'), iterations = 600000) {
+  const hash = crypto.pbkdf2Sync(String(password || ''), salt, iterations, 32, 'sha256').toString('hex');
+  return { salt, hash, iterations };
+}
+
+function verifySupportPassword(password, saved = {}) {
+  const salt = saved?.passwordSalt;
+  const hash = saved?.passwordHash;
+  const iterations = Math.min(1000000, Math.max(120000, Number(saved?.passwordIterations || 600000)));
+  if (!salt || !hash) return false;
+  return safeEqual(supportPasswordHash(password, salt, iterations).hash, hash);
+}
+
+function validSupportPassword(password) {
+  const value = String(password || '');
+  return value.length >= 10
+    && value.length <= 128
+    && /[a-z]/.test(value)
+    && /[A-Z]/.test(value)
+    && /\d/.test(value);
+}
+
+function decryptSecretSafe(value) {
+  try {
+    return decryptSecret(value);
+  } catch {
+    return '';
+  }
+}
+
+function supportAccountStatus(data = {}) {
+  return ['aguardando_aprovacao', 'aprovada', 'bloqueada'].includes(data.status)
+    ? data.status
+    : 'aguardando_aprovacao';
+}
+
+function publicSupportAccount(data = {}, id = '', ownerView = false) {
+  const account = {
+    id,
+    nome: cleanText(data.nome, 100),
+    telefone: onlyDigits(data.telefone).slice(0, 11),
+    cpfFinal: onlyDigits(data.cpfFinal).slice(-4),
+    foto: decryptSecretSafe(data.fotoEncrypted),
+    status: supportAccountStatus(data),
+    motivoBloqueio: cleanText(data.motivoBloqueio, 250),
+    cadastradaEm: serializeFirestore(data.cadastradaEm),
+    aprovadaEm: serializeFirestore(data.aprovadaEm),
+    bloqueadaEm: serializeFirestore(data.bloqueadaEm),
+    ultimoLoginEm: serializeFirestore(data.ultimoLoginEm)
+  };
+  if (ownerView) {
+    account.cpf = onlyDigits(decryptSecretSafe(data.cpfEncrypted));
+    account.dataNascimento = decryptSecretSafe(data.dataNascimentoEncrypted);
+  }
+  return account;
+}
+
+async function issueSupportSession(ref) {
+  const token = `support.v1.${ref.id}.${crypto.randomBytes(32).toString('hex')}`;
+  const tokenHash = hashSecret(token);
+  const now = Date.now();
+  await db.runTransaction(async (tx) => {
+    const snapshot = await tx.get(ref);
+    const saved = snapshot.data()?.supportSessions;
+    const sessions = saved && typeof saved === 'object' ? saved : {};
+    const active = Object.entries(sessions)
+      .filter(([, session]) => Number(session?.expiresAtMs || 0) > now)
+      .sort((a, b) => Number(b[1]?.issuedAtMs || 0) - Number(a[1]?.issuedAtMs || 0))
+      .slice(0, 2);
+    const nextSessions = Object.fromEntries(active);
+    nextSessions[tokenHash] = { issuedAtMs: now, expiresAtMs: now + SUPPORT_SESSION_MS };
+    tx.set(ref, {
+      supportSessions: nextSessions,
+      ultimoLoginEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+  });
+  return token;
+}
+
+async function findSupportSession(token) {
+  const value = String(token || '').trim();
+  const parts = value.split('.');
+  if (parts.length !== 4 || parts[0] !== 'support' || parts[1] !== 'v1' || !/^[a-f0-9]{64}$/.test(parts[2])) return null;
+  const accountSnap = await db.collection('contasSuporte').doc(parts[2]).get();
+  if (!accountSnap.exists) return null;
+  const account = accountSnap.data() || {};
+  const tokenHash = hashSecret(value);
+  const session = account.supportSessions?.[tokenHash];
+  if (!session || Number(session.expiresAtMs || 0) <= Date.now()) return null;
+  return { accountSnap, account, accountId: accountSnap.id, sessionHash: tokenHash };
+}
+
+async function assertSupport(req, res, next) {
+  try {
+    const header = String(req.header('authorization') || '');
+    const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+    const session = await findSupportSession(token);
+    if (!session) return res.status(401).json({ error: 'sessao_suporte_invalida', message: 'Entre novamente no Painel de Suporte.' });
+    const status = supportAccountStatus(session.account);
+    if (status !== 'aprovada') {
+      return res.status(403).json({
+        error: status === 'bloqueada' ? 'conta_suporte_bloqueada' : 'conta_suporte_aguardando_aprovacao',
+        message: status === 'bloqueada' ? 'Sua conta foi bloqueada pelo administrador.' : 'Sua conta ainda aguarda aprovação.'
+      });
+    }
+    req.supportAccountSnap = session.accountSnap;
+    req.supportAccount = session.account;
+    req.supportAccountId = session.accountId;
+    req.supportSessionHash = session.sessionHash;
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function writeSupportAudit(accountId, action, details = {}) {
+  const safeDetails = {};
+  Object.entries(details).slice(0, 12).forEach(([key, value]) => {
+    if (['string', 'number', 'boolean'].includes(typeof value)) safeDetails[cleanText(key, 40)] = typeof value === 'string' ? cleanText(value, 180) : value;
+  });
+  await db.collection('auditoriaSuporte').add({
+    accountId: cleanText(accountId, 80),
+    action: cleanText(action, 80),
+    details: safeDetails,
+    criadaEm: admin.firestore.FieldValue.serverTimestamp()
+  });
 }
 
 async function issueCompanySession(ref) {
@@ -1589,6 +1763,17 @@ function emitDeliveryTracking(companyId, event) {
   const id = onlyDigits(companyId);
   if (!id) return;
   io.to(`company:${id}`).emit('delivery:tracking', serializeFirestore(event));
+}
+
+function emitSupportOperationsRefresh() {
+  supportOperationsCache = null;
+  io.to('support:operations').emit('support:refresh', { at: Date.now() });
+}
+
+function disconnectSupportSockets(accountId) {
+  for (const socket of io.sockets.sockets.values()) {
+    if (socket.data.supportAccountId === accountId) socket.disconnect(true);
+  }
 }
 
 function assertDriverProof(driver = {}, body = {}) {
@@ -1893,6 +2078,7 @@ app.set('trust proxy', 1);
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://nexusmotoja.com.br',
   'https://www.nexusmotoja.com.br',
+  'https://suporte.nexusmotoja.com.br',
   'https://nexusconchal.github.io',
   'https://motoboy-conchal.onrender.com'
 ].join(',');
@@ -1914,7 +2100,16 @@ const io = new SocketIOServer(httpServer, {
 
 io.use(async (socket, next) => {
   try {
-    const session = await findCompanySession(socket.handshake.auth?.token);
+    const token = String(socket.handshake.auth?.token || '');
+    if (token.startsWith('support.v1.')) {
+      const supportSession = await findSupportSession(token);
+      if (!supportSession || supportAccountStatus(supportSession.account) !== 'aprovada') {
+        return next(new Error('sessao_suporte_invalida'));
+      }
+      socket.data.supportAccountId = supportSession.accountId;
+      return next();
+    }
+    const session = await findCompanySession(token);
     if (!session || companyStatus(session.company) !== 'aprovada') {
       return next(new Error('sessao_empresa_invalida'));
     }
@@ -1926,7 +2121,8 @@ io.use(async (socket, next) => {
 });
 
 io.on('connection', (socket) => {
-  socket.join(`company:${socket.data.companyId}`);
+  if (socket.data.supportAccountId) socket.join('support:operations');
+  else socket.join(`company:${socket.data.companyId}`);
 });
 
 app.use(cors({
@@ -1940,10 +2136,27 @@ app.use(cors({
 }));
 app.use(helmet());
 app.use(express.json({ limit: '8mb' }));
+app.use(['/api/support', '/api/admin/support'], (_req, res, next) => {
+  res.set('cache-control', 'no-store, max-age=0');
+  res.set('pragma', 'no-cache');
+  next();
+});
 app.use('/api/admin', (req, res, next) => {
   if (req.method !== 'GET') {
     res.on('finish', () => {
       if (res.statusCode < 400) adminStateCache = null;
+    });
+  }
+  next();
+});
+app.use('/api', (req, res, next) => {
+  const operationalPath = /^\/(rides|deliveries)(?:\/[^/]+\/(?:renew|accept|pickup|cancel|client-cancel|finish))?$/;
+  const ownerOperationalPath = /^\/admin\/(rides|deliveries)\/[^/]+\/(?:renew|cancel|force-finish)$/;
+  const companyOperationalPath = /^\/companies\/exclusive-service$/;
+  const notifiesSupport = req.method === 'POST' && (operationalPath.test(req.path) || ownerOperationalPath.test(req.path) || companyOperationalPath.test(req.path));
+  if (notifiesSupport) {
+    res.on('finish', () => {
+      if (res.statusCode < 400) emitSupportOperationsRefresh();
     });
   }
   next();
@@ -2580,7 +2793,7 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'motoja-conchal-backend',
-    release: 'manual-delivery-date-v176',
+    release: 'support-console-v177',
     manualDeliveryDateMigration: manualDeliveryDateMigrationStatus
   });
 });
@@ -2710,6 +2923,243 @@ app.post('/api/admin/login', authLimiter, (req, res) => {
     return res.status(401).json({ error: 'senha_incorreta' });
   }
   return res.json({ ok: true });
+});
+
+app.post('/api/support/register', authLimiter, async (req, res, next) => {
+  try {
+    const nome = cleanText(req.body.nome, 100);
+    const cpf = onlyDigits(req.body.cpf);
+    const telefone = onlyDigits(req.body.telefone).slice(0, 11);
+    const birth = validBirthDate(req.body.dataNascimento);
+    const foto = validDriverPhoto(req.body.foto);
+    const password = String(req.body.password || '');
+    const consentAccepted = req.body.consentAccepted === true;
+    if (nome.split(' ').filter(Boolean).length < 2) {
+      return res.status(400).json({ error: 'nome_completo_obrigatorio', message: 'Informe nome e sobrenome.' });
+    }
+    if (!validCpf(cpf)) return res.status(400).json({ error: 'cpf_invalido', message: 'Confira o CPF informado.' });
+    if (!birth || birth.age < 18) return res.status(400).json({ error: 'data_nascimento_invalida', message: 'O cadastro de suporte exige idade mínima de 18 anos.' });
+    if (telefone.length < 10) return res.status(400).json({ error: 'telefone_invalido', message: 'Informe um WhatsApp com DDD.' });
+    if (!foto) return res.status(400).json({ error: 'foto_invalida', message: 'Envie uma foto nítida do rosto.' });
+    if (!consentAccepted) return res.status(400).json({ error: 'consentimento_obrigatorio', message: 'Confirme o uso dos dados para identificação e segurança.' });
+    if (!validSupportPassword(password)) {
+      return res.status(400).json({ error: 'senha_fraca', message: 'Use pelo menos 10 caracteres, com letra maiúscula, minúscula e número.' });
+    }
+
+    const accountId = hashSecret(cpf);
+    const accountRef = db.collection('contasSuporte').doc(accountId);
+    const existing = await accountRef.get();
+    if (existing.exists) {
+      return res.status(409).json({ error: 'cpf_ja_cadastrado', message: 'Este CPF já possui cadastro. Entre com sua senha ou fale com o dono.' });
+    }
+    const auth = supportPasswordHash(password);
+    const cpfEncrypted = encryptSecret(cpf);
+    const birthEncrypted = encryptSecret(birth.text);
+    const fotoEncrypted = encryptSecret(foto);
+    if (!cpfEncrypted || !birthEncrypted || !fotoEncrypted) {
+      return res.status(503).json({ error: 'criptografia_indisponivel', message: 'Cadastro temporariamente indisponível. Fale com o dono.' });
+    }
+
+    await accountRef.create({
+      nome,
+      telefone,
+      cpfHash: accountId,
+      cpfFinal: cpf.slice(-4),
+      cpfEncrypted,
+      dataNascimentoEncrypted: birthEncrypted,
+      fotoEncrypted,
+      passwordSalt: auth.salt,
+      passwordHash: auth.hash,
+      passwordIterations: auth.iterations,
+      status: 'aguardando_aprovacao',
+      consentimentoDadosVersao: 'support-access-v1',
+      consentimentoDadosEm: admin.firestore.FieldValue.serverTimestamp(),
+      cadastradaEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    });
+    await writeSupportAudit(accountId, 'cadastro_enviado').catch((error) => console.error('support audit failed', error));
+    return res.status(201).json({
+      ok: true,
+      pendingApproval: true,
+      message: 'Cadastro enviado. Aguarde a aprovação do dono da MotoJÁ antes de entrar.'
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/support/login', authLimiter, async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.body.cpf);
+    const password = String(req.body.password || '');
+    if (!validCpf(cpf) || !password) return res.status(401).json({ error: 'credenciais_invalidas', message: 'CPF ou senha incorretos.' });
+    const accountId = hashSecret(cpf);
+    const accountRef = db.collection('contasSuporte').doc(accountId);
+    const snapshot = await accountRef.get();
+    const account = snapshot.data() || {};
+    if (!snapshot.exists || !verifySupportPassword(password, account)) {
+      return res.status(401).json({ error: 'credenciais_invalidas', message: 'CPF ou senha incorretos.' });
+    }
+    const status = supportAccountStatus(account);
+    if (status !== 'aprovada') {
+      return res.status(403).json({
+        error: status === 'bloqueada' ? 'conta_suporte_bloqueada' : 'conta_suporte_aguardando_aprovacao',
+        message: status === 'bloqueada' ? 'Conta bloqueada. Fale com o dono da MotoJÁ.' : 'Seu cadastro ainda está aguardando aprovação do dono.'
+      });
+    }
+    const token = await issueSupportSession(accountRef);
+    await writeSupportAudit(accountId, 'login_realizado', {
+      userAgent: cleanText(req.header('user-agent'), 160)
+    }).catch((error) => console.error('support audit failed', error));
+    const updated = await accountRef.get();
+    return res.json({ ok: true, token, expiresInMs: SUPPORT_SESSION_MS, account: publicSupportAccount(updated.data() || {}, accountId) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/support/me', assertSupport, (req, res) => {
+  return res.json({ ok: true, account: publicSupportAccount(req.supportAccount, req.supportAccountId) });
+});
+
+app.post('/api/support/logout', assertSupport, async (req, res, next) => {
+  try {
+    await db.runTransaction(async (tx) => {
+      const snapshot = await tx.get(req.supportAccountSnap.ref);
+      const sessions = { ...(snapshot.data()?.supportSessions || {}) };
+      delete sessions[req.supportSessionHash];
+      tx.set(req.supportAccountSnap.ref, {
+        supportSessions: sessions,
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+    await writeSupportAudit(req.supportAccountId, 'logout_realizado').catch((error) => console.error('support audit failed', error));
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/support/operations', assertSupport, async (req, res, next) => {
+  try {
+    if (supportOperationsCache && supportOperationsCache.expiresAt > Date.now()) {
+      return res.json(supportOperationsCache.payload);
+    }
+    const activeStatuses = ['pendente', 'aceita', 'retirada'];
+    const [ridesSnap, deliveriesSnap] = await Promise.all([
+      db.collection('corridas').where('status', 'in', activeStatuses).limit(100).get(),
+      db.collection('entregas').where('status', 'in', activeStatuses).limit(100).get()
+    ]);
+    const operations = [
+      ...ridesSnap.docs.map((doc) => supportOperation('corrida', doc.id, doc.data() || {})),
+      ...deliveriesSnap.docs.map((doc) => supportOperation('entrega', doc.id, doc.data() || {}))
+    ].sort((a, b) => Number(b.alertVersion || 0) - Number(a.alertVersion || 0));
+    const payload = { ok: true, operations, updatedAtMs: Date.now() };
+    supportOperationsCache = { payload, expiresAt: Date.now() + 60 * 1000 };
+    return res.json(payload);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/support/alerts/:kind/:jobId/acknowledge', assertSupport, async (req, res, next) => {
+  try {
+    const kind = req.params.kind === 'entrega' ? 'entrega' : req.params.kind === 'corrida' ? 'corrida' : '';
+    const jobId = cleanText(req.params.jobId, 120);
+    if (!kind || !jobId) return res.status(400).json({ error: 'alerta_invalido' });
+    const collection = kind === 'entrega' ? 'entregas' : 'corridas';
+    const jobRef = db.collection(collection).doc(jobId);
+    let result = null;
+    await db.runTransaction(async (tx) => {
+      const snapshot = await tx.get(jobRef);
+      if (!snapshot.exists) {
+        const error = new Error('Chamado não encontrado.');
+        error.status = 404;
+        throw error;
+      }
+      const job = snapshot.data() || {};
+      if (!['pendente', 'aceita', 'retirada'].includes(job.status)) {
+        const error = new Error('Este chamado não está mais ativo.');
+        error.status = 409;
+        throw error;
+      }
+      const alertVersion = supportAlertVersion(job);
+      if (Number(job.suporteAlertaVersao || 0) !== alertVersion) {
+        tx.set(jobRef, {
+          suporteAlertaVersao: alertVersion,
+          suporteAssumidoPorId: req.supportAccountId,
+          suporteAssumidoPor: cleanText(req.supportAccount.nome, 100),
+          suporteAssumidoEm: admin.firestore.FieldValue.serverTimestamp(),
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      }
+      result = { alertVersion, alreadyAcknowledged: Number(job.suporteAlertaVersao || 0) === alertVersion };
+    });
+    emitSupportOperationsRefresh();
+    await writeSupportAudit(req.supportAccountId, 'alerta_assumido', { kind, jobId, alertVersion: result.alertVersion })
+      .catch((error) => console.error('support audit failed', error));
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/admin/support/accounts', assertOwner, async (_req, res, next) => {
+  try {
+    const snapshot = await db.collection('contasSuporte').limit(100).get();
+    const accounts = snapshot.docs
+      .map((doc) => publicSupportAccount(doc.data() || {}, doc.id, true))
+      .sort((a, b) => timestampMs(b.cadastradaEm) - timestampMs(a.cadastradaEm));
+    return res.json({ ok: true, accounts });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/admin/support/accounts/:accountId/approve', assertOwner, async (req, res, next) => {
+  try {
+    const accountId = String(req.params.accountId || '');
+    if (!/^[a-f0-9]{64}$/.test(accountId)) return res.status(400).json({ error: 'conta_suporte_invalida' });
+    const ref = db.collection('contasSuporte').doc(accountId);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) return res.status(404).json({ error: 'conta_suporte_nao_encontrada' });
+    await ref.set({
+      status: 'aprovada',
+      motivoBloqueio: admin.firestore.FieldValue.delete(),
+      supportSessions: admin.firestore.FieldValue.delete(),
+      aprovadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    await writeSupportAudit(accountId, 'conta_aprovada_pelo_dono').catch((error) => console.error('support audit failed', error));
+    const updated = await ref.get();
+    return res.json({ ok: true, account: publicSupportAccount(updated.data() || {}, accountId, true) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/admin/support/accounts/:accountId/block', assertOwner, async (req, res, next) => {
+  try {
+    const accountId = String(req.params.accountId || '');
+    const reason = cleanText(req.body.reason || 'Acesso encerrado pelo dono', 250);
+    if (!/^[a-f0-9]{64}$/.test(accountId)) return res.status(400).json({ error: 'conta_suporte_invalida' });
+    const ref = db.collection('contasSuporte').doc(accountId);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) return res.status(404).json({ error: 'conta_suporte_nao_encontrada' });
+    await ref.set({
+      status: 'bloqueada',
+      motivoBloqueio: reason,
+      supportSessions: admin.firestore.FieldValue.delete(),
+      bloqueadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    disconnectSupportSockets(accountId);
+    await writeSupportAudit(accountId, 'conta_bloqueada_pelo_dono', { reason }).catch((error) => console.error('support audit failed', error));
+    const updated = await ref.get();
+    return res.json({ ok: true, account: publicSupportAccount(updated.data() || {}, accountId, true) });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 app.post('/api/analytics/event', async (req, res, next) => {
