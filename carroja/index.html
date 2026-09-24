@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    <meta name="theme-color" content="#07110d">
+    <meta name="description" content="Nexus CarroJa - corridas de carro com preco transparente.">
+    <title>Nexus CarroJÁ</title>
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="icon" href="./carroja-icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="./carroja-icon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+    <link rel="stylesheet" href="./style.css?v=2">
+  </head>
+  <body>
+    <div id="boot" class="boot" aria-live="polite">
+      <div class="brand-symbol"><i data-lucide="car-front"></i></div>
+      <strong>NEXUS CarroJÁ</strong>
+      <span>Preparando sua viagem</span>
+    </div>
+
+    <main id="app" class="app-shell" aria-label="Aplicativo Nexus CarroJa">
+      <aside class="side-nav" aria-label="Menu principal">
+        <a class="side-brand" href="./" aria-label="Nexus CarroJa">
+          <img src="./carroja-icon.svg" alt="">
+          <span><small>NEXUS</small><strong>CarroJÁ</strong></span>
+        </a>
+        <nav>
+          <button class="nav-item active" type="button" data-view="ride"><i data-lucide="car-front"></i><span>Solicitar corrida</span></button>
+          <button class="nav-item" type="button" id="historyButton"><i data-lucide="history"></i><span>Minhas corridas</span></button>
+          <button class="nav-item" type="button" id="installButton"><i data-lucide="download"></i><span>Instalar aplicativo</span></button>
+          <button class="nav-item" type="button" id="profileButton"><i data-lucide="user-round"></i><span>Minha conta</span></button>
+        </nav>
+        <div class="side-status">
+          <span class="status-dot"></span>
+          <div><strong>Operação protegida</strong><small>Preço calculado no servidor</small></div>
+        </div>
+      </aside>
+
+      <section class="map-stage" aria-label="Mapa da corrida">
+        <header class="mobile-header">
+          <a class="mobile-brand" href="./"><img src="./carroja-icon.svg" alt=""><span>NEXUS <strong>CarroJÁ</strong></span></a>
+          <button id="mobileProfileButton" class="icon-button" type="button" aria-label="Minha conta"><i data-lucide="user-round"></i></button>
+        </header>
+        <div id="map" class="map"></div>
+        <div class="map-topbar">
+          <div><span class="status-dot"></span><strong id="mapStatus">Informe seu destino</strong></div>
+          <span id="currentFareBadge">Dia · R$ 4,20/km</span>
+        </div>
+        <button id="locateButton" class="map-control" type="button" title="Usar minha localização" aria-label="Usar minha localização">
+          <i data-lucide="locate-fixed"></i>
+        </button>
+        <div id="driverMapCard" class="driver-map-card hidden">
+          <span class="status-dot"></span>
+          <div><strong id="driverMapName">Motorista a caminho</strong><small id="driverMapUpdate">Localização em tempo real</small></div>
+        </div>
+      </section>
+
+      <aside class="booking-panel">
+        <div class="panel-handle" aria-hidden="true"></div>
+        <header class="booking-heading">
+          <div><span class="eyebrow">NOVA CORRIDA</span><h1>Para onde vamos?</h1></div>
+          <button id="panelHistoryButton" class="icon-button" type="button" aria-label="Ver minhas corridas" title="Minhas corridas"><i data-lucide="history"></i></button>
+        </header>
+
+        <section id="bookingForm" class="booking-content">
+          <div class="route-inputs">
+            <label class="route-field origin-field">
+              <span class="route-marker"></span>
+              <span class="field-content"><small>Local de partida</small><input id="originInput" type="text" autocomplete="street-address" placeholder="Rua, número, bairro e cidade"></span>
+              <button id="originGpsButton" class="field-action" type="button" aria-label="Usar GPS na partida" title="Usar minha localização"><i data-lucide="crosshair"></i></button>
+            </label>
+            <label class="route-field destination-field">
+              <span class="route-marker"></span>
+              <span class="field-content"><small>Destino</small><input id="destinationInput" type="text" autocomplete="off" placeholder="Para onde você vai?"></span>
+              <i data-lucide="search" aria-hidden="true"></i>
+            </label>
+          </div>
+
+          <label class="note-field"><span>Observação para o motorista <small>opcional</small></span><input id="rideNote" type="text" maxlength="240" placeholder="Ex.: estou no portão azul"></label>
+
+          <button id="calculateButton" class="primary-button" type="button"><i data-lucide="route"></i><span>Calcular corrida</span></button>
+
+          <div id="quoteCard" class="quote-card hidden">
+            <div class="quote-car">
+              <div class="car-thumb"><i data-lucide="car-front"></i></div>
+              <div><strong>CarroJá</strong><small id="quoteEta">Buscando motoristas disponíveis</small></div>
+              <strong id="quoteTotal" class="quote-total">R$ 0,00</strong>
+            </div>
+            <div class="quote-details">
+              <span><i data-lucide="route"></i><b id="quoteDistance">0 km</b></span>
+              <span><i data-lucide="clock-3"></i><b id="quotePeriod">Dia</b></span>
+              <span><i data-lucide="badge-dollar-sign"></i><b id="quoteRate">R$ 4,20/km</b></span>
+            </div>
+            <label class="payment-select"><span>Pagamento</span><select id="paymentMode"><option value="pix">PIX</option><option value="dinheiro">Dinheiro</option><option value="mercadopago" disabled>Mercado Pago (em breve)</option></select></label>
+            <button id="confirmButton" class="primary-button" type="button"><span>Confirmar corrida</span><i data-lucide="arrow-right"></i></button>
+            <p class="price-note">O preço é fechado antes da confirmação. Alterações de destino exigem novo cálculo.</p>
+          </div>
+        </section>
+
+        <section id="activeRide" class="active-ride hidden" aria-live="polite">
+          <div class="active-head"><div><span class="eyebrow">CORRIDA ATIVA</span><h2 id="activeRideTitle">Procurando motorista</h2></div><span id="activeRideStatus" class="ride-status">Pendente</span></div>
+          <div class="search-animation" id="searchAnimation"><i data-lucide="car-front"></i><span></span></div>
+          <div id="acceptedDriver" class="accepted-driver hidden">
+            <img id="acceptedDriverPhoto" alt="Foto do motorista">
+            <div><small>Seu motorista</small><strong id="acceptedDriverName">Motorista</strong><span id="acceptedCar">Carro e placa</span></div>
+            <a id="driverWhatsapp" class="icon-button success" href="#" target="_blank" rel="noopener" aria-label="Conversar pelo WhatsApp"><i data-lucide="message-circle"></i></a>
+          </div>
+          <div class="active-route"><span></span><div><small>Partida</small><strong id="activeOrigin">-</strong></div><span></span><div><small>Destino</small><strong id="activeDestination">-</strong></div></div>
+          <div class="active-price"><span>Valor da corrida</span><strong id="activePrice">R$ 0,00</strong></div>
+          <button id="cancelRideButton" class="secondary-button danger" type="button"><i data-lucide="x"></i><span>Cancelar corrida</span></button>
+        </section>
+      </aside>
+    </main>
+
+    <nav class="mobile-nav" aria-label="Navegação móvel">
+      <button class="active" type="button" data-mobile-view="ride"><i data-lucide="map"></i><span>Corrida</span></button>
+      <button id="mobileHistoryButton" type="button"><i data-lucide="history"></i><span>Histórico</span></button>
+      <button id="mobileInstallButton" type="button"><i data-lucide="download"></i><span>Instalar</span></button>
+      <button id="mobileAccountButton" type="button"><i data-lucide="user-round"></i><span>Conta</span></button>
+    </nav>
+
+    <dialog id="authDialog" class="modal auth-modal">
+      <div class="modal-shell">
+        <div class="auth-brand"><img src="./carroja-icon.svg" alt=""><div><small>NEXUS</small><strong>CarroJÁ</strong></div></div>
+        <div class="auth-tabs" role="tablist">
+          <button class="active" type="button" data-auth-tab="login">Entrar</button>
+          <button type="button" data-auth-tab="register">Criar conta</button>
+        </div>
+        <form id="loginForm" class="auth-form" data-auth-panel="login">
+          <header><h2>Bem-vindo de volta</h2><p>Entre para pedir e acompanhar suas corridas.</p></header>
+          <label>CPF<input id="loginCpf" inputmode="numeric" autocomplete="username" maxlength="14" placeholder="000.000.000-00" required></label>
+          <label>Senha<span class="password-wrap"><input id="loginPassword" type="password" autocomplete="current-password" minlength="6" placeholder="Sua senha" required><button type="button" data-toggle-password="loginPassword" aria-label="Mostrar senha"><i data-lucide="eye"></i></button></span></label>
+          <button class="primary-button" type="submit">Entrar no CarroJá</button>
+          <p id="loginMessage" class="form-message"></p>
+        </form>
+        <form id="registerForm" class="auth-form hidden" data-auth-panel="register">
+          <header><h2>Crie sua conta</h2><p>Seus dados ficam protegidos e o WhatsApp será confirmado por código.</p></header>
+          <div class="form-grid">
+            <label>Nome completo<input id="registerName" autocomplete="name" maxlength="80" placeholder="Seu nome completo" required></label>
+            <label>WhatsApp com DDD<input id="registerPhone" inputmode="tel" autocomplete="tel" maxlength="15" placeholder="(19) 99999-9999" required></label>
+            <label>CPF<input id="registerCpf" inputmode="numeric" maxlength="14" placeholder="000.000.000-00" required></label>
+            <label>Data de nascimento<input id="registerBirth" type="date" required></label>
+          </div>
+          <label>Foto do rosto<span class="file-field"><input id="registerPhoto" type="file" accept="image/*" capture="user" required><i data-lucide="camera"></i><span id="registerPhotoLabel">Escolher foto</span></span></label>
+          <label>Senha<span class="password-wrap"><input id="registerPassword" type="password" autocomplete="new-password" minlength="6" placeholder="Mínimo de 6 caracteres" required><button type="button" data-toggle-password="registerPassword" aria-label="Mostrar senha"><i data-lucide="eye"></i></button></span></label>
+          <div class="otp-row"><button id="sendOtpButton" class="secondary-button" type="button">Enviar código</button><label>Código<input id="registerOtp" inputmode="numeric" maxlength="6" placeholder="000000"></label></div>
+          <button class="primary-button" type="submit">Confirmar e criar conta</button>
+          <p id="registerMessage" class="form-message"></p>
+        </form>
+      </div>
+    </dialog>
+
+    <dialog id="historyDialog" class="modal history-modal">
+      <div class="modal-shell">
+        <header class="modal-heading"><div><span class="eyebrow">SUA CONTA</span><h2>Minhas corridas</h2></div><button class="icon-button" type="button" data-close-dialog="historyDialog" aria-label="Fechar"><i data-lucide="x"></i></button></header>
+        <div id="historyList" class="history-list"><div class="empty-state">Carregando histórico...</div></div>
+      </div>
+    </dialog>
+
+    <dialog id="accountDialog" class="modal account-modal">
+      <div class="modal-shell">
+        <header class="modal-heading"><div><span class="eyebrow">PERFIL</span><h2>Minha conta</h2></div><button class="icon-button" type="button" data-close-dialog="accountDialog" aria-label="Fechar"><i data-lucide="x"></i></button></header>
+        <div class="account-card"><img id="accountPhoto" alt="Foto do passageiro"><div><strong id="accountName">Passageiro</strong><span id="accountPhone">-</span><small id="accountCpf">CPF final -</small></div></div>
+        <div class="tariff-table"><h3>Tarifas por horário</h3><div><span><i></i>Dia <small>06h às 18h</small></span><strong>R$ 4,20/km</strong></div><div><span><i></i>Noite <small>18h às 00h</small></span><strong>R$ 6,20/km</strong></div><div><span><i></i>Madrugada <small>00h às 06h</small></span><strong>R$ 8,20/km</strong></div></div>
+        <button id="logoutButton" class="secondary-button danger" type="button"><i data-lucide="log-out"></i><span>Sair da conta</span></button>
+      </div>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+    <script src="./app.js?v=2" defer></script>
+  </body>
+</html>

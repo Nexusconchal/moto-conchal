@@ -218,7 +218,7 @@
     }
     root.innerHTML = filtered.map((item) => {
       const contacts = [
-        whatsapp(item.telefonePrincipal, item.tipo === "entrega" ? "empresa" : "cliente"),
+        whatsapp(item.telefonePrincipal, item.tipo === "entrega" ? "empresa" : "passageiro"),
         whatsapp(item.telefoneRecebedor, "recebedor"),
         whatsapp(item.telefoneMotoboy, "motoboy"),
       ].filter(Boolean).join("");
@@ -228,11 +228,13 @@
       const acknowledgedText = item.alertaAssumido
         ? `Assumido por ${escapeHtml(item.alertaAssumidoPor || "suporte")}`
         : "Assumir alerta e parar alarme";
+      const kindLabel = item.tipo === "entrega" ? "Entrega de empresa" : item.tipo === "carro" ? "Corrida de carro" : "Corrida de mototáxi";
+      const kindBadge = item.tipo === "entrega" ? "ENT" : item.tipo === "carro" ? "CAR" : "COR";
       return `<article class="operation${item.alertaAssumido ? "" : " unacknowledged"}">
-        <div class="operation-top"><div class="operation-kind"><span>${item.tipo === "entrega" ? "ENT" : "COR"}</span><div><strong>${escapeHtml(item.titulo)}</strong><small>${dateText(item.criadaEm)} · ${item.tipo === "entrega" ? "Entrega de empresa" : "Corrida de mototáxi"}</small></div></div><span class="status ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span></div>
+        <div class="operation-top"><div class="operation-kind"><span>${kindBadge}</span><div><strong>${escapeHtml(item.titulo)}</strong><small>${dateText(item.criadaEm)} · ${kindLabel}</small></div></div><span class="status ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span></div>
         <div class="route"><i></i><div><strong>${item.tipo === "entrega" ? "Retirada" : "Origem"}</strong><span>${escapeHtml(item.origem || "Não informada")}</span></div><i></i><div><strong>Destino</strong><span>${escapeHtml(item.destino || "Não informado")}</span></div></div>
         ${extras}
-        <div class="operation-meta"><span>${escapeHtml(item.responsavel || item.titulo)}</span>${item.tipoEntrega ? `<span>${escapeHtml(item.tipoEntrega)}</span>` : ""}${item.motoboy ? `<span>Motoboy: ${escapeHtml(item.motoboy)}</span>` : ""}${item.paradas > 1 ? `<span>${item.paradas} pontos</span>` : ""}</div>
+        <div class="operation-meta"><span>${escapeHtml(item.responsavel || item.titulo)}</span>${item.tipoEntrega ? `<span>${escapeHtml(item.tipoEntrega)}</span>` : ""}${item.motoboy ? `<span>${item.tipo === "carro" ? "Motorista" : "Motoboy"}: ${escapeHtml(item.motoboy)}</span>` : ""}${item.paradas > 1 ? `<span>${item.paradas} pontos</span>` : ""}</div>
         ${contacts ? `<div class="contacts">${contacts}</div>` : ""}
         <button class="acknowledge" data-ack-kind="${item.tipo}" data-ack-id="${item.id}" ${item.alertaAssumido ? "disabled" : ""}>${acknowledgedText}</button>
       </article>`;

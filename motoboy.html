@@ -2453,7 +2453,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=172", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=179", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});
@@ -2757,5 +2757,7 @@
       };
     </script>
     <script src="./motoboy-tracking.js?v=170" defer></script>
+    <link rel="stylesheet" href="./motoboy-carros.css?v=1" />
+    <script src="./motoboy-carros.js?v=1" defer></script>
   </body>
 </html>

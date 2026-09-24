@@ -1,0 +1,14 @@
+{
+  "name": "Nexus CarroJa",
+  "short_name": "CarroJa",
+  "description": "Corridas de carro com preco transparente.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#07110d",
+  "theme_color": "#07110d",
+  "lang": "pt-BR",
+  "icons": [
+    { "src": "./carroja-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

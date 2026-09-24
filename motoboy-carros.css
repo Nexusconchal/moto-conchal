@@ -1,0 +1,59 @@
+.car-jobs-entry {
+  width: 100%;
+  min-height: 54px;
+  margin-top: 10px;
+  border: 1px solid rgba(34, 197, 94, 0.45) !important;
+  color: #d9ffe7 !important;
+  background: linear-gradient(135deg, #11723f, #159c55) !important;
+  box-shadow: 0 12px 28px rgba(21, 156, 85, 0.2);
+}
+.car-jobs-entry::before { content: "CAR"; margin-right: 10px; padding: 4px 6px; border-radius: 5px; color: #06351d; background: #7df4aa; font-size: 10px; font-weight: 900; }
+.car-jobs-overlay { position: fixed; z-index: 10000; inset: 0; display: grid; align-items: end; background: rgba(2, 7, 5, 0.78); backdrop-filter: blur(7px); }
+.car-jobs-overlay.hidden { display: none; }
+.car-jobs-shell { width: min(100%, 700px); max-height: 92dvh; margin: 0 auto; overflow-y: auto; border: 1px solid rgba(71, 232, 135, 0.28); border-radius: 18px 18px 0 0; color: #f5fff9; background: #08120d; box-shadow: 0 -24px 70px rgba(0, 0, 0, 0.55); }
+.car-jobs-head { position: sticky; z-index: 4; top: 0; min-height: 74px; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); background: rgba(8, 18, 13, 0.96); backdrop-filter: blur(12px); }
+.car-jobs-head > div { display: grid; gap: 2px; }
+.car-jobs-head small { color: #68e99d; font-size: 11px; font-weight: 900; }
+.car-jobs-head h2 { margin: 0; font-size: 22px; }
+.car-jobs-close { width: 42px; height: 42px; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 8px; color: #fff; background: #121d17; font-size: 25px; cursor: pointer; }
+.car-jobs-content { padding: 16px 18px calc(24px + env(safe-area-inset-bottom)); display: grid; gap: 14px; }
+.car-status-card, .car-register, .car-job, .car-empty { padding: 15px; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; background: #0e1913; }
+.car-status-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.car-status-card > div { display: grid; gap: 3px; }
+.car-status-card small, .car-job small, .car-register p, .car-empty { color: #9caf9f; }
+.car-status-badge { padding: 7px 9px; border-radius: 999px; color: #07110b; background: #68e99d; font-size: 11px; font-weight: 900; white-space: nowrap; }
+.car-status-badge.waiting { color: #fff1b2; background: rgba(245, 178, 36, 0.18); }
+.car-status-badge.blocked { color: #ffb0b0; background: rgba(255, 75, 75, 0.16); }
+.car-register { display: grid; gap: 12px; }
+.car-register h3 { margin: 0; }
+.car-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.car-register label { display: grid; gap: 6px; color: #dfece3; font-size: 12px; font-weight: 800; }
+.car-register input { width: 100%; min-height: 46px; padding: 0 12px; border: 1px solid rgba(255, 255, 255, 0.13); border-radius: 7px; color: #fff; background: #111d17; }
+.car-register input[type="file"] { padding: 10px; }
+.car-primary, .car-secondary, .car-danger, .car-tab { min-height: 46px; padding: 0 14px; border-radius: 7px; cursor: pointer; font-weight: 850; }
+.car-primary { border: 0; color: #04130a; background: #42df83; }
+.car-secondary, .car-tab { border: 1px solid rgba(255, 255, 255, 0.13); color: #fff; background: #17231c; }
+.car-danger { border: 1px solid rgba(255, 89, 89, 0.25); color: #ffb0b0; background: rgba(255, 72, 72, 0.08); }
+.car-primary:disabled, .car-secondary:disabled, .car-danger:disabled { opacity: 0.5; cursor: wait; }
+.car-online { min-height: 54px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid rgba(66, 223, 131, 0.27); border-radius: 8px; background: rgba(66, 223, 131, 0.06); }
+.car-online button { min-width: 104px; }
+.car-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.car-tab.active { border-color: #42df83; color: #b7ffd4; background: rgba(66, 223, 131, 0.12); }
+.car-jobs-list { display: grid; gap: 10px; }
+.car-job { display: grid; gap: 12px; }
+.car-job-head, .car-job-value { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.car-job-head strong { font-size: 16px; }
+.car-job-status { color: #7cf0aa; font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.car-route { display: grid; grid-template-columns: 12px 1fr; gap: 7px 10px; }
+.car-route i { width: 10px; height: 10px; margin-top: 4px; border: 2px solid #42df83; border-radius: 50%; }
+.car-route i:nth-of-type(2) { border-color: #ff9a18; border-radius: 2px; }
+.car-route div { min-width: 0; display: grid; gap: 2px; }
+.car-route span { overflow-wrap: anywhere; }
+.car-job-value strong { color: #8df1b5; font-size: 18px; }
+.car-job-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.car-job-actions > :only-child { grid-column: 1 / -1; }
+.car-empty { padding-block: 30px; text-align: center; }
+.car-feedback { min-height: 17px; margin: 0; color: #ffabab; font-size: 12px; text-align: center; }
+.car-feedback.success { color: #8df1b5; }
+@media (min-width: 760px) { .car-jobs-overlay { align-items: center; padding: 20px; } .car-jobs-shell { border-radius: 12px; } }
+@media (max-width: 520px) { .car-form-grid, .car-job-actions { grid-template-columns: 1fr; } .car-job-actions > * { grid-column: 1; } }

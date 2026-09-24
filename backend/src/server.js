@@ -29,10 +29,14 @@ const SUPPORT_SESSION_MS = 12 * 60 * 60 * 1000;
 const CUSTOMER_SESSION_MS = 90 * 24 * 60 * 60 * 1000;
 const CUSTOMER_OTP_MS = 10 * 60 * 1000;
 const CUSTOMER_VERIFICATION_MS = 20 * 60 * 1000;
+const CAR_CUSTOMER_SESSION_MS = 90 * 24 * 60 * 60 * 1000;
+const CAR_RIDE_EXPIRE_MS = Number(process.env.CAR_RIDE_EXPIRE_MINUTES || 8) * 60 * 1000;
+const CAR_DRIVER_PERCENT = Math.max(0.5, Math.min(0.95, Number(process.env.CAR_DRIVER_PERCENT || 0.8)));
 const CUSTOMER_FREE_RIDES = Math.max(1, Number(process.env.CUSTOMER_FREE_RIDES || 3));
 const CUSTOMER_REGISTRATION_ENFORCED = String(process.env.CUSTOMER_REGISTRATION_ENFORCED || '').toLowerCase() === 'true';
 const MP_OAUTH_STATE_MS = 10 * 60 * 1000;
 const driverProofCache = new Map();
+const carDriverCache = new Map();
 const ADMIN_STATE_CACHE_MS = 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 let adminStateCache = null;
@@ -106,6 +110,32 @@ function rideSplit(km) {
   return {
     appPercent,
     driverPercent: money(1 - appPercent)
+  };
+}
+
+function carFare(km, date = new Date()) {
+  const distance = Number(km || 0);
+  if (!Number.isFinite(distance) || distance <= 0) {
+    return { period: rideFarePeriod(date), rate: 0, total: 0 };
+  }
+  const period = rideFarePeriod(date);
+  const rate = period === 'madrugada' ? 8.2 : period === 'noite' ? 6.2 : 4.2;
+  return { period, rate, total: money(distance * rate) };
+}
+
+function carFareLabel(fare = {}) {
+  const labels = { dia: 'Dia', noite: 'Noite', madrugada: 'Madrugada' };
+  return `${labels[fare.period] || 'Dia'} - R$ ${Number(fare.rate || 0).toFixed(2).replace('.', ',')}/km`;
+}
+
+function carRideSplit(total) {
+  const amount = money(total);
+  const driverAmount = money(amount * CAR_DRIVER_PERCENT);
+  return {
+    driverPercent: CAR_DRIVER_PERCENT,
+    appPercent: money(1 - CAR_DRIVER_PERCENT),
+    driverAmount,
+    appFee: money(Math.max(0, amount - driverAmount))
   };
 }
 
@@ -1016,21 +1046,25 @@ function driverEarningsDayRef(driverCpf, dayKey) {
 }
 
 function driverEarningEventRef(driverCpf, kind, serviceId) {
-  const safeKind = kind === 'entrega' ? 'entrega' : 'corrida';
+  const safeKind = kind === 'entrega' ? 'entrega' : kind === 'carro' ? 'carro' : 'corrida';
   const safeId = String(serviceId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 120);
   return driverEarningsRef(driverCpf).collection('historico').doc(`${safeKind}_${safeId}`);
 }
 
 function driverEarningEvent(kind, serviceId, job = {}, finishedAtMs = Date.now()) {
   const isDelivery = kind === 'entrega';
+  const isCar = kind === 'carro';
   const split = isDelivery
     ? deliverySplit(job)
-    : rideSplitAmounts(job.pagamento?.total || job.valor, job.km);
+    : isCar
+      ? carRideSplit(job.valor)
+      : rideSplitAmounts(job.pagamento?.total || job.valor, job.km);
   const driverAmount = money(job.ganhoMotoboy ?? job.valorMotoboy ?? split.driverAmount);
   return {
     serviceId: String(serviceId || '').slice(0, 120),
     tipo: isDelivery ? 'entrega' : 'corrida',
-    titulo: cleanText(isDelivery ? (job.empresa || 'Empresa') : (job.nome || 'Cliente'), 100),
+    modalidade: isCar ? 'carro' : isDelivery ? 'entrega' : 'moto',
+    titulo: cleanText(isDelivery ? (job.empresa || 'Empresa') : isCar ? (job.passageiroNome || 'Passageiro') : (job.nome || 'Cliente'), 100),
     origem: cleanText(isDelivery ? job.retirada : job.origem, 180),
     destino: cleanText(isDelivery ? job.entrega : job.destino, 180),
     ganhoCentavos: Math.max(0, Math.round(driverAmount * 100)),
@@ -1119,11 +1153,12 @@ async function rebuildDriverEarnings(driverCpf) {
   const cpf = onlyDigits(driverCpf);
   const totalRef = driverEarningsRef(cpf);
   const totalSnap = await totalRef.get();
-  if (Number(totalSnap.data()?.versaoHistorico || 0) >= 1) return;
+  if (Number(totalSnap.data()?.versaoHistorico || 0) >= 2) return;
 
-  const [ridesSnap, deliveriesSnap] = await Promise.all([
+  const [ridesSnap, deliveriesSnap, carRidesSnap] = await Promise.all([
     db.collection('corridas').where('motoboyCpf', '==', cpf).where('status', '==', 'finalizada').limit(500).get(),
-    db.collection('entregas').where('motoboyCpf', '==', cpf).where('status', '==', 'finalizada').limit(500).get()
+    db.collection('entregas').where('motoboyCpf', '==', cpf).where('status', '==', 'finalizada').limit(500).get(),
+    db.collection('corridasCarro').where('motoristaCpf', '==', cpf).where('status', '==', 'finalizada').limit(500).get()
   ]);
   const events = [];
   ridesSnap.docs.forEach((docSnap) => {
@@ -1137,6 +1172,15 @@ async function rebuildDriverEarnings(driverCpf) {
         ? manualDeliveryPerformedAtMs(job)
         : timestampMs(job.finalizadaEm) || Date.now();
       events.push(driverEarningEvent('entrega', docSnap.id, job, finishedAtMs));
+    }
+  });
+  carRidesSnap.docs.forEach((docSnap) => {
+    const job = docSnap.data() || {};
+    if (job.status === 'finalizada') {
+      const finishedAtMs = job.finalizadaPeloDonoEm
+        ? timestampMs(job.iniciadaEm) || timestampMs(job.aceitaEm) || timestampMs(job.criadaEm) || Date.now()
+        : timestampMs(job.finalizadaEm) || Date.now();
+      events.push(driverEarningEvent('carro', docSnap.id, job, finishedAtMs));
     }
   });
 
@@ -1159,7 +1203,7 @@ async function rebuildDriverEarnings(driverCpf) {
   }
   await totalRef.set({
     ...total,
-    versaoHistorico: 1,
+    versaoHistorico: 2,
     historicoImportadoEm: admin.firestore.FieldValue.serverTimestamp(),
     atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
   }, { merge: true });
@@ -1357,6 +1401,7 @@ function supportAlertVersion(job = {}) {
 
 function supportOperation(kind, id, job = {}) {
   const isDelivery = kind === 'entrega';
+  const isCar = kind === 'carro';
   const alertVersion = supportAlertVersion(job);
   const receiverPhone = isDelivery ? onlyDigits(job.telefoneRecebedor).slice(0, 11) : '';
   const extraStops = Array.isArray(job.pontosExtras)
@@ -1369,11 +1414,11 @@ function supportOperation(kind, id, job = {}) {
     : [];
   return {
     id,
-    tipo: isDelivery ? 'entrega' : 'corrida',
+    tipo: isDelivery ? 'entrega' : isCar ? 'carro' : 'corrida',
     status: cleanText(job.status, 30),
-    titulo: cleanText(isDelivery ? job.empresa : job.nome, 100) || (isDelivery ? 'Empresa' : 'Cliente'),
-    responsavel: cleanText(isDelivery ? job.responsavel : job.nome, 100),
-    telefonePrincipal: onlyDigits(isDelivery ? job.telefoneEmpresa : job.telefoneCliente).slice(0, 11),
+    titulo: cleanText(isDelivery ? job.empresa : isCar ? job.passageiroNome : job.nome, 100) || (isDelivery ? 'Empresa' : 'Cliente'),
+    responsavel: cleanText(isDelivery ? job.responsavel : isCar ? job.passageiroNome : job.nome, 100),
+    telefonePrincipal: onlyDigits(isDelivery ? job.telefoneEmpresa : isCar ? job.passageiroTelefone : job.telefoneCliente).slice(0, 11),
     recebedor: cleanText(job.recebedor, 100),
     telefoneRecebedor: receiverPhone,
     origem: cleanText(isDelivery ? job.retirada : job.origem, 180),
@@ -1381,8 +1426,8 @@ function supportOperation(kind, id, job = {}) {
     tipoEntrega: isDelivery ? cleanText(job.tipoEntrega, 100) : '',
     paradas: isDelivery ? Math.max(1, Number(job.paradas || 1)) : 1,
     pontosExtras: extraStops,
-    motoboy: cleanText(job.motoboy, 100),
-    telefoneMotoboy: onlyDigits(job.motoboyTelefone).slice(0, 11),
+    motoboy: cleanText(isCar ? job.motorista : job.motoboy, 100),
+    telefoneMotoboy: onlyDigits(isCar ? job.motoristaTelefone : job.motoboyTelefone).slice(0, 11),
     criadaEm: serializeFirestore(job.criadaEm),
     aceitaEm: serializeFirestore(job.aceitaEm),
     retiradaEm: serializeFirestore(job.retiradaConfirmadaEm),
@@ -1419,6 +1464,29 @@ function safeEqual(a, b) {
 
 function hashSecret(value) {
   return crypto.createHash('sha256').update(String(value || '')).digest('hex');
+}
+
+function createCarQuoteToken(payload = {}) {
+  const key = process.env.DATA_ENCRYPTION_KEY || ownerPasswordValue();
+  if (!key) throw new Error('DATA_ENCRYPTION_KEY nao configurada para assinar tarifas do CarroJa.');
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto.createHmac('sha256', String(key)).update(body).digest('base64url');
+  return `${body}.${signature}`;
+}
+
+function verifyCarQuoteToken(token) {
+  const key = process.env.DATA_ENCRYPTION_KEY || ownerPasswordValue();
+  const [body, signature] = String(token || '').split('.');
+  if (!key || !body || !signature) return null;
+  const expected = crypto.createHmac('sha256', String(key)).update(body).digest('base64url');
+  if (!safeEqual(signature, expected)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (!payload || Number(payload.expiresAtMs || 0) < Date.now()) return null;
+    return payload;
+  } catch (_error) {
+    return null;
+  }
 }
 
 function encryptSecret(value) {
@@ -1624,6 +1692,19 @@ async function issueCustomerSession(ref) {
   return token;
 }
 
+async function issueCarCustomerSession(ref) {
+  const token = `v2.${ref.id}.${crypto.randomBytes(32).toString('hex')}`;
+  const now = Date.now();
+  await ref.set({
+    sessionTokenHash: hashSecret(token),
+    sessionIssuedAtMs: now,
+    sessionExpiresAtMs: now + CAR_CUSTOMER_SESSION_MS,
+    ultimoLoginEm: admin.firestore.FieldValue.serverTimestamp(),
+    atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
+  return token;
+}
+
 function customerProfileComplete(data = {}) {
   return !!(
     data.whatsappVerificadoEm
@@ -1645,6 +1726,125 @@ async function findCustomerSession(token) {
   const expiresAt = Number(customer.sessionExpiresAtMs || 0);
   if (expiresAt && expiresAt <= Date.now()) return null;
   return { customerSnap, customer, customerId: customerSnap.id };
+}
+
+function carCustomerProfileComplete(data = {}) {
+  return !!(
+    data.whatsappVerificadoEm
+    && data.cpfHash
+    && validBirthDate(data.dataNascimento)
+    && validDriverPhoto(data.fotoCliente)
+    && data.passwordHash
+    && data.passwordSalt
+    && data.status !== 'bloqueada'
+  );
+}
+
+function publicCarCustomer(data = {}, id = '') {
+  return {
+    id,
+    nome: cleanText(data.nome, 80),
+    telefoneCliente: onlyDigits(data.telefoneCliente || id).slice(0, 11),
+    fotoCliente: validDriverPhoto(data.fotoCliente) || '',
+    cpfFinal: onlyDigits(data.cpfFinal).slice(-4),
+    dataNascimento: data.dataNascimento || '',
+    cadastroCompleto: carCustomerProfileComplete(data)
+  };
+}
+
+async function findCarCustomerSession(token) {
+  const value = String(token || '').trim();
+  if (!value) return null;
+  let customerSnap = null;
+  const parts = value.split('.');
+  if (parts.length === 3 && parts[0] === 'v2' && /^\d{10,11}$/.test(parts[1])) {
+    const direct = await db.collection('carroClientes').doc(parts[1]).get();
+    if (!direct.exists || !safeEqual(direct.data()?.sessionTokenHash || '', hashSecret(value))) return null;
+    customerSnap = direct;
+  } else {
+    const snap = await db.collection('carroClientes').where('sessionTokenHash', '==', hashSecret(value)).limit(1).get();
+    if (snap.empty) return null;
+    customerSnap = snap.docs[0];
+  }
+  const customer = customerSnap.data() || {};
+  const expiresAt = Number(customer.sessionExpiresAtMs || 0);
+  if ((expiresAt && expiresAt <= Date.now()) || customer.status === 'bloqueada') return null;
+  return { customerSnap, customer, customerId: customerSnap.id };
+}
+
+async function assertCarCustomer(req, res, next) {
+  try {
+    const header = String(req.header('authorization') || '');
+    const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+    const session = await findCarCustomerSession(token);
+    if (!session || !carCustomerProfileComplete(session.customer)) {
+      return res.status(401).json({ error: 'sessao_carroja_invalida', message: 'Entre novamente no CarroJa.' });
+    }
+    req.carCustomer = session.customer;
+    req.carCustomerId = session.customerId;
+    req.carCustomerSnap = session.customerSnap;
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+}
+
+function carDriverStatus(driver = {}) {
+  const car = driver.carro && typeof driver.carro === 'object' ? driver.carro : driver;
+  const status = String(car.status || '');
+  if (status === 'aprovado' || status === 'bloqueado') return status;
+  return car.modelo || car.placa || status ? 'aguardando_aprovacao' : 'nao_cadastrado';
+}
+
+function publicCarDriver(driver = {}, cpf = '', carProfile = null) {
+  const car = carProfile || driver.carro || {};
+  return {
+    cpf: onlyDigits(cpf || driver.cpf),
+    nome: cleanText(driver.nome, 80),
+    telefone: onlyDigits(driver.telefone).slice(0, 11),
+    fotoMotoboy: validDriverPhoto(driver.fotoMotoboy) || '',
+    status: carDriverStatus(car),
+    online: car.online === true && carDriverStatus(car) === 'aprovado',
+    modelo: cleanText(car.modelo, 80),
+    ano: cleanText(car.ano, 4),
+    placa: cleanText(car.placa, 8).toUpperCase(),
+    cor: cleanText(car.cor, 40),
+    cidadeBase: cleanText(car.cidadeBase, 80),
+    fotoCarro: validDriverPhoto(car.fotoCarro) || '',
+    crlvCadastrado: !!validDriverDocument(car.crlvFoto),
+    motivoBloqueio: cleanText(car.motivoBloqueio, 180)
+  };
+}
+
+async function getCarDriverProfile(driverCpf, fallbackDriver = null) {
+  const cpf = onlyDigits(driverCpf);
+  const cached = carDriverCache.get(cpf);
+  if (cached && cached.expiresAt > Date.now()) return cached.car;
+  const snap = await db.collection('carroMotoristas').doc(cpf).get();
+  const car = snap.exists ? snap.data() || {} : fallbackDriver?.carro || {};
+  carDriverCache.set(cpf, { car, expiresAt: Date.now() + DRIVER_PROOF_CACHE_MS });
+  return car;
+}
+
+function clearCarDriverCache(driverCpf = '') {
+  const cpf = onlyDigits(driverCpf);
+  if (cpf) carDriverCache.delete(cpf);
+  else carDriverCache.clear();
+}
+
+async function getApprovedCarDriver(driverCpf, body = {}) {
+  const driver = await getDriverWithProof(driverCpf, body);
+  const car = await getCarDriverProfile(driverCpf, driver);
+  const status = carDriverStatus(car);
+  if (status !== 'aprovado') {
+    const error = new Error(status === 'bloqueado'
+      ? 'Seu cadastro de carro foi bloqueado pelo dono.'
+      : 'Seu cadastro de carro ainda aguarda aprovacao do dono.');
+    error.status = 403;
+    error.code = status === 'bloqueado' ? 'carro_bloqueado' : 'carro_aguardando_aprovacao';
+    throw error;
+  }
+  return { ...driver, carro: car };
 }
 
 async function completedCustomerRides(deviceId) {
@@ -1905,6 +2105,56 @@ function ridePublicData(ride) {
   };
 }
 
+function carRidePublicData(ride = {}) {
+  return {
+    clientRequestId: String(ride.clientRequestId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80),
+    origem: cleanText(ride.origem, 300),
+    origemEncontrada: cleanText(ride.origemEncontrada || ride.origem, 300),
+    origemLat: Number(ride.origemLat || 0),
+    origemLon: Number(ride.origemLon || 0),
+    destino: cleanText(ride.destino, 300),
+    destinoEncontrado: cleanText(ride.destinoEncontrado || ride.destino, 300),
+    destinoLat: Number(ride.destinoLat || 0),
+    destinoLon: Number(ride.destinoLon || 0),
+    cidadeOperacao: cleanText(ride.cidadeOperacao, 80),
+    observacao: cleanText(ride.observacao, 240),
+    pagamentoModo: ['dinheiro', 'pix', 'mercadopago'].includes(String(ride.pagamentoModo || ''))
+      ? String(ride.pagamentoModo)
+      : 'pix'
+  };
+}
+
+function carRideForCustomer(id, ride = {}) {
+  const car = ride.carro || {};
+  return {
+    id,
+    status: String(ride.status || ''),
+    origem: cleanText(ride.origemEncontrada || ride.origem, 300),
+    destino: cleanText(ride.destinoEncontrado || ride.destino, 300),
+    km: Number(ride.km || 0),
+    valor: money(ride.valor),
+    tarifaPeriodo: String(ride.tarifaPeriodo || ''),
+    tarifaPorKm: Number(ride.tarifaPorKm || 0),
+    tarifaLabel: String(ride.tarifaLabel || ''),
+    motorista: cleanText(ride.motorista, 80),
+    motoristaFoto: validDriverPhoto(ride.motoristaFoto) || '',
+    motoristaTelefone: onlyDigits(ride.motoristaTelefone).slice(0, 11),
+    carro: ride.motoristaCpf ? {
+      modelo: cleanText(car.modelo, 80),
+      placa: cleanText(car.placa, 8).toUpperCase(),
+      cor: cleanText(car.cor, 40),
+      foto: validDriverPhoto(car.fotoCarro) || ''
+    } : null,
+    motoristaLocalizacao: ['aceita', 'motorista_chegou', 'em_andamento'].includes(ride.status)
+      ? serializeFirestore(ride.motoristaLocalizacao || null)
+      : null,
+    criadaEmMs: timestampMs(ride.criadaEm),
+    aceitaEmMs: timestampMs(ride.aceitaEm),
+    iniciadaEmMs: timestampMs(ride.iniciadaEm),
+    finalizadaEmMs: timestampMs(ride.finalizadaEm)
+  };
+}
+
 function deliveryPublicData(delivery) {
   return {
     clientRequestId: String(delivery.clientRequestId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80),
@@ -2080,7 +2330,9 @@ const DEFAULT_ALLOWED_ORIGINS = [
   'https://www.nexusmotoja.com.br',
   'https://suporte.nexusmotoja.com.br',
   'https://nexusconchal.github.io',
-  'https://motoboy-conchal.onrender.com'
+  'https://motoboy-conchal.onrender.com',
+  'http://127.0.0.1:8093',
+  'http://localhost:8093'
 ].join(',');
 const allowedOrigins = String(`${DEFAULT_ALLOWED_ORIGINS},${process.env.ALLOWED_ORIGINS || ''}`)
   .split(',')
@@ -2680,6 +2932,21 @@ async function cleanupRides() {
     }
   });
 
+  const pendingCarRides = await db.collection('corridasCarro').where('status', '==', 'pendente').get();
+  pendingCarRides.forEach((doc) => {
+    const data = doc.data() || {};
+    const createdAt = timestampMs(data.criadaEm);
+    if (createdAt && now - createdAt > CAR_RIDE_EXPIRE_MS) {
+      batch.update(doc.ref, {
+        status: 'expirada',
+        expiradaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+      updated += 1;
+      batchUpdated += 1;
+    }
+  });
+
   const pendingDeliveries = await db.collection('entregas').where('status', '==', 'pendente').get();
   for (const doc of pendingDeliveries.docs) {
     const data = doc.data();
@@ -3046,13 +3313,15 @@ app.get('/api/support/operations', assertSupport, async (req, res, next) => {
       return res.json(supportOperationsCache.payload);
     }
     const activeStatuses = ['pendente', 'aceita', 'retirada'];
-    const [ridesSnap, deliveriesSnap] = await Promise.all([
+    const [ridesSnap, deliveriesSnap, carRidesSnap] = await Promise.all([
       db.collection('corridas').where('status', 'in', activeStatuses).limit(100).get(),
-      db.collection('entregas').where('status', 'in', activeStatuses).limit(100).get()
+      db.collection('entregas').where('status', 'in', activeStatuses).limit(100).get(),
+      db.collection('corridasCarro').where('status', 'in', ['pendente', 'aceita', 'motorista_chegou', 'em_andamento']).limit(100).get()
     ]);
     const operations = [
       ...ridesSnap.docs.map((doc) => supportOperation('corrida', doc.id, doc.data() || {})),
-      ...deliveriesSnap.docs.map((doc) => supportOperation('entrega', doc.id, doc.data() || {}))
+      ...deliveriesSnap.docs.map((doc) => supportOperation('entrega', doc.id, doc.data() || {})),
+      ...carRidesSnap.docs.map((doc) => supportOperation('carro', doc.id, doc.data() || {}))
     ].sort((a, b) => Number(b.alertVersion || 0) - Number(a.alertVersion || 0));
     const payload = { ok: true, operations, updatedAtMs: Date.now() };
     supportOperationsCache = { payload, expiresAt: Date.now() + 60 * 1000 };
@@ -3064,10 +3333,10 @@ app.get('/api/support/operations', assertSupport, async (req, res, next) => {
 
 app.post('/api/support/alerts/:kind/:jobId/acknowledge', assertSupport, async (req, res, next) => {
   try {
-    const kind = req.params.kind === 'entrega' ? 'entrega' : req.params.kind === 'corrida' ? 'corrida' : '';
+    const kind = ['entrega', 'corrida', 'carro'].includes(req.params.kind) ? req.params.kind : '';
     const jobId = cleanText(req.params.jobId, 120);
     if (!kind || !jobId) return res.status(400).json({ error: 'alerta_invalido' });
-    const collection = kind === 'entrega' ? 'entregas' : 'corridas';
+    const collection = kind === 'entrega' ? 'entregas' : kind === 'carro' ? 'corridasCarro' : 'corridas';
     const jobRef = db.collection(collection).doc(jobId);
     let result = null;
     await db.runTransaction(async (tx) => {
@@ -3078,7 +3347,7 @@ app.post('/api/support/alerts/:kind/:jobId/acknowledge', assertSupport, async (r
         throw error;
       }
       const job = snapshot.data() || {};
-      if (!['pendente', 'aceita', 'retirada'].includes(job.status)) {
+      if (!['pendente', 'aceita', 'retirada', 'motorista_chegou', 'em_andamento'].includes(job.status)) {
         const error = new Error('Este chamado não está mais ativo.');
         error.status = 409;
         throw error;
@@ -3204,17 +3473,19 @@ app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
     if (adminStateCache && adminStateCache.expiresAt > Date.now()) {
       return res.json(adminStateCache.payload);
     }
-    const [corridas, entregas, motoboys, depositos, recuperacoesSenhaEmpresa, empresasRaw, eventosFunil] = await Promise.all([
+    const [corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresasRaw, eventosFunil] = await Promise.all([
       collectionState('corridas'),
+      collectionState('corridasCarro', 500, 'criadaEm'),
       collectionState('entregas', 500, 'criadaEm'),
       collectionState('motoboys'),
+      collectionState('carroMotoristas', 500, 'atualizadoEm'),
       collectionState('depositos'),
       collectionState('recuperacoesSenhaEmpresa'),
       collectionState('empresas'),
       collectionState('eventosFunil', 2000)
     ]);
     const empresas = empresasRaw.map((empresa) => publicCompany(empresa, empresa.id));
-    const payload = { ok: true, corridas, entregas, motoboys, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil };
+    const payload = { ok: true, corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil };
     adminStateCache = { payload, expiresAt: Date.now() + ADMIN_STATE_CACHE_MS };
     return res.json(payload);
   } catch (error) {
@@ -3502,6 +3773,53 @@ app.post('/api/admin/drivers/:cpf/unblock', assertOwner, async (req, res, next) 
   }
 });
 
+app.post('/api/admin/car/drivers/:cpf/approve', assertOwner, async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.params.cpf);
+    const ref = db.collection('carroMotoristas').doc(cpf);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'cadastro_carro_nao_encontrado' });
+    const car = snap.data() || {};
+    if (!car.modelo || !car.ano || !car.placa || !car.cor || !validDriverDocument(car.crlvFoto) || !validDriverPhoto(car.fotoCarro)) {
+      return res.status(409).json({ error: 'cadastro_carro_incompleto', message: 'Modelo, ano, placa, cor e fotos sao obrigatorios.' });
+    }
+    await ref.set({
+      status: 'aprovado',
+      motivoBloqueio: admin.firestore.FieldValue.delete(),
+      aprovadoEm: admin.firestore.FieldValue.serverTimestamp(),
+      aprovadoPor: 'dono',
+      atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    clearCarDriverCache(cpf);
+    adminStateCache = null;
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/admin/car/drivers/:cpf/block', assertOwner, async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.params.cpf);
+    const motivo = cleanText(req.body.reason || 'Bloqueado pelo dono', 180);
+    const ref = db.collection('carroMotoristas').doc(cpf);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'cadastro_carro_nao_encontrado' });
+    await ref.set({
+      status: 'bloqueado',
+      online: false,
+      motivoBloqueio: motivo,
+      bloqueadoEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    clearCarDriverCache(cpf);
+    adminStateCache = null;
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/drivers/register', authLimiter, async (req, res, next) => {
   try {
     const password = String(req.body.password || '');
@@ -3628,6 +3946,128 @@ app.post('/api/drivers/register', authLimiter, async (req, res, next) => {
       crlvFoto,
       cidadesAtivas: driverRideCities(savedDriver)
     });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/drivers/:cpf/car/status', authLimiter, async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    const driver = await getDriverWithProof(driverCpf, req.body);
+    const car = await getCarDriverProfile(driverCpf, driver);
+    return res.json({ ok: true, carDriver: publicCarDriver(driver, driverCpf, car) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/drivers/:cpf/car/register', authLimiter, async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    const driver = await getDriverWithProof(driverCpf, req.body);
+    const previous = await getCarDriverProfile(driverCpf, driver);
+    const modelo = cleanText(req.body.modelo, 80);
+    const ano = onlyDigits(req.body.ano).slice(0, 4);
+    const placa = cleanText(req.body.placa, 8).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const cor = cleanText(req.body.cor, 40);
+    const cidadeBase = cleanText(req.body.cidadeBase, 80);
+    const fotoCarro = validDriverPhoto(req.body.fotoCarro);
+    const crlvFoto = validDriverDocument(req.body.crlvFoto);
+    if (!modelo || !/^(19|20)\d{2}$/.test(ano) || placa.length < 7 || !cor || !cidadeBase || !fotoCarro || !crlvFoto) {
+      return res.status(400).json({
+        error: 'dados_carro_invalidos',
+        message: 'Preencha modelo, ano, placa, cor, cidade e envie as fotos do carro e do CRLV.'
+      });
+    }
+    const changed = [modelo, ano, placa, cor, cidadeBase, fotoCarro, crlvFoto]
+      .some((value, index) => String(value) !== String([
+        previous.modelo, previous.ano, previous.placa, previous.cor,
+        previous.cidadeBase, previous.fotoCarro, previous.crlvFoto
+      ][index] || ''));
+    const status = changed || carDriverStatus(previous) === 'nao_cadastrado'
+      ? 'aguardando_aprovacao'
+      : carDriverStatus(previous);
+    const car = {
+      modelo,
+      ano,
+      placa,
+      cor,
+      cidadeBase,
+      fotoCarro,
+      crlvFoto,
+      status,
+      online: status === 'aprovado' && previous.online === true,
+      motoristaCpf: driverCpf,
+      motoristaNome: cleanText(driver.nome, 80),
+      motoristaTelefone: onlyDigits(driver.telefone).slice(0, 11),
+      cadastradoEm: previous.cadastradoEm || admin.firestore.FieldValue.serverTimestamp(),
+      atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+    };
+    await db.collection('carroMotoristas').doc(driverCpf).set(car, { merge: true });
+    clearCarDriverCache(driverCpf);
+    adminStateCache = null;
+    sendEvolutionText(OWNER_WHATSAPP, `Nexus CarroJa: ${driver.nome || 'Motorista'} cadastrou o carro ${modelo} ${placa}. Confira e aprove no Painel do Dono.`)
+      .catch((error) => console.error('car registration whatsapp failed', error));
+    return res.status(201).json({ ok: true, carDriver: publicCarDriver({ ...driver, carro: car }, driverCpf) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/drivers/:cpf/car/online', authLimiter, async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    const driver = await getApprovedCarDriver(driverCpf, req.body);
+    const online = req.body.online === true;
+    await db.collection('carroMotoristas').doc(driverCpf).set({
+      online,
+      onlineAtualizadoEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    clearCarDriverCache(driverCpf);
+    return res.json({ ok: true, online });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/drivers/:cpf/car/jobs', createRideLimiter, async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    const driver = await getApprovedCarDriver(driverCpf, req.body);
+    const scope = req.body.scope === 'mine' ? 'mine' : 'pending';
+    if (scope === 'pending' && driver.carro?.online !== true) {
+      return res.json({ ok: true, jobs: [], carDriver: publicCarDriver(driver, driverCpf) });
+    }
+    let snapshot;
+    if (scope === 'mine') {
+      snapshot = await db.collection('corridasCarro').where('motoristaCpf', '==', driverCpf).limit(25).get();
+    } else {
+      snapshot = await db.collection('corridasCarro').where('status', '==', 'pendente').limit(25).get();
+    }
+    const allowedMine = new Set(['aceita', 'motorista_chegou', 'em_andamento']);
+    const jobs = snapshot.docs
+      .map((doc) => ({ id: doc.id, ...serializeFirestore(doc.data()) }))
+      .filter((job) => scope === 'pending' ? job.status === 'pendente' : allowedMine.has(job.status))
+      .sort((a, b) => Number(b.criadaEm?.seconds || 0) - Number(a.criadaEm?.seconds || 0))
+      .map((job) => ({
+        id: job.id,
+        status: job.status,
+        origem: job.origemEncontrada || job.origem,
+        destino: job.destinoEncontrado || job.destino,
+        cidadeOperacao: job.cidadeOperacao || '',
+        observacao: job.observacao || '',
+        km: Number(job.km || 0),
+        valor: money(job.valor),
+        motoristaRecebe: money(job.driverAmount || carRideSplit(job.valor).driverAmount),
+        tarifaLabel: job.tarifaLabel || '',
+        pagamentoModo: job.pagamentoModo || 'pix',
+        passageiro: scope === 'mine' ? cleanText(job.passageiroNome, 80) : '',
+        passageiroTelefone: scope === 'mine' ? onlyDigits(job.passageiroTelefone).slice(0, 11) : '',
+        criadaEm: job.criadaEm || null
+      }));
+    return res.json({ ok: true, jobs, carDriver: publicCarDriver(driver, driverCpf) });
   } catch (error) {
     return next(error);
   }
@@ -4069,7 +4509,11 @@ app.post('/api/customers/register', authLimiter, async (req, res, next) => {
     };
     let registrationError = null;
     await db.runTransaction(async (tx) => {
-      const [freshOtpSnap, cpfSnap] = await Promise.all([tx.get(otpRef), tx.get(cpfRef)]);
+      const [freshOtpSnap, cpfSnap, customerSnap] = await Promise.all([
+        tx.get(otpRef),
+        tx.get(cpfRef),
+        tx.get(customerRef)
+      ]);
       const freshOtp = freshOtpSnap.data() || {};
       if (!freshOtpSnap.exists || !freshOtp.verified || freshOtp.verificationExpiresAtMs < Date.now() || !safeEqual(hashSecret(verificationToken), freshOtp.verificationTokenHash || '')) {
         registrationError = { status: 401, code: 'whatsapp_nao_verificado', message: 'Confirme novamente o código enviado pelo WhatsApp.' };
@@ -4227,6 +4671,671 @@ app.get('/api/customers/me/rides', createRideLimiter, async (req, res, next) => 
       .sort((a, b) => timestampMs(b.criadaEm) - timestampMs(a.criadaEm));
 
     return res.json({ ok: true, rides });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/car/fare', mapLimiter, async (req, res, next) => {
+  try {
+    const points = req.body?.points || [];
+    const route = await calculateRoute(points);
+    const fare = carFare(route.km);
+    const quotePayload = {
+      points: points.map((point) => ({
+        lat: Number(Number(point.lat).toFixed(6)),
+        lon: Number(Number(point.lon).toFixed(6))
+      })),
+      km: route.km,
+      period: fare.period,
+      rate: fare.rate,
+      total: fare.total,
+      issuedAtMs: Date.now(),
+      expiresAtMs: Date.now() + 10 * 60 * 1000
+    };
+    return res.json({
+      ok: true,
+      km: route.km,
+      geometry: route.geometry,
+      period: fare.period,
+      rate: fare.rate,
+      total: fare.total,
+      label: carFareLabel(fare),
+      quoteToken: createCarQuoteToken(quotePayload),
+      expiresAtMs: quotePayload.expiresAtMs
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/car/customers/otp/request', customerOtpLimiter, async (req, res, next) => {
+  try {
+    const telefoneCliente = onlyDigits(req.body.telefoneCliente).slice(0, 11);
+    const deviceId = validDeviceId(req.body.deviceId);
+    if (telefoneCliente.length < 10 || telefoneCliente.length > 11 || !deviceId) {
+      return res.status(400).json({ error: 'whatsapp_invalido', message: 'Digite um WhatsApp com DDD.' });
+    }
+    const code = String(crypto.randomInt(100000, 1000000));
+    const otpRef = db.collection('carroCustomerOtp').doc(hashSecret(`${telefoneCliente}:${deviceId}`));
+    const delivery = await sendEvolutionText(`55${telefoneCliente}`, `Nexus CarroJa: seu codigo de confirmacao e ${code}. Ele vence em 10 minutos. Nao compartilhe este codigo.`);
+    if (!delivery.sent) {
+      return res.status(503).json({ error: 'whatsapp_otp_indisponivel', message: 'A confirmacao pelo WhatsApp esta indisponivel. Fale com o suporte.' });
+    }
+    await otpRef.set({
+      telefoneCliente,
+      deviceHash: hashSecret(deviceId),
+      codeHash: hashSecret(code),
+      expiresAtMs: Date.now() + CUSTOMER_OTP_MS,
+      attempts: 0,
+      verified: false,
+      criadaEm: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return res.json({ ok: true, message: 'Codigo enviado pelo WhatsApp.' });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/car/customers/otp/verify', authLimiter, async (req, res, next) => {
+  try {
+    const telefoneCliente = onlyDigits(req.body.telefoneCliente).slice(0, 11);
+    const deviceId = validDeviceId(req.body.deviceId);
+    const code = onlyDigits(req.body.code).slice(0, 6);
+    if (!deviceId || telefoneCliente.length < 10 || code.length !== 6) {
+      return res.status(400).json({ error: 'codigo_invalido', message: 'Digite o codigo de 6 numeros.' });
+    }
+    const otpRef = db.collection('carroCustomerOtp').doc(hashSecret(`${telefoneCliente}:${deviceId}`));
+    let verificationToken = '';
+    let verificationError = null;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(otpRef);
+      const data = snap.data() || {};
+      if (!snap.exists || data.expiresAtMs < Date.now() || Number(data.attempts || 0) >= 5) {
+        verificationError = { code: 'codigo_expirado', message: 'Codigo expirado. Solicite um novo.' };
+        return;
+      }
+      if (!safeEqual(hashSecret(code), data.codeHash || '')) {
+        tx.set(otpRef, { attempts: admin.firestore.FieldValue.increment(1) }, { merge: true });
+        verificationError = { code: 'codigo_incorreto', message: 'Codigo incorreto. Confira e tente novamente.' };
+        return;
+      }
+      verificationToken = crypto.randomBytes(32).toString('hex');
+      tx.set(otpRef, {
+        verified: true,
+        verificationTokenHash: hashSecret(verificationToken),
+        verificationExpiresAtMs: Date.now() + CUSTOMER_VERIFICATION_MS,
+        verificadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+    if (verificationError) return res.status(400).json({ error: verificationError.code, message: verificationError.message });
+    return res.json({ ok: true, verificationToken });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/car/customers/register', authLimiter, async (req, res, next) => {
+  try {
+    const nome = cleanText(req.body.nome, 80);
+    const telefoneCliente = onlyDigits(req.body.telefoneCliente).slice(0, 11);
+    const cpf = onlyDigits(req.body.cpf);
+    const birth = validBirthDate(req.body.dataNascimento);
+    const fotoCliente = validDriverPhoto(req.body.fotoCliente);
+    const password = String(req.body.password || '');
+    const deviceId = validDeviceId(req.body.deviceId);
+    const verificationToken = String(req.body.verificationToken || '').trim();
+    if (!nome || telefoneCliente.length < 10 || !validCpf(cpf) || !birth || !fotoCliente || password.length < 6 || !deviceId) {
+      return res.status(400).json({ error: 'dados_cliente_invalidos', message: 'Preencha nome, CPF valido, nascimento, foto e senha com pelo menos 6 caracteres.' });
+    }
+    const otpRef = db.collection('carroCustomerOtp').doc(hashSecret(`${telefoneCliente}:${deviceId}`));
+    const cpfHash = hashSecret(cpf);
+    const customerRef = db.collection('carroClientes').doc(telefoneCliente);
+    const cpfRef = db.collection('carroCustomerCpf').doc(cpfHash);
+    const auth = passwordHash(password);
+    const customerData = {
+      nome,
+      telefoneCliente,
+      fotoCliente,
+      cpfHash,
+      cpfEncrypted: encryptSecret(cpf),
+      cpfFinal: cpf.slice(-4),
+      dataNascimento: birth.text,
+      idadeCadastro: birth.age,
+      clienteDeviceId: deviceId,
+      whatsappVerificadoEm: admin.firestore.FieldValue.serverTimestamp(),
+      passwordSalt: auth.salt,
+      passwordHash: auth.hash,
+      status: 'ativo',
+      cadastradaEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    };
+    let registrationError = null;
+    await db.runTransaction(async (tx) => {
+      const [freshOtpSnap, cpfSnap] = await Promise.all([tx.get(otpRef), tx.get(cpfRef)]);
+      const freshOtp = freshOtpSnap.data() || {};
+      if (!freshOtpSnap.exists || !freshOtp.verified || freshOtp.verificationExpiresAtMs < Date.now() || !safeEqual(hashSecret(verificationToken), freshOtp.verificationTokenHash || '')) {
+        registrationError = { status: 401, code: 'whatsapp_nao_verificado', message: 'Confirme novamente o codigo enviado pelo WhatsApp.' };
+        return;
+      }
+      const cpfOwnerId = String(cpfSnap.data()?.customerId || '');
+      if (cpfSnap.exists && cpfOwnerId !== telefoneCliente) {
+        registrationError = { status: 409, code: 'cpf_ja_cadastrado', message: 'Este CPF ja possui cadastro. Use a tela de login.' };
+        return;
+      }
+      const currentCpfHash = String(customerSnap.data()?.cpfHash || '');
+      if (customerSnap.exists && currentCpfHash && currentCpfHash !== cpfHash) {
+        registrationError = { status: 409, code: 'telefone_ja_cadastrado', message: 'Este WhatsApp ja possui uma conta. Use a tela de login ou fale com o suporte.' };
+        return;
+      }
+      tx.set(customerRef, customerData, { merge: true });
+      tx.set(cpfRef, { customerId: telefoneCliente, cpfFinal: cpf.slice(-4), atualizadaEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      tx.delete(otpRef);
+    });
+    if (registrationError) return res.status(registrationError.status).json({ error: registrationError.code, message: registrationError.message });
+    const token = await issueCarCustomerSession(customerRef);
+    return res.status(201).json({ ok: true, token, customer: publicCarCustomer(customerData, telefoneCliente) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/car/customers/login', authLimiter, async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.body.cpf);
+    const password = String(req.body.password || '');
+    const deviceId = validDeviceId(req.body.deviceId);
+    if (!validCpf(cpf) || password.length < 6 || !deviceId) {
+      return res.status(400).json({ error: 'dados_cliente_invalidos', message: 'Digite CPF e senha.' });
+    }
+    const snap = await db.collection('carroClientes').where('cpfHash', '==', hashSecret(cpf)).limit(1).get();
+    if (snap.empty || !verifyPassword(password, snap.docs[0].data()) || !carCustomerProfileComplete(snap.docs[0].data())) {
+      passwordHash(password || crypto.randomBytes(12).toString('hex'));
+      return res.status(401).json({ error: 'credenciais_cliente_invalidas', message: 'CPF ou senha incorretos.' });
+    }
+    await snap.docs[0].ref.set({ clienteDeviceId: deviceId, atualizadaEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    const token = await issueCarCustomerSession(snap.docs[0].ref);
+    return res.json({ ok: true, token, customer: publicCarCustomer(snap.docs[0].data(), snap.docs[0].id) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/car/customers/me', assertCarCustomer, async (req, res) => {
+  return res.json({ ok: true, customer: publicCarCustomer(req.carCustomer, req.carCustomerId) });
+});
+
+app.post('/api/car/customers/logout', assertCarCustomer, async (req, res, next) => {
+  try {
+    await req.carCustomerSnap.ref.set({
+      sessionTokenHash: admin.firestore.FieldValue.delete(),
+      sessionIssuedAtMs: admin.firestore.FieldValue.delete(),
+      sessionExpiresAtMs: admin.firestore.FieldValue.delete(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/car/rides', assertCarCustomer, createRideLimiter, async (req, res, next) => {
+  try {
+    const ride = carRidePublicData(req.body);
+    const quote = verifyCarQuoteToken(req.body.quoteToken);
+    if (!quote || !Array.isArray(quote.points) || quote.points.length < 2) {
+      return res.status(400).json({ error: 'cotacao_expirada', message: 'Calcule a rota novamente antes de confirmar.' });
+    }
+    if (!ride.origem || !ride.destino) {
+      return res.status(400).json({ error: 'enderecos_obrigatorios', message: 'Informe local de partida e destino.' });
+    }
+    const requestedPoints = [
+      { lat: ride.origemLat, lon: ride.origemLon },
+      { lat: ride.destinoLat, lon: ride.destinoLon }
+    ];
+    const coordinatesMatch = requestedPoints.every((point, index) => (
+      Math.abs(Number(point.lat) - Number(quote.points[index]?.lat)) < 0.000002
+      && Math.abs(Number(point.lon) - Number(quote.points[index]?.lon)) < 0.000002
+    ));
+    if (!coordinatesMatch) {
+      return res.status(400).json({ error: 'rota_divergente', message: 'Os pontos mudaram. Calcule a rota novamente.' });
+    }
+    const requestId = ride.clientRequestId || crypto.randomUUID().replace(/-/g, '');
+    const ref = db.collection('corridasCarro').doc(hashSecret(`${req.carCustomerId}:${requestId}`).slice(0, 48));
+    const split = carRideSplit(quote.total);
+    let created = false;
+    await db.runTransaction(async (tx) => {
+      const existing = await tx.get(ref);
+      if (existing.exists) return;
+      tx.set(ref, {
+        ...ride,
+        clientRequestId: requestId,
+        passageiroId: req.carCustomerId,
+        passageiroNome: cleanText(req.carCustomer.nome, 80),
+        passageiroTelefone: onlyDigits(req.carCustomer.telefoneCliente || req.carCustomerId).slice(0, 11),
+        passageiroFoto: validDriverPhoto(req.carCustomer.fotoCliente) || '',
+        km: Number(quote.km),
+        valor: money(quote.total),
+        tarifaPeriodo: quote.period,
+        tarifaPorKm: Number(quote.rate),
+        tarifaLabel: carFareLabel(quote),
+        ...split,
+        status: 'pendente',
+        criadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+      created = true;
+    });
+    if (!created) return res.status(200).json({ ok: true, rideId: ref.id, duplicated: true });
+    const push = await notifyCarDriversAboutRide(ref.id, { ...ride, valor: quote.total }).catch((error) => {
+      console.error('car driver push failed', error);
+      return { sent: 0, failed: 0 };
+    });
+    adminStateCache = null;
+    emitSupportOperationsRefresh();
+    return res.status(201).json({ ok: true, rideId: ref.id, push });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/car/rides/:rideId/status', assertCarCustomer, async (req, res, next) => {
+  try {
+    const snap = await db.collection('corridasCarro').doc(String(req.params.rideId || '')).get();
+    if (!snap.exists) return res.status(404).json({ error: 'corrida_carro_nao_encontrada' });
+    const ride = snap.data() || {};
+    if (String(ride.passageiroId || '') !== req.carCustomerId) return res.status(403).json({ error: 'corrida_nao_pertence_ao_passageiro' });
+    return res.json({ ok: true, ride: carRideForCustomer(snap.id, ride) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/car/customers/me/rides', assertCarCustomer, async (req, res, next) => {
+  try {
+    const snapshot = await db.collection('corridasCarro').where('passageiroId', '==', req.carCustomerId).limit(60).get();
+    const rides = snapshot.docs
+      .map((doc) => carRideForCustomer(doc.id, doc.data() || {}))
+      .sort((a, b) => b.criadaEmMs - a.criadaEmMs);
+    return res.json({ ok: true, rides });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/car/rides/:rideId/cancel', assertCarCustomer, createRideLimiter, async (req, res, next) => {
+  try {
+    const ref = db.collection('corridasCarro').doc(String(req.params.rideId || ''));
+    let cancelledDriverCpf = '';
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        const error = new Error('Corrida nao encontrada.');
+        error.status = 404;
+        error.code = 'corrida_carro_nao_encontrada';
+        throw error;
+      }
+      const ride = snap.data() || {};
+      if (String(ride.passageiroId || '') !== req.carCustomerId) {
+        const error = new Error('Esta corrida nao pertence a sua conta.');
+        error.status = 403;
+        error.code = 'corrida_nao_pertence_ao_passageiro';
+        throw error;
+      }
+      if (ride.status === 'em_andamento' || ride.status === 'finalizada') {
+        const error = new Error('Corrida iniciada. Fale com o suporte para cancelar com seguranca.');
+        error.status = 409;
+        error.code = 'corrida_ja_iniciada';
+        throw error;
+      }
+      if (ride.status === 'cancelada') return;
+      const driverCpf = onlyDigits(ride.motoristaCpf);
+      cancelledDriverCpf = driverCpf;
+      const driverRef = driverCpf.length === 11 ? db.collection('carroMotoristas').doc(driverCpf) : null;
+      const driverSnap = driverRef ? await tx.get(driverRef) : null;
+      tx.set(ref, {
+        status: 'cancelada',
+        canceladaPor: 'passageiro',
+        motivoCancelamento: cleanText(req.body.reason || 'Cancelada pelo passageiro', 180),
+        canceladaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      if (driverRef && driverSnap?.exists) {
+        tx.set(driverRef, {
+          corridaAtivaId: admin.firestore.FieldValue.delete(),
+          corridaAtivaDesde: admin.firestore.FieldValue.delete(),
+          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      }
+    });
+    clearCarDriverCache(cancelledDriverCpf);
+    adminStateCache = null;
+    emitSupportOperationsRefresh();
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/car/rides/:rideId/accept', createRideLimiter, async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    const driver = await getApprovedCarDriver(driverCpf, req.body);
+    const active = await db.collection('corridasCarro').where('motoristaCpf', '==', driverCpf).limit(20).get();
+    if (active.docs.some((doc) => ['aceita', 'motorista_chegou', 'em_andamento'].includes(doc.data()?.status))) {
+      return res.status(409).json({ error: 'motorista_ja_tem_corrida', message: 'Finalize sua corrida atual antes de aceitar outra.' });
+    }
+    const ref = db.collection('corridasCarro').doc(String(req.params.rideId || ''));
+    const driverRef = db.collection('carroMotoristas').doc(driverCpf);
+    await db.runTransaction(async (tx) => {
+      const [snap, freshDriverSnap] = await Promise.all([tx.get(ref), tx.get(driverRef)]);
+      if (!snap.exists) {
+        const error = new Error('Corrida nao encontrada.');
+        error.status = 404;
+        error.code = 'corrida_carro_nao_encontrada';
+        throw error;
+      }
+      const ride = snap.data() || {};
+      if (ride.status !== 'pendente') {
+        const error = new Error('Outro motorista aceitou esta corrida.');
+        error.status = 409;
+        error.code = 'corrida_carro_indisponivel';
+        throw error;
+      }
+      const freshDriver = freshDriverSnap.data() || {};
+      const lockedRideId = String(freshDriver.corridaAtivaId || '');
+      if (lockedRideId && lockedRideId !== ref.id) {
+        const lockedSnap = await tx.get(db.collection('corridasCarro').doc(lockedRideId));
+        if (lockedSnap.exists && ['aceita', 'motorista_chegou', 'em_andamento'].includes(lockedSnap.data()?.status)) {
+          const error = new Error('Finalize sua corrida atual antes de aceitar outra.');
+          error.status = 409;
+          error.code = 'motorista_ja_tem_corrida';
+          throw error;
+        }
+      }
+      tx.set(ref, {
+        status: 'aceita',
+        motorista: cleanText(driver.nome, 80),
+        motoristaCpf: driverCpf,
+        motoristaTelefone: onlyDigits(driver.telefone).slice(0, 11),
+        motoristaFoto: validDriverPhoto(driver.fotoMotoboy) || '',
+        carro: {
+          modelo: cleanText(driver.carro?.modelo, 80),
+          ano: cleanText(driver.carro?.ano, 4),
+          placa: cleanText(driver.carro?.placa, 8).toUpperCase(),
+          cor: cleanText(driver.carro?.cor, 40),
+          fotoCarro: validDriverPhoto(driver.carro?.fotoCarro) || ''
+        },
+        aceitaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      tx.set(driverRef, {
+        corridaAtivaId: ref.id,
+        corridaAtivaDesde: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+    clearCarDriverCache(driverCpf);
+    adminStateCache = null;
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+async function updateCarRideDriverState(req, res, next, config) {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    await getApprovedCarDriver(driverCpf, req.body);
+    const ref = db.collection('corridasCarro').doc(String(req.params.rideId || ''));
+    const driverRef = db.collection('carroMotoristas').doc(driverCpf);
+    await db.runTransaction(async (tx) => {
+      const [snap, driverSnap] = await Promise.all([tx.get(ref), tx.get(driverRef)]);
+      if (!snap.exists) {
+        const error = new Error('Corrida nao encontrada.');
+        error.status = 404;
+        error.code = 'corrida_carro_nao_encontrada';
+        throw error;
+      }
+      const ride = snap.data() || {};
+      if (onlyDigits(ride.motoristaCpf) !== driverCpf) {
+        const error = new Error('Esta corrida nao pertence a este motorista.');
+        error.status = 403;
+        error.code = 'corrida_nao_pertence_ao_motorista';
+        throw error;
+      }
+      if (!config.from.includes(ride.status)) {
+        const error = new Error(config.invalidMessage);
+        error.status = 409;
+        error.code = 'status_corrida_invalido';
+        throw error;
+      }
+      if (config.recordEarning) {
+        const earningEvent = driverEarningEvent('carro', ref.id, ride, Date.now());
+        await recordDriverEarning(tx, driverCpf, earningEvent);
+      }
+      tx.set(ref, {
+        status: config.to,
+        [config.timestampField]: admin.firestore.FieldValue.serverTimestamp(),
+        ...(config.recordEarning ? { ganhoContabilizadoEm: admin.firestore.FieldValue.serverTimestamp() } : {}),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      if (config.recordEarning && driverSnap.exists) {
+        tx.set(driverRef, {
+          corridaAtivaId: admin.firestore.FieldValue.delete(),
+          corridaAtivaDesde: admin.firestore.FieldValue.delete(),
+          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      }
+    });
+    if (config.recordEarning) clearCarDriverCache(driverCpf);
+    adminStateCache = null;
+    return res.json({ ok: true, status: config.to });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+app.post('/api/car/rides/:rideId/arrived', createRideLimiter, (req, res, next) => updateCarRideDriverState(req, res, next, {
+  from: ['aceita'], to: 'motorista_chegou', timestampField: 'motoristaChegouEm', invalidMessage: 'A corrida precisa estar aceita.'
+}));
+
+app.post('/api/car/rides/:rideId/start', createRideLimiter, (req, res, next) => updateCarRideDriverState(req, res, next, {
+  from: ['aceita', 'motorista_chegou'], to: 'em_andamento', timestampField: 'iniciadaEm', invalidMessage: 'A corrida nao pode ser iniciada agora.'
+}));
+
+app.post('/api/car/rides/:rideId/finish', createRideLimiter, (req, res, next) => updateCarRideDriverState(req, res, next, {
+  from: ['em_andamento'], to: 'finalizada', timestampField: 'finalizadaEm', invalidMessage: 'Inicie a corrida antes de finalizar.', recordEarning: true
+}));
+
+app.post('/api/car/rides/:rideId/location', createRideLimiter, async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    await getApprovedCarDriver(driverCpf, req.body);
+    const latitude = Number(req.body.latitude);
+    const longitude = Number(req.body.longitude);
+    if (!validCoordinate({ lat: latitude, lon: longitude })) return res.status(400).json({ error: 'localizacao_invalida' });
+    const ref = db.collection('corridasCarro').doc(String(req.params.rideId || ''));
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'corrida_carro_nao_encontrada' });
+    const ride = snap.data() || {};
+    if (onlyDigits(ride.motoristaCpf) !== driverCpf || !['aceita', 'motorista_chegou', 'em_andamento'].includes(ride.status)) {
+      return res.status(409).json({ error: 'rastreamento_nao_permitido' });
+    }
+    await ref.set({
+      motoristaLocalizacao: {
+        latitude,
+        longitude,
+        accuracy: Math.max(0, Number(req.body.accuracy || 0)),
+        clientTimestampMs: Number(req.body.clientTimestampMs || Date.now()),
+        serverTimestampMs: Date.now()
+      },
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/car/rides/:rideId/driver-cancel', createRideLimiter, async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    await getApprovedCarDriver(driverCpf, req.body);
+    const ref = db.collection('corridasCarro').doc(String(req.params.rideId || ''));
+    const driverRef = db.collection('carroMotoristas').doc(driverCpf);
+    await db.runTransaction(async (tx) => {
+      const [snap, driverSnap] = await Promise.all([tx.get(ref), tx.get(driverRef)]);
+      if (!snap.exists) {
+        const error = new Error('Corrida nao encontrada.');
+        error.status = 404;
+        throw error;
+      }
+      const ride = snap.data() || {};
+      if (onlyDigits(ride.motoristaCpf) !== driverCpf) {
+        const error = new Error('Esta corrida nao pertence a este motorista.');
+        error.status = 403;
+        throw error;
+      }
+      if (ride.status === 'em_andamento') {
+        const error = new Error('Corrida iniciada. Fale com o suporte antes de cancelar.');
+        error.status = 409;
+        throw error;
+      }
+      if (!['aceita', 'motorista_chegou'].includes(ride.status)) return;
+      tx.set(ref, {
+        status: 'pendente',
+        motorista: '',
+        motoristaCpf: '',
+        motoristaTelefone: '',
+        motoristaFoto: '',
+        carro: {},
+        aceitaEm: null,
+        motoristaChegouEm: null,
+        motoristaLocalizacao: admin.firestore.FieldValue.delete(),
+        cancelamentosMotorista: admin.firestore.FieldValue.increment(1),
+        ultimoCancelamentoMotoristaCpf: driverCpf,
+        motivoReabertura: cleanText(req.body.reason || 'Motorista cancelou antes do inicio', 180),
+        reabertaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      if (driverSnap.exists) {
+        tx.set(driverRef, {
+          corridaAtivaId: admin.firestore.FieldValue.delete(),
+          corridaAtivaDesde: admin.firestore.FieldValue.delete(),
+          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      }
+    });
+    clearCarDriverCache(driverCpf);
+    const rideSnap = await ref.get();
+    notifyCarDriversAboutRide(ref.id, rideSnap.data() || {}).catch((error) => console.error('car reopen push failed', error));
+    adminStateCache = null;
+    return res.json({ ok: true, status: 'pendente' });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/admin/car/rides/:rideId/cancel', assertOwner, async (req, res, next) => {
+  try {
+    const reason = cleanText(req.body.reason, 250);
+    if (!reason) return res.status(400).json({ error: 'motivo_obrigatorio', message: 'Informe o motivo do cancelamento.' });
+    const ref = db.collection('corridasCarro').doc(String(req.params.rideId || ''));
+    let cancelledDriverCpf = '';
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        const error = new Error('Corrida de carro nao encontrada.');
+        error.status = 404;
+        throw error;
+      }
+      const ride = snap.data() || {};
+      if (ride.status === 'finalizada') {
+        const error = new Error('Corrida ja finalizada.');
+        error.status = 409;
+        throw error;
+      }
+      if (ride.status === 'cancelada') return;
+      const driverCpf = onlyDigits(ride.motoristaCpf);
+      cancelledDriverCpf = driverCpf;
+      const driverRef = driverCpf.length === 11 ? db.collection('carroMotoristas').doc(driverCpf) : null;
+      const driverSnap = driverRef ? await tx.get(driverRef) : null;
+      tx.set(ref, {
+        status: 'cancelada',
+        canceladaPor: 'dono',
+        motivoCancelamento: reason,
+        canceladaEm: admin.firestore.FieldValue.serverTimestamp(),
+        motoristaLocalizacao: admin.firestore.FieldValue.delete(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      if (driverRef && driverSnap?.exists) {
+        tx.set(driverRef, {
+          corridaAtivaId: admin.firestore.FieldValue.delete(),
+          corridaAtivaDesde: admin.firestore.FieldValue.delete(),
+          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      }
+    });
+    clearCarDriverCache(cancelledDriverCpf);
+    adminStateCache = null;
+    emitSupportOperationsRefresh();
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/admin/car/rides/:rideId/force-finish', assertOwner, async (req, res, next) => {
+  try {
+    const reason = cleanText(req.body.reason, 250);
+    if (!reason) return res.status(400).json({ error: 'motivo_obrigatorio', message: 'Informe o motivo da finalizacao.' });
+    const ref = db.collection('corridasCarro').doc(String(req.params.rideId || ''));
+    let finishedDriverCpf = '';
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        const error = new Error('Corrida de carro nao encontrada.');
+        error.status = 404;
+        throw error;
+      }
+      const ride = snap.data() || {};
+      if (ride.status === 'finalizada') return;
+      const driverCpf = onlyDigits(ride.motoristaCpf);
+      finishedDriverCpf = driverCpf;
+      if (driverCpf.length !== 11 || !['aceita', 'motorista_chegou', 'em_andamento'].includes(ride.status)) {
+        const error = new Error('Vincule um motorista e confirme a corrida antes de finalizar.');
+        error.status = 409;
+        throw error;
+      }
+      const driverRef = db.collection('carroMotoristas').doc(driverCpf);
+      const driverSnap = await tx.get(driverRef);
+      const performedAtMs = timestampMs(ride.iniciadaEm) || timestampMs(ride.aceitaEm) || timestampMs(ride.criadaEm) || Date.now();
+      const performedAt = admin.firestore.Timestamp.fromMillis(performedAtMs);
+      const earningEvent = driverEarningEvent('carro', ref.id, ride, performedAtMs);
+      await recordDriverEarning(tx, driverCpf, earningEvent);
+      tx.set(ref, {
+        status: 'finalizada',
+        finalizadaEm: performedAt,
+        realizadaEm: performedAt,
+        finalizadaPeloDonoEm: admin.firestore.FieldValue.serverTimestamp(),
+        motivoFinalizacaoManual: reason,
+        ganhoContabilizadoEm: admin.firestore.FieldValue.serverTimestamp(),
+        motoristaLocalizacao: admin.firestore.FieldValue.delete(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      if (driverSnap.exists) {
+        tx.set(driverRef, {
+          corridaAtivaId: admin.firestore.FieldValue.delete(),
+          corridaAtivaDesde: admin.firestore.FieldValue.delete(),
+          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      }
+    });
+    clearCarDriverCache(finishedDriverCpf);
+    adminStateCache = null;
+    emitSupportOperationsRefresh();
+    return res.json({ ok: true });
   } catch (error) {
     return next(error);
   }
@@ -4695,6 +5804,52 @@ app.post('/api/companies/me/integration', assertCompany, assertCompanyApproved, 
 
 function cardapioWebBaseUrl() {
   return String(process.env.CARDAPIOWEB_API_BASE_URL || 'https://integracao.cardapioweb.com/api/partner/v1').replace(/\/$/, '');
+}
+
+async function notifyCarDriversAboutRide(rideId, ride) {
+  const profiles = await db.collection('carroMotoristas')
+    .where('status', '==', 'aprovado')
+    .select('online')
+    .get();
+  const onlineCpfs = profiles.docs
+    .filter((doc) => doc.data()?.online === true)
+    .map((doc) => doc.id)
+    .slice(0, 500);
+  const drivers = await Promise.all(onlineCpfs.map((cpf) => db.collection('motoboys').doc(cpf).get()));
+  const tokens = [];
+
+  drivers.forEach((doc) => {
+    if (!doc.exists) return;
+    const data = doc.data() || {};
+    if (String(data.status || '') !== 'ativo') return;
+    const saved = data.fcmTokens || {};
+    Object.entries(saved).forEach(([token, info]) => {
+      if (info?.ativo !== false) tokens.push(token);
+    });
+  });
+
+  if (!tokens.length) return { sent: 0, failed: 0 };
+  const response = await admin.messaging().sendEachForMulticast({
+    tokens: [...new Set(tokens)].slice(0, 500),
+    notification: {
+      title: 'Nova corrida Nexus CarroJa',
+      body: `${ride.cidadeOperacao || 'Nova chamada'} - ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`
+    },
+    webpush: {
+      headers: { Urgency: 'high' },
+      fcmOptions: { link: appUrl('/motoboy.html?aba=carros') },
+      notification: {
+        icon: appUrl('/nexus-motoja-icon-192.png'),
+        badge: appUrl('/nexus-motoja-icon-192.png'),
+        tag: `carroja_${rideId}`,
+        renotify: true,
+        requireInteraction: true,
+        vibrate: [220, 90, 220, 90, 320]
+      }
+    },
+    data: { rideId, tipo: 'nova_corrida_carro' }
+  });
+  return { sent: response.successCount, failed: response.failureCount };
 }
 
 function rideTrackingHtml(rideId, item = {}, nonce = '') {

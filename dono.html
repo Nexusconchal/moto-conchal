@@ -10,9 +10,9 @@ document.addEventListener('click',async e=>{const aprovarPagamento=e.target.clos
 comidaEntrega = function(e){return /lanche|comida|pizza|pastel|acai|sorvete|marmita|farmacia/i.test(String(e.tipoEntrega||''))};
 </script>
 <link rel="stylesheet" href="./owner-dashboard.css?v=174">
-<link rel="stylesheet" href="./owner-workspace.css?v=177">
+<link rel="stylesheet" href="./owner-workspace.css?v=178">
 <script src="./owner-dashboard.js?v=174"></script>
-<script src="./owner-workspace.js?v=177"></script>
+<script src="./owner-workspace.js?v=178"></script>
 <style>
   .delivery-report-toolbar{display:grid;grid-template-columns:repeat(3,minmax(190px,1fr)) auto;align-items:end;justify-content:space-between;gap:10px}
   .delivery-report-toolbar button{padding:0 18px;white-space:nowrap}
@@ -157,7 +157,7 @@ comidaEntrega = function(e){return /lanche|comida|pizza|pastel|acai|sorvete|marm
 
     refreshFilterOptions();
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js?v=177', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
+      navigator.serviceWorker.register('./sw.js?v=179', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
     }
   })();
 </script>
