@@ -3920,6 +3920,10 @@
       }
 
       async function pediplusAcceptOrder(orderId) {
+        if (saldoEmpresa.disponivel <= 0) {
+          mostrarStatus(`Saldo insuficiente (${moeda(saldoEmpresa.disponivel)}). Adicione saldo na aba Financeiro para chamar o motoboy.`, true);
+          return;
+        }
         const btn = document.querySelector(`[data-accept-pediplus="${CSS.escape(orderId)}"]`);
         if (btn) { btn.disabled = true; btn.textContent = "Calculando..."; }
         try {
@@ -4092,6 +4096,10 @@
       }
 
       async function cardapioWebAcceptOrder(orderId) {
+        if (saldoEmpresa.disponivel <= 0) {
+          mostrarStatus(`Saldo insuficiente (${moeda(saldoEmpresa.disponivel)}). Adicione saldo na aba Financeiro para chamar o motoboy.`, true);
+          return;
+        }
         const btn = document.querySelector(`[data-accept-cardapio="${CSS.escape(orderId)}"]`);
         if (btn) { btn.disabled = true; btn.textContent = "Calculando..."; }
         try {

@@ -6131,12 +6131,14 @@ async function cardapioWebRefreshActiveCompanies() {
     const snapshot = await db.collection('empresas')
       .where('integracaoAtiva', '==', true)
       .where('integracaoTokenEncrypted', '!=', '')
-      .select('integracaoTokenEncrypted', 'integracaoCodigoLoja', 'integracaoTipoEntrega', 'empresa', 'retirada', 'cidade', 'status')
+      .select('integracaoTokenEncrypted', 'integracaoCodigoLoja', 'integracaoTipoEntrega', 'empresa', 'retirada', 'cidade', 'status', 'saldo', 'reservado')
       .get();
     const found = new Set();
     snapshot.docs.forEach((doc) => {
       const data = doc.data() || {};
       if (companyStatus(data) !== 'aprovada') return;
+      const balance = companyBalance(data);
+      if (balance.disponivel <= 0) return;
       const apiKey = decryptSecretSafe(data.integracaoTokenEncrypted);
       if (!apiKey) return;
       found.add(doc.id);
@@ -6426,12 +6428,14 @@ async function pediplusRefreshActiveCompanies() {
     const snapshot = await db.collection('empresas')
       .where('pediplusAtivo', '==', true)
       .where('pediplusTokenEncrypted', '!=', '')
-      .select('pediplusTokenEncrypted', 'pediplusTipoEntrega', 'empresa', 'retirada', 'cidade', 'status')
+      .select('pediplusTokenEncrypted', 'pediplusTipoEntrega', 'empresa', 'retirada', 'cidade', 'status', 'saldo', 'reservado')
       .get();
     const found = new Set();
     snapshot.docs.forEach((doc) => {
       const data = doc.data() || {};
       if (companyStatus(data) !== 'aprovada') return;
+      const balance = companyBalance(data);
+      if (balance.disponivel <= 0) return;
       const apiKey = decryptSecretSafe(data.pediplusTokenEncrypted);
       if (!apiKey) return;
       found.add(doc.id);
