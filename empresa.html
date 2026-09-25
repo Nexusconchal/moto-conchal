@@ -819,6 +819,12 @@
         grid-template-columns: minmax(540px, 1.08fr) minmax(430px, 0.92fr);
         align-items: start;
       }
+      #pedidosAutoCardapio,
+      #pedidosAutoPediplus {
+        grid-column: 1 / -1;
+        width: 100%;
+        margin-top: 14px;
+      }
       .finance-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
         align-items: start;
@@ -1710,7 +1716,7 @@
           As configuracoes sao independentes do aplicativo de mototaxi.
         </div>
       </section>
-      <section id="pedidosAutoCardapio" class="box app-area hidden" style="border-color:rgba(37,211,102,.35);background:rgba(37,211,102,.06)">
+      <section id="pedidosAutoCardapio" class="box app-area hidden" style="display:none;border-color:rgba(37,211,102,.35);background:rgba(37,211,102,.06)">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
           <h2>Pedidos Cardapio Web</h2>
           <button id="pararAlarmeCardapio" type="button" class="secondary" style="min-height:42px;padding:0 16px;display:none">Parar alarme</button>
@@ -1719,7 +1725,7 @@
         <div id="pedidosAutoCardapioStatus" class="status show">Aguardando pedidos novos...</div>
         <div id="pedidosAutoCardapioLista" class="captured-list"></div>
       </section>
-      <section id="pedidosAutoPediplus" class="box app-area hidden" style="border-color:rgba(249,115,22,.4);background:rgba(249,115,22,.06)">
+      <section id="pedidosAutoPediplus" class="box app-area hidden" style="display:none;border-color:rgba(249,115,22,.4);background:rgba(249,115,22,.06)">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
           <h2>Pedidos PediPlus</h2>
           <button id="pararAlarmePediplus" type="button" class="secondary" style="min-height:42px;padding:0 16px;display:none">Parar alarme</button>
@@ -3860,12 +3866,9 @@
         const lista = $("pedidosAutoPediplusLista"), section = $("pedidosAutoPediplus"), status = $("pedidosAutoPediplusStatus");
         if (!lista || !section) return;
         if (!orders.length) {
-          section.style.display = pediplusAtivo ? "grid" : "none";
+          section.style.display = "none";
+          section.classList.add("hidden");
           lista.innerHTML = "";
-          if (status) {
-            status.textContent = "Nenhum pedido novo no momento. Aguardando...";
-            status.className = "status show";
-          }
           if (typeof cardapioWebStopAlarm === "function") cardapioWebStopAlarm();
           return;
         }
@@ -4006,12 +4009,9 @@
         if (!lista || !section) return;
 
         if (!orders.length) {
-          section.style.display = integracaoAtiva ? "grid" : "none";
+          section.style.display = "none";
+          section.classList.add("hidden");
           lista.innerHTML = "";
-          if (status) {
-            status.textContent = "Nenhum pedido novo no momento. Aguardando...";
-            status.className = "status show";
-          }
           cardapioWebStopAlarm();
           return;
         }
@@ -4640,6 +4640,8 @@
         const captured = document.getElementById("pedidosCapturadosLista")?.closest("section");
         const delivery = document.getElementById("calcular")?.closest("section");
         const report = document.getElementById("verRelatorioDia")?.closest("section");
+        const autoCardapio = document.getElementById("pedidosAutoCardapio");
+        const autoPediplus = document.getElementById("pedidosAutoPediplus");
         if (!tracking || !payment || !wallet || !dailyPlan || !integrations || !captured || !delivery || !report) return;
 
         const shell = document.createElement("div");
@@ -4698,6 +4700,8 @@
         deliveryTitle.innerHTML = '<div><h2>Nova entrega</h2><p class="muted">Preencha o destino, calcule o valor e chame um motoboy.</p></div>';
         delivery.prepend(deliveryTitle);
         operationsView.append(delivery, tracking);
+        if (autoCardapio) operationsView.append(autoCardapio);
+        if (autoPediplus) operationsView.append(autoPediplus);
 
         const ordersView = makeView("orders");
         ordersView.append(lead("Pedidos capturados", "Confira pedidos recebidos das plataformas conectadas."), captured);
@@ -4729,6 +4733,13 @@
           const selectedButton = activeButton || navButtons.find((button) => button.dataset.companyView === name && !button.hasAttribute("data-focus-delivery"));
           navButtons.forEach((button) => button.classList.toggle("active", button === selectedButton));
           document.getElementById("companyViewTitle").textContent = focusDelivery ? "Nova entrega" : titles[name] || "Nexus MotoJA";
+          if (name === "orders") {
+            if (autoCardapio) ordersView.prepend(autoCardapio);
+            if (autoPediplus) ordersView.prepend(autoPediplus);
+          } else if (name === "operations") {
+            if (autoCardapio) operationsView.append(autoCardapio);
+            if (autoPediplus) operationsView.append(autoPediplus);
+          }
           window.scrollTo({ top: 0, behavior: "smooth" });
           if (name === "operations") {
             setTimeout(() => window.dispatchEvent(new Event("resize")), 80);
