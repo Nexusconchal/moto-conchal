@@ -1644,6 +1644,53 @@
               <div id="resultadoIntegracao" class="result"></div>
             </div>
           </article>
+          <article class="integration-card" data-platform="pediplus">
+            <button class="integration-head" type="button" data-expand="pediplus">
+              <span class="integration-icon" style="color:#f97316;font-weight:900">P</span
+              ><strong class="integration-title">PediPlus</strong
+              ><span id="pediplusBadge" class="integration-badge">Inativo</span
+              ><span class="integration-arrow">⌄</span>
+            </button>
+            <div class="integration-body">
+              <p class="muted">
+                Para lojas integradas ao PediPlus (acai, lanchonetes, pizzarias). Cole o Token Secreto de Acesso (Bearer Token) gerado no painel do PediPlus.
+              </p>
+              <div id="pediplusStatus" class="status show">
+                Modo manual ligado. Pedidos automaticos desligados.
+              </div>
+              <label
+                >Tipo da entrega<select id="pediplusTipoEntrega">
+                  <option value="">Selecione o tipo de entrega</option>
+                  <option selected>Acai / pote de sorvete</option>
+                  <option>Lanche / pizza / pastel / marmita</option>
+                  <option>Encomendas</option>
+                  <option>Farmacia</option>
+                </select></label
+              >
+              <label
+                >Token Secreto PediPlus (Bearer Token)<textarea
+                  id="pediplusToken"
+                  placeholder="Cole aqui o token que comeca com pedi_live_..."
+                ></textarea>
+              </label>
+              <div class="grid2 compact-buttons">
+                <button id="togglePediplus" type="button" class="secondary">
+                  Ligar automatico</button
+                ><button id="salvarPediplus" type="button" class="secondary">
+                  Salvar token
+                </button>
+              </div>
+              <button
+                id="editarPediplus"
+                type="button"
+                class="secondary"
+                style="display: none"
+              >
+                Editar/trocar Token salvo</button
+              ><button id="testarPediplus" type="button">Testar conexao PediPlus</button>
+              <div id="resultadoPediplus" class="result"></div>
+            </div>
+          </article>
           <article class="integration-card" data-platform="ifood">
             <button class="integration-head" type="button" data-expand="ifood">
               <span class="integration-icon">i</span
@@ -1662,6 +1709,24 @@
         <div id="integracoesPedidosStatus" class="status show">
           As configuracoes sao independentes do aplicativo de mototaxi.
         </div>
+      </section>
+      <section id="pedidosAutoCardapio" class="box app-area hidden" style="border-color:rgba(37,211,102,.35);background:rgba(37,211,102,.06)">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <h2>Pedidos Cardapio Web</h2>
+          <button id="pararAlarmeCardapio" type="button" class="secondary" style="min-height:42px;padding:0 16px;display:none">Parar alarme</button>
+        </div>
+        <p class="muted">Pedidos novos caem aqui automaticamente. Clique em Liberar para chamar o motoboy.</p>
+        <div id="pedidosAutoCardapioStatus" class="status show">Aguardando pedidos novos...</div>
+        <div id="pedidosAutoCardapioLista" class="captured-list"></div>
+      </section>
+      <section id="pedidosAutoPediplus" class="box app-area hidden" style="border-color:rgba(249,115,22,.4);background:rgba(249,115,22,.06)">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <h2>Pedidos PediPlus</h2>
+          <button id="pararAlarmePediplus" type="button" class="secondary" style="min-height:42px;padding:0 16px;display:none">Parar alarme</button>
+        </div>
+        <p class="muted">Pedidos do PediPlus caem aqui automaticamente. Clique em Liberar para chamar o motoboy.</p>
+        <div id="pedidosAutoPediplusStatus" class="status show">Aguardando pedidos novos...</div>
+        <div id="pedidosAutoPediplusLista" class="captured-list"></div>
       </section>
       <section class="box app-area hidden">
         <div
@@ -1900,6 +1965,8 @@
         saldoEmpresa = { saldo: 0, reservado: 0, disponivel: 0 },
         integracaoAtiva = false,
         integracaoProtegida = false,
+        pediplusAtivo = false,
+        pediplusProtegido = false,
         pagamentoModo = "pix_manual",
         planoDiarioAtivo = false,
         empresaStatus = "aprovada",
@@ -2819,6 +2886,15 @@
             $("tipoEntrega").value = c.integracaoTipoEntrega;
         }
         atualizarIntegracaoUI();
+
+        pediplusAtivo = !!c.pediplusAtivo;
+        pediplusProtegido = !!c.pediplusProtegido;
+        if (c.pediplusTipoEntrega) {
+          $("pediplusTipoEntrega").value = c.pediplusTipoEntrega;
+          if (!$("tipoEntrega").value)
+            $("tipoEntrega").value = c.pediplusTipoEntrega;
+        }
+        if (typeof atualizarPediplusUI === "function") atualizarPediplusUI();
         $("contaStatus").textContent = c.empresa
           ? empresaAprovada
             ? `Conta aprovada: ${c.empresa}. Os dados agora abrem tambem em outro celular ou PC.`
@@ -3619,6 +3695,451 @@
           btn.textContent = "Testar integracao";
         }
       };
+
+      function pediplusTipoValor() {
+        return $("pediplusTipoEntrega")?.value || "";
+      }
+      function atualizarPediplusUI() {
+        const box = $("pediplusStatus"),
+          btn = $("togglePediplus"),
+          salvar = $("salvarPediplus"),
+          editar = $("editarPediplus"),
+          testar = $("testarPediplus"),
+          token = $("pediplusToken"),
+          badge = $("pediplusBadge"),
+          tipoOk = tipoPrecificado(pediplusTipoValor());
+        if (!box || !btn) return;
+        box.className = "status show";
+        if (salvar)
+          salvar.textContent = pediplusProtegido ? "Trocar token" : "Salvar token";
+        if (editar)
+          editar.style.display = pediplusProtegido ? "block" : "none";
+        if (token && pediplusProtegido && !token.value)
+          token.placeholder = "Token protegido. Para trocar, cole o novo aqui";
+        if (badge) {
+          badge.textContent = pediplusAtivo ? "Ativo" : "Inativo";
+          badge.classList.toggle("active", pediplusAtivo);
+        }
+        btn.disabled = !tipoOk && !pediplusAtivo;
+        if (testar) testar.disabled = !tipoOk;
+        if (!tipoOk) {
+          box.textContent = "Escolha o tipo de entrega para liberar teste e automatico. O token salvo fica protegido.";
+          btn.textContent = pediplusAtivo ? "Desligar automatico" : "Ligar automatico";
+          btn.className = "secondary";
+          return;
+        }
+        if (pediplusAtivo) {
+          box.textContent = "Modo automatico ligado para " + pediplusTipoValor() + ". Pedidos PediPlus entrarao sozinhos.";
+          btn.textContent = "Desligar automatico";
+          btn.className = "secondary";
+        } else {
+          box.textContent = pediplusProtegido
+            ? "Modo manual ligado. O token esta salvo e protegido. Para mudar, toque em Editar/trocar token salvo."
+            : "Modo manual ligado. Cole e salve o Token Secreto PediPlus antes de ligar o automatico.";
+          btn.textContent = "Ligar automatico";
+          btn.className = "secondary";
+        }
+      }
+
+      $("salvarPediplus") && ($("salvarPediplus").onclick = async () => {
+        if (!empresaToken) {
+          mostrarStatus("Entre na conta antes de salvar PediPlus.", true);
+          return;
+        }
+        const btn = $("salvarPediplus");
+        btn.disabled = true;
+        btn.textContent = "Salvando...";
+        try {
+          const r = await fetchComTempo(
+            `${CONFIG.backend}/api/companies/me/pediplus/save`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json", ...authHeaders() },
+              body: JSON.stringify({
+                tipoEntrega: pediplusTipoValor(),
+                token: $("pediplusToken").value,
+                ativo: pediplusAtivo || !!$("pediplusToken").value.trim(),
+              }),
+            },
+            15000,
+          );
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.message || "Nao consegui salvar o PediPlus.");
+          $("pediplusToken").value = "";
+          pediplusAtivo = !!d.pediplusAtivo;
+          pediplusProtegido = !!d.pediplusProtegido;
+          atualizarPediplusUI();
+          mostrarStatus(d.pediplusAtivo ? "PediPlus salvo e automatico ligado." : "Token PediPlus salvo. Modo manual.");
+        } catch (e) {
+          mostrarStatus(e.message, true);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      $("editarPediplus") && ($("editarPediplus").onclick = () => {
+        if (!confirm("Deseja excluir o token PediPlus salvo e colocar um novo?")) return;
+        const t = $("pediplusToken");
+        if (t) {
+          t.value = "";
+          t.placeholder = "Cole o novo token PediPlus aqui";
+          setTimeout(() => t.focus(), 120);
+        }
+        mostrarStatus("Pode colar o novo token. O antigo continua protegido ate salvar.");
+      });
+
+      $("togglePediplus") && ($("togglePediplus").onclick = async () => {
+        if (!empresaToken) return;
+        const ligar = !pediplusAtivo;
+        const token = $("pediplusToken").value.trim();
+        if (ligar && !tipoPrecificado(pediplusTipoValor())) {
+          mostrarStatus("Selecione o tipo de entrega.", true);
+          return;
+        }
+        if (ligar && !pediplusProtegido && !token) {
+          mostrarStatus("Cole o Token antes de ligar.", true);
+          return;
+        }
+        const btn = $("togglePediplus");
+        btn.disabled = true;
+        btn.textContent = ligar ? "Ligando..." : "Desligando...";
+        try {
+          const r = await fetchComTempo(
+            `${CONFIG.backend}/api/companies/me/pediplus/save`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json", ...authHeaders() },
+              body: JSON.stringify({
+                tipoEntrega: pediplusTipoValor(),
+                token,
+                ativo: ligar,
+              }),
+            },
+            15000,
+          );
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.message || "Nao consegui mudar o modo.");
+          if (token) $("pediplusToken").value = "";
+          pediplusAtivo = !!d.pediplusAtivo;
+          pediplusProtegido = !!d.pediplusProtegido;
+          atualizarPediplusUI();
+          mostrarStatus(pediplusAtivo ? "Automatico PediPlus ligado." : "Automatico PediPlus desligado.");
+        } catch (e) {
+          mostrarStatus(e.message, true);
+          atualizarPediplusUI();
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      $("testarPediplus") && ($("testarPediplus").onclick = async () => {
+        if (!empresaToken) return;
+        const btn = $("testarPediplus"), box = $("resultadoPediplus");
+        btn.disabled = true; btn.textContent = "Testando...";
+        box.className = "result"; box.textContent = "";
+        try {
+          const r = await fetchComTempo(
+            `${CONFIG.backend}/api/companies/me/pediplus/test`,
+            { method: "POST", headers: { "content-type": "application/json", ...authHeaders() } },
+            15000,
+          );
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.message || "Falha no teste PediPlus.");
+          box.innerHTML = `<strong>Sucesso:</strong> ${esc(d.message || "Conexao OK.")}`;
+          box.className = "result show";
+        } catch (e) {
+          box.textContent = e.message;
+          box.className = "status show error";
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "Testar conexao PediPlus";
+        }
+      });
+
+      function pediplusRenderPendingOrders(orders) {
+        const lista = $("pedidosAutoPediplusLista"), section = $("pedidosAutoPediplus"), status = $("pedidosAutoPediplusStatus");
+        if (!lista || !section) return;
+        if (!orders.length) {
+          section.style.display = pediplusAtivo ? "grid" : "none";
+          lista.innerHTML = "";
+          if (status) {
+            status.textContent = "Nenhum pedido novo no momento. Aguardando...";
+            status.className = "status show";
+          }
+          if (typeof cardapioWebStopAlarm === "function") cardapioWebStopAlarm();
+          return;
+        }
+        section.style.display = "grid";
+        section.classList.remove("hidden");
+        lista.innerHTML = orders.map((o) => {
+          const itens = itensPedidoApi(o);
+          return \`<article class="captured-order" data-pediplus-order-id="\${esc(o.externalId)}">
+            <div class="captured-meta"><strong>Pedido \${esc(o.externalId || "-")}</strong><span>\${esc(dataHoraPedido(o.recebidoEmMs || o.receivedAtMs))}</span></div>
+            <span>Cliente: <strong>\${esc(o.cliente || "-")}</strong></span>
+            <span>Endereco: <strong>\${esc(o.enderecoEntrega || "-")}</strong></span>
+            \${o.complemento ? \`<span>Complemento: <strong>\${esc(o.complemento)}</strong></span>\` : ""}
+            \${o.telefoneCliente ? \`<span>WhatsApp: <strong>\${esc(o.telefoneCliente)}</strong></span>\` : ""}
+            <span>Itens: <strong>\${esc(itens || "-")}</strong></span>
+            <span>Valor: <strong>R$ \${Number(o.valorPedido || 0).toFixed(2).replace(".", ",")}</strong></span>
+            <button type="button" class="green" data-accept-pediplus="\${esc(o.externalId)}" style="min-height:52px;font-size:1.05rem;background:#f97316;border-color:#ea580c">Liberar e chamar motoboy</button>
+          </article>\`;
+        }).join("");
+        if (status) {
+          status.textContent = \`\${orders.length} pedido(s) PediPlus aguardando!\`;
+          status.className = "status show";
+          status.style.background = "rgba(249,115,22,.15)";
+          status.style.borderColor = "rgba(249,115,22,.4)";
+          status.style.color = "#ffedd5";
+        }
+        if (typeof cardapioWebPlayAlarm === "function") cardapioWebPlayAlarm();
+      }
+
+      async function pediplusLoadPending() {
+        if (!empresaToken || !pediplusAtivo) return;
+        try {
+          const r = await fetchComTempo(
+            `${CONFIG.backend}/api/companies/me/pediplus/pending-orders`,
+            { headers: authHeaders(), cache: "no-store" },
+            10000,
+          );
+          const d = await r.json().catch(() => ({}));
+          if (r.ok && Array.isArray(d.orders)) {
+            pediplusRenderPendingOrders(d.orders);
+          }
+        } catch {}
+      }
+
+      async function pediplusAcceptOrder(orderId) {
+        const btn = document.querySelector(\`[data-accept-pediplus="\${CSS.escape(orderId)}"]\`);
+        if (btn) { btn.disabled = true; btn.textContent = "Calculando..."; }
+        try {
+          const r = await fetchComTempo(
+            `${CONFIG.backend}/api/companies/me/pediplus/pending-orders/\${encodeURIComponent(orderId)}/accept`,
+            { method: "POST", headers: { "content-type": "application/json", ...authHeaders() }, body: "{}" },
+            15000,
+          );
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.message || "Erro ao aceitar pedido.");
+          const order = d.order;
+          if (!order) throw new Error("Dados do pedido nao retornados.");
+          preencherPedidoIntegracao(order);
+          mostrarStatus(\`Pedido PediPlus \${orderId} aceito! Chamando motoboy...\`);
+          try {
+            await chamarPedidoIntegracao(order, (t) => mostrarStatus(t));
+            mostrarStatus(\`Motoboy chamado para pedido \${orderId}!\`);
+            await carregarSaldo();
+          } catch (e) {
+            mostrarStatus(\`Pedido aceito. Confira os dados e calcule manualmente: \${e.message}\`, true);
+          }
+          await pediplusLoadPending();
+        } catch (e) {
+          mostrarStatus(e.message || "Erro ao aceitar.", true);
+          if (btn) { btn.disabled = false; btn.textContent = "Liberar e chamar motoboy"; }
+        }
+      }
+
+      $("pedidosAutoPediplusLista")?.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-accept-pediplus]");
+        if (btn) pediplusAcceptOrder(btn.dataset.acceptPediplus);
+      });
+
+      $("pararAlarmePediplus")?.addEventListener("click", () => {
+        if (typeof cardapioWebStopAlarm === "function") cardapioWebStopAlarm();
+      });
+
+      // ── Cardapio Web: Automatic orders + alarm ──
+      let cardapioWebAlarmInterval = null;
+      let cardapioWebAlarmCtx = null;
+
+      function cardapioWebPlayAlarm() {
+        if (cardapioWebAlarmInterval) return;
+        try {
+          cardapioWebAlarmCtx = new (window.AudioContext || window.webkitAudioContext)();
+        } catch { return; }
+        function beep() {
+          if (!cardapioWebAlarmCtx) return;
+          try {
+            const osc = cardapioWebAlarmCtx.createOscillator();
+            const gain = cardapioWebAlarmCtx.createGain();
+            osc.connect(gain);
+            gain.connect(cardapioWebAlarmCtx.destination);
+            osc.frequency.value = 880;
+            gain.gain.value = 0.7;
+            osc.start();
+            osc.stop(cardapioWebAlarmCtx.currentTime + 0.18);
+            setTimeout(() => {
+              if (!cardapioWebAlarmCtx) return;
+              const osc2 = cardapioWebAlarmCtx.createOscillator();
+              const gain2 = cardapioWebAlarmCtx.createGain();
+              osc2.connect(gain2);
+              gain2.connect(cardapioWebAlarmCtx.destination);
+              osc2.frequency.value = 1100;
+              gain2.gain.value = 0.7;
+              osc2.start();
+              osc2.stop(cardapioWebAlarmCtx.currentTime + 0.22);
+            }, 220);
+          } catch {}
+        }
+        beep();
+        cardapioWebAlarmInterval = setInterval(beep, 2200);
+        const btn = $("pararAlarmeCardapio");
+        if (btn) btn.style.display = "block";
+      }
+
+      function cardapioWebStopAlarm() {
+        if (cardapioWebAlarmInterval) {
+          clearInterval(cardapioWebAlarmInterval);
+          cardapioWebAlarmInterval = null;
+        }
+        if (cardapioWebAlarmCtx) {
+          cardapioWebAlarmCtx.close().catch(() => {});
+          cardapioWebAlarmCtx = null;
+        }
+        const btn = $("pararAlarmeCardapio");
+        if (btn) btn.style.display = "none";
+      }
+
+      function cardapioWebRenderPendingOrders(orders) {
+        const lista = $("pedidosAutoCardapioLista");
+        const section = $("pedidosAutoCardapio");
+        const status = $("pedidosAutoCardapioStatus");
+        if (!lista || !section) return;
+
+        if (!orders.length) {
+          section.style.display = integracaoAtiva ? "grid" : "none";
+          lista.innerHTML = "";
+          if (status) {
+            status.textContent = "Nenhum pedido novo no momento. Aguardando...";
+            status.className = "status show";
+          }
+          cardapioWebStopAlarm();
+          return;
+        }
+
+        section.style.display = "grid";
+        section.classList.remove("hidden");
+
+        lista.innerHTML = orders.map((o) => {
+          const itens = itensPedidoApi(o);
+          return `<article class="captured-order" data-cardapio-order-id="${esc(o.externalId)}">
+            <div class="captured-meta"><strong>Pedido ${esc(o.externalId || "-")}</strong><span>${esc(dataHoraPedido(o.recebidoEmMs || o.receivedAtMs))}</span></div>
+            <span>Cliente: <strong>${esc(o.cliente || "-")}</strong></span>
+            <span>Endereco: <strong>${esc(o.enderecoEntrega || "-")}</strong></span>
+            ${o.complemento ? `<span>Complemento: <strong>${esc(o.complemento)}</strong></span>` : ""}
+            ${o.telefoneCliente ? `<span>WhatsApp: <strong>${esc(o.telefoneCliente)}</strong></span>` : ""}
+            <span>Itens: <strong>${esc(itens || "-")}</strong></span>
+            <span>Valor: <strong>R$ ${Number(o.valorPedido || 0).toFixed(2).replace(".", ",")}</strong></span>
+            <button type="button" class="green" data-accept-cardapio="${esc(o.externalId)}" style="min-height:52px;font-size:1.05rem">Liberar e chamar motoboy</button>
+          </article>`;
+        }).join("");
+
+        if (status) {
+          status.textContent = `${orders.length} pedido(s) novo(s) aguardando liberacao!`;
+          status.className = "status show";
+          status.style.background = "rgba(37,211,102,.15)";
+          status.style.borderColor = "rgba(37,211,102,.35)";
+          status.style.color = "#bfffd2";
+        }
+
+        cardapioWebPlayAlarm();
+      }
+
+      async function cardapioWebLoadPending() {
+        if (!empresaToken || !integracaoAtiva) return;
+        try {
+          const r = await fetchComTempo(
+            `${CONFIG.backend}/api/companies/me/integration/pending-orders`,
+            { headers: authHeaders(), cache: "no-store" },
+            10000,
+          );
+          const d = await r.json().catch(() => ({}));
+          if (r.ok && Array.isArray(d.orders)) {
+            cardapioWebRenderPendingOrders(d.orders);
+          }
+        } catch {}
+      }
+
+      async function cardapioWebAcceptOrder(orderId) {
+        const btn = document.querySelector(`[data-accept-cardapio="${CSS.escape(orderId)}"]`);
+        if (btn) { btn.disabled = true; btn.textContent = "Calculando..."; }
+        try {
+          const r = await fetchComTempo(
+            `${CONFIG.backend}/api/companies/me/integration/pending-orders/${encodeURIComponent(orderId)}/accept`,
+            { method: "POST", headers: { "content-type": "application/json", ...authHeaders() }, body: "{}" },
+            15000,
+          );
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.message || "Erro ao aceitar pedido.");
+          const order = d.order;
+          if (!order) throw new Error("Dados do pedido nao retornados.");
+
+          preencherPedidoIntegracao(order);
+          mostrarStatus(`Pedido ${orderId} aceito! Calculando rota e chamando motoboy...`);
+
+          try {
+            await chamarPedidoIntegracao(order, (t) => mostrarStatus(t));
+            mostrarStatus(`Motoboy chamado para o pedido ${orderId}!`);
+            await carregarSaldo();
+          } catch (e) {
+            mostrarStatus(`Pedido ${orderId} aceito. Confira os dados e calcule manualmente: ${e.message}`, true);
+          }
+
+          await cardapioWebLoadPending();
+        } catch (e) {
+          mostrarStatus(e.message || "Erro ao aceitar pedido.", true);
+          if (btn) { btn.disabled = false; btn.textContent = "Liberar e chamar motoboy"; }
+        }
+      }
+
+      $("pedidosAutoCardapioLista")?.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-accept-cardapio]");
+        if (btn) cardapioWebAcceptOrder(btn.dataset.acceptCardapio);
+      });
+
+      $("pararAlarmeCardapio")?.addEventListener("click", () => {
+        cardapioWebStopAlarm();
+      });
+
+      if (typeof io !== "undefined" && CONFIG.backend) {
+        try {
+          const socket = typeof window.empresaSocket !== "undefined" 
+            ? window.empresaSocket 
+            : io(CONFIG.backend, {
+                auth: { token: empresaToken },
+                transports: ["websocket", "polling"]
+              });
+          if (typeof window.empresaSocket === "undefined") {
+            window.empresaSocket = socket;
+          }
+          socket.on("cardapioweb:new-orders", (data) => {
+            if (Array.isArray(data.orders)) {
+              cardapioWebRenderPendingOrders(data.orders);
+            }
+          });
+          socket.on("cardapioweb:order-accepted", () => {
+            cardapioWebLoadPending();
+          });
+          socket.on("pediplus:new-orders", (data) => {
+            if (Array.isArray(data.orders)) {
+              pediplusRenderPendingOrders(data.orders);
+            }
+          });
+          socket.on("pediplus:order-accepted", () => {
+            pediplusLoadPending();
+          });
+        } catch {}
+      }
+
+      setInterval(() => {
+        if (empresaToken && integracaoAtiva) cardapioWebLoadPending();
+        if (empresaToken && pediplusAtivo) pediplusLoadPending();
+      }, 30000);
+
+      setTimeout(() => {
+        if (empresaToken && integracaoAtiva) cardapioWebLoadPending();
+        if (empresaToken && pediplusAtivo) pediplusLoadPending();
+      }, 3000);
+
       $("tipoEntrega").addEventListener("change", () => {
         mostrarTipoEntregaAviso("");
       });

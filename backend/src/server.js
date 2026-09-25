@@ -44,6 +44,22 @@ let supportOperationsCache = null;
 let cleanupRunning = false;
 const driverEarningsInitializations = new Map();
 
+// ── Cardápio Web automatic polling (in-memory, zero Firebase cost) ──
+const CARDAPIO_WEB_POLL_INTERVAL_MS = 45 * 1000;
+const CARDAPIO_WEB_COMPANIES_REFRESH_MS = 5 * 60 * 1000;
+const cardapioWebActiveCompanies = new Map(); // companyId → { apiKey, storeCode, tipoEntrega, empresa, retirada, companyData }
+const cardapioWebSeenOrders = new Map(); // companyId → Set<externalId>
+const cardapioWebPendingOrders = new Map(); // companyId → Map<externalId, orderPreview>
+let cardapioWebLastCompanyRefresh = 0;
+
+// ── PediPlus automatic polling (in-memory, zero Firebase cost) ──
+const PEDIPLUS_POLL_INTERVAL_MS = 45 * 1000;
+const PEDIPLUS_COMPANIES_REFRESH_MS = 5 * 60 * 1000;
+const pediplusActiveCompanies = new Map(); // companyId → { apiKey, tipoEntrega, empresa, retirada, cidade, companyData }
+const pediplusSeenOrders = new Map(); // companyId → Set<externalId>
+const pediplusPendingOrders = new Map(); // companyId → Map<externalId, orderPreview>
+let pediplusLastCompanyRefresh = 0;
+
 function requiredEnv(name) {
   const value = process.env[name];
   if (!value) throw new Error(`Missing environment variable: ${name}`);
@@ -1876,6 +1892,9 @@ function publicCompany(data = {}, id = '') {
     integracaoNome: data.integracaoNome || '',
     integracaoCodigoLoja: data.integracaoCodigoLoja || '',
     integracaoTipoEntrega: data.integracaoTipoEntrega || '',
+    pediplusAtivo: !!data.pediplusAtivo,
+    pediplusProtegido: !!(data.pediplusProtegido || data.pediplusTokenEncrypted),
+    pediplusTipoEntrega: data.pediplusTipoEntrega || '',
     pedidosMensagemAtivos: !!data.pedidosMensagemAtivos,
     pedidosMensagemTaxaPercentual: Number(data.pedidosMensagemTaxaPercentual || 0),
     pedidosMensagemGrupoConfigurado: !!data.pedidosMensagemGrupoJid,
@@ -5796,6 +5815,29 @@ app.post('/api/companies/me/integration', assertCompany, assertCompanyApproved, 
     }
 
     await req.companySnap.ref.set(update, { merge: true });
+
+    // Refresh in-memory cache when integration settings change
+    if (ativo) {
+      // Use encryptedToken if a new one was provided, otherwise try existing
+      const tokenToDecrypt = encryptedToken || req.company.integracaoTokenEncrypted || '';
+      const apiKey = decryptSecretSafe(tokenToDecrypt);
+      if (apiKey) {
+        cardapioWebActiveCompanies.set(req.companyId, {
+          apiKey,
+          storeCode: req.body.codigoLoja || req.company.integracaoCodigoLoja || '',
+          tipoEntrega: req.body.tipoEntrega || req.company.integracaoTipoEntrega || 'Lanche / pizza / pastel / marmita',
+          empresa: req.company.empresa || '',
+          retirada: req.company.retirada || '',
+          cidade: req.company.cidade || 'Conchal',
+          companyData: req.company
+        });
+        if (!cardapioWebSeenOrders.has(req.companyId)) cardapioWebSeenOrders.set(req.companyId, new Set());
+        if (!cardapioWebPendingOrders.has(req.companyId)) cardapioWebPendingOrders.set(req.companyId, new Map());
+      }
+    } else {
+      cardapioWebActiveCompanies.delete(req.companyId);
+    }
+
     res.json({ ok: true, integracaoAtiva: ativo, integracaoProtegida: !!(encryptedToken || tokenJaSalvo), integracaoTipoEntrega: tipoEntrega || req.company.integracaoTipoEntrega || '' });
   } catch (error) {
     next(error);
@@ -6080,6 +6122,470 @@ app.post('/api/companies/me/integration/test', assertCompany, assertCompanyAppro
     }, { merge: true }).catch(() => {});
     next(error);
   }
+});
+
+// ── Cardápio Web: Automatic Polling System (in-memory, Firebase-friendly) ──
+
+async function cardapioWebRefreshActiveCompanies() {
+  try {
+    const snapshot = await db.collection('empresas')
+      .where('integracaoAtiva', '==', true)
+      .where('integracaoTokenEncrypted', '!=', '')
+      .select('integracaoTokenEncrypted', 'integracaoCodigoLoja', 'integracaoTipoEntrega', 'empresa', 'retirada', 'cidade', 'status')
+      .get();
+    const found = new Set();
+    snapshot.docs.forEach((doc) => {
+      const data = doc.data() || {};
+      if (companyStatus(data) !== 'aprovada') return;
+      const apiKey = decryptSecretSafe(data.integracaoTokenEncrypted);
+      if (!apiKey) return;
+      found.add(doc.id);
+      cardapioWebActiveCompanies.set(doc.id, {
+        apiKey,
+        storeCode: data.integracaoCodigoLoja || '',
+        tipoEntrega: data.integracaoTipoEntrega || 'Lanche / pizza / pastel / marmita',
+        empresa: data.empresa || '',
+        retirada: data.retirada || '',
+        cidade: data.cidade || 'Conchal',
+        companyData: data
+      });
+      if (!cardapioWebSeenOrders.has(doc.id)) cardapioWebSeenOrders.set(doc.id, new Set());
+      if (!cardapioWebPendingOrders.has(doc.id)) cardapioWebPendingOrders.set(doc.id, new Map());
+    });
+    // Remove companies that are no longer active
+    for (const companyId of cardapioWebActiveCompanies.keys()) {
+      if (!found.has(companyId)) {
+        cardapioWebActiveCompanies.delete(companyId);
+        cardapioWebSeenOrders.delete(companyId);
+        cardapioWebPendingOrders.delete(companyId);
+      }
+    }
+    cardapioWebLastCompanyRefresh = Date.now();
+    console.log(`[cardapioweb] ${cardapioWebActiveCompanies.size} empresa(s) ativa(s) carregada(s).`);
+  } catch (error) {
+    console.error('[cardapioweb] erro ao carregar empresas ativas:', error.message);
+  }
+}
+
+function cardapioWebClearMidnight() {
+  const today = dateKeySaoPaulo();
+  for (const [companyId, seen] of cardapioWebSeenOrders.entries()) {
+    // Keep a tag of the day; if day changed, clear seen orders
+    if (seen._day && seen._day !== today) {
+      seen.clear();
+      cardapioWebPendingOrders.get(companyId)?.clear();
+    }
+    seen._day = today;
+  }
+}
+
+async function cardapioWebPollSingleCompany(companyId, config) {
+  try {
+    const base = cardapioWebBaseUrl();
+    const ordersUrl = `${base}/orders?${new URLSearchParams({ status: 'waiting_confirmation' }).toString()}`;
+    const response = await fetch(ordersUrl, { headers: cardapioWebHeaders(config.apiKey, config.storeCode) });
+    if (!response.ok) {
+      console.error(`[cardapioweb] ${config.empresa || companyId}: API HTTP ${response.status}`);
+      return;
+    }
+    const data = await response.json().catch(() => ({}));
+    const orders = Array.isArray(data) ? data : Array.isArray(data.orders) ? data.orders : Array.isArray(data.data) ? data.data : [];
+    if (!orders.length) return;
+
+    const today = dateKeySaoPaulo();
+    const seen = cardapioWebSeenOrders.get(companyId) || new Set();
+    const pending = cardapioWebPendingOrders.get(companyId) || new Map();
+    let newCount = 0;
+
+    for (const candidate of orders.slice(0, 15)) {
+      const orderId = candidate.id || candidate.order_id || candidate.uuid || candidate.code;
+      if (!orderId) continue;
+      const externalIdStr = String(orderId).slice(0, 80);
+
+      // Already seen in memory? Skip (ZERO Firebase cost)
+      if (seen.has(externalIdStr)) continue;
+
+      // Not a new order? Skip
+      if (!isNewCardapioWebOrder(candidate)) {
+        seen.add(externalIdStr);
+        continue;
+      }
+
+      // Fetch full order details
+      let fullOrder = candidate;
+      try {
+        const detail = await fetch(`${base}/orders/${encodeURIComponent(orderId)}`, { headers: cardapioWebHeaders(config.apiKey, config.storeCode) });
+        if (detail.ok) {
+          const detailData = await detail.json().catch(() => ({}));
+          fullOrder = { ...candidate, ...(detailData && typeof detailData === 'object' ? detailData : {}) };
+        }
+      } catch {}
+
+      const preview = normalizeCardapioWebOrder(fullOrder, { empresa: config.empresa, cidade: config.cidade });
+      if (!preview.externalId) continue;
+
+      // Only today's orders
+      if (!preview.recebidoEmMs || preview.recebidoDia !== today) {
+        seen.add(externalIdStr);
+        continue;
+      }
+
+      // Mark as seen in memory
+      seen.add(externalIdStr);
+
+      // Add to pending orders (in memory)
+      pending.set(externalIdStr, {
+        ...preview,
+        receivedAtMs: Date.now(),
+        companyId
+      });
+      newCount++;
+    }
+
+    if (newCount > 0) {
+      console.log(`[cardapioweb] ${config.empresa || companyId}: ${newCount} pedido(s) novo(s) encontrado(s).`);
+      // Notify frontend via Socket.IO
+      io.to(`company:${companyId}`).emit('cardapioweb:new-orders', {
+        orders: Array.from(pending.values()),
+        total: pending.size,
+        at: Date.now()
+      });
+    }
+  } catch (error) {
+    console.error(`[cardapioweb] ${config.empresa || companyId}: erro no polling:`, error.message);
+  }
+}
+
+async function cardapioWebPollAll() {
+  // Refresh company list every 5 minutes (1 Firebase read)
+  if (Date.now() - cardapioWebLastCompanyRefresh > CARDAPIO_WEB_COMPANIES_REFRESH_MS) {
+    await cardapioWebRefreshActiveCompanies();
+  }
+  // Clear seen orders at midnight (São Paulo time)
+  cardapioWebClearMidnight();
+
+  // Poll each active company (API calls only, zero Firebase)
+  for (const [companyId, config] of cardapioWebActiveCompanies.entries()) {
+    await cardapioWebPollSingleCompany(companyId, config);
+    // Small delay between companies to respect rate limits
+    if (cardapioWebActiveCompanies.size > 1) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+  }
+}
+
+// ── Endpoint: Get pending orders from in-memory (ZERO Firebase reads) ──
+app.get('/api/companies/me/integration/pending-orders', assertCompany, assertCompanyApproved, (req, res) => {
+  const pending = cardapioWebPendingOrders.get(req.companyId);
+  const orders = pending ? Array.from(pending.values()) : [];
+  res.json({ ok: true, orders, total: orders.length });
+});
+
+// ── Endpoint: Accept and dispatch a pending order ──
+app.post('/api/companies/me/integration/pending-orders/:orderId/accept', assertCompany, assertCompanyApproved, async (req, res, next) => {
+  try {
+    const orderId = String(req.params.orderId || '').slice(0, 80);
+    const pending = cardapioWebPendingOrders.get(req.companyId);
+    const order = pending?.get(orderId);
+    if (!order) {
+      return res.status(404).json({ error: 'pedido_nao_encontrado', message: 'Pedido nao encontrado ou ja foi aceito.' });
+    }
+
+    // Mark as imported in Firebase (1 write — the ONLY Firebase cost per order)
+    const docId = externalOrderDocId(order.origem || 'Cardapio Web', orderId);
+    await db.collection('empresas').doc(req.companyId).collection('integracaoPedidos').doc(docId).set({
+      origem: order.origem || 'Cardapio Web',
+      pedidoId: orderId,
+      recebidoEm: order.recebidoEm || '',
+      recebidoEmMs: order.recebidoEmMs || 0,
+      aceitoEm: admin.firestore.FieldValue.serverTimestamp(),
+      aceitoEmMs: Date.now(),
+      enderecoEntrega: order.enderecoEntrega || '',
+      cliente: order.cliente || '',
+      telefoneCliente: order.telefoneCliente || '',
+      valorPedido: order.valorPedido || 0
+    }, { merge: true });
+
+    // Remove from pending (memory)
+    pending.delete(orderId);
+
+    // Notify frontend to update the list
+    io.to(`company:${req.companyId}`).emit('cardapioweb:order-accepted', { orderId, at: Date.now() });
+
+    // Return order data so frontend can fill the delivery form
+    res.json({
+      ok: true,
+      message: `Pedido ${orderId} aceito. Calculando entrega...`,
+      order
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ── Start polling on server boot ──
+cardapioWebRefreshActiveCompanies().then(() => {
+  console.log('[cardapioweb] polling automatico iniciado (intervalo: 45s).');
+  setInterval(() => {
+    cardapioWebPollAll().catch((error) => console.error('[cardapioweb] erro no polling geral:', error.message));
+  }, CARDAPIO_WEB_POLL_INTERVAL_MS);
+}).catch((error) => {
+  console.error('[cardapioweb] erro ao iniciar polling:', error.message);
+});
+
+// ── PediPlus: Automatic Polling System (in-memory, Firebase-friendly) ──
+
+function normalizePediplusDelivery(delivery = {}, company = {}) {
+  const orderId = delivery.id || delivery.numero || delivery.order_id || delivery.codigo || '';
+  const cliente = delivery.cliente?.nome || delivery.customer_name || 'Cliente';
+  const telefoneCliente = delivery.cliente?.telefone || delivery.customer_phone || '';
+  const endereco = delivery.endereco || delivery.address || '';
+  const valor = Number(delivery.valor || delivery.total || 0);
+
+  return {
+    origem: 'PediPlus',
+    externalId: String(orderId),
+    recebidoEm: new Date().toISOString(),
+    recebidoEmMs: Date.now(),
+    recebidoDia: dateKeySaoPaulo(),
+    enderecoEntrega: endereco,
+    cliente: cliente,
+    telefoneCliente: telefoneCliente,
+    valorPedido: isNaN(valor) ? 0 : valor
+  };
+}
+
+async function updatePediplusOrderStatus(token, orderNumber, status = 'saiu_para_entrega', driverName = 'Motoboy MotoJá') {
+  try {
+    const url = `https://api.pediplus.com.br/v1/pedidos/${orderNumber}/status`;
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ status, entregador: driverName })
+    });
+    return response.ok;
+  } catch (error) {
+    console.error('[pediplus] erro ao atualizar status:', error.message);
+    return false;
+  }
+}
+
+async function pediplusRefreshActiveCompanies() {
+  try {
+    const snapshot = await db.collection('empresas')
+      .where('pediplusAtivo', '==', true)
+      .where('pediplusTokenEncrypted', '!=', '')
+      .select('pediplusTokenEncrypted', 'pediplusTipoEntrega', 'empresa', 'retirada', 'cidade', 'status')
+      .get();
+    const found = new Set();
+    snapshot.docs.forEach((doc) => {
+      const data = doc.data() || {};
+      if (companyStatus(data) !== 'aprovada') return;
+      const apiKey = decryptSecretSafe(data.pediplusTokenEncrypted);
+      if (!apiKey) return;
+      found.add(doc.id);
+      pediplusActiveCompanies.set(doc.id, {
+        apiKey,
+        tipoEntrega: data.pediplusTipoEntrega || 'Lanche / pizza / pastel / marmita',
+        empresa: data.empresa || '',
+        retirada: data.retirada || '',
+        cidade: data.cidade || 'Conchal',
+        companyData: data
+      });
+      if (!pediplusSeenOrders.has(doc.id)) pediplusSeenOrders.set(doc.id, new Set());
+      if (!pediplusPendingOrders.has(doc.id)) pediplusPendingOrders.set(doc.id, new Map());
+    });
+    for (const companyId of pediplusActiveCompanies.keys()) {
+      if (!found.has(companyId)) {
+        pediplusActiveCompanies.delete(companyId);
+        pediplusSeenOrders.delete(companyId);
+        pediplusPendingOrders.delete(companyId);
+      }
+    }
+    pediplusLastCompanyRefresh = Date.now();
+    console.log(`[pediplus] ${pediplusActiveCompanies.size} empresa(s) ativa(s) carregada(s).`);
+  } catch (error) {
+    console.error('[pediplus] erro ao carregar empresas ativas:', error.message);
+  }
+}
+
+function pediplusClearMidnight() {
+  const today = dateKeySaoPaulo();
+  for (const [companyId, seen] of pediplusSeenOrders.entries()) {
+    if (seen._day && seen._day !== today) {
+      seen.clear();
+      pediplusPendingOrders.get(companyId)?.clear();
+    }
+    seen._day = today;
+  }
+}
+
+async function pediplusPollSingleCompany(companyId, config) {
+  try {
+    const url = 'https://api.pediplus.com.br/v1/pedidos?status=pendente';
+    const response = await fetch(url, { headers: { 'Authorization': `Bearer ${config.apiKey}` } });
+    if (!response.ok) return;
+    const data = await response.json().catch(() => ({}));
+    const orders = Array.isArray(data) ? data : (data.pedidos || []);
+    if (!orders.length) return;
+
+    const today = dateKeySaoPaulo();
+    const seen = pediplusSeenOrders.get(companyId) || new Set();
+    const pending = pediplusPendingOrders.get(companyId) || new Map();
+    let newCount = 0;
+
+    for (const candidate of orders.slice(0, 15)) {
+      const orderId = candidate.id || candidate.numero;
+      if (!orderId) continue;
+      const externalIdStr = String(orderId).slice(0, 80);
+
+      if (seen.has(externalIdStr)) continue;
+
+      const preview = normalizePediplusDelivery(candidate, { empresa: config.empresa, cidade: config.cidade });
+      if (!preview.externalId) continue;
+
+      if (!preview.recebidoEmMs || preview.recebidoDia !== today) {
+        seen.add(externalIdStr);
+        continue;
+      }
+
+      seen.add(externalIdStr);
+      pending.set(externalIdStr, {
+        ...preview,
+        receivedAtMs: Date.now(),
+        companyId
+      });
+      newCount++;
+    }
+
+    if (newCount > 0) {
+      console.log(`[pediplus] ${config.empresa || companyId}: ${newCount} pedido(s) novo(s) encontrado(s).`);
+      io.to(`company:${companyId}`).emit('pediplus:new-orders', {
+        orders: Array.from(pending.values()),
+        total: pending.size,
+        at: Date.now()
+      });
+    }
+  } catch (error) {
+    console.error(`[pediplus] ${config.empresa || companyId}: erro no polling:`, error.message);
+  }
+}
+
+async function pediplusPollAll() {
+  if (Date.now() - pediplusLastCompanyRefresh > PEDIPLUS_COMPANIES_REFRESH_MS) {
+    await pediplusRefreshActiveCompanies();
+  }
+  pediplusClearMidnight();
+
+  for (const [companyId, config] of pediplusActiveCompanies.entries()) {
+    await pediplusPollSingleCompany(companyId, config);
+    if (pediplusActiveCompanies.size > 1) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+  }
+}
+
+app.post('/api/companies/me/pediplus/save', assertCompany, assertCompanyApproved, async (req, res, next) => {
+  try {
+    const { token, ativa, tipoEntrega } = req.body;
+    const updates = {
+      pediplusAtivo: !!ativa,
+      pediplusTipoEntrega: String(tipoEntrega || '').slice(0, 50),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    };
+    if (typeof token === 'string' && token.trim()) {
+      updates.pediplusTokenEncrypted = encryptSecret(token.trim());
+    }
+    await req.companySnap.ref.set(updates, { merge: true });
+    
+    setTimeout(pediplusRefreshActiveCompanies, 1000);
+    res.json({ ok: true, message: 'Integracao PediPlus salva com sucesso.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/companies/me/pediplus/test', assertCompany, assertCompanyApproved, async (req, res, next) => {
+  try {
+    if (!req.company.pediplusTokenEncrypted) {
+      return res.status(400).json({ error: 'token_missing', message: 'Nenhuma chave/API salva.' });
+    }
+    const token = decryptSecretSafe(req.company.pediplusTokenEncrypted);
+    
+    const orderPreview = normalizePediplusDelivery({
+      id: 'TEST-' + Math.floor(Math.random() * 10000),
+      cliente: { nome: 'Cliente Teste PediPlus', telefone: '19999999999' },
+      endereco: 'Rua Teste PediPlus, 123',
+      valor: 45.90
+    }, req.company);
+
+    res.json({
+      ok: true,
+      message: 'Conexao testada. Pedido mockado gerado.',
+      orderPreview,
+      orderPreviews: [orderPreview],
+      totalPedidos: 1
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/companies/me/pediplus/pending-orders', assertCompany, assertCompanyApproved, (req, res) => {
+  const pending = pediplusPendingOrders.get(req.companyId);
+  const orders = pending ? Array.from(pending.values()) : [];
+  res.json({ ok: true, orders, total: orders.length });
+});
+
+app.post('/api/companies/me/pediplus/pending-orders/:orderId/accept', assertCompany, assertCompanyApproved, async (req, res, next) => {
+  try {
+    const orderId = String(req.params.orderId || '').slice(0, 80);
+    const pending = pediplusPendingOrders.get(req.companyId);
+    const order = pending?.get(orderId);
+    if (!order) {
+      return res.status(404).json({ error: 'pedido_nao_encontrado', message: 'Pedido nao encontrado ou ja foi aceito.' });
+    }
+
+    const docId = externalOrderDocId(order.origem || 'PediPlus', orderId);
+    await db.collection('empresas').doc(req.companyId).collection('integracaoPedidos').doc(docId).set({
+      origem: order.origem || 'PediPlus',
+      pedidoId: orderId,
+      recebidoEm: order.recebidoEm || '',
+      recebidoEmMs: order.recebidoEmMs || 0,
+      aceitoEm: admin.firestore.FieldValue.serverTimestamp(),
+      aceitoEmMs: Date.now(),
+      enderecoEntrega: order.enderecoEntrega || '',
+      cliente: order.cliente || '',
+      telefoneCliente: order.telefoneCliente || '',
+      valorPedido: order.valorPedido || 0
+    }, { merge: true });
+
+    pending.delete(orderId);
+    io.to(`company:${req.companyId}`).emit('pediplus:order-accepted', { orderId, at: Date.now() });
+
+    if (req.company.pediplusTokenEncrypted) {
+      const token = decryptSecretSafe(req.company.pediplusTokenEncrypted);
+      if (token) {
+        updatePediplusOrderStatus(token, orderId, 'saiu_para_entrega', 'MotoJa Entregador').catch(console.error);
+      }
+    }
+
+    res.json({ ok: true, message: `Pedido ${orderId} aceito.`, order });
+  } catch (error) {
+    next(error);
+  }
+});
+
+pediplusRefreshActiveCompanies().then(() => {
+  console.log('[pediplus] polling automatico iniciado (intervalo: 45s).');
+  setInterval(() => {
+    pediplusPollAll().catch((error) => console.error('[pediplus] erro no polling geral:', error.message));
+  }, PEDIPLUS_POLL_INTERVAL_MS);
+}).catch((error) => {
+  console.error('[pediplus] erro ao iniciar polling:', error.message);
 });
 
 app.get('/api/company/balance', assertCompany, async (req, res) => {
