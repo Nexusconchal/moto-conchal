@@ -6490,19 +6490,45 @@ async function pediplusPollAll() {
 
 app.post('/api/companies/me/pediplus/save', assertCompany, assertCompanyApproved, async (req, res, next) => {
   try {
-    const { token, ativa, tipoEntrega } = req.body;
+    const token = typeof req.body.token === 'string' ? req.body.token.trim() : '';
+    const ativo = req.body.ativo !== undefined ? !!req.body.ativo : !!req.body.ativa;
+    const tipoEntrega = String(req.body.tipoEntrega || 'Acai / pote de sorvete').slice(0, 50);
     const updates = {
-      pediplusAtivo: !!ativa,
-      pediplusTipoEntrega: String(tipoEntrega || '').slice(0, 50),
+      pediplusAtivo: ativo,
+      pediplusTipoEntrega: tipoEntrega,
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     };
-    if (typeof token === 'string' && token.trim()) {
-      updates.pediplusTokenEncrypted = encryptSecret(token.trim());
+    let tokenSalvo = false;
+    if (token) {
+      updates.pediplusTokenEncrypted = encryptSecret(token);
+      tokenSalvo = true;
     }
     await req.companySnap.ref.set(updates, { merge: true });
-    
-    setTimeout(pediplusRefreshActiveCompanies, 1000);
-    res.json({ ok: true, message: 'Integracao PediPlus salva com sucesso.' });
+
+    const tokenFinal = token || decryptSecretSafe(req.company.pediplusTokenEncrypted || '');
+    if (ativo && tokenFinal) {
+      pediplusActiveCompanies.set(req.companyId, {
+        apiKey: tokenFinal,
+        tipoEntrega,
+        empresa: req.company.empresa || '',
+        retirada: req.company.retirada || '',
+        cidade: req.company.cidade || 'Conchal',
+        companyData: req.company
+      });
+      if (!pediplusSeenOrders.has(req.companyId)) pediplusSeenOrders.set(req.companyId, new Set());
+      if (!pediplusPendingOrders.has(req.companyId)) pediplusPendingOrders.set(req.companyId, new Map());
+      pediplusPollSingleCompany(req.companyId, pediplusActiveCompanies.get(req.companyId)).catch(console.error);
+    } else if (!ativo) {
+      pediplusActiveCompanies.delete(req.companyId);
+    }
+
+    res.json({
+      ok: true,
+      pediplusAtivo: ativo,
+      pediplusProtegido: !!(tokenSalvo || req.company.pediplusTokenEncrypted),
+      pediplusTipoEntrega: tipoEntrega,
+      message: ativo ? 'PediPlus ativo e sincronizando.' : 'PediPlus desativado.'
+    });
   } catch (error) {
     next(error);
   }
@@ -6510,24 +6536,32 @@ app.post('/api/companies/me/pediplus/save', assertCompany, assertCompanyApproved
 
 app.post('/api/companies/me/pediplus/test', assertCompany, assertCompanyApproved, async (req, res, next) => {
   try {
-    if (!req.company.pediplusTokenEncrypted) {
-      return res.status(400).json({ error: 'token_missing', message: 'Nenhuma chave/API salva.' });
+    const rawToken = String(req.body.token || '').trim();
+    const token = rawToken || decryptSecretSafe(req.company.pediplusTokenEncrypted || '');
+    if (!token) {
+      return res.status(400).json({ error: 'token_missing', message: 'Cole o Token do PediPlus ou salve antes de testar.' });
     }
-    const token = decryptSecretSafe(req.company.pediplusTokenEncrypted);
-    
-    const orderPreview = normalizePediplusDelivery({
-      id: 'TEST-' + Math.floor(Math.random() * 10000),
-      cliente: { nome: 'Cliente Teste PediPlus', telefone: '19999999999' },
-      endereco: 'Rua Teste PediPlus, 123',
-      valor: 45.90
-    }, req.company);
-
+    const response = await fetch('https://pediplus.online/api/public/deliveries?status=pendentes', {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/json'
+      }
+    });
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: 'pediplus_error',
+        message: `PediPlus respondeu HTTP ${response.status}. Verifique se o token esta correto.`
+      });
+    }
+    const data = await response.json().catch(() => ({}));
+    const store = data.store || {};
+    const deliveries = Array.isArray(data.deliveries) ? data.deliveries : [];
     res.json({
       ok: true,
-      message: 'Conexao testada. Pedido mockado gerado.',
-      orderPreview,
-      orderPreviews: [orderPreview],
-      totalPedidos: 1
+      message: `Conexao com ${store.name || 'PediPlus'} bem sucedida!`,
+      store,
+      total: deliveries.length,
+      deliveries
     });
   } catch (error) {
     next(error);

@@ -3703,7 +3703,7 @@
       };
 
       function pediplusTipoValor() {
-        return $("pediplusTipoEntrega")?.value || "";
+        return $("pediplusTipoEntrega")?.value || "Acai / pote de sorvete";
       }
       function atualizarPediplusUI() {
         const box = $("pediplusStatus"),
@@ -3712,8 +3712,7 @@
           editar = $("editarPediplus"),
           testar = $("testarPediplus"),
           token = $("pediplusToken"),
-          badge = $("pediplusBadge"),
-          tipoOk = tipoPrecificado(pediplusTipoValor());
+          badge = $("pediplusBadge");
         if (!box || !btn) return;
         box.className = "status show";
         if (salvar)
@@ -3726,22 +3725,16 @@
           badge.textContent = pediplusAtivo ? "Ativo" : "Inativo";
           badge.classList.toggle("active", pediplusAtivo);
         }
-        btn.disabled = !tipoOk && !pediplusAtivo;
-        if (testar) testar.disabled = !tipoOk;
-        if (!tipoOk) {
-          box.textContent = "Escolha o tipo de entrega para liberar teste e automatico. O token salvo fica protegido.";
-          btn.textContent = pediplusAtivo ? "Desligar automatico" : "Ligar automatico";
-          btn.className = "secondary";
-          return;
-        }
+        btn.disabled = false;
+        if (testar) testar.disabled = false;
         if (pediplusAtivo) {
           box.textContent = "Modo automatico ligado para " + pediplusTipoValor() + ". Pedidos PediPlus entrarao sozinhos.";
           btn.textContent = "Desligar automatico";
           btn.className = "secondary";
         } else {
           box.textContent = pediplusProtegido
-            ? "Modo manual ligado. O token esta salvo e protegido. Para mudar, toque em Editar/trocar token salvo."
-            : "Modo manual ligado. Cole e salve o Token Secreto PediPlus antes de ligar o automatico.";
+            ? "Modo manual ligado. O token do Canto do Acai esta salvo e protegido. Clique em 'Ligar automatico' para comecar a receber."
+            : "Modo manual ligado. Cole o Token do PediPlus e clique em 'Salvar token' ou 'Ligar automatico'.";
           btn.textContent = "Ligar automatico";
           btn.className = "secondary";
         }
@@ -3795,15 +3788,14 @@
       });
 
       $("togglePediplus") && ($("togglePediplus").onclick = async () => {
-        if (!empresaToken) return;
-        const ligar = !pediplusAtivo;
-        const token = $("pediplusToken").value.trim();
-        if (ligar && !tipoPrecificado(pediplusTipoValor())) {
-          mostrarStatus("Selecione o tipo de entrega.", true);
+        if (!empresaToken) {
+          mostrarStatus("Entre na conta da empresa antes de ligar.", true);
           return;
         }
+        const ligar = !pediplusAtivo;
+        const token = $("pediplusToken").value.trim();
         if (ligar && !pediplusProtegido && !token) {
-          mostrarStatus("Cole o Token antes de ligar.", true);
+          mostrarStatus("Cole o Token do PediPlus antes de ligar.", true);
           return;
         }
         const btn = $("togglePediplus");
@@ -3829,7 +3821,10 @@
           pediplusAtivo = !!d.pediplusAtivo;
           pediplusProtegido = !!d.pediplusProtegido;
           atualizarPediplusUI();
-          mostrarStatus(pediplusAtivo ? "Automatico PediPlus ligado." : "Automatico PediPlus desligado.");
+          mostrarStatus(pediplusAtivo ? "Automatico PediPlus ligado! Buscando novos pedidos..." : "Automatico PediPlus desligado.");
+          if (pediplusAtivo) {
+            pediplusLoadPending();
+          }
         } catch (e) {
           mostrarStatus(e.message, true);
           atualizarPediplusUI();
@@ -3839,19 +3834,26 @@
       });
 
       $("testarPediplus") && ($("testarPediplus").onclick = async () => {
-        if (!empresaToken) return;
+        if (!empresaToken) {
+          mostrarStatus("Entre na conta da empresa antes de testar.", true);
+          return;
+        }
         const btn = $("testarPediplus"), box = $("resultadoPediplus");
         btn.disabled = true; btn.textContent = "Testando...";
         box.className = "result"; box.textContent = "";
         try {
           const r = await fetchComTempo(
             `${CONFIG.backend}/api/companies/me/pediplus/test`,
-            { method: "POST", headers: { "content-type": "application/json", ...authHeaders() } },
+            {
+              method: "POST",
+              headers: { "content-type": "application/json", ...authHeaders() },
+              body: JSON.stringify({ token: $("pediplusToken")?.value?.trim() || "" })
+            },
             15000,
           );
           const d = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(d.message || "Falha no teste PediPlus.");
-          box.innerHTML = `<strong>Sucesso:</strong> ${esc(d.message || "Conexao OK.")}`;
+          box.innerHTML = `<strong>Sucesso:</strong> ${esc(d.message || "Conexao OK.")}${d.store?.name ? `<br>Loja: <strong>${esc(d.store.name)}</strong>` : ""}${d.store?.address ? `<br>Endereco: <strong>${esc(d.store.address)}</strong>` : ""}${d.total !== undefined ? `<br>Pedidos disponiveis agora: <strong>${d.total}</strong>` : ""}`;
           box.className = "result show";
         } catch (e) {
           box.textContent = e.message;
@@ -3861,6 +3863,8 @@
           btn.textContent = "Testar conexao PediPlus";
         }
       });
+
+      $("pediplusTipoEntrega")?.addEventListener("change", atualizarPediplusUI);
 
       function pediplusRenderPendingOrders(orders) {
         const lista = $("pedidosAutoPediplusLista"), section = $("pedidosAutoPediplus"), status = $("pedidosAutoPediplusStatus");
