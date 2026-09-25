@@ -3873,19 +3873,19 @@
         section.classList.remove("hidden");
         lista.innerHTML = orders.map((o) => {
           const itens = itensPedidoApi(o);
-          return \`<article class="captured-order" data-pediplus-order-id="\${esc(o.externalId)}">
-            <div class="captured-meta"><strong>Pedido \${esc(o.externalId || "-")}</strong><span>\${esc(dataHoraPedido(o.recebidoEmMs || o.receivedAtMs))}</span></div>
-            <span>Cliente: <strong>\${esc(o.cliente || "-")}</strong></span>
-            <span>Endereco: <strong>\${esc(o.enderecoEntrega || "-")}</strong></span>
-            \${o.complemento ? \`<span>Complemento: <strong>\${esc(o.complemento)}</strong></span>\` : ""}
-            \${o.telefoneCliente ? \`<span>WhatsApp: <strong>\${esc(o.telefoneCliente)}</strong></span>\` : ""}
-            <span>Itens: <strong>\${esc(itens || "-")}</strong></span>
-            <span>Valor: <strong>R$ \${Number(o.valorPedido || 0).toFixed(2).replace(".", ",")}</strong></span>
-            <button type="button" class="green" data-accept-pediplus="\${esc(o.externalId)}" style="min-height:52px;font-size:1.05rem;background:#f97316;border-color:#ea580c">Liberar e chamar motoboy</button>
-          </article>\`;
+          return `<article class="captured-order" data-pediplus-order-id="${esc(o.externalId)}">
+            <div class="captured-meta"><strong>Pedido ${esc(o.externalId || "-")}</strong><span>${esc(dataHoraPedido(o.recebidoEmMs || o.receivedAtMs))}</span></div>
+            <span>Cliente: <strong>${esc(o.cliente || "-")}</strong></span>
+            <span>Endereco: <strong>${esc(o.enderecoEntrega || "-")}</strong></span>
+            ${o.complemento ? `<span>Complemento: <strong>${esc(o.complemento)}</strong></span>` : ""}
+            ${o.telefoneCliente ? `<span>WhatsApp: <strong>${esc(o.telefoneCliente)}</strong></span>` : ""}
+            <span>Itens: <strong>${esc(itens || "-")}</strong></span>
+            <span>Valor: <strong>R$ ${Number(o.valorPedido || 0).toFixed(2).replace(".", ",")}</strong></span>
+            <button type="button" class="green" data-accept-pediplus="${esc(o.externalId)}" style="min-height:52px;font-size:1.05rem;background:#f97316;border-color:#ea580c">Liberar e chamar motoboy</button>
+          </article>`;
         }).join("");
         if (status) {
-          status.textContent = \`\${orders.length} pedido(s) PediPlus aguardando!\`;
+          status.textContent = `${orders.length} pedido(s) PediPlus aguardando!`;
           status.className = "status show";
           status.style.background = "rgba(249,115,22,.15)";
           status.style.borderColor = "rgba(249,115,22,.4)";
@@ -3910,11 +3910,11 @@
       }
 
       async function pediplusAcceptOrder(orderId) {
-        const btn = document.querySelector(\`[data-accept-pediplus="\${CSS.escape(orderId)}"]\`);
+        const btn = document.querySelector(`[data-accept-pediplus="${CSS.escape(orderId)}"]`);
         if (btn) { btn.disabled = true; btn.textContent = "Calculando..."; }
         try {
           const r = await fetchComTempo(
-            `${CONFIG.backend}/api/companies/me/pediplus/pending-orders/\${encodeURIComponent(orderId)}/accept`,
+            `${CONFIG.backend}/api/companies/me/pediplus/pending-orders/${encodeURIComponent(orderId)}/accept`,
             { method: "POST", headers: { "content-type": "application/json", ...authHeaders() }, body: "{}" },
             15000,
           );
@@ -3923,13 +3923,13 @@
           const order = d.order;
           if (!order) throw new Error("Dados do pedido nao retornados.");
           preencherPedidoIntegracao(order);
-          mostrarStatus(\`Pedido PediPlus \${orderId} aceito! Chamando motoboy...\`);
+          mostrarStatus(`Pedido PediPlus ${orderId} aceito! Chamando motoboy...`);
           try {
             await chamarPedidoIntegracao(order, (t) => mostrarStatus(t));
-            mostrarStatus(\`Motoboy chamado para pedido \${orderId}!\`);
+            mostrarStatus(`Motoboy chamado para pedido ${orderId}!`);
             await carregarSaldo();
           } catch (e) {
-            mostrarStatus(\`Pedido aceito. Confira os dados e calcule manualmente: \${e.message}\`, true);
+            mostrarStatus(`Pedido aceito. Confira os dados e calcule manualmente: ${e.message}`, true);
           }
           await pediplusLoadPending();
         } catch (e) {
