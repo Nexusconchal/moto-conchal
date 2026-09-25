@@ -6323,6 +6323,30 @@ app.post('/api/companies/me/integration/pending-orders/:orderId/accept', assertC
   }
 });
 
+app.post('/api/companies/me/integration/pending-orders/:orderId/cancel', assertCompany, assertCompanyApproved, async (req, res, next) => {
+  try {
+    const orderId = String(req.params.orderId || '').slice(0, 80);
+    const pending = cardapioWebPendingOrders.get(req.companyId);
+    if (pending) pending.delete(orderId);
+    const seen = cardapioWebSeenOrders.get(req.companyId) || new Set();
+    seen.add(orderId);
+
+    const docId = externalOrderDocId('Cardapio Web', orderId);
+    await db.collection('empresas').doc(req.companyId).collection('integracaoPedidos').doc(docId).set({
+      origem: 'Cardapio Web',
+      pedidoId: orderId,
+      status: 'cancelado',
+      canceladoEm: admin.firestore.FieldValue.serverTimestamp(),
+      canceladoEmMs: Date.now()
+    }, { merge: true });
+
+    io.to(`company:${req.companyId}`).emit('cardapioweb:order-accepted', { orderId, at: Date.now() });
+    res.json({ ok: true, message: `Pedido ${orderId} cancelado.` });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // ── Start polling on server boot ──
 cardapioWebRefreshActiveCompanies().then(() => {
   console.log('[cardapioweb] polling automatico iniciado (intervalo: 45s).');
@@ -6643,6 +6667,30 @@ app.post('/api/companies/me/pediplus/pending-orders/:orderId/accept', assertComp
     }
 
     res.json({ ok: true, message: `Pedido ${orderId} aceito.`, order });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/companies/me/pediplus/pending-orders/:orderId/cancel', assertCompany, assertCompanyApproved, async (req, res, next) => {
+  try {
+    const orderId = String(req.params.orderId || '').slice(0, 80);
+    const pending = pediplusPendingOrders.get(req.companyId);
+    if (pending) pending.delete(orderId);
+    const seen = pediplusSeenOrders.get(req.companyId) || new Set();
+    seen.add(orderId);
+
+    const docId = externalOrderDocId('PediPlus', orderId);
+    await db.collection('empresas').doc(req.companyId).collection('integracaoPedidos').doc(docId).set({
+      origem: 'PediPlus',
+      pedidoId: orderId,
+      status: 'cancelado',
+      canceladoEm: admin.firestore.FieldValue.serverTimestamp(),
+      canceladoEmMs: Date.now()
+    }, { merge: true });
+
+    io.to(`company:${req.companyId}`).emit('pediplus:order-accepted', { orderId, at: Date.now() });
+    res.json({ ok: true, message: `Pedido ${orderId} cancelado.` });
   } catch (error) {
     next(error);
   }

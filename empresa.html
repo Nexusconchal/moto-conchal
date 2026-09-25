@@ -3888,7 +3888,10 @@
             ${o.telefoneCliente ? `<span>WhatsApp: <strong>${esc(o.telefoneCliente)}</strong></span>` : ""}
             <span>Itens: <strong>${esc(itens || "-")}</strong></span>
             <span>Valor: <strong>R$ ${Number(o.valorPedido || 0).toFixed(2).replace(".", ",")}</strong></span>
-            <button type="button" class="green" data-accept-pediplus="${esc(o.externalId)}" style="min-height:52px;font-size:1.05rem;background:#f97316;border-color:#ea580c">Liberar e chamar motoboy</button>
+            <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap">
+              <button type="button" class="green" data-accept-pediplus="${esc(o.externalId)}" style="flex:2;min-height:48px;font-size:1.02rem;background:#f97316;border-color:#ea580c">Liberar e chamar motoboy</button>
+              <button type="button" class="secondary" data-cancel-pediplus="${esc(o.externalId)}" style="flex:1;min-height:48px;color:#ff8585;border-color:rgba(255,80,80,.35)">Cancelar</button>
+            </div>
           </article>`;
         }).join("");
         if (status) {
@@ -3945,9 +3948,31 @@
         }
       }
 
+      async function pediplusCancelOrder(orderId) {
+        if (!confirm(`Deseja cancelar e dispensar o pedido ${orderId}? Ele nao sera enviado para entrega.`)) return;
+        const btn = document.querySelector(`[data-cancel-pediplus="${CSS.escape(orderId)}"]`);
+        if (btn) { btn.disabled = true; btn.textContent = "Cancelando..."; }
+        try {
+          const r = await fetchComTempo(
+            `${CONFIG.backend}/api/companies/me/pediplus/pending-orders/${encodeURIComponent(orderId)}/cancel`,
+            { method: "POST", headers: { "content-type": "application/json", ...authHeaders() }, body: "{}" },
+            15000,
+          );
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.message || "Erro ao cancelar pedido.");
+          mostrarStatus(`Pedido PediPlus ${orderId} cancelado.`);
+          await pediplusLoadPending();
+        } catch (e) {
+          mostrarStatus(e.message || "Erro ao cancelar pedido.", true);
+          if (btn) { btn.disabled = false; btn.textContent = "Cancelar"; }
+        }
+      }
+
       $("pedidosAutoPediplusLista")?.addEventListener("click", (e) => {
-        const btn = e.target.closest("[data-accept-pediplus]");
-        if (btn) pediplusAcceptOrder(btn.dataset.acceptPediplus);
+        const acceptBtn = e.target.closest("[data-accept-pediplus]");
+        if (acceptBtn) pediplusAcceptOrder(acceptBtn.dataset.acceptPediplus);
+        const cancelBtn = e.target.closest("[data-cancel-pediplus]");
+        if (cancelBtn) pediplusCancelOrder(cancelBtn.dataset.cancelPediplus);
       });
 
       $("pararAlarmePediplus")?.addEventListener("click", () => {
@@ -4033,7 +4058,10 @@
             ${o.telefoneCliente ? `<span>WhatsApp: <strong>${esc(o.telefoneCliente)}</strong></span>` : ""}
             <span>Itens: <strong>${esc(itens || "-")}</strong></span>
             <span>Valor: <strong>R$ ${Number(o.valorPedido || 0).toFixed(2).replace(".", ",")}</strong></span>
-            <button type="button" class="green" data-accept-cardapio="${esc(o.externalId)}" style="min-height:52px;font-size:1.05rem">Liberar e chamar motoboy</button>
+            <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap">
+              <button type="button" class="green" data-accept-cardapio="${esc(o.externalId)}" style="flex:2;min-height:48px;font-size:1.02rem">Liberar e chamar motoboy</button>
+              <button type="button" class="secondary" data-cancel-cardapio="${esc(o.externalId)}" style="flex:1;min-height:48px;color:#ff8585;border-color:rgba(255,80,80,.35)">Cancelar</button>
+            </div>
           </article>`;
         }).join("");
 
@@ -4095,9 +4123,31 @@
         }
       }
 
+      async function cardapioWebCancelOrder(orderId) {
+        if (!confirm(`Deseja cancelar e dispensar o pedido ${orderId}? Ele nao sera enviado para os motoboys.`)) return;
+        const btn = document.querySelector(`[data-cancel-cardapio="${CSS.escape(orderId)}"]`);
+        if (btn) { btn.disabled = true; btn.textContent = "Cancelando..."; }
+        try {
+          const r = await fetchComTempo(
+            `${CONFIG.backend}/api/companies/me/integration/pending-orders/${encodeURIComponent(orderId)}/cancel`,
+            { method: "POST", headers: { "content-type": "application/json", ...authHeaders() }, body: "{}" },
+            15000,
+          );
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.message || "Erro ao cancelar pedido.");
+          mostrarStatus(`Pedido Cardapio Web ${orderId} cancelado.`);
+          await cardapioWebLoadPending();
+        } catch (e) {
+          mostrarStatus(e.message || "Erro ao cancelar pedido.", true);
+          if (btn) { btn.disabled = false; btn.textContent = "Cancelar"; }
+        }
+      }
+
       $("pedidosAutoCardapioLista")?.addEventListener("click", (e) => {
-        const btn = e.target.closest("[data-accept-cardapio]");
-        if (btn) cardapioWebAcceptOrder(btn.dataset.acceptCardapio);
+        const acceptBtn = e.target.closest("[data-accept-cardapio]");
+        if (acceptBtn) cardapioWebAcceptOrder(acceptBtn.dataset.acceptCardapio);
+        const cancelBtn = e.target.closest("[data-cancel-cardapio]");
+        if (cancelBtn) cardapioWebCancelOrder(cancelBtn.dataset.cancelCardapio);
       });
 
       $("pararAlarmeCardapio")?.addEventListener("click", () => {
