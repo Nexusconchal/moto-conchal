@@ -44,6 +44,9 @@ let supportOperationsCache = null;
 let cleanupRunning = false;
 const driverEarningsInitializations = new Map();
 
+// ── Integration constants & minimum balance ──
+const MIN_INTEGRATION_BALANCE = 6.50;
+
 // ── Cardápio Web automatic polling (in-memory, zero Firebase cost) ──
 const CARDAPIO_WEB_POLL_INTERVAL_MS = 45 * 1000;
 const CARDAPIO_WEB_COMPANIES_REFRESH_MS = 5 * 60 * 1000;
@@ -5785,6 +5788,14 @@ app.post('/api/companies/me/integration', assertCompany, assertCompanyApproved, 
     const encryptedToken = token ? encryptSecret(token) : '';
     const tokenJaSalvo = !!req.company.integracaoTokenEncrypted;
 
+    const balance = companyBalance(req.company || {});
+    if (ativo && balance.disponivel < MIN_INTEGRATION_BALANCE) {
+      return res.status(400).json({
+        error: 'saldo_insuficiente',
+        message: `Saldo insuficiente (R$ ${balance.disponivel.toFixed(2).replace('.', ',')}). Para ativar o modo automatico e necessario ter no minimo R$ 6,50 de saldo disponivel. Adicione saldo no Financeiro primeiro.`
+      });
+    }
+
     if (ativo && !tipoEntrega && !req.company.integracaoTipoEntrega) {
       return res.status(400).json({
         error: 'integration_delivery_type_required',
@@ -5817,7 +5828,7 @@ app.post('/api/companies/me/integration', assertCompany, assertCompanyApproved, 
     await req.companySnap.ref.set(update, { merge: true });
 
     // Refresh in-memory cache when integration settings change
-    if (ativo) {
+    if (ativo && balance.disponivel >= MIN_INTEGRATION_BALANCE) {
       // Use encryptedToken if a new one was provided, otherwise try existing
       const tokenToDecrypt = encryptedToken || req.company.integracaoTokenEncrypted || '';
       const apiKey = decryptSecretSafe(tokenToDecrypt);
@@ -6138,7 +6149,7 @@ async function cardapioWebRefreshActiveCompanies() {
       const data = doc.data() || {};
       if (companyStatus(data) !== 'aprovada') return;
       const balance = companyBalance(data);
-      if (balance.disponivel <= 0) return;
+      if (balance.disponivel < MIN_INTEGRATION_BALANCE) return;
       const apiKey = decryptSecretSafe(data.integracaoTokenEncrypted);
       if (!apiKey) return;
       found.add(doc.id);
@@ -6293,6 +6304,14 @@ app.post('/api/companies/me/integration/pending-orders/:orderId/accept', assertC
       return res.status(404).json({ error: 'pedido_nao_encontrado', message: 'Pedido nao encontrado ou ja foi aceito.' });
     }
 
+    const balance = companyBalance(req.company || {});
+    if (balance.disponivel < MIN_INTEGRATION_BALANCE) {
+      return res.status(402).json({
+        error: 'saldo_insuficiente',
+        message: `Saldo insuficiente (R$ ${balance.disponivel.toFixed(2).replace('.', ',')}). E necessario ter no minimo R$ 6,50 de saldo para liberar e chamar motoboy. Adicione saldo no Financeiro.`
+      });
+    }
+
     // Mark as imported in Firebase (1 write — the ONLY Firebase cost per order)
     const docId = externalOrderDocId(order.origem || 'Cardapio Web', orderId);
     await db.collection('empresas').doc(req.companyId).collection('integracaoPedidos').doc(docId).set({
@@ -6435,7 +6454,7 @@ async function pediplusRefreshActiveCompanies() {
       const data = doc.data() || {};
       if (companyStatus(data) !== 'aprovada') return;
       const balance = companyBalance(data);
-      if (balance.disponivel <= 0) return;
+      if (balance.disponivel < MIN_INTEGRATION_BALANCE) return;
       const apiKey = decryptSecretSafe(data.pediplusTokenEncrypted);
       if (!apiKey) return;
       found.add(doc.id);
@@ -6556,6 +6575,15 @@ app.post('/api/companies/me/pediplus/save', assertCompany, assertCompanyApproved
     const token = typeof req.body.token === 'string' ? req.body.token.trim() : '';
     const ativo = req.body.ativo !== undefined ? !!req.body.ativo : !!req.body.ativa;
     const tipoEntrega = String(req.body.tipoEntrega || 'Acai / pote de sorvete').slice(0, 50);
+
+    const balance = companyBalance(req.company || {});
+    if (ativo && balance.disponivel < MIN_INTEGRATION_BALANCE) {
+      return res.status(400).json({
+        error: 'saldo_insuficiente',
+        message: `Saldo insuficiente (R$ ${balance.disponivel.toFixed(2).replace('.', ',')}). Para ativar o modo automatico e necessario ter no minimo R$ 6,50 de saldo disponivel. Adicione saldo no Financeiro primeiro.`
+      });
+    }
+
     const updates = {
       pediplusAtivo: ativo,
       pediplusTipoEntrega: tipoEntrega,
@@ -6569,7 +6597,7 @@ app.post('/api/companies/me/pediplus/save', assertCompany, assertCompanyApproved
     await req.companySnap.ref.set(updates, { merge: true });
 
     const tokenFinal = token || decryptSecretSafe(req.company.pediplusTokenEncrypted || '');
-    if (ativo && tokenFinal) {
+    if (ativo && tokenFinal && balance.disponivel >= MIN_INTEGRATION_BALANCE) {
       pediplusActiveCompanies.set(req.companyId, {
         apiKey: tokenFinal,
         tipoEntrega,
@@ -6644,6 +6672,14 @@ app.post('/api/companies/me/pediplus/pending-orders/:orderId/accept', assertComp
     const order = pending?.get(orderId);
     if (!order) {
       return res.status(404).json({ error: 'pedido_nao_encontrado', message: 'Pedido nao encontrado ou ja foi aceito.' });
+    }
+
+    const balance = companyBalance(req.company || {});
+    if (balance.disponivel < MIN_INTEGRATION_BALANCE) {
+      return res.status(402).json({
+        error: 'saldo_insuficiente',
+        message: `Saldo insuficiente (R$ ${balance.disponivel.toFixed(2).replace('.', ',')}). E necessario ter no minimo R$ 6,50 de saldo para liberar e chamar motoboy. Adicione saldo no Financeiro.`
+      });
     }
 
     const docId = externalOrderDocId(order.origem || 'PediPlus', orderId);

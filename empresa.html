@@ -2106,6 +2106,8 @@
         $("saldoEmpresa").textContent = moeda(saldoEmpresa.disponivel);
         $("saldoDetalhe").textContent =
           `Saldo total ${moeda(saldoEmpresa.saldo)} | reservado ${moeda(saldoEmpresa.reservado)}`;
+        if (typeof atualizarIntegracaoUI === "function") atualizarIntegracaoUI();
+        if (typeof atualizarPediplusUI === "function") atualizarPediplusUI();
       }
       function renderRelatorioEmpresa(d = {}) {
         const box = $("relatorioEmpresa");
@@ -2844,13 +2846,23 @@
           return;
         }
         if (integracaoAtiva) {
-          box.textContent =
-            "Modo automatico ligado para " +
-            $("tipoEntrega").value +
-            ". Pedidos da integracao podem entrar automaticamente.";
+          if ((saldoEmpresa.disponivel || 0) < 6.50) {
+            box.textContent = "Atenção: Saldo insuficiente (" + moeda(saldoEmpresa.disponivel) + "). O modo automático fica pausado até você recarregar no mínimo R$ 6,50 no Financeiro.";
+            box.style.borderColor = "rgba(239, 68, 68, 0.4)";
+            box.style.color = "#fca5a5";
+          } else {
+            box.style.borderColor = "";
+            box.style.color = "";
+            box.textContent =
+              "Modo automatico ligado para " +
+              $("tipoEntrega").value +
+              ". Pedidos da integracao podem entrar automaticamente.";
+          }
           btn.textContent = "Desligar automatico";
           btn.className = "secondary";
         } else {
+          box.style.borderColor = "";
+          box.style.color = "";
           box.textContent = integracaoProtegida
             ? "Modo manual ligado. A chave/API esta salva e protegida. Para mudar, toque em Editar/trocar API salva."
             : "Modo manual ligado. Cole e salve uma chave/API antes de ligar o automatico.";
@@ -3376,6 +3388,13 @@
         }
         const ligar = !integracaoAtiva,
           token = $("integracaoToken").value.trim();
+        if (ligar && (saldoEmpresa.disponivel || 0) < 6.50) {
+          mostrarStatus(
+            `Saldo insuficiente (${moeda(saldoEmpresa.disponivel)}). Para ligar o modo automatico e necessario ter no minimo R$ 6,50 de saldo disponivel. Adicione saldo no Financeiro primeiro.`,
+            true,
+          );
+          return;
+        }
         if (ligar && !integracaoTipoOk()) {
           mostrarTipoEntregaAviso(
             "Selecione o tipo de entrega antes de ligar o automatico.",
@@ -3728,10 +3747,20 @@
         btn.disabled = false;
         if (testar) testar.disabled = false;
         if (pediplusAtivo) {
-          box.textContent = "Modo automatico ligado para " + pediplusTipoValor() + ". Pedidos PediPlus entrarao sozinhos.";
+          if ((saldoEmpresa.disponivel || 0) < 6.50) {
+            box.textContent = "Atenção: Saldo insuficiente (" + moeda(saldoEmpresa.disponivel) + "). O modo automático fica pausado até você recarregar no mínimo R$ 6,50 no Financeiro.";
+            box.style.borderColor = "rgba(239, 68, 68, 0.4)";
+            box.style.color = "#fca5a5";
+          } else {
+            box.style.borderColor = "";
+            box.style.color = "";
+            box.textContent = "Modo automatico ligado para " + pediplusTipoValor() + ". Pedidos PediPlus entrarao sozinhos.";
+          }
           btn.textContent = "Desligar automatico";
           btn.className = "secondary";
         } else {
+          box.style.borderColor = "";
+          box.style.color = "";
           box.textContent = pediplusProtegido
             ? "Modo manual ligado. O token do Canto do Acai esta salvo e protegido. Clique em 'Ligar automatico' para comecar a receber."
             : "Modo manual ligado. Cole o Token do PediPlus e clique em 'Salvar token' ou 'Ligar automatico'.";
@@ -3757,7 +3786,7 @@
               body: JSON.stringify({
                 tipoEntrega: pediplusTipoValor(),
                 token: $("pediplusToken").value,
-                ativo: pediplusAtivo || !!$("pediplusToken").value.trim(),
+                ativo: (saldoEmpresa.disponivel || 0) >= 6.50 ? pediplusAtivo : false,
               }),
             },
             15000,
@@ -3794,6 +3823,13 @@
         }
         const ligar = !pediplusAtivo;
         const token = $("pediplusToken").value.trim();
+        if (ligar && (saldoEmpresa.disponivel || 0) < 6.50) {
+          mostrarStatus(
+            `Saldo insuficiente (${moeda(saldoEmpresa.disponivel)}). Para ligar o modo automatico e necessario ter no minimo R$ 6,50 de saldo disponivel. Adicione saldo no Financeiro primeiro.`,
+            true,
+          );
+          return;
+        }
         if (ligar && !pediplusProtegido && !token) {
           mostrarStatus("Cole o Token do PediPlus antes de ligar.", true);
           return;
@@ -3920,8 +3956,8 @@
       }
 
       async function pediplusAcceptOrder(orderId) {
-        if (saldoEmpresa.disponivel <= 0) {
-          mostrarStatus(`Saldo insuficiente (${moeda(saldoEmpresa.disponivel)}). Adicione saldo na aba Financeiro para chamar o motoboy.`, true);
+        if ((saldoEmpresa.disponivel || 0) < 6.50) {
+          mostrarStatus(`Saldo insuficiente (${moeda(saldoEmpresa.disponivel)}). E necessario ter no minimo R$ 6,50 de saldo para liberar e chamar motoboy. Adicione saldo no Financeiro.`, true);
           return;
         }
         const btn = document.querySelector(`[data-accept-pediplus="${CSS.escape(orderId)}"]`);
@@ -4096,8 +4132,8 @@
       }
 
       async function cardapioWebAcceptOrder(orderId) {
-        if (saldoEmpresa.disponivel <= 0) {
-          mostrarStatus(`Saldo insuficiente (${moeda(saldoEmpresa.disponivel)}). Adicione saldo na aba Financeiro para chamar o motoboy.`, true);
+        if ((saldoEmpresa.disponivel || 0) < 6.50) {
+          mostrarStatus(`Saldo insuficiente (${moeda(saldoEmpresa.disponivel)}). E necessario ter no minimo R$ 6,50 de saldo para liberar e chamar motoboy. Adicione saldo no Financeiro.`, true);
           return;
         }
         const btn = document.querySelector(`[data-accept-cardapio="${CSS.escape(orderId)}"]`);
