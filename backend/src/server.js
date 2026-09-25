@@ -6336,36 +6336,60 @@ cardapioWebRefreshActiveCompanies().then(() => {
 // ── PediPlus: Automatic Polling System (in-memory, Firebase-friendly) ──
 
 function normalizePediplusDelivery(delivery = {}, company = {}) {
-  const orderId = delivery.id || delivery.numero || delivery.order_id || delivery.codigo || '';
-  const cliente = delivery.cliente?.nome || delivery.customer_name || 'Cliente';
-  const telefoneCliente = delivery.cliente?.telefone || delivery.customer_phone || '';
-  const endereco = delivery.endereco || delivery.address || '';
-  const valor = Number(delivery.valor || delivery.total || 0);
-
+  const customer = delivery.customer || {};
+  const payment = delivery.payment || {};
+  const items = Array.isArray(delivery.items) ? delivery.items : [];
+  const orderNumber = delivery.order_number || delivery.display_id || delivery.id || '';
+  const externalId = String(orderNumber).replace(/^#/, '').trim().slice(0, 80);
+  const itemsFormatted = items.map((item) => {
+    const addons = Array.isArray(item.addons) && item.addons.length ? ` (${item.addons.join(', ')})` : '';
+    return {
+      nome: cleanText(`${item.name || 'Item'}${addons}`, 150),
+      quantidade: Number(item.quantity || 1)
+    };
+  });
+  const recebidoEm = pickFirst(delivery.created_at, delivery.createdAt, new Date().toISOString());
+  const recebidoEmMs = externalOrderMs(recebidoEm);
   return {
     origem: 'PediPlus',
-    externalId: String(orderId),
-    recebidoEm: new Date().toISOString(),
-    recebidoEmMs: Date.now(),
-    recebidoDia: dateKeySaoPaulo(),
-    enderecoEntrega: endereco,
-    cliente: cliente,
-    telefoneCliente: telefoneCliente,
-    valorPedido: isNaN(valor) ? 0 : valor
+    externalId,
+    orderId: externalId,
+    status: cleanText(delivery.status || 'pendente', 40),
+    empresa: company.empresa || 'Empresa',
+    cliente: cleanText(customer.name || 'Cliente PediPlus', 120),
+    telefoneCliente: onlyDigits(customer.phone).slice(0, 13),
+    enderecoEntrega: cleanText(customer.address || '', 300),
+    complemento: cleanText(delivery.notes || '', 160),
+    itens: itemsFormatted,
+    valorPedido: money(payment.total || 0),
+    taxaEntregaPediplus: money(payment.delivery_fee || 0),
+    formaPagamento: cleanText(payment.method || '', 40),
+    trocoPara: money(payment.change_for || 0),
+    recebidoEm,
+    recebidoEmMs,
+    recebidoDia: recebidoEmMs ? dateKeySaoPaulo(new Date(recebidoEmMs)) : ''
   };
 }
 
-async function updatePediplusOrderStatus(token, orderNumber, status = 'saiu_para_entrega', driverName = 'Motoboy MotoJá') {
+async function updatePediplusOrderStatus(token, orderNumber, status = 'saiu_para_entrega', driverName = 'Motoboy Nexus') {
   try {
-    const url = `https://api.pediplus.com.br/v1/pedidos/${orderNumber}/status`;
+    const num = Number(String(orderNumber).replace(/\D/g, ''));
+    if (!num) return false;
+    const url = 'https://pediplus.online/api/public/deliveries';
     const response = await fetch(url, {
-      method: 'PUT',
+      method: 'PATCH',
       headers: {
         'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
       },
-      body: JSON.stringify({ status, entregador: driverName })
+      body: JSON.stringify({
+        order_number: num,
+        status,
+        driver_name: driverName
+      })
     });
+    console.log(`[pediplus] status update #${num} -> ${status}: HTTP ${response.status}`);
     return response.ok;
   } catch (error) {
     console.error('[pediplus] erro ao atualizar status:', error.message);
@@ -6389,7 +6413,7 @@ async function pediplusRefreshActiveCompanies() {
       found.add(doc.id);
       pediplusActiveCompanies.set(doc.id, {
         apiKey,
-        tipoEntrega: data.pediplusTipoEntrega || 'Lanche / pizza / pastel / marmita',
+        tipoEntrega: data.pediplusTipoEntrega || 'Acai / pote de sorvete',
         empresa: data.empresa || '',
         retirada: data.retirada || '',
         cidade: data.cidade || 'Conchal',
@@ -6425,35 +6449,46 @@ function pediplusClearMidnight() {
 
 async function pediplusPollSingleCompany(companyId, config) {
   try {
-    const url = 'https://api.pediplus.com.br/v1/pedidos?status=pendente';
-    const response = await fetch(url, { headers: { 'Authorization': `Bearer ${config.apiKey}` } });
-    if (!response.ok) return;
+    const url = 'https://pediplus.online/api/public/deliveries';
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${config.apiKey}`,
+        'Accept': 'application/json'
+      }
+    });
+    if (!response.ok) {
+      console.error(`[pediplus] ${config.empresa || companyId}: HTTP ${response.status}`);
+      return;
+    }
     const data = await response.json().catch(() => ({}));
-    const orders = Array.isArray(data) ? data : (data.pedidos || []);
-    if (!orders.length) return;
+    const deliveries = Array.isArray(data.deliveries) ? data.deliveries : (Array.isArray(data) ? data : []);
+    if (!deliveries.length) return;
 
     const today = dateKeySaoPaulo();
     const seen = pediplusSeenOrders.get(companyId) || new Set();
     const pending = pediplusPendingOrders.get(companyId) || new Map();
     let newCount = 0;
 
-    for (const candidate of orders.slice(0, 15)) {
-      const orderId = candidate.id || candidate.numero;
-      if (!orderId) continue;
-      const externalIdStr = String(orderId).slice(0, 80);
-
-      if (seen.has(externalIdStr)) continue;
-
+    for (const candidate of deliveries.slice(0, 20)) {
       const preview = normalizePediplusDelivery(candidate, { empresa: config.empresa, cidade: config.cidade });
       if (!preview.externalId) continue;
 
-      if (!preview.recebidoEmMs || preview.recebidoDia !== today) {
-        seen.add(externalIdStr);
+      if (seen.has(preview.externalId)) continue;
+
+      // Only today's orders
+      if (preview.recebidoDia && preview.recebidoDia !== today) {
+        seen.add(preview.externalId);
         continue;
       }
 
-      seen.add(externalIdStr);
-      pending.set(externalIdStr, {
+      // Check if already imported/dispatched in Firestore
+      if (await alreadyImportedIntegrationOrder(companyId, preview.origem, preview.externalId)) {
+        seen.add(preview.externalId);
+        continue;
+      }
+
+      seen.add(preview.externalId);
+      pending.set(preview.externalId, {
         ...preview,
         receivedAtMs: Date.now(),
         companyId
