@@ -7690,6 +7690,12 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
       return { sent: 0, failed: 1 };
     });
 
+    emitDeliveryTracking(delivery.empresaId || delivery.telefoneEmpresa, {
+      deliveryId: ref.id,
+      status: 'pendente',
+      rastreamentoAtivo: false
+    });
+
     res.status(201).json({ deliveryId: ref.id, telegram, push });
   } catch (error) {
     if (error.code === 'saldo_insuficiente') {
@@ -8170,8 +8176,8 @@ app.get('/api/companies/me/active-deliveries', assertCompany, assertCompanyAppro
       .get();
     const deliveries = snapshot.docs
       .map((docSnap) => serializeFirestore({ id: docSnap.id, ...docSnap.data() }))
-      .filter((delivery) => delivery.status === 'aceita' || delivery.status === 'retirada')
-      .sort((a, b) => Number(timestampMs(b.aceitaEm)) - Number(timestampMs(a.aceitaEm)));
+      .filter((delivery) => delivery.status === 'pendente' || delivery.status === 'aceita' || delivery.status === 'retirada')
+      .sort((a, b) => Number(timestampMs(b.aceitaEm || b.criadaEm)) - Number(timestampMs(a.aceitaEm || a.criadaEm)));
     return res.json({ ok: true, deliveries });
   } catch (error) {
     return next(error);

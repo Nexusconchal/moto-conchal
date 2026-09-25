@@ -28,14 +28,15 @@
 
   function statusLabel(status) {
     if (status === 'retirada') return 'Pedido retirado - em trajeto';
-    if (status === 'aceita') return 'Motoboy aceitou - aguardando retirada';
+    if (status === 'aceita') return 'Motoboy aceitou - a caminho da retirada';
+    if (status === 'pendente') return 'Chamando motoboy...';
     return status || 'Atualizando';
   }
 
   function locationOf(delivery) {
     const location = delivery?.motoboyLocalizacao || delivery?.location;
-    const latitude = Number(location?.latitude);
-    const longitude = Number(location?.longitude);
+    const latitude = Number(location?.latitude ?? location?.lat);
+    const longitude = Number(location?.longitude ?? location?.lon ?? location?.lng);
     return Number.isFinite(latitude) && Number.isFinite(longitude) ? { ...location, latitude, longitude } : null;
   }
 
@@ -81,8 +82,20 @@
   }
 
   function deliveryPoint(delivery, prefix) {
-    const latitude = Number(delivery?.[`${prefix}Lat`]);
-    const longitude = Number(delivery?.[`${prefix}Lon`]);
+    const latitude = Number(
+      delivery?.[`${prefix}Lat`] ??
+      delivery?.[`${prefix}_lat`] ??
+      delivery?.[prefix]?.lat ??
+      delivery?.[prefix]?.latitude
+    );
+    const longitude = Number(
+      delivery?.[`${prefix}Lon`] ??
+      delivery?.[`${prefix}Lng`] ??
+      delivery?.[`${prefix}_lon`] ??
+      delivery?.[prefix]?.lon ??
+      delivery?.[prefix]?.lng ??
+      delivery?.[prefix]?.longitude
+    );
     return Number.isFinite(latitude) && Number.isFinite(longitude) ? [latitude, longitude] : null;
   }
 
@@ -174,19 +187,27 @@
     const pickupPoint = deliveryPoint(delivery, 'retirada');
     const destinationPoint = deliveryPoint(delivery, 'entrega');
     if (pickupPoint) {
+      const popupHtml = `<b>Ponto de Retirada (Loja)</b><br>${escapeHtml(delivery.retirada || delivery.empresa || 'Loja')}`;
       if (!pickupMarker) pickupMarker = window.L.marker(pickupPoint, {
         icon: markerIcon('motoja-pickup-marker', 'L', 'Local de retirada')
-      }).addTo(map).bindPopup('Retirada na loja');
-      else pickupMarker.setLatLng(pickupPoint);
+      }).addTo(map).bindPopup(popupHtml);
+      else {
+        pickupMarker.setLatLng(pickupPoint);
+        pickupMarker.setPopupContent(popupHtml);
+      }
     } else if (pickupMarker) {
       map.removeLayer(pickupMarker);
       pickupMarker = null;
     }
     if (destinationPoint) {
+      const popupHtml = `<b>Destino da Entrega</b><br>${escapeHtml(delivery.entrega || delivery.recebedor || 'Cliente')}`;
       if (!destinationMarker) destinationMarker = window.L.marker(destinationPoint, {
         icon: markerIcon('motoja-destination-marker', 'D', 'Destino da entrega')
-      }).addTo(map).bindPopup('Destino da entrega');
-      else destinationMarker.setLatLng(destinationPoint);
+      }).addTo(map).bindPopup(popupHtml);
+      else {
+        destinationMarker.setLatLng(destinationPoint);
+        destinationMarker.setPopupContent(popupHtml);
+      }
     } else if (destinationMarker) {
       map.removeLayer(destinationMarker);
       destinationMarker = null;
@@ -201,17 +222,29 @@
       if (routeLayer) map.fitBounds(routeLayer.getBounds(), { padding: [34, 34], maxZoom: 16 });
       else if (destinationMarker) map.setView(destinationMarker.getLatLng(), 15);
       if (mapStatus) mapStatus.textContent = delivery.status === 'aceita'
-        ? 'O motoboy aceitou. O mapa comeca a se mover quando ele confirmar a retirada.'
+        ? 'Motoboy aceitou a corrida! O boneco da moto comeca a se mover no mapa assim que ele confirmar a retirada.'
+        : delivery.status === 'pendente'
+        ? 'Chamada enviada aos motoboys! Aguardando motoboy aceitar a corrida...'
         : 'Aguardando o primeiro sinal de GPS do motoboy.';
       return;
     }
 
     const point = [location.latitude, location.longitude];
     const icon = markerIcon('motoja-driver-marker', '🏍', 'Motoboy em rota', true);
-    if (!driverMarker) driverMarker = window.L.marker(point, { icon }).addTo(map).bindPopup('Motoboy');
-    else driverMarker.setLatLng(point);
-    if (!routeLayer) map.panTo(point, { animate: true, duration: 0.5 });
-    if (mapStatus) mapStatus.textContent = `Localizacao atualizada ${relativeTime(location.serverTimestampMs || location.clientTimestamp)}.`;
+    const driverPopup = `<b>Motoboy: ${escapeHtml(delivery.motoboy || 'Em trajeto')}</b><br>${location.speed ? 'Velocidade: ' + Math.round(location.speed * 3.6) + ' km/h' : 'Em deslocamento'}`;
+    if (!driverMarker) driverMarker = window.L.marker(point, { icon }).addTo(map).bindPopup(driverPopup);
+    else {
+      driverMarker.setLatLng(point);
+      driverMarker.setPopupContent(driverPopup);
+    }
+    if (routeLayer) {
+      const bounds = routeLayer.getBounds();
+      bounds.extend(point);
+      map.fitBounds(bounds, { padding: [34, 34], maxZoom: 16 });
+    } else {
+      map.panTo(point, { animate: true, duration: 0.5 });
+    }
+    if (mapStatus) mapStatus.textContent = `Motoboy em trajeto! Localizacao atualizada ${relativeTime(location.serverTimestampMs || location.clientTimestamp)}.`;
   }
 
   function render() {
@@ -308,9 +341,14 @@
     refresh();
     setInterval(() => {
       if (token() && document.visibilityState === 'visible') refresh();
-    }, 5 * 60 * 1000);
+    }, 15 * 1000);
     window.addEventListener('storage', (event) => {
       if (event.key === TOKEN_KEY) refresh();
     });
+    window.addEventListener('delivery:created', () => refresh());
+    window.addEventListener('focus', () => {
+      if (token()) refresh();
+    });
+    window.empresaTrackingRefresh = refresh;
   });
 })();

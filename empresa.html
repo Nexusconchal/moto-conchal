@@ -447,8 +447,8 @@
         max-height: none !important;
       }
       .motoja-driver-marker span {
-        width: 40px;
-        height: 40px;
+        width: 44px;
+        height: 44px;
         border-radius: 50%;
         display: grid;
         place-items: center;
@@ -456,7 +456,9 @@
         border: 3px solid #111;
         color: #111;
         font-weight: 900;
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+        font-size: 22px;
+        line-height: 1;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5), 0 0 12px rgba(255, 107, 0, 0.7);
       }
       .motoja-pickup-marker span,
       .motoja-destination-marker span {
@@ -3553,6 +3555,10 @@
           throw new Error(
             data.message || data.error || "Nao consegui chamar motoboy.",
           );
+        try {
+          window.dispatchEvent(new CustomEvent('delivery:created'));
+          if (typeof window.empresaTrackingRefresh === 'function') window.empresaTrackingRefresh();
+        } catch (_) {}
         return data;
       }
       function prepararAcoesIntegracao() {
@@ -4641,6 +4647,10 @@
             throw new Error(
               data.message || data.error || "Nao consegui chamar motoboy.",
             );
+          try {
+            window.dispatchEvent(new CustomEvent('delivery:created'));
+            if (typeof window.empresaTrackingRefresh === 'function') window.empresaTrackingRefresh();
+          } catch (_) {}
           const pedidoPreparadoEnviado = d.pedidoPreparadoId
             ? pedidosPreparados.find(
                 (pedido) => pedido.id === d.pedidoPreparadoId,
