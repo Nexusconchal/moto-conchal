@@ -70,6 +70,22 @@
     ["Funil", "funnel", "09", "Análise"],
   ];
 
+  const DEFAULT_BACKEND = "https://motoboy-conchal.onrender.com";
+
+  function getBackendUrl() {
+    if (typeof window !== "undefined" && window.CONFIG && window.CONFIG.backend) {
+      return window.CONFIG.backend;
+    }
+    if (typeof CONFIG !== "undefined" && CONFIG && CONFIG.backend) {
+      return CONFIG.backend;
+    }
+    return DEFAULT_BACKEND;
+  }
+
+  if (typeof window !== "undefined") {
+    window.CONFIG = window.CONFIG || { backend: DEFAULT_BACKEND };
+  }
+
   let supportAccountsLoading = false;
   let carAdminState = { corridasCarro: [], carroMotoristas: [] };
 
@@ -81,6 +97,34 @@
     return String(value || "").replace(/[&<>'"]/g, (character) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
     })[character]);
+  }
+
+  function formatCpf(value) {
+    const digits = String(value || "").replace(/\D/g, "");
+    if (digits.length === 11) {
+      return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+    }
+    return value || "-";
+  }
+
+  function formatPhone(value) {
+    const digits = String(value || "").replace(/\D/g, "");
+    if (digits.length === 11) {
+      return digits.replace(/(\d{2})(\d{5})(\d{4})/, "($1) $2-$3");
+    }
+    if (digits.length === 10) {
+      return digits.replace(/(\d{2})(\d{4})(\d{4})/, "($1) $2-$3");
+    }
+    return value || "Sem telefone";
+  }
+
+  function formatBirth(value) {
+    if (!value) return "-";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const [year, month, day] = value.split("-");
+      return `${day}/${month}/${year}`;
+    }
+    return value;
   }
 
   function supportDate(value) {
@@ -124,7 +168,7 @@
       } else if (!confirm("Aprovar esta pessoa para acessar o site de suporte?")) return;
       button.disabled = true;
       try {
-        const response = await fetch(`${CONFIG.backend}/api/admin/support/accounts/${accountId}/${action}`, {
+        const response = await fetch(`${getBackendUrl()}/api/admin/support/accounts/${accountId}/${action}`, {
           method: "POST",
           headers: { "content-type": "application/json", "x-owner-password": getOwnerPassword() },
           body: action === "block" ? JSON.stringify({ reason: reason.trim() }) : "{}",
@@ -220,10 +264,12 @@
     }
     button.disabled = true;
     try {
-      const response = await fetch(`${CONFIG.backend}${path}`, { method: "POST", headers: { "content-type": "application/json", "x-owner-password": getOwnerPassword() }, body: JSON.stringify(body) });
+      const response = await fetch(`${getBackendUrl()}${path}`, { method: "POST", headers: { "content-type": "application/json", "x-owner-password": getOwnerPassword() }, body: JSON.stringify(body) });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || data.error || "Não foi possível atualizar.");
-      await carregarPainel();
+      if (typeof window.carregarPainel === "function") {
+        await window.carregarPainel();
+      }
     } catch (error) {
       alert(error.message || "Não foi possível atualizar.");
       button.disabled = false;
@@ -243,9 +289,9 @@
         ? `<button class="danger" data-support-action="block" data-account-id="${account.id}">Bloquear e desconectar</button>`
         : `<button class="approve" data-support-action="approve" data-account-id="${account.id}">${status === "bloqueada" ? "Reativar conta" : "Aprovar acesso"}</button>`;
       return `<article class="owner-support-card">
-        <div class="owner-support-person">${account.foto ? `<img src="${account.foto}" alt="Foto de ${escapeHtml(account.nome)}">` : '<span>MJ</span>'}<div><strong>${escapeHtml(account.nome)}</strong><small>${escapeHtml(account.telefone || "Sem telefone")}</small></div></div>
-        <div class="owner-support-detail"><span>CPF</span><strong>${escapeHtml(account.cpf || `***.***.***-${account.cpfFinal || "**"}`)}</strong></div>
-        <div class="owner-support-detail"><span>Nascimento</span><strong>${escapeHtml(account.dataNascimento || "-")}</strong></div>
+        <div class="owner-support-person">${account.foto ? `<img src="${account.foto}" alt="Foto de ${escapeHtml(account.nome)}">` : '<span>MJ</span>'}<div><strong>${escapeHtml(account.nome)}</strong><small>${escapeHtml(formatPhone(account.telefone))}</small></div></div>
+        <div class="owner-support-detail"><span>CPF</span><strong>${escapeHtml(account.cpf ? formatCpf(account.cpf) : `***.***.***-${account.cpfFinal || "**"}`)}</strong></div>
+        <div class="owner-support-detail"><span>Nascimento</span><strong>${escapeHtml(formatBirth(account.dataNascimento))}</strong></div>
         <div class="owner-support-detail"><span>Cadastro</span><strong>${supportDate(account.cadastradaEm)}</strong></div>
         <div class="owner-support-state ${status}"><strong>${supportStatusLabel(status)}</strong><small>${escapeHtml(account.motivoBloqueio || (account.ultimoLoginEm ? `Último login: ${supportDate(account.ultimoLoginEm)}` : "Ainda não entrou"))}</small></div>
         <div class="owner-support-actions">${primaryAction}</div>
@@ -255,12 +301,16 @@
 
   async function loadSupportAccounts() {
     const pwd = getOwnerPassword();
-    if (supportAccountsLoading || !pwd) return;
-    supportAccountsLoading = true;
     const root = document.getElementById("ownerSupportAccounts");
+    if (!pwd) {
+      if (root) root.innerHTML = '<div class="owner-support-empty">Faça login com a senha do dono para carregar as contas.</div>';
+      return;
+    }
+    if (supportAccountsLoading) return;
+    supportAccountsLoading = true;
     if (root) root.innerHTML = '<div class="owner-support-empty">Carregando contas protegidas...</div>';
     try {
-      const response = await fetch(`${CONFIG.backend}/api/admin/support/accounts`, {
+      const response = await fetch(`${getBackendUrl()}/api/admin/support/accounts`, {
         headers: { "x-owner-password": pwd }, cache: "no-store",
       });
       const data = await response.json().catch(() => ({}));
@@ -414,6 +464,8 @@
       renderSupportAccounts(event.detail.contasSuporte);
     } else if (getOwnerPassword()) {
       loadSupportAccounts();
+    } else if (Array.isArray(event.detail?.contasSuporte)) {
+      renderSupportAccounts([]);
     }
   });
 })();

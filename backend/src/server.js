@@ -34,6 +34,7 @@ const CAR_RIDE_EXPIRE_MS = Number(process.env.CAR_RIDE_EXPIRE_MINUTES || 8) * 60
 const CAR_DRIVER_PERCENT = Math.max(0.5, Math.min(0.95, Number(process.env.CAR_DRIVER_PERCENT || 0.8)));
 const CUSTOMER_FREE_RIDES = Math.max(1, Number(process.env.CUSTOMER_FREE_RIDES || 3));
 const CUSTOMER_REGISTRATION_ENFORCED = String(process.env.CUSTOMER_REGISTRATION_ENFORCED || '').toLowerCase() === 'true';
+const CAR_FREE_RIDES = Math.max(1, Number(process.env.CAR_FREE_RIDES || 3));
 const MP_OAUTH_STATE_MS = 10 * 60 * 1000;
 const driverProofCache = new Map();
 const carDriverCache = new Map();
@@ -1808,6 +1809,55 @@ async function assertCarCustomer(req, res, next) {
   }
 }
 
+async function completedCarCustomerRides(deviceId) {
+  if (!deviceId) return 0;
+  const byDevice = await db.collection('corridasCarro')
+    .where('clienteDeviceId', '==', deviceId)
+    .where('status', '==', 'finalizada')
+    .limit(CAR_FREE_RIDES)
+    .get();
+  return byDevice.size;
+}
+
+async function assertCarCustomerOrGuest(req, res, next) {
+  try {
+    const header = String(req.header('authorization') || '');
+    const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+    const session = await findCarCustomerSession(token);
+    if (session && carCustomerProfileComplete(session.customer)) {
+      req.carCustomer = session.customer;
+      req.carCustomerId = session.customerId;
+      req.carCustomerSnap = session.customerSnap;
+      req.carCustomerAuthenticated = true;
+      return next();
+    }
+    // Guest mode — check device id and free rides
+    const deviceId = validDeviceId(req.body?.deviceId || req.query?.deviceId || req.header('x-device-id') || '');
+    if (!deviceId) {
+      return res.status(401).json({ error: 'sessao_carroja_invalida', message: 'Entre novamente no CarroJa.' });
+    }
+    const completedRides = await completedCarCustomerRides(deviceId);
+    if (completedRides >= CAR_FREE_RIDES) {
+      return res.status(403).json({
+        error: 'cadastro_cliente_obrigatorio',
+        message: `Voce ja completou ${CAR_FREE_RIDES} corrida(s). Faca seu cadastro para continuar usando o CarroJa.`,
+        completedRides,
+        freeRideLimit: CAR_FREE_RIDES,
+        registrationRequired: true
+      });
+    }
+    req.carCustomer = null;
+    req.carCustomerId = null;
+    req.carCustomerSnap = null;
+    req.carCustomerAuthenticated = false;
+    req.carGuestDeviceId = deviceId;
+    req.carGuestCompletedRides = completedRides;
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+}
+
 function carDriverStatus(driver = {}) {
   const car = driver.carro && typeof driver.carro === 'object' ? driver.carro : driver;
   const status = String(car.status || '');
@@ -3266,6 +3316,7 @@ app.post('/api/support/register', authLimiter, async (req, res, next) => {
       cadastradaEm: admin.firestore.FieldValue.serverTimestamp(),
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     });
+    adminStateCache = null;
     await writeSupportAudit(accountId, 'cadastro_enviado').catch((error) => console.error('support audit failed', error));
     return res.status(201).json({
       ok: true,
@@ -3421,6 +3472,7 @@ app.post('/api/admin/support/accounts/:accountId/approve', assertOwner, async (r
       aprovadaEm: admin.firestore.FieldValue.serverTimestamp(),
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
+    adminStateCache = null;
     await writeSupportAudit(accountId, 'conta_aprovada_pelo_dono').catch((error) => console.error('support audit failed', error));
     const updated = await ref.get();
     return res.json({ ok: true, account: publicSupportAccount(updated.data() || {}, accountId, true) });
@@ -3444,6 +3496,7 @@ app.post('/api/admin/support/accounts/:accountId/block', assertOwner, async (req
       bloqueadaEm: admin.firestore.FieldValue.serverTimestamp(),
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
+    adminStateCache = null;
     disconnectSupportSockets(accountId);
     await writeSupportAudit(accountId, 'conta_bloqueada_pelo_dono', { reason }).catch((error) => console.error('support audit failed', error));
     const updated = await ref.get();
@@ -4729,6 +4782,28 @@ app.post('/api/car/fare', mapLimiter, async (req, res, next) => {
       label: carFareLabel(fare),
       quoteToken: createCarQuoteToken(quotePayload),
       expiresAtMs: quotePayload.expiresAtMs
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/car/customers/device-status', authLimiter, async (req, res, next) => {
+  try {
+    const deviceId = validDeviceId(req.body.deviceId);
+    if (!deviceId) return res.status(400).json({ error: 'aparelho_invalido' });
+    const header = String(req.header('authorization') || '');
+    const customerToken = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+    const session = await findCarCustomerSession(customerToken);
+    const authenticated = !!(session && carCustomerProfileComplete(session.customer));
+    const completedRides = !authenticated ? await completedCarCustomerRides(deviceId) : 0;
+    return res.json({
+      ok: true,
+      authenticated,
+      registrationRequired: !authenticated && completedRides >= CAR_FREE_RIDES,
+      completedRides,
+      freeRideLimit: CAR_FREE_RIDES,
+      customer: authenticated ? publicCarCustomer(session.customer, session.customerId) : null
     });
   } catch (error) {
     return next(error);
