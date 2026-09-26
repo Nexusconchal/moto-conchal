@@ -6649,7 +6649,286 @@ function rideTrackingHtml(rideId, item = {}, nonce = '') {
   const safeRideId = String(rideId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 120);
   const name = escapeHtml(cleanText(item.motoboy || 'Motoboy Nexus MotoJa', 80));
   const photo = validDriverPhoto(item.motoboyFoto) || '';
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Acompanhar corrida</title><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><style>*{box-sizing:border-box}body{margin:0;min-height:100vh;background:#090911;color:#fff;font-family:system-ui,sans-serif;padding:18px}.card{width:min(100%,520px);margin:auto;padding:20px;border-radius:18px;background:#11121c;border:1px solid rgba(255,154,0,.34);box-shadow:0 20px 60px rgba(0,0,0,.42)}header{display:flex;align-items:center;gap:14px}img,.empty{width:72px;height:72px;border-radius:50%;object-fit:cover;border:3px solid #ff9a00;background:#1b1b27}.empty{display:grid;place-items:center;color:#ff9a00;font-size:24px;font-weight:900}small{color:#ff9a00;font-weight:900;text-transform:uppercase}h1{font-size:22px;margin:4px 0}p{color:#c8c8d6;margin:6px 0}.status{margin:18px 0 12px;padding:13px;border-radius:10px;background:rgba(255,154,0,.11);border:1px solid rgba(255,154,0,.28);color:#fff;font-weight:700}.map{display:none;width:100%;height:330px;border-radius:12px;background:#191923;overflow:hidden}.map.show{display:block}.updated{font-size:13px;text-align:center;margin-top:10px}.done{color:#bfffd2}.leaflet-container img{max-width:none!important;max-height:none!important}</style></head><body><main class="card"><header>${photo ? `<img src="${escapeHtml(photo)}" alt="Foto do motoboy">` : '<div class="empty">MJ</div>'}<div><small>Nexus MotoJa</small><h1>${name}</h1><p>Seu motoboy nesta corrida</p></div></header><div id="status" class="status">Aguardando o motoboy iniciar o GPS...</div><div id="map" class="map" aria-label="Localizacao do motoboy"></div><p id="updated" class="updated">Esta pagina atualiza automaticamente.</p></main><script nonce="${escapeHtml(nonce)}" src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script nonce="${escapeHtml(nonce)}">const rideId=${JSON.stringify(safeRideId)};let map,marker,last='';const statusEl=document.getElementById('status'),mapEl=document.getElementById('map'),updatedEl=document.getElementById('updated');function showMap(lat,lon){mapEl.classList.add('show');if(!map){map=L.map(mapEl).setView([lat,lon],16);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);marker=L.marker([lat,lon]).addTo(map).bindPopup('Seu motoboy');new ResizeObserver(()=>map.invalidateSize()).observe(mapEl);}else{marker.setLatLng([lat,lon]);map.panTo([lat,lon]);}requestAnimationFrame(()=>map.invalidateSize());setTimeout(()=>map.invalidateSize(),180);}async function refresh(){try{const r=await fetch('/api/rides/'+encodeURIComponent(rideId)+'/status',{cache:'no-store'}),d=await r.json();if(!r.ok)return;if(d.status==='finalizada'){statusEl.textContent='Corrida finalizada.';statusEl.classList.add('done');return;}if(d.status==='cancelada'){statusEl.textContent='Corrida cancelada.';return;}const p=d.motoboyLocalizacao;if(p&&Number.isFinite(Number(p.latitude))&&Number.isFinite(Number(p.longitude))){const key=Number(p.latitude).toFixed(5)+','+Number(p.longitude).toFixed(5);if(key!==last){showMap(Number(p.latitude),Number(p.longitude));last=key;}statusEl.textContent='Motoboy a caminho - localizacao ao vivo';const age=Math.max(0,Math.round((Date.now()-Number(p.serverTimestampMs||Date.now()))/1000));updatedEl.textContent=age<15?'Localizacao atualizada agora':'Atualizada ha '+age+' segundos';}else{statusEl.textContent=d.clienteAvisado?'GPS iniciado. Aguardando a primeira localizacao...':'Aguardando o motoboy iniciar o GPS...';}}catch(_){updatedEl.textContent='Reconectando ao acompanhamento...';}}refresh();setInterval(refresh,8000);</script></body></html>`;
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title>Nexus MotoJa - Acompanhamento ao Vivo</title><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;min-height:100vh;background:#090911;color:#fff;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:14px}
+.tracker-card{width:min(100%,540px);margin:0 auto;padding:18px;border-radius:20px;background:#12131d;border:1px solid rgba(255,154,0,.3);box-shadow:0 24px 60px rgba(0,0,0,.5)}
+.driver-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:14px;border-bottom:1px solid rgba(255,255,255,.08)}
+.driver-info{display:flex;align-items:center;gap:12px}
+.driver-img,.driver-empty{width:62px;height:62px;border-radius:50%;object-fit:cover;border:3px solid #ff9a00;background:#1b1b27;flex-shrink:0}
+.driver-empty{display:grid;place-items:center;color:#ff9a00;font-size:20px;font-weight:900}
+.badge-app{color:#ff9a00;font-size:11px;font-weight:900;letter-spacing:1px;text-transform:uppercase}
+.driver-name{font-size:19px;font-weight:900;margin:2px 0 3px;color:#fff;line-height:1.2}
+.driver-sub{font-size:12px;color:#94a3b8}
+.btn-whatsapp-driver{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:999px;background:#25d366;color:#090911;text-decoration:none;font-weight:900;font-size:12px;box-shadow:0 4px 14px rgba(37,211,102,.35);transition:transform .2s}
+.btn-whatsapp-driver:active{transform:scale(.96)}
+.status-banner{margin:14px 0 10px;padding:12px 14px;border-radius:14px;background:rgba(255,154,0,.12);border:1px solid rgba(255,154,0,.35);display:flex;align-items:center;justify-content:space-between;gap:10px}
+.status-title{font-size:13px;font-weight:800;color:#ff9a00}
+.pulse-dot{width:8px;height:8px;border-radius:50%;background:#25d366;box-shadow:0 0 10px #25d366;animation:blinkDot 1.2s infinite ease-in-out;display:inline-block}
+@keyframes blinkDot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.8)}}
+.alert-chegando{display:none;margin:12px 0;padding:14px;border-radius:14px;background:linear-gradient(135deg,rgba(16,185,129,.24),rgba(5,150,105,.18));border:1.5px solid #10b981;text-align:center;animation:alertGlow 1.5s infinite alternate}
+@keyframes alertGlow{from{box-shadow:0 0 10px rgba(16,185,129,.25)}to{box-shadow:0 0 25px rgba(16,185,129,.55)}}
+.hud-grid{display:none;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px}
+.hud-item{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:9px 6px;text-align:center}
+.hud-label{font-size:10px;text-transform:uppercase;font-weight:800;color:#94a3b8;letter-spacing:.5px}
+.hud-val{font-size:17px;font-weight:900;color:#fff;margin-top:2px}
+.hud-val.highlight{color:#ff9a00}
+.map-wrap{position:relative;width:100%;height:340px;border-radius:16px;overflow:hidden;background:#10111a;border:1px solid rgba(255,154,0,.28);margin:10px 0}
+.map-container{width:100%;height:100%}
+.btn-recenter{position:absolute;bottom:14px;right:14px;z-index:999;background:rgba(18,19,29,.88);backdrop-filter:blur(8px);border:1px solid rgba(255,154,0,.5);color:#ff9a00;padding:8px 14px;border-radius:999px;font-size:12px;font-weight:800;cursor:pointer;display:flex;align-items:center;gap:6px;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+.footer-updated{font-size:12px;color:#64748b;text-align:center;margin-top:10px}
+.leaflet-container{font-family:inherit;background:#10111a!important}
+.leaflet-tile{filter:invert(1) hue-rotate(172deg) brightness(1.05) contrast(.96) saturate(1.35)!important}
+.marker-moto{display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:#181824;border:3px solid #ff9a00;box-shadow:0 6px 20px rgba(255,154,0,.7);font-size:22px}
+.marker-pickup{position:relative;display:grid;place-items:center;width:38px;height:38px;border-radius:50%;background:#059669;border:3px solid #fff;box-shadow:0 4px 18px rgba(16,185,129,.7);font-size:19px}
+.marker-pickup::after{content:'';position:absolute;inset:-8px;border-radius:50%;border:2px solid #10b981;animation:pulseBeacon 2s infinite ease-out;pointer-events:none}
+@keyframes pulseBeacon{0%{transform:scale(.8);opacity:.9}100%{transform:scale(2.2);opacity:0}}
+.marker-dest{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:#7c3aed;border:2px solid #fff;box-shadow:0 4px 14px rgba(124,58,237,.6);font-size:16px}
+</style></head><body><main class="tracker-card">
+<header class="driver-header">
+<div class="driver-info">
+${photo ? `<img src="${escapeHtml(photo)}" class="driver-img" alt="Foto do motoboy">` : '<div class="driver-empty">MJ</div>'}
+<div><div class="badge-app">Nexus MotoJa Conchal</div><div class="driver-name">${name}</div><div class="driver-sub" id="driver-sub">Seu motoboy nesta corrida</div></div>
+</div>
+<div id="driver-contact-box"></div>
+</header>
+<div id="status-banner" class="status-banner">
+<div class="status-title" id="status-txt">Aguardando o motoboy iniciar o GPS...</div>
+<span class="pulse-dot" id="live-dot" style="display:none"></span>
+</div>
+<div id="alert-chegando" class="alert-chegando">
+<strong style="color:#34d399;font-size:15px">🚨 SEU MOTOBOY ESTA CHEGANDO!</strong><br>
+<span style="font-size:13px;color:#e2e8f0">Por favor, dirija-se ao local de embarque.</span>
+</div>
+<div id="hud-grid" class="hud-grid">
+<div class="hud-item"><div class="hud-label">Tempo est.</div><div class="hud-val highlight" id="hud-eta">-- min</div></div>
+<div class="hud-item"><div class="hud-label">Distancia</div><div class="hud-val" id="hud-dist">-- km</div></div>
+<div class="hud-item"><div class="hud-label">Velocidade</div><div class="hud-val" id="hud-speed">-- km/h</div></div>
+</div>
+<div class="map-wrap">
+<div id="map" class="map-container" aria-label="Localizacao do motoboy"></div>
+<button type="button" id="btn-recenter" class="btn-recenter" style="display:none">🎯 Enquadrar</button>
+</div>
+<div id="endereco-resumo" style="font-size:12px;color:#94a3b8;margin:8px 0;line-height:1.4"></div>
+<div id="footer-updated" class="footer-updated">Esta pagina atualiza automaticamente.</div>
+</main>
+<script nonce="${escapeHtml(nonce)}" src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script nonce="${escapeHtml(nonce)}">
+const rideId = ${JSON.stringify(safeRideId)};
+let map = null, driverMarker = null, pickupMarker = null, destMarker = null;
+let routeGlow = null, routeLine = null;
+let lastMotoboyPos = null, lastPickupPos = null, lastRoutePos = null;
+let hasAutoFitOnce = false, refreshTimer = null;
+const statusTxt = document.getElementById('status-txt');
+const liveDot = document.getElementById('live-dot');
+const alertChegando = document.getElementById('alert-chegando');
+const hudGrid = document.getElementById('hud-grid');
+const hudEta = document.getElementById('hud-eta');
+const hudDist = document.getElementById('hud-dist');
+const hudSpeed = document.getElementById('hud-speed');
+const footerUpdated = document.getElementById('footer-updated');
+const btnRecenter = document.getElementById('btn-recenter');
+const driverContactBox = document.getElementById('driver-contact-box');
+const enderecoResumo = document.getElementById('endereco-resumo');
+
+function calcDistMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371e3;
+  const phi1 = lat1 * Math.PI / 180, phi2 = lat2 * Math.PI / 180;
+  const dPhi = (lat2 - lat1) * Math.PI / 180, dLambda = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dPhi/2)**2 + Math.cos(phi1)*Math.cos(phi2)*(Math.sin(dLambda/2)**2);
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function calcBearing(p1, p2) {
+  if (!p1 || !p2) return 0;
+  const dLon = (p2[1] - p1[1]) * Math.PI / 180;
+  const lat1 = p1[0] * Math.PI / 180, lat2 = p2[0] * Math.PI / 180;
+  const y = Math.sin(dLon) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+function ensureMap(centerLat, centerLon) {
+  if (map || !window.L) return;
+  const mapEl = document.getElementById('map');
+  map = L.map(mapEl, { zoomControl: false }).setView([centerLat, centerLon], 16);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+  L.control.zoom({ position: 'bottomleft' }).addTo(map);
+  new ResizeObserver(() => map && map.invalidateSize({ pan: false })).observe(mapEl);
+  btnRecenter.style.display = 'flex';
+  btnRecenter.onclick = () => fitMapBounds(true);
+}
+
+function fitMapBounds(force = false) {
+  if (!map) return;
+  const points = [];
+  if (driverMarker) points.push(driverMarker.getLatLng());
+  if (pickupMarker) points.push(pickupMarker.getLatLng());
+  if (points.length >= 2) {
+    const bounds = L.latLngBounds(points);
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 17, animate: true });
+  } else if (points.length === 1 && force) {
+    map.setView(points[0], 16, { animate: true });
+  }
+}
+
+async function updateRoute(driverLat, driverLon, pickupLat, pickupLon) {
+  if (!map || !window.L) return;
+  if (lastRoutePos && calcDistMeters(driverLat, driverLon, lastRoutePos[0], lastRoutePos[1]) < 28) return;
+  lastRoutePos = [driverLat, driverLon];
+  try {
+    const res = await fetch('/api/maps/route', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ points: [{ lat: driverLat, lon: driverLon }, { lat: pickupLat, lon: pickupLon }] })
+    });
+    const d = await res.json().catch(() => ({}));
+    if (res.ok && Array.isArray(d.geometry) && d.geometry.length > 1) {
+      if (routeGlow) map.removeLayer(routeGlow);
+      if (routeLine) map.removeLayer(routeLine);
+      routeGlow = L.polyline(d.geometry, { color: '#ff9a00', weight: 8, opacity: 0.35, lineCap: 'round', lineJoin: 'round' }).addTo(map);
+      routeLine = L.polyline(d.geometry, { color: '#ff6b00', weight: 4.5, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }).addTo(map);
+      if (!hasAutoFitOnce) {
+        fitMapBounds();
+        hasAutoFitOnce = true;
+      }
+      return;
+    }
+  } catch (_) {}
+  if (!routeLine) {
+    routeLine = L.polyline([[driverLat, driverLon], [pickupLat, pickupLon]], { color: '#ff6b00', weight: 3.5, dashArray: '6 8', opacity: 0.8 }).addTo(map);
+  } else {
+    routeLine.setLatLngs([[driverLat, driverLon], [pickupLat, pickupLon]]);
+  }
+}
+
+async function refresh() {
+  try {
+    const res = await fetch('/api/rides/' + encodeURIComponent(rideId) + '/status', { cache: 'no-store' });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) return;
+
+    if (d.status === 'finalizada') {
+      statusTxt.textContent = 'Corrida finalizada. Obrigado por viajar com MotoJa!';
+      statusTxt.style.color = '#34d399';
+      liveDot.style.display = 'none';
+      alertChegando.style.display = 'none';
+      hudGrid.style.display = 'none';
+      return;
+    }
+    if (d.status === 'cancelada') {
+      statusTxt.textContent = 'Esta corrida foi cancelada.';
+      statusTxt.style.color = '#f87171';
+      liveDot.style.display = 'none';
+      alertChegando.style.display = 'none';
+      hudGrid.style.display = 'none';
+      return;
+    }
+
+    if (d.motoboyTelefone && !driverContactBox.hasChildNodes()) {
+      const waLink = 'https://wa.me/55' + d.motoboyTelefone + '?text=' + encodeURIComponent('Ola! Estou acompanhando sua localizacao na corrida MotoJa.');
+      driverContactBox.innerHTML = '<a href="' + waLink + '" target="_blank" class="btn-whatsapp-driver">💬 WhatsApp</a>';
+    }
+
+    if (d.origem || d.destino) {
+      enderecoResumo.innerHTML = (d.origem ? '<strong>Embarque:</strong> ' + d.origem : '') + (d.destino ? '<br><strong>Destino:</strong> ' + d.destino : '');
+    }
+
+    const p = d.motoboyLocalizacao;
+    const driverLat = Number(p?.latitude), driverLon = Number(p?.longitude);
+    const pickupLat = Number(d.origemLat), pickupLon = Number(d.origemLon);
+    const destLat = Number(d.destinoLat), destLon = Number(d.destinoLon);
+
+    if (Number.isFinite(driverLat) && Number.isFinite(driverLon)) {
+      ensureMap(driverLat, driverLon);
+      liveDot.style.display = 'inline-block';
+
+      let rotation = Number.isFinite(Number(p.heading)) ? Number(p.heading) : 0;
+      if (!p.heading && lastMotoboyPos) {
+        rotation = calcBearing(lastMotoboyPos, [driverLat, driverLon]);
+      }
+      lastMotoboyPos = [driverLat, driverLon];
+
+      const driverIcon = L.divIcon({
+        className: '',
+        html: '<div class="marker-moto" style="transform:rotate(' + Math.round(rotation) + 'deg);transition:transform .3s ease">🏍️</div>',
+        iconSize: [44, 44],
+        iconAnchor: [22, 22]
+      });
+
+      if (!driverMarker) {
+        driverMarker = L.marker([driverLat, driverLon], { icon: driverIcon, zIndexOffset: 1000 }).addTo(map).bindPopup('<b>Motoboy: ' + (d.motoboy || 'MotoJa') + '</b>');
+      } else {
+        driverMarker.setLatLng([driverLat, driverLon]);
+        driverMarker.setIcon(driverIcon);
+      }
+
+      if (Number.isFinite(pickupLat) && Number.isFinite(pickupLon) && Math.abs(pickupLat) > 0.1) {
+        if (!pickupMarker) {
+          const pickupIcon = L.divIcon({
+            className: '',
+            html: '<div class="marker-pickup">🏠</div>',
+            iconSize: [38, 38],
+            iconAnchor: [19, 19]
+          });
+          pickupMarker = L.marker([pickupLat, pickupLon], { icon: pickupIcon, zIndexOffset: 500 }).addTo(map).bindPopup('<b>Local de Embarque (Voce)</b>');
+        } else {
+          pickupMarker.setLatLng([pickupLat, pickupLon]);
+        }
+        updateRoute(driverLat, driverLon, pickupLat, pickupLon);
+
+        const distMeters = Math.round(calcDistMeters(driverLat, driverLon, pickupLat, pickupLon));
+        hudGrid.style.display = 'grid';
+        hudDist.textContent = distMeters < 1000 ? distMeters + ' m' : (distMeters / 1000).toFixed(1).replace('.', ',') + ' km';
+        const speedKmh = p.speed ? Math.round(p.speed * 3.6) : (distMeters > 500 ? 30 : 20);
+        hudSpeed.textContent = p.speed ? Math.round(p.speed * 3.6) + ' km/h' : 'Em desloc.';
+        const etaMinutes = Math.max(1, Math.round((distMeters / 1000) / (Math.max(15, speedKmh) / 60)));
+        hudEta.textContent = '~' + etaMinutes + ' min';
+
+        if (distMeters <= 160) {
+          alertChegando.style.display = 'block';
+          statusTxt.textContent = 'Motoboy chegando ao local de embarque!';
+        } else {
+          alertChegando.style.display = 'none';
+          statusTxt.textContent = 'Motoboy a caminho do embarque (' + hudDist.textContent + ')';
+        }
+      } else {
+        hudGrid.style.display = 'none';
+        alertChegando.style.display = 'none';
+        statusTxt.textContent = 'Motoboy a caminho - localizacao ao vivo';
+      }
+
+      if (Number.isFinite(destLat) && Number.isFinite(destLon) && Math.abs(destLat) > 0.1 && !destMarker) {
+        const destIcon = L.divIcon({
+          className: '',
+          html: '<div class="marker-dest">🏁</div>',
+          iconSize: [34, 34],
+          iconAnchor: [17, 17]
+        });
+        destMarker = L.marker([destLat, destLon], { icon: destIcon }).addTo(map).bindPopup('<b>Destino Final:</b><br>' + (d.destino || ''));
+      }
+
+      if (!hasAutoFitOnce) {
+        fitMapBounds();
+        hasAutoFitOnce = true;
+      }
+
+      const age = Math.max(0, Math.round((Date.now() - Number(p.serverTimestampMs || Date.now())) / 1000));
+      footerUpdated.textContent = age < 10 ? 'GPS conectado em tempo real (agora)' : 'Ultimo sinal recebido ha ' + age + ' segundos';
+    } else {
+      statusTxt.textContent = d.clienteAvisado ? 'GPS iniciado. Aguardando primeira posicao...' : 'Aguardando o motoboy iniciar o GPS...';
+      liveDot.style.display = 'none';
+      hudGrid.style.display = 'none';
+      alertChegando.style.display = 'none';
+    }
+  } catch (_) {
+    footerUpdated.textContent = 'Reconectando ao servidor...';
+  }
+}
+
+refresh();
+refreshTimer = setInterval(refresh, 4000);
+</script></body></html>`;
 }
 
 function cardapioWebHeaders(apiKey, storeCode = '') {
@@ -8016,8 +8295,16 @@ app.get('/api/rides/:rideId/status', async (req, res, next) => {
       aceitaEmMs: timestampMs(ride.aceitaEm),
       motoboy: ride.motoboy || '',
       motoboyFoto: validDriverPhoto(ride.motoboyFoto) || '',
+      motoboyTelefone: onlyDigits(ride.motoboyTelefone || '').slice(0, 11),
       valor: money(ride.valor),
+      origem: ride.origem || '',
+      origemLat: Number(ride.origemLat || 0),
+      origemLon: Number(ride.origemLon || 0),
       destino: ride.destino || '',
+      destinoLat: Number(ride.destinoLat || 0),
+      destinoLon: Number(ride.destinoLon || 0),
+      km: Number(ride.km || 0),
+      cidadeOperacao: ride.cidadeOperacao || '',
       clienteAvisado: !!ride.clienteAvisadoEm,
       rastreamentoAtivo: ride.rastreamentoAtivo === true,
       motoboyLocalizacao: ride.rastreamentoAtivo === true && ride.status === 'aceita'
