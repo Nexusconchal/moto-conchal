@@ -8281,12 +8281,20 @@ app.post('/api/rides', createRideLimiter, async (req, res, next) => {
   }
 });
 
+const rideStatusCache = new Map();
+const RIDE_STATUS_CACHE_MS = 2200;
+
 app.get('/api/rides/:rideId/status', async (req, res, next) => {
   try {
-    const doc = await db.collection('corridas').doc(String(req.params.rideId || '')).get();
+    const rideId = String(req.params.rideId || '');
+    const cached = rideStatusCache.get(rideId);
+    if (cached && (Date.now() - cached.at) < RIDE_STATUS_CACHE_MS) {
+      return res.json(cached.payload);
+    }
+    const doc = await db.collection('corridas').doc(rideId).get();
     if (!doc.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
     const ride = doc.data() || {};
-    res.json({
+    const payload = {
       ok: true,
       rideId: doc.id,
       status: ride.status || '',
@@ -8315,7 +8323,15 @@ app.get('/api/rides/:rideId/status', async (req, res, next) => {
         initPoint: ride.pagamento.initPoint || '',
         metodo: ride.pagamento.metodo || ''
       } : null
-    });
+    };
+    rideStatusCache.set(rideId, { at: Date.now(), payload });
+    if (rideStatusCache.size > 200) {
+      const now = Date.now();
+      for (const [k, v] of rideStatusCache.entries()) {
+        if (now - v.at > 60000) rideStatusCache.delete(k);
+      }
+    }
+    res.json(payload);
   } catch (error) {
     next(error);
   }
@@ -9975,6 +9991,7 @@ app.post('/api/rides/:rideId/location', async (req, res, next) => {
       localizacaoAtualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
+    rideStatusCache.delete(req.params.rideId);
     return res.json({ ok: true });
   } catch (error) {
     return next(error);
