@@ -1901,6 +1901,19 @@ function clearCarDriverCache(driverCpf = '') {
   else carDriverCache.clear();
 }
 
+function clearDriverProofCache(driverCpf = '') {
+  const cpf = onlyDigits(driverCpf);
+  if (!cpf) {
+    driverProofCache.clear();
+    return;
+  }
+  for (const key of driverProofCache.keys()) {
+    if (key.startsWith(`${cpf}:`)) {
+      driverProofCache.delete(key);
+    }
+  }
+}
+
 async function getApprovedCarDriver(driverCpf, body = {}) {
   const driver = await getDriverWithProof(driverCpf, body);
   const car = await getCarDriverProfile(driverCpf, driver);
@@ -5468,13 +5481,19 @@ app.post('/api/admin/rides/:rideId/force-finish', assertOwner, async (req, res, 
 
       let driverCpf = onlyDigits(ride.motoboyCpf);
       let driverData = null;
+      let driverRef = null;
+      let driverSnap = null;
+
       if (driverCpf.length === 11) {
+        driverRef = db.collection('motoboys').doc(driverCpf);
+        driverSnap = await tx.get(driverRef);
+        const existingDriver = driverSnap.exists ? (driverSnap.data() || {}) : {};
         driverData = {
-          nome: ride.motoboy || '',
+          nome: ride.motoboy || existingDriver.nome || '',
           cpf: driverCpf,
-          cnh: ride.motoboyCnh || '',
-          telefone: onlyDigits(ride.motoboyTelefone),
-          fotoMotoboy: ride.motoboyFoto || ''
+          cnh: ride.motoboyCnh || existingDriver.cnh || '',
+          telefone: onlyDigits(ride.motoboyTelefone || existingDriver.telefone),
+          fotoMotoboy: ride.motoboyFoto || existingDriver.fotoMotoboy || ''
         };
       } else {
         if (manualDriverCpf.length !== 11) {
@@ -5482,7 +5501,8 @@ app.post('/api/admin/rides/:rideId/force-finish', assertOwner, async (req, res, 
           error.status = 400;
           throw error;
         }
-        const driverSnap = await tx.get(db.collection('motoboys').doc(manualDriverCpf));
+        driverRef = db.collection('motoboys').doc(manualDriverCpf);
+        driverSnap = await tx.get(driverRef);
         if (!driverSnap.exists) {
           const error = new Error('Motoboy nao cadastrado. Cadastre o motoboy antes de finalizar esta corrida.');
           error.status = 404;
@@ -5520,9 +5540,6 @@ app.post('/api/admin/rides/:rideId/force-finish', assertOwner, async (req, res, 
       );
       await recordDriverEarning(tx, driverCpf, earningEvent);
 
-      const driverRef = db.collection('motoboys').doc(driverCpf);
-      const driverSnap = await tx.get(driverRef);
-
       tx.set(rideRef, {
         status: 'finalizada',
         motoboy: driverData.nome,
@@ -5555,7 +5572,7 @@ app.post('/api/admin/rides/:rideId/force-finish', assertOwner, async (req, res, 
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
 
-      if (driverSnap.exists) {
+      if (driverSnap && driverSnap.exists) {
         tx.set(driverRef, {
           corridaAtivaId: admin.firestore.FieldValue.delete(),
           atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
