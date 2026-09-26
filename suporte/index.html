@@ -10,7 +10,7 @@
   <title>Central de Suporte MotoJÁ</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="../nexus-motoja-icon-192.png">
-  <link rel="stylesheet" href="./style.css?v=177">
+  <link rel="stylesheet" href="./style.css?v=181">
 </head>
 <body>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -68,23 +68,28 @@
 
     <section id="alarmBanner" class="alarm-banner quiet">
       <div><span id="alarmPulse"></span><strong id="alarmTitle">Nenhum alerta aguardando</strong><small id="alarmText">A central está acompanhando os chamados ativos.</small></div>
-      <button id="enableSound" type="button">Ativar som</button>
+      <div class="alarm-actions">
+        <button id="ackAllButton" class="btn-ack-all" type="button">Assumir todos</button>
+        <button id="enableSound" type="button">Ativar som</button>
+      </div>
     </section>
 
     <section class="toolbar">
       <div class="metrics">
-        <article><span>Novos alertas</span><strong id="metricAlerts">0</strong></article>
-        <article><span>Aguardando motoboy</span><strong id="metricPending">0</strong></article>
-        <article><span>Em andamento</span><strong id="metricActive">0</strong></article>
+        <article class="metric-card active" data-filter="all"><span>Todos os chamados</span><strong id="metricTotal">0</strong></article>
+        <article class="metric-card" data-filter="alerts"><span>🚨 Novos alertas</span><strong id="metricAlerts">0</strong></article>
+        <article class="metric-card" data-filter="pending"><span>Aguardando motoboy</span><strong id="metricPending">0</strong></article>
+        <article class="metric-card" data-filter="active"><span>Em andamento</span><strong id="metricActive">0</strong></article>
+        <article class="metric-card metric-stale" data-filter="stale"><span>⚠️ Antigos (&gt; 2h)</span><strong id="metricStale">0</strong></article>
       </div>
       <div class="tools"><label>Buscar<input id="searchInput" type="search" placeholder="Nome, endereço ou motoboy"></label><button id="refreshButton" type="button">Atualizar</button></div>
     </section>
 
-    <section class="operations-head"><div><span>OPERAÇÃO EM TEMPO REAL</span><h2>Chamados ativos</h2></div><p id="lastUpdated">Conectando...</p></section>
+    <section class="operations-head"><div><span>OPERAÇÃO EM TEMPO REAL</span><h2 id="operationsTitle">Chamados ativos</h2></div><p id="lastUpdated">Conectando...</p></section>
     <section id="operationsList" class="operations-list"><div class="empty-state">Carregando chamados...</div></section>
   </main>
 
   <script src="https://cdn.socket.io/4.8.1/socket.io.min.js" crossorigin="anonymous" defer></script>
-  <script src="./app.js?v=177" defer></script>
+  <script src="./app.js?v=181" defer></script>
 </body>
 </html>

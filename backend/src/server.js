@@ -1432,6 +1432,9 @@ function supportOperation(kind, id, job = {}) {
       telefone: onlyDigits(point.telefoneRecebedor).slice(0, 11)
     }))
     : [];
+  const criadaEmMs = timestampMs(job.criadaEm) || timestampMs(job.aceitaEm) || Date.now();
+  const aceitaEmMs = timestampMs(job.aceitaEm) || 0;
+  const isStale = (Date.now() - criadaEmMs) > (2 * 60 * 60 * 1000);
   return {
     id,
     tipo: isDelivery ? 'entrega' : isCar ? 'carro' : 'corrida',
@@ -1447,11 +1450,16 @@ function supportOperation(kind, id, job = {}) {
     paradas: isDelivery ? Math.max(1, Number(job.paradas || 1)) : 1,
     pontosExtras: extraStops,
     motoboy: cleanText(isCar ? job.motorista : job.motoboy, 100),
+    motoboyCpf: onlyDigits(isCar ? job.motoristaCpf : job.motoboyCpf),
     telefoneMotoboy: onlyDigits(isCar ? job.motoristaTelefone : job.motoboyTelefone).slice(0, 11),
+    valor: money(job.pagamento?.total || job.valor || job.saldoReservado || 0),
     criadaEm: serializeFirestore(job.criadaEm),
+    criadaEmMs,
     aceitaEm: serializeFirestore(job.aceitaEm),
+    aceitaEmMs,
     retiradaEm: serializeFirestore(job.retiradaConfirmadaEm),
     alertVersion,
+    isStale,
     alertaAssumido: Number(job.suporteAlertaVersao || 0) === alertVersion,
     alertaAssumidoPor: cleanText(job.suporteAssumidoPor, 100),
     alertaAssumidoEm: serializeFirestore(job.suporteAssumidoEm)
@@ -3454,6 +3462,286 @@ app.post('/api/support/alerts/:kind/:jobId/acknowledge', assertSupport, async (r
     await writeSupportAudit(req.supportAccountId, 'alerta_assumido', { kind, jobId, alertVersion: result.alertVersion })
       .catch((error) => console.error('support audit failed', error));
     return res.json({ ok: true, ...result });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/support/alerts/acknowledge-all', assertSupport, async (req, res, next) => {
+  try {
+    const activeStatuses = ['pendente', 'aceita', 'retirada'];
+    const [ridesSnap, deliveriesSnap, carRidesSnap] = await Promise.all([
+      db.collection('corridas').where('status', 'in', activeStatuses).limit(100).get(),
+      db.collection('entregas').where('status', 'in', activeStatuses).limit(100).get(),
+      db.collection('corridasCarro').where('status', 'in', ['pendente', 'aceita', 'motorista_chegou', 'em_andamento']).limit(100).get()
+    ]);
+    const batch = db.batch();
+    let count = 0;
+    const markDoc = (doc) => {
+      const data = doc.data() || {};
+      const alertVersion = supportAlertVersion(data);
+      if (Number(data.suporteAlertaVersao || 0) !== alertVersion) {
+        batch.set(doc.ref, {
+          suporteAlertaVersao: alertVersion,
+          suporteAssumidoPorId: req.supportAccountId,
+          suporteAssumidoPor: cleanText(req.supportAccount.nome, 100),
+          suporteAssumidoEm: admin.firestore.FieldValue.serverTimestamp(),
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        count++;
+      }
+    };
+    ridesSnap.docs.forEach(markDoc);
+    deliveriesSnap.docs.forEach(markDoc);
+    carRidesSnap.docs.forEach(markDoc);
+    if (count > 0) {
+      await batch.commit();
+      emitSupportOperationsRefresh();
+      await writeSupportAudit(req.supportAccountId, 'todos_alertas_assumidos', { count })
+        .catch((error) => console.error('support audit failed', error));
+    }
+    return res.json({ ok: true, count });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/support/operations/:kind/:jobId/finish', assertSupport, async (req, res, next) => {
+  try {
+    const kind = ['entrega', 'corrida', 'carro'].includes(req.params.kind) ? req.params.kind : '';
+    const jobId = cleanText(req.params.jobId, 120);
+    const reason = cleanText(req.body.reason || 'Finalizada pelo suporte MotoJa', 250);
+    const requestedValue = money(req.body.valor);
+    if (!kind || !jobId) return res.status(400).json({ error: 'chamado_invalido' });
+
+    if (kind === 'corrida') {
+      const rideRef = db.collection('corridas').doc(jobId);
+      let finishedDriverCpf = '';
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(rideRef);
+        if (!snap.exists) {
+          const error = new Error('Corrida nao encontrada.');
+          error.status = 404;
+          throw error;
+        }
+        const ride = snap.data() || {};
+        if (ride.status === 'finalizada') {
+          const error = new Error('Corrida ja foi finalizada.');
+          error.status = 409;
+          throw error;
+        }
+
+        let driverCpf = onlyDigits(ride.motoboyCpf || req.body.driverCpf);
+        let driverRef = null;
+        let driverSnap = null;
+        let driverData = {
+          nome: ride.motoboy || '',
+          cpf: driverCpf,
+          cnh: ride.motoboyCnh || '',
+          telefone: onlyDigits(ride.motoboyTelefone),
+          fotoMotoboy: ride.motoboyFoto || ''
+        };
+
+        if (driverCpf.length === 11) {
+          driverRef = db.collection('motoboys').doc(driverCpf);
+          driverSnap = await tx.get(driverRef);
+          if (driverSnap.exists) {
+            const ed = driverSnap.data() || {};
+            driverData = {
+              nome: ride.motoboy || ed.nome || '',
+              cpf: driverCpf,
+              cnh: ride.motoboyCnh || ed.cnh || '',
+              telefone: onlyDigits(ride.motoboyTelefone || ed.telefone),
+              fotoMotoboy: ride.motoboyFoto || ed.fotoMotoboy || ''
+            };
+          }
+        }
+
+        finishedDriverCpf = driverCpf;
+        const valorOriginal = money(ride.pagamento?.total || ride.valor || 0);
+        const valor = requestedValue > 0 ? requestedValue : valorOriginal;
+        const split = rideSplitAmounts(valor, ride.km);
+        const performedAtMs = timestampMs(ride.aceitaEm) || timestampMs(ride.criadaEm) || Date.now();
+        const performedAt = admin.firestore.Timestamp.fromMillis(performedAtMs);
+
+        if (driverCpf.length === 11 && valor > 0) {
+          const earningEvent = driverEarningEvent('corrida', rideRef.id, { ...ride, valor, ganhoMotoboy: split.driverAmount }, performedAtMs);
+          await recordDriverEarning(tx, driverCpf, earningEvent);
+        }
+
+        tx.set(rideRef, {
+          status: 'finalizada',
+          finalizadaEm: performedAt,
+          realizadaEm: performedAt,
+          finalizadaPeloSuporteEm: admin.firestore.FieldValue.serverTimestamp(),
+          finalizadaPorSuporteNome: cleanText(req.supportAccount.nome, 100),
+          motivoFinalizacaoManual: reason,
+          rastreamentoAtivo: false,
+          motoboyLocalizacao: admin.firestore.FieldValue.delete(),
+          localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
+          ganhoContabilizadoEm: admin.firestore.FieldValue.serverTimestamp(),
+          ganhoMotoboy: split.driverAmount,
+          ganhoApp: split.appFee,
+          percentualMotoboy: split.driverPercent,
+          percentualApp: split.appPercent,
+          valorMotoboy: split.driverAmount,
+          valorApp: split.appFee,
+          valor,
+          pagamento: {
+            ...(ride.pagamento || {}),
+            status: 'approved',
+            metodo: ride.pagamento?.metodo || 'ajuste_manual_suporte',
+            aprovadoPeloSuporteEm: admin.firestore.FieldValue.serverTimestamp(),
+            motivoAprovacaoManual: reason
+          },
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        if (driverRef && driverSnap && driverSnap.exists) {
+          tx.set(driverRef, { corridaAtivaId: admin.firestore.FieldValue.delete(), atualizadoEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        }
+      });
+      clearDriverProofCache(finishedDriverCpf);
+      adminStateCache = null;
+      emitSupportOperationsRefresh();
+      await writeSupportAudit(req.supportAccountId, 'corrida_finalizada_pelo_suporte', { jobId, reason, valor: requestedValue })
+        .catch((error) => console.error('support audit failed', error));
+      return res.json({ ok: true });
+    }
+
+    if (kind === 'entrega') {
+      const deliveryRef = db.collection('entregas').doc(jobId);
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(deliveryRef);
+        if (!snap.exists) {
+          const error = new Error('Entrega nao encontrada.');
+          error.status = 404;
+          throw error;
+        }
+        const delivery = snap.data() || {};
+        if (delivery.status === 'finalizada') {
+          const error = new Error('Entrega ja foi finalizada.');
+          error.status = 409;
+          throw error;
+        }
+
+        const valor = requestedValue > 0 ? requestedValue : money(delivery.saldoReservado || delivery.valor || 0);
+        const split = deliverySplit({ ...delivery, valor });
+        const driverCpf = onlyDigits(delivery.motoboyCpf);
+        const performedAtMs = manualDeliveryPerformedAtMs(delivery);
+        const performedAt = admin.firestore.Timestamp.fromMillis(performedAtMs);
+
+        if (driverCpf.length === 11 && valor > 0) {
+          const earningEvent = driverEarningEvent('entrega', deliveryRef.id, { ...delivery, valor, ganhoMotoboy: split.driverAmount }, performedAtMs);
+          await recordDriverEarning(tx, driverCpf, earningEvent);
+        }
+
+        tx.set(deliveryRef, {
+          status: 'finalizada',
+          finalizadaEm: performedAt,
+          realizadaEm: performedAt,
+          finalizadaPeloSuporteEm: admin.firestore.FieldValue.serverTimestamp(),
+          finalizadaPorSuporteNome: cleanText(req.supportAccount.nome, 100),
+          motivoFinalizacaoManual: reason,
+          rastreamentoAtivo: false,
+          motoboyLocalizacao: admin.firestore.FieldValue.delete(),
+          localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
+          ganhoContabilizadoEm: admin.firestore.FieldValue.serverTimestamp(),
+          ganhoMotoboy: split.driverAmount,
+          ganhoApp: split.appFee,
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      });
+      adminStateCache = null;
+      emitSupportOperationsRefresh();
+      await writeSupportAudit(req.supportAccountId, 'entrega_finalizada_pelo_suporte', { jobId, reason, valor: requestedValue })
+        .catch((error) => console.error('support audit failed', error));
+      return res.json({ ok: true });
+    }
+
+    if (kind === 'carro') {
+      const ref = db.collection('corridasCarro').doc(jobId);
+      let finishedDriverCpf = '';
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists) {
+          const error = new Error('Corrida de carro nao encontrada.');
+          error.status = 404;
+          throw error;
+        }
+        const ride = snap.data() || {};
+        if (ride.status === 'finalizada') return;
+        const driverCpf = onlyDigits(ride.motoristaCpf);
+        finishedDriverCpf = driverCpf;
+        const driverRef = driverCpf.length === 11 ? db.collection('carroMotoristas').doc(driverCpf) : null;
+        const driverSnap = driverRef ? await tx.get(driverRef) : null;
+        const performedAtMs = timestampMs(ride.iniciadaEm) || timestampMs(ride.aceitaEm) || timestampMs(ride.criadaEm) || Date.now();
+        const performedAt = admin.firestore.Timestamp.fromMillis(performedAtMs);
+
+        if (driverCpf.length === 11) {
+          const earningEvent = driverEarningEvent('carro', ref.id, ride, performedAtMs);
+          await recordDriverEarning(tx, driverCpf, earningEvent);
+        }
+
+        tx.set(ref, {
+          status: 'finalizada',
+          finalizadaEm: performedAt,
+          realizadaEm: performedAt,
+          finalizadaPeloSuporteEm: admin.firestore.FieldValue.serverTimestamp(),
+          finalizadaPorSuporteNome: cleanText(req.supportAccount.nome, 100),
+          motivoFinalizacaoManual: reason,
+          ganhoContabilizadoEm: admin.firestore.FieldValue.serverTimestamp(),
+          motoristaLocalizacao: admin.firestore.FieldValue.delete(),
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        if (driverRef && driverSnap && driverSnap.exists) {
+          tx.set(driverRef, { corridaAtivaId: admin.firestore.FieldValue.delete(), corridaAtivaDesde: admin.firestore.FieldValue.delete(), atualizadoEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        }
+      });
+      clearCarDriverCache(finishedDriverCpf);
+      adminStateCache = null;
+      emitSupportOperationsRefresh();
+      await writeSupportAudit(req.supportAccountId, 'carro_finalizado_pelo_suporte', { jobId, reason })
+        .catch((error) => console.error('support audit failed', error));
+      return res.json({ ok: true });
+    }
+
+    return res.status(400).json({ error: 'tipo_invalido' });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/support/operations/:kind/:jobId/cancel', assertSupport, async (req, res, next) => {
+  try {
+    const kind = ['entrega', 'corrida', 'carro'].includes(req.params.kind) ? req.params.kind : '';
+    const jobId = cleanText(req.params.jobId, 120);
+    const reason = cleanText(req.body.reason || 'Cancelada pelo suporte MotoJa', 250);
+    if (!kind || !jobId) return res.status(400).json({ error: 'chamado_invalido' });
+
+    const collection = kind === 'entrega' ? 'entregas' : kind === 'carro' ? 'corridasCarro' : 'corridas';
+    const ref = db.collection(collection).doc(jobId);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'chamado_nao_encontrado' });
+
+    await ref.set({
+      status: 'cancelada',
+      rastreamentoAtivo: false,
+      motoboyLocalizacao: admin.firestore.FieldValue.delete(),
+      motoristaLocalizacao: admin.firestore.FieldValue.delete(),
+      localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
+      motivoCancelamento: reason,
+      canceladoPor: `Suporte: ${cleanText(req.supportAccount.nome, 80)}`,
+      canceladoEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    adminStateCache = null;
+    emitSupportOperationsRefresh();
+    await writeSupportAudit(req.supportAccountId, 'chamado_cancelado_pelo_suporte', { kind, jobId, reason })
+      .catch((error) => console.error('support audit failed', error));
+    return res.json({ ok: true });
   } catch (error) {
     return next(error);
   }

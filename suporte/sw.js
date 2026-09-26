@@ -1,5 +1,5 @@
-const CACHE = 'motoja-support-v177';
-const ASSETS = ['./', './index.html', './style.css?v=177', './app.js?v=177', './manifest.webmanifest', '../nexus-motoja-icon-192.png', '../nexus-motoja-site-logo.png'];
+const CACHE = 'motoja-support-v181';
+const ASSETS = ['./', './index.html', './style.css?v=181', './app.js?v=181', './manifest.webmanifest', '../nexus-motoja-icon-192.png', '../nexus-motoja-site-logo.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));

@@ -17,6 +17,30 @@
   let audioEnabled = false;
   let toastTimer = null;
 
+  let currentFilter = "all";
+
+  function moeda(val) {
+    return Number(val || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  }
+
+  function timeAgoText(ms) {
+    if (!ms) return "";
+    const elapsedMin = Math.floor((Date.now() - ms) / 60000);
+    if (elapsedMin < 1) return "Agora";
+    if (elapsedMin < 60) return `Há ${elapsedMin} min`;
+    const elapsedHours = Math.floor(elapsedMin / 60);
+    if (elapsedHours < 24) return `Há ${elapsedHours}h`;
+    const elapsedDays = Math.floor(elapsedHours / 24);
+    return `Há ${elapsedDays} dia${elapsedDays > 1 ? "s" : ""}`;
+  }
+
+  function isItemAlerting(item) {
+    if (item.alertaAssumido) return false;
+    if (item.status === "pendente") return true;
+    const ageMs = Date.now() - (item.criadaEmMs || 0);
+    return ageMs <= 2 * 60 * 60 * 1000;
+  }
+
   function escapeHtml(value) {
     return String(value || "").replace(/[&<>'"]/g, (character) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
@@ -166,26 +190,39 @@
   }
 
   function updateAlarm() {
-    const pending = operations.filter((item) => !item.alertaAssumido);
+    const alertingItems = operations.filter(isItemAlerting);
+    const staleItems = operations.filter((item) => item.isStale || (Date.now() - (item.criadaEmMs || 0)) > 2 * 60 * 60 * 1000);
     const banner = $("alarmBanner");
-    $("metricAlerts").textContent = pending.length;
-    if (!pending.length) {
+    const countAlerts = $("metricAlerts");
+    const countStale = $("metricStale");
+    const countTotal = $("metricTotal");
+    if (countAlerts) countAlerts.textContent = alertingItems.length;
+    if (countStale) countStale.textContent = staleItems.length;
+    if (countTotal) countTotal.textContent = operations.length;
+
+    if (!alertingItems.length) {
       banner.className = "alarm-banner quiet";
-      $("alarmTitle").textContent = "Nenhum alerta aguardando";
-      $("alarmText").textContent = "A central está acompanhando os chamados ativos.";
+      if (staleItems.length) {
+        $("alarmTitle").textContent = `${staleItems.length} chamado${staleItems.length > 1 ? "s antigos" : " antigo"} com finalização pendente`;
+        $("alarmText").textContent = "Alarme sonoro desligado para chamados antigos (> 2h). Use a aba '⚠️ Antigos' para dar baixa.";
+      } else {
+        $("alarmTitle").textContent = "Nenhum alerta recente aguardando";
+        $("alarmText").textContent = "A central está acompanhando os chamados ativos em tempo real.";
+      }
       stopAlarm();
       return;
     }
+
     banner.className = "alarm-banner alerting";
-    $("alarmTitle").textContent = `${pending.length} alerta${pending.length === 1 ? " precisa" : "s precisam"} de atendimento`;
-    $("alarmText").textContent = audioEnabled ? "O alarme para quando todos forem assumidos." : "Ative o som para receber o aviso contínuo.";
+    $("alarmTitle").textContent = `${alertingItems.length} alerta${alertingItems.length === 1 ? " recente precisa" : "s recentes precisam"} de atendimento`;
+    $("alarmText").textContent = audioEnabled ? "O alarme sonoro para quando forem assumidos." : "Ative o som para receber o aviso contínuo.";
     $("enableSound").textContent = audioEnabled ? "Som ativo" : "Ativar som";
-    if (!alarmTimer) {
+    if (!alarmTimer && audioEnabled) {
       beep();
       alarmTimer = setInterval(beep, 4200);
     }
     if (document.hidden === false && "Notification" in window && Notification.permission === "granted") {
-      const newest = pending[0];
+      const newest = alertingItems[0];
       const notificationKey = `${newest.tipo}:${newest.id}:${newest.alertVersion}`;
       if (sessionStorage.getItem("lastSupportNotification") !== notificationKey) {
         sessionStorage.setItem("lastSupportNotification", notificationKey);
@@ -207,15 +244,36 @@
 
   function renderOperations() {
     const query = $("searchInput").value.trim().toLocaleLowerCase("pt-BR");
-    const filtered = operations.filter((item) => !query || [item.titulo, item.responsavel, item.origem, item.destino, item.motoboy, item.tipoEntrega].join(" ").toLocaleLowerCase("pt-BR").includes(query));
-    $("metricPending").textContent = operations.filter((item) => item.status === "pendente").length;
-    $("metricActive").textContent = operations.filter((item) => item.status !== "pendente").length;
+    const pendingCount = operations.filter((item) => item.status === "pendente").length;
+    const activeCount = operations.filter((item) => item.status !== "pendente" && !item.isStale && (Date.now() - (item.criadaEmMs || 0)) <= 2 * 60 * 60 * 1000).length;
+    const staleCount = operations.filter((item) => item.isStale || (Date.now() - (item.criadaEmMs || 0)) > 2 * 60 * 60 * 1000).length;
+    const alertCount = operations.filter(isItemAlerting).length;
+
+    if ($("metricPending")) $("metricPending").textContent = pendingCount;
+    if ($("metricActive")) $("metricActive").textContent = activeCount;
+    if ($("metricStale")) $("metricStale").textContent = staleCount;
+    if ($("metricAlerts")) $("metricAlerts").textContent = alertCount;
+    if ($("metricTotal")) $("metricTotal").textContent = operations.length;
+
+    let itemsToFilter = operations;
+    if (currentFilter === "alerts") {
+      itemsToFilter = operations.filter(isItemAlerting);
+    } else if (currentFilter === "pending") {
+      itemsToFilter = operations.filter((item) => item.status === "pendente");
+    } else if (currentFilter === "active") {
+      itemsToFilter = operations.filter((item) => item.status !== "pendente" && !item.isStale && (Date.now() - (item.criadaEmMs || 0)) <= 2 * 60 * 60 * 1000);
+    } else if (currentFilter === "stale") {
+      itemsToFilter = operations.filter((item) => item.isStale || (Date.now() - (item.criadaEmMs || 0)) > 2 * 60 * 60 * 1000);
+    }
+
+    const filtered = itemsToFilter.filter((item) => !query || [item.titulo, item.responsavel, item.origem, item.destino, item.motoboy, item.tipoEntrega].join(" ").toLocaleLowerCase("pt-BR").includes(query));
     const root = $("operationsList");
     if (!filtered.length) {
-      root.innerHTML = `<div class="empty-state">${query ? "Nenhum chamado corresponde à busca." : "Nenhuma corrida ou entrega ativa agora."}</div>`;
+      root.innerHTML = `<div class="empty-state">${query ? "Nenhum chamado corresponde à busca." : "Nenhum chamado nesta categoria no momento."}</div>`;
       updateAlarm();
       return;
     }
+
     root.innerHTML = filtered.map((item) => {
       const contacts = [
         whatsapp(item.telefonePrincipal, item.tipo === "entrega" ? "empresa" : "passageiro"),
@@ -225,18 +283,48 @@
       const extras = item.pontosExtras?.length
         ? `<div class="extra-stops">${item.pontosExtras.map((point) => `<span>Ponto ${Number(point.ordem || 0)}: ${escapeHtml(point.endereco)}${point.recebedor ? ` · ${escapeHtml(point.recebedor)}` : ""}</span>`).join("")}</div>`
         : "";
+      const isStale = item.isStale || (Date.now() - (item.criadaEmMs || 0)) > 2 * 60 * 60 * 1000;
+      const staleBadge = isStale ? `<span class="badge-stale">⚠️ Aberto ${timeAgoText(item.criadaEmMs)}</span>` : "";
+      const timeBadge = `<span class="time-ago">🕒 ${timeAgoText(item.criadaEmMs)}</span>`;
+      const valBadge = item.valor > 0 ? `<span>${moeda(item.valor)}</span>` : "";
       const acknowledgedText = item.alertaAssumido
         ? `Assumido por ${escapeHtml(item.alertaAssumidoPor || "suporte")}`
-        : "Assumir alerta e parar alarme";
+        : "Assumir alerta";
       const kindLabel = item.tipo === "entrega" ? "Entrega de empresa" : item.tipo === "carro" ? "Corrida de carro" : "Corrida de mototáxi";
       const kindBadge = item.tipo === "entrega" ? "ENT" : item.tipo === "carro" ? "CAR" : "COR";
-      return `<article class="operation${item.alertaAssumido ? "" : " unacknowledged"}">
-        <div class="operation-top"><div class="operation-kind"><span>${kindBadge}</span><div><strong>${escapeHtml(item.titulo)}</strong><small>${dateText(item.criadaEm)} · ${kindLabel}</small></div></div><span class="status ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span></div>
-        <div class="route"><i></i><div><strong>${item.tipo === "entrega" ? "Retirada" : "Origem"}</strong><span>${escapeHtml(item.origem || "Não informada")}</span></div><i></i><div><strong>Destino</strong><span>${escapeHtml(item.destino || "Não informado")}</span></div></div>
+      const isAlerting = isItemAlerting(item);
+
+      return `<article class="operation${isAlerting ? " unacknowledged" : ""}${isStale ? " stale-job" : ""}">
+        <div class="operation-top">
+          <div class="operation-kind">
+            <span>${kindBadge}</span>
+            <div>
+              <strong>${escapeHtml(item.titulo)}</strong>
+              <small>${dateText(item.criadaEm)} · ${kindLabel}</small>
+            </div>
+          </div>
+          <span class="status ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span>
+        </div>
+        <div class="route">
+          <i></i><div><strong>${item.tipo === "entrega" ? "Retirada" : "Origem"}</strong><span>${escapeHtml(item.origem || "Não informada")}</span></div>
+          <i></i><div><strong>Destino</strong><span>${escapeHtml(item.destino || "Não informado")}</span></div>
+        </div>
         ${extras}
-        <div class="operation-meta"><span>${escapeHtml(item.responsavel || item.titulo)}</span>${item.tipoEntrega ? `<span>${escapeHtml(item.tipoEntrega)}</span>` : ""}${item.motoboy ? `<span>${item.tipo === "carro" ? "Motorista" : "Motoboy"}: ${escapeHtml(item.motoboy)}</span>` : ""}${item.paradas > 1 ? `<span>${item.paradas} pontos</span>` : ""}</div>
+        <div class="operation-meta">
+          ${staleBadge}
+          ${timeBadge}
+          ${valBadge}
+          <span>${escapeHtml(item.responsavel || item.titulo)}</span>
+          ${item.tipoEntrega ? `<span>${escapeHtml(item.tipoEntrega)}</span>` : ""}
+          ${item.motoboy ? `<span>${item.tipo === "carro" ? "Motorista" : "Motoboy"}: ${escapeHtml(item.motoboy)}</span>` : ""}
+          ${item.paradas > 1 ? `<span>${item.paradas} pontos</span>` : ""}
+        </div>
         ${contacts ? `<div class="contacts">${contacts}</div>` : ""}
-        <button class="acknowledge" data-ack-kind="${item.tipo}" data-ack-id="${item.id}" ${item.alertaAssumido ? "disabled" : ""}>${acknowledgedText}</button>
+        <div class="operation-actions">
+          <button class="acknowledge" data-ack-kind="${item.tipo}" data-ack-id="${item.id}" ${item.alertaAssumido ? "disabled" : ""}>${acknowledgedText}</button>
+          <button class="btn-op-action btn-op-finish" data-op-finish-kind="${item.tipo}" data-op-finish-id="${item.id}" data-op-finish-driver="${item.motoboyCpf || ""}" data-op-finish-val="${item.valor || 0}">Finalizar</button>
+          <button class="btn-op-action btn-op-cancel" data-op-cancel-kind="${item.tipo}" data-op-cancel-id="${item.id}">Cancelar</button>
+        </div>
       </article>`;
     }).join("");
     updateAlarm();
@@ -343,18 +431,110 @@
   });
 
   $("operationsList").addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-ack-id]");
-    if (!button) return;
-    button.disabled = true;
-    button.textContent = "Registrando atendimento...";
+    const ackBtn = event.target.closest("[data-ack-id]");
+    if (ackBtn) {
+      ackBtn.disabled = true;
+      ackBtn.textContent = "Registrando...";
+      try {
+        await api(`/api/support/alerts/${ackBtn.dataset.ackKind}/${ackBtn.dataset.ackId}/acknowledge`, { method: "POST", body: "{}" });
+        await refreshOperations();
+      } catch (error) {
+        toast(error.message, true);
+        ackBtn.disabled = false;
+        ackBtn.textContent = "Assumir alerta";
+      }
+      return;
+    }
+
+    const finishBtn = event.target.closest("[data-op-finish-id]");
+    if (finishBtn) {
+      const kind = finishBtn.dataset.opFinishKind;
+      const id = finishBtn.dataset.opFinishId;
+      const driverCpf = finishBtn.dataset.opFinishDriver || "";
+      const currentVal = Number(finishBtn.dataset.opFinishVal || 0);
+      const motivo = prompt("Motivo para finalizar pelo suporte (ex: pago em dinheiro/Pix direto ao motoboy):", "Pago por fora / corrida concluída");
+      if (!motivo || !motivo.trim()) return;
+      const valorStr = prompt("Valor da corrida para repasse ao motoboy (R$):", String(currentVal || "6.50").replace(".", ","));
+      const valor = Number(String(valorStr || "").replace(/[^0-9,.]/g, "").replace(",", "."));
+      if (isNaN(valor) || valor <= 0) {
+        toast("Valor inválido.", true);
+        return;
+      }
+      if (!confirm(`Finalizar este chamado no valor de ${moeda(valor)} e registrar repasse?`)) return;
+      finishBtn.disabled = true;
+      finishBtn.textContent = "Finalizando...";
+      try {
+        await api(`/api/support/operations/${kind}/${id}/finish`, {
+          method: "POST",
+          body: JSON.stringify({ reason: motivo.trim(), driverCpf, valor }),
+        });
+        toast("Chamado finalizado com sucesso!");
+        await refreshOperations();
+      } catch (error) {
+        toast(error.message, true);
+        finishBtn.disabled = false;
+        finishBtn.textContent = "Finalizar";
+      }
+      return;
+    }
+
+    const cancelBtn = event.target.closest("[data-op-cancel-id]");
+    if (cancelBtn) {
+      const kind = cancelBtn.dataset.opCancelKind;
+      const id = cancelBtn.dataset.opCancelId;
+      const motivo = prompt("Motivo do cancelamento pelo suporte:");
+      if (!motivo || !motivo.trim()) return;
+      if (!confirm("Tem certeza que deseja cancelar este chamado?")) return;
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = "Cancelando...";
+      try {
+        await api(`/api/support/operations/${kind}/${id}/cancel`, {
+          method: "POST",
+          body: JSON.stringify({ reason: motivo.trim() }),
+        });
+        toast("Chamado cancelado com sucesso!");
+        await refreshOperations();
+      } catch (error) {
+        toast(error.message, true);
+        cancelBtn.disabled = false;
+        cancelBtn.textContent = "Cancelar";
+      }
+      return;
+    }
+  });
+
+  $("ackAllButton")?.addEventListener("click", async () => {
+    const btn = $("ackAllButton");
+    btn.disabled = true;
+    btn.textContent = "Assumindo...";
     try {
-      await api(`/api/support/alerts/${button.dataset.ackKind}/${button.dataset.ackId}/acknowledge`, { method: "POST", body: "{}" });
+      const data = await api("/api/support/alerts/acknowledge-all", { method: "POST", body: "{}" });
+      toast(`${data.count || 0} alerta(s) assumido(s) com sucesso!`);
       await refreshOperations();
     } catch (error) {
       toast(error.message, true);
-      button.disabled = false;
-      button.textContent = "Assumir alerta e parar alarme";
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Assumir todos";
     }
+  });
+
+  document.querySelectorAll(".metric-card").forEach((card) => {
+    card.addEventListener("click", () => {
+      document.querySelectorAll(".metric-card").forEach((c) => c.classList.remove("active"));
+      card.classList.add("active");
+      currentFilter = card.dataset.filter || "all";
+      const titles = {
+        all: "Chamados ativos",
+        alerts: "🚨 Novos alertas prioritários",
+        pending: "Aguardando motoboy aceitar",
+        active: "Chamados em andamento",
+        stale: "⚠️ Chamados antigos (> 2h)",
+      };
+      const titleEl = $("operationsTitle");
+      if (titleEl) titleEl.textContent = titles[currentFilter] || "Chamados ativos";
+      renderOperations();
+    });
   });
 
   $("logoutButton").addEventListener("click", async () => {
@@ -368,7 +548,7 @@
   document.addEventListener("visibilitychange", () => { if (!document.hidden && token) refreshOperations(); });
 
   async function initialize() {
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js?v=177", { scope: "./", updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js?v=181", { scope: "./", updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
     if (!token) return showAuth("login");
     try {
       const data = await api("/api/support/me");
