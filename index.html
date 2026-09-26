@@ -3226,13 +3226,28 @@
         const foto = /^https:\/\//i.test(String(dados.motoboyFoto || ""))
           ? `<img src="${escHtml(dados.motoboyFoto)}" alt="Foto do motoboy" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:3px solid #ff9a00">`
           : `<div style="width:64px;height:64px;border-radius:50%;display:grid;place-items:center;border:3px solid #ff9a00;background:#191923;font-weight:900;color:#ff9a00">MJ</div>`;
+        const pag = dados.pagamento || {};
+        const valorTxt = `R$ ${Number(dados.valor || 0).toFixed(2).replace('.', ',')}`;
+        let pagHtml = "";
+        if (pag.status === "approved") {
+          pagHtml = `<div id="pagamento-cliente-box" style="margin:12px 0;padding:12px;border-radius:14px;background:rgba(37,211,102,.15);border:1px solid rgba(37,211,102,.35);color:#bfffd2;font-weight:800;text-align:center">Pagamento aprovado pelo Mercado Pago!</div>`;
+        } else if (pag.initPoint) {
+          pagHtml = `<div id="pagamento-cliente-box" style="margin:12px 0;padding:14px;border-radius:14px;background:linear-gradient(135deg,rgba(0,158,227,.18),rgba(0,158,227,.08));border:1px solid rgba(0,158,227,.4);text-align:center"><div class="small" style="font-weight:800;color:#75d1ff;margin-bottom:8px">Pagar corrida online</div><a href="${escHtml(pag.initPoint)}" target="_blank" rel="noopener" class="btn-main" style="display:inline-block;padding:11px 22px;text-decoration:none;border-radius:999px;background:linear-gradient(135deg,#009ee3,#007eb5);color:#fff;font-weight:900;font-size:1.02rem;box-shadow:0 8px 22px rgba(0,158,227,.35)">Pagar com Pix / Cartão (${valorTxt})</a><div class="small" style="margin-top:8px;color:#aeb4c3">Ou pague direto ao motoboy em dinheiro ou Pix.</div></div>`;
+        }
         if (!$("mapa-acompanhamento") || corridaAcompanhadaId !== pedido.id) {
           if (mapaAcompanhamento) mapaAcompanhamento.remove();
           mapaAcompanhamento = null;
           marcadorMotoboy = null;
           corridaAcompanhadaId = pedido.id;
-          resultadoBox.innerHTML = `<div style="text-align:left"><div style="display:flex;align-items:center;gap:12px">${foto}<div><strong style="font-size:1.12rem">${escHtml(dados.motoboy || "MotoJa")}</strong><br><span class="small" style="text-align:left">Seu motoboy aceitou a corrida</span></div></div><div id="gps-cliente-status" style="margin:14px 0;padding:12px;border-radius:12px;background:rgba(255,154,0,.12);border:1px solid rgba(255,154,0,.35);font-weight:800">Aguardando o motoboy iniciar o GPS...</div><div id="mapa-acompanhamento" style="display:none;width:100%;height:300px;border-radius:14px;overflow:hidden;background:#171720;border:1px solid rgba(255,154,0,.3)"></div><div id="gps-cliente-hora" class="small" style="margin-top:8px">Confira também seu WhatsApp para pagamento e contato.</div></div>`;
+          resultadoBox.innerHTML = `<div style="text-align:left"><div style="display:flex;align-items:center;gap:12px">${foto}<div><strong style="font-size:1.12rem">${escHtml(dados.motoboy || "MotoJa")}</strong><br><span class="small" style="text-align:left">Seu motoboy aceitou a corrida</span></div></div>${pagHtml}<div id="gps-cliente-status" style="margin:14px 0;padding:12px;border-radius:12px;background:rgba(255,154,0,.12);border:1px solid rgba(255,154,0,.35);font-weight:800">Aguardando o motoboy iniciar o GPS...</div><div id="mapa-acompanhamento" style="display:none;width:100%;height:300px;border-radius:14px;overflow:hidden;background:#171720;border:1px solid rgba(255,154,0,.3)"></div><div id="gps-cliente-hora" class="small" style="margin-top:8px">Confira também seu WhatsApp para pagamento e contato.</div></div>`;
           resultadoBox.className = "result show";
+        } else {
+          const existingPag = $("pagamento-cliente-box");
+          if (existingPag && pagHtml) {
+            existingPag.outerHTML = pagHtml;
+          } else if (!existingPag && pagHtml && $("gps-cliente-status")) {
+            $("gps-cliente-status").insertAdjacentHTML("beforebegin", pagHtml);
+          }
         }
         const location = dados.motoboyLocalizacao;
         const lat = Number(location?.latitude), lon = Number(location?.longitude);

@@ -19,7 +19,7 @@ const DELIVERY_EXPIRE_MS = DELIVERY_EXPIRE_MINUTES * 60 * 1000;
 const ACCEPTED_NOTICE_MS = Number(process.env.ACCEPTED_NOTICE_MINUTES || 3) * 60 * 1000;
 const DUPLICATE_RIDE_MS = Number(process.env.DUPLICATE_RIDE_SECONDS || 45) * 1000;
 const MP_API = 'https://api.mercadopago.com';
-const BACKEND_BASE_URL = String(process.env.BACKEND_BASE_URL || '').replace(/\/$/, '');
+const BACKEND_BASE_URL = String(process.env.BACKEND_BASE_URL || 'https://motoboy-conchal.onrender.com').replace(/\/$/, '');
 const OWNER_WHATSAPP = onlyDigits(process.env.OWNER_WHATSAPP || process.env.SUPPORT_PHONE || '5519992306488');
 const OWNER_PIX_KEY = String(process.env.OWNER_PIX_KEY || '94bff0ce-3c37-4e5e-a911-4512651e3d55').trim();
 const GEOAPIFY_API_KEY = process.env.GEOAPIFY_API_KEY || '1361a528dcbe484e8143a19929527781';
@@ -3495,7 +3495,7 @@ app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
     if (adminStateCache && adminStateCache.expiresAt > Date.now()) {
       return res.json(adminStateCache.payload);
     }
-    const [corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresasRaw, eventosFunil] = await Promise.all([
+    const [corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresasRaw, eventosFunil, contasSuporteSnap] = await Promise.all([
       collectionState('corridas'),
       collectionState('corridasCarro', 500, 'criadaEm'),
       collectionState('entregas', 500, 'criadaEm'),
@@ -3504,10 +3504,14 @@ app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
       collectionState('depositos'),
       collectionState('recuperacoesSenhaEmpresa'),
       collectionState('empresas'),
-      collectionState('eventosFunil', 2000)
+      collectionState('eventosFunil', 2000),
+      db.collection('contasSuporte').limit(100).get().catch(() => ({ docs: [] }))
     ]);
     const empresas = empresasRaw.map((empresa) => publicCompany(empresa, empresa.id));
-    const payload = { ok: true, corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil };
+    const contasSuporte = (contasSuporteSnap.docs || [])
+      .map((doc) => publicSupportAccount(doc.data() || {}, doc.id, true))
+      .sort((a, b) => timestampMs(b.cadastradaEm) - timestampMs(a.cadastradaEm));
+    const payload = { ok: true, corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil, contasSuporte };
     adminStateCache = { payload, expiresAt: Date.now() + ADMIN_STATE_CACHE_MS };
     return res.json(payload);
   } catch (error) {
@@ -5358,6 +5362,200 @@ app.post('/api/admin/car/rides/:rideId/force-finish', assertOwner, async (req, r
     adminStateCache = null;
     emitSupportOperationsRefresh();
     return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/admin/rides/:rideId/force-finish', assertOwner, async (req, res, next) => {
+  try {
+    const reason = cleanText(req.body.reason || 'Finalizada manualmente pelo dono', 250);
+    const manualDriverCpf = onlyDigits(req.body.driverCpf);
+    const requestedValue = money(req.body.valor);
+    if (!reason) return res.status(400).json({ error: 'motivo_obrigatorio', message: 'Informe o motivo para finalizar pelo painel.' });
+
+    const rideRef = db.collection('corridas').doc(String(req.params.rideId || ''));
+    let finishedDriverCpf = '';
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(rideRef);
+      if (!snap.exists) {
+        const error = new Error('Corrida nao encontrada.');
+        error.status = 404;
+        throw error;
+      }
+      const ride = snap.data() || {};
+      if (ride.status === 'finalizada') {
+        const error = new Error('Corrida ja foi finalizada.');
+        error.status = 409;
+        throw error;
+      }
+
+      let driverCpf = onlyDigits(ride.motoboyCpf);
+      let driverData = null;
+      if (driverCpf.length === 11) {
+        driverData = {
+          nome: ride.motoboy || '',
+          cpf: driverCpf,
+          cnh: ride.motoboyCnh || '',
+          telefone: onlyDigits(ride.motoboyTelefone),
+          fotoMotoboy: ride.motoboyFoto || ''
+        };
+      } else {
+        if (manualDriverCpf.length !== 11) {
+          const error = new Error('Informe o CPF do motoboy cadastrado que fez esta corrida.');
+          error.status = 400;
+          throw error;
+        }
+        const driverSnap = await tx.get(db.collection('motoboys').doc(manualDriverCpf));
+        if (!driverSnap.exists) {
+          const error = new Error('Motoboy nao cadastrado. Cadastre o motoboy antes de finalizar esta corrida.');
+          error.status = 404;
+          throw error;
+        }
+        const foundDriver = driverSnap.data() || {};
+        driverCpf = manualDriverCpf;
+        driverData = {
+          nome: cleanText(foundDriver.nome || ''),
+          cpf: driverCpf,
+          cnh: onlyDigits(foundDriver.cnh),
+          telefone: onlyDigits(foundDriver.telefone),
+          fotoMotoboy: foundDriver.fotoMotoboy || ''
+        };
+      }
+
+      finishedDriverCpf = driverCpf;
+      const valorOriginal = money(ride.pagamento?.total || ride.valor || 0);
+      const valor = requestedValue > 0 ? requestedValue : valorOriginal;
+      if (valor <= 0) {
+        const error = new Error('Valor da corrida invalido.');
+        error.status = 400;
+        throw error;
+      }
+
+      const split = rideSplitAmounts(valor, ride.km);
+      const performedAtMs = timestampMs(ride.aceitaEm) || timestampMs(ride.criadaEm) || Date.now();
+      const performedAt = admin.firestore.Timestamp.fromMillis(performedAtMs);
+
+      const earningEvent = driverEarningEvent(
+        'corrida',
+        rideRef.id,
+        { ...ride, valor, ganhoMotoboy: split.driverAmount },
+        performedAtMs
+      );
+      await recordDriverEarning(tx, driverCpf, earningEvent);
+
+      const driverRef = db.collection('motoboys').doc(driverCpf);
+      const driverSnap = await tx.get(driverRef);
+
+      tx.set(rideRef, {
+        status: 'finalizada',
+        motoboy: driverData.nome,
+        motoboyCpf: driverData.cpf,
+        motoboyCnh: driverData.cnh,
+        motoboyTelefone: driverData.telefone,
+        motoboyFoto: driverData.fotoMotoboy,
+        finalizadaEm: performedAt,
+        realizadaEm: performedAt,
+        finalizadaPeloDonoEm: admin.firestore.FieldValue.serverTimestamp(),
+        motivoFinalizacaoManual: reason,
+        rastreamentoAtivo: false,
+        motoboyLocalizacao: admin.firestore.FieldValue.delete(),
+        localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
+        ganhoContabilizadoEm: admin.firestore.FieldValue.serverTimestamp(),
+        ganhoMotoboy: split.driverAmount,
+        ganhoApp: split.appFee,
+        percentualMotoboy: split.driverPercent,
+        percentualApp: split.appPercent,
+        valorMotoboy: split.driverAmount,
+        valorApp: split.appFee,
+        valor,
+        pagamento: {
+          ...(ride.pagamento || {}),
+          status: 'approved',
+          metodo: ride.pagamento?.metodo || 'ajuste_manual_dono',
+          aprovadoPeloDonoEm: admin.firestore.FieldValue.serverTimestamp(),
+          motivoAprovacaoManual: reason
+        },
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      if (driverSnap.exists) {
+        tx.set(driverRef, {
+          corridaAtivaId: admin.firestore.FieldValue.delete(),
+          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      }
+    });
+
+    clearDriverProofCache(finishedDriverCpf);
+    adminStateCache = null;
+    emitSupportOperationsRefresh();
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/admin/rides/:rideId/payment/sync', assertOwner, async (req, res, next) => {
+  try {
+    const rideRef = db.collection('corridas').doc(String(req.params.rideId || ''));
+    const snap = await rideRef.get();
+    if (!snap.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
+    const ride = snap.data() || {};
+    const preferenceId = ride.pagamento?.preferenceId;
+    if (!preferenceId) return res.status(400).json({ error: 'sem_preferencia_mercadopago', message: 'Corrida nao possui pagamento Mercado Pago criado.' });
+
+    let payments = [];
+    try {
+      const searchRes = await mpFetch(`/v1/payments/search?external_reference=${encodeURIComponent(rideRef.id)}`, {
+        token: requiredEnv('MP_OWNER_ACCESS_TOKEN')
+      });
+      payments = Array.isArray(searchRes?.results) ? searchRes.results : [];
+    } catch (err) {
+      console.warn('payment search failed with owner token', err.message);
+    }
+
+    if (!payments.length && ride.motoboyCpf) {
+      const driverSnap = await db.collection('motoboys').doc(onlyDigits(ride.motoboyCpf)).get();
+      const sellerToken = driverSnap.data()?.mercadoPago?.accessToken;
+      if (sellerToken) {
+        try {
+          const searchRes = await mpFetch(`/v1/payments/search?external_reference=${encodeURIComponent(rideRef.id)}`, {
+            token: sellerToken
+          });
+          payments = Array.isArray(searchRes?.results) ? searchRes.results : [];
+        } catch (err) {}
+      }
+    }
+
+    const approvedPayment = payments.find((p) => p.status === 'approved');
+    if (approvedPayment) {
+      const totalPago = money(approvedPayment.transaction_amount);
+      await rideRef.set({
+        pagamento: {
+          ...(ride.pagamento || {}),
+          status: 'approved',
+          paymentId: String(approvedPayment.id),
+          totalPago,
+          statusDetail: approvedPayment.status_detail || null,
+          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+        },
+        pagamentoConfirmadoEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      adminStateCache = null;
+      emitSupportOperationsRefresh();
+      return res.json({ ok: true, approved: true, payment: approvedPayment });
+    }
+
+    const latest = payments[0];
+    return res.json({
+      ok: true,
+      approved: false,
+      status: latest ? latest.status : ride.pagamento?.status || 'preference_created',
+      message: latest ? `Status no Mercado Pago: ${latest.status}` : 'Nenhum pagamento registrado ainda no Mercado Pago.'
+    });
   } catch (error) {
     return next(error);
   }
@@ -7282,7 +7480,12 @@ app.get('/api/rides/:rideId/status', async (req, res, next) => {
       rastreamentoAtivo: ride.rastreamentoAtivo === true,
       motoboyLocalizacao: ride.rastreamentoAtivo === true && ride.status === 'aceita'
         ? serializeFirestore(ride.motoboyLocalizacao || null)
-        : null
+        : null,
+      pagamento: ride.pagamento ? {
+        status: ride.pagamento.status || '',
+        initPoint: ride.pagamento.initPoint || '',
+        metodo: ride.pagamento.metodo || ''
+      } : null
     });
   } catch (error) {
     next(error);
@@ -9430,8 +9633,9 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
     }
     const rideId = normalizedRideRef(authoritativeReference);
     if (!rideId || rideId.startsWith('deposit:')) return res.status(200).json({ ignored: true });
-    if (!externalReference || !metadataRideRef
-      || normalizedRideRef(metadataRideRef) !== rideId
+    if (!authoritativeReference
+      || (metadataRideRef && normalizedRideRef(metadataRideRef) !== rideId)
+      || (externalReference && normalizedRideRef(externalReference) !== rideId)
       || String(payment.currency_id || '').toUpperCase() !== 'BRL') {
       return res.status(409).json({ error: 'corrida_mercadopago_nao_autentica' });
     }
@@ -9456,9 +9660,9 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
       }
       const rideDriverCpf = onlyDigits(ride.motoboyCpf);
       const metadataDriverCpf = onlyDigits(payment.metadata?.driver_cpf);
-      if ((metadataDriverCpf && metadataDriverCpf !== rideDriverCpf)
-        || (webhookDriverCpf && webhookDriverCpf !== rideDriverCpf)
-        || (paymentSource === 'driver' && webhookDriverCpf !== rideDriverCpf)) {
+      if ((metadataDriverCpf && rideDriverCpf && metadataDriverCpf !== rideDriverCpf)
+        || (webhookDriverCpf && rideDriverCpf && webhookDriverCpf !== rideDriverCpf)
+        || (paymentSource === 'driver' && webhookDriverCpf && webhookDriverCpf !== rideDriverCpf)) {
         const error = new Error('Pagamento nao pertence ao motoboy desta corrida.');
         error.status = 409;
         error.code = 'pagamento_motoboy_divergente';

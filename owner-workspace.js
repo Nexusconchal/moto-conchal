@@ -73,6 +73,10 @@
   let supportAccountsLoading = false;
   let carAdminState = { corridasCarro: [], carroMotoristas: [] };
 
+  function getOwnerPassword() {
+    return window.senhaDono || document.getElementById("senha")?.value?.trim() || "";
+  }
+
   function escapeHtml(value) {
     return String(value || "").replace(/[&<>'"]/g, (character) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
@@ -98,11 +102,15 @@
     section.innerHTML = `
       <div class="owner-support-heading">
         <div><h2>Contas da equipe de suporte</h2><p class="muted">O site operacional é separado. Aqui você apenas aprova, bloqueia e encerra sessões.</p></div>
-        <a href="./suporte/" target="_blank" rel="noopener">Abrir site do suporte</a>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button id="btnRecarregarSuporte" type="button" class="secondary" style="min-height:36px;padding:0 14px;font-size:.82rem">Recarregar contas</button>
+          <a href="./suporte/" target="_blank" rel="noopener">Abrir site do suporte</a>
+        </div>
       </div>
       <div class="owner-support-security"><strong>Acesso protegido</strong><span>CPF, nascimento e foto ficam disponíveis somente nesta área do dono. O suporte não recebe dados financeiros.</span></div>
       <div id="ownerSupportAccounts" class="owner-support-list"><div class="owner-support-empty">Abra esta página para carregar as contas.</div></div>`;
     panel.appendChild(section);
+    section.querySelector("#btnRecarregarSuporte")?.addEventListener("click", () => loadSupportAccounts());
     section.addEventListener("click", async (event) => {
       const button = event.target.closest("[data-support-action]");
       if (!button) return;
@@ -118,7 +126,7 @@
       try {
         const response = await fetch(`${CONFIG.backend}/api/admin/support/accounts/${accountId}/${action}`, {
           method: "POST",
-          headers: { "content-type": "application/json", "x-owner-password": senhaDono },
+          headers: { "content-type": "application/json", "x-owner-password": getOwnerPassword() },
           body: action === "block" ? JSON.stringify({ reason: reason.trim() }) : "{}",
         });
         const data = await response.json().catch(() => ({}));
@@ -212,7 +220,7 @@
     }
     button.disabled = true;
     try {
-      const response = await fetch(`${CONFIG.backend}${path}`, { method: "POST", headers: { "content-type": "application/json", "x-owner-password": senhaDono }, body: JSON.stringify(body) });
+      const response = await fetch(`${CONFIG.backend}${path}`, { method: "POST", headers: { "content-type": "application/json", "x-owner-password": getOwnerPassword() }, body: JSON.stringify(body) });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || data.error || "Não foi possível atualizar.");
       await carregarPainel();
@@ -246,13 +254,14 @@
   }
 
   async function loadSupportAccounts() {
-    if (supportAccountsLoading || !senhaDono) return;
+    const pwd = getOwnerPassword();
+    if (supportAccountsLoading || !pwd) return;
     supportAccountsLoading = true;
     const root = document.getElementById("ownerSupportAccounts");
     if (root) root.innerHTML = '<div class="owner-support-empty">Carregando contas protegidas...</div>';
     try {
       const response = await fetch(`${CONFIG.backend}/api/admin/support/accounts`, {
-        headers: { "x-owner-password": senhaDono }, cache: "no-store",
+        headers: { "x-owner-password": pwd }, cache: "no-store",
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || data.error || "Erro ao carregar equipe.");
@@ -401,5 +410,10 @@
   window.addEventListener("motoja:admin-state", (event) => {
     carAdminState = event.detail || carAdminState;
     renderCarSection();
+    if (Array.isArray(event.detail?.contasSuporte) && event.detail.contasSuporte.length) {
+      renderSupportAccounts(event.detail.contasSuporte);
+    } else if (getOwnerPassword()) {
+      loadSupportAccounts();
+    }
   });
 })();
