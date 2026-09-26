@@ -1435,6 +1435,11 @@ function supportOperation(kind, id, job = {}) {
   const criadaEmMs = timestampMs(job.criadaEm) || timestampMs(job.aceitaEm) || Date.now();
   const aceitaEmMs = timestampMs(job.aceitaEm) || 0;
   const isStale = (Date.now() - criadaEmMs) > (2 * 60 * 60 * 1000);
+  const loc = isCar ? job.motoristaLocalizacao : job.motoboyLocalizacao;
+  const latitude = typeof loc?.latitude === 'number' ? loc.latitude : null;
+  const longitude = typeof loc?.longitude === 'number' ? loc.longitude : null;
+  const localizacaoAtualizadaEmMs = timestampMs(job.localizacaoAtualizadaEm) || 0;
+
   return {
     id,
     tipo: isDelivery ? 'entrega' : isCar ? 'carro' : 'corrida',
@@ -1453,6 +1458,10 @@ function supportOperation(kind, id, job = {}) {
     motoboyCpf: onlyDigits(isCar ? job.motoristaCpf : job.motoboyCpf),
     telefoneMotoboy: onlyDigits(isCar ? job.motoristaTelefone : job.motoboyTelefone).slice(0, 11),
     valor: money(job.pagamento?.total || job.valor || job.saldoReservado || 0),
+    latitude,
+    longitude,
+    mapsUrl: (latitude && longitude) ? `https://www.google.com/maps?q=${latitude},${longitude}` : null,
+    localizacaoAtualizadaEmMs,
     criadaEm: serializeFirestore(job.criadaEm),
     criadaEmMs,
     aceitaEm: serializeFirestore(job.aceitaEm),
@@ -3008,6 +3017,21 @@ async function cleanupRides() {
   accepted.forEach((doc) => {
     const data = doc.data();
     const acceptedAt = timestampMs(data.aceitaEm);
+    const createdAt = timestampMs(data.criadaEm);
+    if ((createdAt && now - createdAt > 24 * 60 * 60 * 1000) || (acceptedAt && now - acceptedAt > 24 * 60 * 60 * 1000)) {
+      batch.update(doc.ref, {
+        status: 'finalizada_por_inatividade',
+        rastreamentoAtivo: false,
+        motoboyLocalizacao: admin.firestore.FieldValue.delete(),
+        localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
+        motivoFinalizacaoManual: 'Encerrada automaticamente por inatividade (> 24h)',
+        finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+      updated += 1;
+      batchUpdated += 1;
+      return;
+    }
     if (acceptedAt && !data.clienteAvisadoEm && now - acceptedAt > ACCEPTED_NOTICE_MS) {
       batch.update(doc.ref, {
         status: 'pendente',
@@ -3742,6 +3766,144 @@ app.post('/api/support/operations/:kind/:jobId/cancel', assertSupport, async (re
     await writeSupportAudit(req.supportAccountId, 'chamado_cancelado_pelo_suporte', { kind, jobId, reason })
       .catch((error) => console.error('support audit failed', error));
     return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/support/operations/:kind/:jobId/reassign-to-queue', assertSupport, async (req, res, next) => {
+  try {
+    const kind = ['entrega', 'corrida', 'carro'].includes(req.params.kind) ? req.params.kind : '';
+    const jobId = cleanText(req.params.jobId, 120);
+    const reason = cleanText(req.body.reason || 'Devolvida para a fila pelo suporte MotoJa', 250);
+    if (!kind || !jobId) return res.status(400).json({ error: 'chamado_invalido' });
+
+    if (kind === 'corrida') {
+      const ref = db.collection('corridas').doc(jobId);
+      let previousDriverCpf = '';
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists) throw new Error('Corrida nao encontrada.');
+        const ride = snap.data() || {};
+        if (['finalizada', 'cancelada'].includes(ride.status)) {
+          throw new Error('Corrida ja foi finalizada ou cancelada.');
+        }
+        previousDriverCpf = onlyDigits(ride.motoboyCpf);
+        tx.update(ref, {
+          status: 'pendente',
+          motoboy: admin.firestore.FieldValue.delete(),
+          motoboyCpf: admin.firestore.FieldValue.delete(),
+          motoboyCnh: admin.firestore.FieldValue.delete(),
+          motoboyTelefone: admin.firestore.FieldValue.delete(),
+          motoboyFoto: admin.firestore.FieldValue.delete(),
+          aceitaEm: admin.firestore.FieldValue.delete(),
+          rastreamentoAtivo: false,
+          motoboyLocalizacao: admin.firestore.FieldValue.delete(),
+          localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
+          reabertaEm: admin.firestore.FieldValue.serverTimestamp(),
+          motivoReabertura: `Suporte (${cleanText(req.supportAccount.nome, 80)}): ${reason}`,
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        });
+        if (previousDriverCpf.length === 11) {
+          tx.set(db.collection('motoboys').doc(previousDriverCpf), {
+            corridaAtivaId: admin.firestore.FieldValue.delete(),
+            atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+        }
+      });
+      clearDriverProofCache(previousDriverCpf);
+      adminStateCache = null;
+      emitSupportOperationsRefresh();
+      await writeSupportAudit(req.supportAccountId, 'corrida_devolvida_para_fila', { jobId, previousDriverCpf, reason })
+        .catch((error) => console.error('support audit failed', error));
+      return res.json({ ok: true });
+    }
+
+    if (kind === 'entrega') {
+      const ref = db.collection('entregas').doc(jobId);
+      let previousDriverCpf = '';
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists) throw new Error('Entrega nao encontrada.');
+        const delivery = snap.data() || {};
+        if (['finalizada', 'cancelada'].includes(delivery.status)) {
+          throw new Error('Entrega ja foi finalizada ou cancelada.');
+        }
+        previousDriverCpf = onlyDigits(delivery.motoboyCpf);
+        tx.update(ref, {
+          status: 'pendente',
+          motoboy: admin.firestore.FieldValue.delete(),
+          motoboyCpf: admin.firestore.FieldValue.delete(),
+          motoboyCnh: admin.firestore.FieldValue.delete(),
+          motoboyTelefone: admin.firestore.FieldValue.delete(),
+          motoboyFoto: admin.firestore.FieldValue.delete(),
+          aceitaEm: admin.firestore.FieldValue.delete(),
+          retiradaConfirmadaEm: admin.firestore.FieldValue.delete(),
+          rastreamentoAtivo: false,
+          motoboyLocalizacao: admin.firestore.FieldValue.delete(),
+          localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
+          reabertaEm: admin.firestore.FieldValue.serverTimestamp(),
+          motivoReabertura: `Suporte (${cleanText(req.supportAccount.nome, 80)}): ${reason}`,
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        });
+        if (previousDriverCpf.length === 11) {
+          tx.set(db.collection('motoboys').doc(previousDriverCpf), {
+            corridaAtivaId: admin.firestore.FieldValue.delete(),
+            atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+        }
+      });
+      clearDriverProofCache(previousDriverCpf);
+      adminStateCache = null;
+      emitSupportOperationsRefresh();
+      await writeSupportAudit(req.supportAccountId, 'entrega_devolvida_para_fila', { jobId, previousDriverCpf, reason })
+        .catch((error) => console.error('support audit failed', error));
+      return res.json({ ok: true });
+    }
+
+    if (kind === 'carro') {
+      const ref = db.collection('corridasCarro').doc(jobId);
+      let previousDriverCpf = '';
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists) throw new Error('Corrida de carro nao encontrada.');
+        const ride = snap.data() || {};
+        if (['finalizada', 'cancelada'].includes(ride.status)) {
+          throw new Error('Corrida ja foi finalizada ou cancelada.');
+        }
+        previousDriverCpf = onlyDigits(ride.motoristaCpf);
+        tx.update(ref, {
+          status: 'pendente',
+          motorista: admin.firestore.FieldValue.delete(),
+          motoristaCpf: admin.firestore.FieldValue.delete(),
+          motoristaTelefone: admin.firestore.FieldValue.delete(),
+          motoristaFoto: admin.firestore.FieldValue.delete(),
+          aceitaEm: admin.firestore.FieldValue.delete(),
+          motoristaChegouEm: admin.firestore.FieldValue.delete(),
+          iniciadaEm: admin.firestore.FieldValue.delete(),
+          motoristaLocalizacao: admin.firestore.FieldValue.delete(),
+          localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
+          reabertaEm: admin.firestore.FieldValue.serverTimestamp(),
+          motivoReabertura: `Suporte (${cleanText(req.supportAccount.nome, 80)}): ${reason}`,
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        });
+        if (previousDriverCpf.length === 11) {
+          tx.set(db.collection('carroMotoristas').doc(previousDriverCpf), {
+            corridaAtivaId: admin.firestore.FieldValue.delete(),
+            corridaAtivaDesde: admin.firestore.FieldValue.delete(),
+            atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+        }
+      });
+      clearCarDriverCache(previousDriverCpf);
+      adminStateCache = null;
+      emitSupportOperationsRefresh();
+      await writeSupportAudit(req.supportAccountId, 'carro_devolvido_para_fila', { jobId, previousDriverCpf, reason })
+        .catch((error) => console.error('support audit failed', error));
+      return res.json({ ok: true });
+    }
+
+    return res.status(400).json({ error: 'tipo_invalido' });
   } catch (error) {
     return next(error);
   }

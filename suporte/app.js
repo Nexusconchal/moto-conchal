@@ -236,10 +236,11 @@
     return seconds ? new Date(seconds * 1000).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "Agora";
   }
 
-  function whatsapp(phone, label) {
+  function whatsapp(phone, label, text = "") {
     const number = digits(phone);
     if (number.length < 10) return "";
-    return `<a href="https://wa.me/55${number}" target="_blank" rel="noopener">WhatsApp ${escapeHtml(label)}</a>`;
+    const query = text ? `?text=${encodeURIComponent(text)}` : "";
+    return `<a href="https://wa.me/55${number}${query}" target="_blank" rel="noopener">WhatsApp ${escapeHtml(label)}</a>`;
   }
 
   function renderOperations() {
@@ -275,18 +276,45 @@
     }
 
     root.innerHTML = filtered.map((item) => {
+      const msgPassenger = `Olá ${item.responsavel || item.titulo}, aqui é da Central Nexus MotoJá! Vi que seu chamado de ${item.tipo === "carro" ? "carro" : "mototáxi"} com ${item.motoboy || "nosso motorista"} está em andamento. Está tudo certo com a sua viagem?`;
+      const msgDriver = `Olá ${item.motoboy || "motorista"}, aqui é da Central Nexus MotoJá! Notamos que o chamado de ${item.responsavel || item.titulo} está em andamento. Você já concluiu a viagem ou precisa de algum suporte?`;
+      const msgReceiver = `Olá ${item.recebedor || "cliente"}, aqui é da Central Nexus MotoJá! O entregador está com seu pedido de ${item.titulo} a caminho para: ${item.destino}.`;
+
       const contacts = [
-        whatsapp(item.telefonePrincipal, item.tipo === "entrega" ? "empresa" : "passageiro"),
-        whatsapp(item.telefoneRecebedor, "recebedor"),
-        whatsapp(item.telefoneMotoboy, "motoboy"),
+        whatsapp(item.telefonePrincipal, item.tipo === "entrega" ? "empresa" : "passageiro", msgPassenger),
+        whatsapp(item.telefoneRecebedor, "recebedor", msgReceiver),
+        whatsapp(item.telefoneMotoboy, item.tipo === "carro" ? "motorista" : "motoboy", msgDriver),
       ].filter(Boolean).join("");
+
       const extras = item.pontosExtras?.length
         ? `<div class="extra-stops">${item.pontosExtras.map((point) => `<span>Ponto ${Number(point.ordem || 0)}: ${escapeHtml(point.endereco)}${point.recebedor ? ` · ${escapeHtml(point.recebedor)}` : ""}</span>`).join("")}</div>`
         : "";
+
       const isStale = item.isStale || (Date.now() - (item.criadaEmMs || 0)) > 2 * 60 * 60 * 1000;
       const staleBadge = isStale ? `<span class="badge-stale">⚠️ Aberto ${timeAgoText(item.criadaEmMs)}</span>` : "";
       const timeBadge = `<span class="time-ago">🕒 ${timeAgoText(item.criadaEmMs)}</span>`;
       const valBadge = item.valor > 0 ? `<span>${moeda(item.valor)}</span>` : "";
+
+      let gpsBadge = "";
+      if (item.latitude && item.longitude) {
+        if (item.localizacaoAtualizadaEmMs) {
+          const gpsAgeMin = Math.floor((Date.now() - item.localizacaoAtualizadaEmMs) / 60000);
+          if (gpsAgeMin < 8) {
+            gpsBadge = `<span class="badge-gps-live">🟢 GPS ativo (${timeAgoText(item.localizacaoAtualizadaEmMs)})</span>`;
+          } else {
+            gpsBadge = `<span class="badge-gps-stale">🔴 GPS sem sinal há ${timeAgoText(item.localizacaoAtualizadaEmMs)}</span>`;
+          }
+        } else {
+          gpsBadge = `<span class="badge-gps-live">🟢 GPS registrado</span>`;
+        }
+      } else if (item.status === "aceita" || item.status === "retirada" || item.status === "em_andamento") {
+        gpsBadge = `<span class="badge-gps-none">⚪ Sem sinal GPS</span>`;
+      }
+
+      const mapLink = (item.latitude && item.longitude && item.mapsUrl)
+        ? `<a href="${escapeHtml(item.mapsUrl)}" target="_blank" rel="noopener" class="btn-map-link">🗺️ Ver no Maps</a>`
+        : "";
+
       const acknowledgedText = item.alertaAssumido
         ? `Assumido por ${escapeHtml(item.alertaAssumidoPor || "suporte")}`
         : "Assumir alerta";
@@ -314,15 +342,17 @@
           ${staleBadge}
           ${timeBadge}
           ${valBadge}
+          ${gpsBadge}
           <span>${escapeHtml(item.responsavel || item.titulo)}</span>
           ${item.tipoEntrega ? `<span>${escapeHtml(item.tipoEntrega)}</span>` : ""}
           ${item.motoboy ? `<span>${item.tipo === "carro" ? "Motorista" : "Motoboy"}: ${escapeHtml(item.motoboy)}</span>` : ""}
           ${item.paradas > 1 ? `<span>${item.paradas} pontos</span>` : ""}
         </div>
-        ${contacts ? `<div class="contacts">${contacts}</div>` : ""}
+        ${(contacts || mapLink) ? `<div class="contacts">${contacts}${mapLink}</div>` : ""}
         <div class="operation-actions">
           <button class="acknowledge" data-ack-kind="${item.tipo}" data-ack-id="${item.id}" ${item.alertaAssumido ? "disabled" : ""}>${acknowledgedText}</button>
           <button class="btn-op-action btn-op-finish" data-op-finish-kind="${item.tipo}" data-op-finish-id="${item.id}" data-op-finish-driver="${item.motoboyCpf || ""}" data-op-finish-val="${item.valor || 0}">Finalizar</button>
+          ${item.status !== "pendente" ? `<button class="btn-op-action btn-op-reassign" data-op-reassign-kind="${item.tipo}" data-op-reassign-id="${item.id}">Trocar Motoboy</button>` : ""}
           <button class="btn-op-action btn-op-cancel" data-op-cancel-kind="${item.tipo}" data-op-cancel-id="${item.id}">Cancelar</button>
         </div>
       </article>`;
@@ -474,6 +504,30 @@
         toast(error.message, true);
         finishBtn.disabled = false;
         finishBtn.textContent = "Finalizar";
+      }
+      return;
+    }
+
+    const reassignBtn = event.target.closest("[data-op-reassign-id]");
+    if (reassignBtn) {
+      const kind = reassignBtn.dataset.opReassignKind;
+      const id = reassignBtn.dataset.opReassignId;
+      const motivo = prompt("Motivo para devolver este chamado para a fila (ex: motoboy furou pneu / demorou):", "Troca de motoboy solicitada pelo suporte");
+      if (!motivo || !motivo.trim()) return;
+      if (!confirm("Isso vai desvincular o motoboy atual e devolver a corrida para outros motoboys aceitarem no app. Confirma?")) return;
+      reassignBtn.disabled = true;
+      reassignBtn.textContent = "Devolvendo...";
+      try {
+        await api(`/api/support/operations/${kind}/${id}/reassign-to-queue`, {
+          method: "POST",
+          body: JSON.stringify({ reason: motivo.trim() }),
+        });
+        toast("Chamado devolvido para a fila de motoboys com sucesso!");
+        await refreshOperations();
+      } catch (error) {
+        toast(error.message, true);
+        reassignBtn.disabled = false;
+        reassignBtn.textContent = "Trocar Motoboy";
       }
       return;
     }
