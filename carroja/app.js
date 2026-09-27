@@ -22,11 +22,14 @@
   let ridePollTimer = null;
   let toastTimer = null;
   let installPrompt = null;
+  let registrationRequired = false;
+  let freeRidesRemaining = 3;
   let map;
   let routeLayer;
   let originMarker;
   let destinationMarker;
   let driverMarker;
+  let renderedActiveRouteId = "";
 
   const deviceId = (() => {
     let value = localStorage.getItem(DEVICE_KEY);
@@ -55,6 +58,7 @@
       const error = new Error(data.message || data.error || "Não foi possível concluir agora.");
       error.status = response.status;
       error.code = data.error || "request_failed";
+      error.rideId = data.rideId || "";
       throw error;
     }
     return data;
@@ -264,9 +268,27 @@
     return false;
   }
 
+  async function loadDeviceStatus() {
+    try {
+      const data = await api("/api/car/customers/device-status", {
+        method: "POST",
+        body: JSON.stringify({ deviceId }),
+      });
+      registrationRequired = data.registrationRequired === true;
+      freeRidesRemaining = Math.max(0, Number(data.freeRideLimit || 3) - Number(data.completedRides || 0));
+      return data;
+    } catch {
+      registrationRequired = false;
+      return null;
+    }
+  }
+
   async function confirmRide() {
     if (!quote) return toast("Calcule a rota antes de confirmar.", true);
-    if (!authHeadersReady()) return;
+    if (!customer && registrationRequired) {
+      openAuth("register");
+      return toast("Você completou 3 corridas. Crie sua conta para continuar.", true);
+    }
     const button = $("confirmButton");
     setBusy(button, true, "Chamando motoristas...");
     try {
@@ -287,18 +309,31 @@
           cidadeOperacao: quote.origin.city || quote.destination.city || "Região atendida",
           observacao: $("rideNote").value,
           pagamentoModo: $("paymentMode").value,
+          routeGeometry: quote.geometry,
+          deviceId,
         }),
       });
       localStorage.setItem(ACTIVE_RIDE_KEY, data.rideId);
       currentRide = {
         id: data.rideId, status: "pendente", origem: quote.origin.text, destino: quote.destination.text,
         valor: quote.total, km: quote.km, tarifaLabel: quote.label,
+        origemLat: quote.origin.lat, origemLon: quote.origin.lon,
+        destinoLat: quote.destination.lat, destinoLon: quote.destination.lon,
+        routeGeometry: quote.geometry,
       };
       renderActiveRide(currentRide);
       startRidePolling();
       toast("Corrida enviada aos motoristas.");
     } catch (error) {
       if (error.status === 401) clearSession();
+      if (error.code === "cadastro_cliente_obrigatorio") {
+        registrationRequired = true;
+        openAuth("register");
+      }
+      if (error.code === "corrida_convidado_em_andamento" && error.rideId) {
+        localStorage.setItem(ACTIVE_RIDE_KEY, error.rideId);
+        startRidePolling();
+      }
       toast(error.message, true);
     } finally {
       setBusy(button, false);
@@ -331,11 +366,22 @@
     $("acceptedDriver").classList.toggle("hidden", !accepted);
     $("driverMapCard").classList.toggle("hidden", !accepted || ride.status === "finalizada");
     if (accepted) {
+      if (renderedActiveRouteId !== ride.id
+        && Number.isFinite(Number(ride.origemLat)) && Number.isFinite(Number(ride.origemLon))
+        && Number.isFinite(Number(ride.destinoLat)) && Number.isFinite(Number(ride.destinoLon))) {
+        drawRoute(
+          { lat: Number(ride.origemLat), lon: Number(ride.origemLon) },
+          { lat: Number(ride.destinoLat), lon: Number(ride.destinoLon) },
+          ride.routeGeometry || [],
+        );
+        renderedActiveRouteId = ride.id;
+      }
       $("acceptedDriverName").textContent = ride.motorista;
       $("acceptedDriverPhoto").src = ride.motoristaFoto || "./carroja-icon.svg";
       $("acceptedCar").textContent = [ride.carro?.modelo, ride.carro?.cor, ride.carro?.placa].filter(Boolean).join(" · ");
       $("driverMapName").textContent = ride.motorista;
-      $("driverMapUpdate").textContent = labels[0];
+      $("driverMapUpdate").textContent = ride.motoristaLocalizacao
+        ? "GPS ativo · localização em tempo real" : "Aguardando o GPS do motorista";
       const phone = digits(ride.motoristaTelefone);
       $("driverWhatsapp").href = phone ? `https://wa.me/55${phone}` : "#";
       updateDriverMarker(ride.motoristaLocalizacao);
@@ -367,6 +413,7 @@
     $("ridePayment").classList.add("hidden");
     if (driverMarker && map) map.removeLayer(driverMarker);
     driverMarker = null;
+    renderedActiveRouteId = "";
     quote = null;
     $("quoteCard").classList.add("hidden");
     $("mapStatus").textContent = "Informe seu destino";
@@ -374,9 +421,9 @@
 
   async function refreshRide() {
     const rideId = localStorage.getItem(ACTIVE_RIDE_KEY);
-    if (!rideId || !token) return;
+    if (!rideId) return;
     try {
-      const data = await api(`/api/car/rides/${encodeURIComponent(rideId)}/status`);
+      const data = await api(`/api/car/rides/${encodeURIComponent(rideId)}/status?deviceId=${encodeURIComponent(deviceId)}`);
       renderActiveRide(data.ride);
     } catch (error) {
       if (error.status === 404) {
@@ -389,7 +436,7 @@
   function startRidePolling() {
     clearInterval(ridePollTimer);
     refreshRide();
-    ridePollTimer = setInterval(refreshRide, 10000);
+    ridePollTimer = setInterval(refreshRide, 5000);
   }
 
   async function cancelRide() {
@@ -398,7 +445,7 @@
     setBusy(button, true, "Cancelando...");
     try {
       await api(`/api/car/rides/${encodeURIComponent(currentRide.id)}/cancel`, {
-        method: "POST", body: JSON.stringify({ reason: "Cancelada pelo passageiro no aplicativo" }),
+        method: "POST", body: JSON.stringify({ reason: "Cancelada pelo passageiro no aplicativo", deviceId }),
       });
       currentRide.status = "cancelada";
       renderActiveRide(currentRide);
@@ -419,6 +466,7 @@
   function openAuth(tab = "login") {
     document.querySelectorAll("[data-auth-tab]").forEach((button) => button.classList.toggle("active", button.dataset.authTab === tab));
     document.querySelectorAll("[data-auth-panel]").forEach((panel) => panel.classList.toggle("hidden", panel.dataset.authPanel !== tab));
+    $("authCloseButton").classList.toggle("hidden", registrationRequired && !customer);
     if (!$("authDialog").open) $("authDialog").showModal();
   }
 
@@ -618,7 +666,10 @@
     $("sendOtpButton").addEventListener("click", sendOtp);
     $("loginForm").addEventListener("submit", login);
     $("registerForm").addEventListener("submit", register);
-    $("authDialog").addEventListener("cancel", (event) => { if (!customer) event.preventDefault(); });
+    $("authCloseButton").addEventListener("click", () => {
+      if (!registrationRequired || customer) $("authDialog").close();
+    });
+    $("authDialog").addEventListener("cancel", (event) => { if (registrationRequired && !customer) event.preventDefault(); });
     window.addEventListener("beforeinstallprompt", (event) => { event.preventDefault(); installPrompt = event; });
     ["installButton", "mobileInstallButton"].forEach((id) => $(id).addEventListener("click", async () => {
       if (!installPrompt) return toast("No celular, use o menu do navegador e escolha Instalar aplicativo.");
@@ -646,8 +697,11 @@
         localStorage.removeItem(TOKEN_KEY);
       }
     }
-    if (!customer) openAuth(new URLSearchParams(location.search).get("cadastro") === "1" ? "register" : "login");
-    if (token && localStorage.getItem(ACTIVE_RIDE_KEY)) startRidePolling();
+    const deviceStatus = await loadDeviceStatus();
+    const requestedRegistration = new URLSearchParams(location.search).get("cadastro") === "1";
+    if (!customer && (registrationRequired || requestedRegistration)) openAuth("register");
+    else if (!customer && deviceStatus) toast(`${freeRidesRemaining} corrida(s) sem cadastro disponível(is).`);
+    if (localStorage.getItem(ACTIVE_RIDE_KEY)) startRidePolling();
     setTimeout(() => $("boot").classList.add("done"), 220);
   }
 

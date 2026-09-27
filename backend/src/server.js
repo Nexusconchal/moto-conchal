@@ -1836,7 +1836,7 @@ async function completedCarCustomerRides(deviceId) {
   return byDevice.size;
 }
 
-async function assertCarCustomerOrGuest(req, res, next) {
+async function resolveCarCustomerOrGuest(req, res, next, enforceFreeRideLimit) {
   try {
     const header = String(req.header('authorization') || '');
     const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
@@ -1853,8 +1853,8 @@ async function assertCarCustomerOrGuest(req, res, next) {
     if (!deviceId) {
       return res.status(401).json({ error: 'sessao_carroja_invalida', message: 'Entre novamente no CarroJa.' });
     }
-    const completedRides = await completedCarCustomerRides(deviceId);
-    if (completedRides >= CAR_FREE_RIDES) {
+    const completedRides = enforceFreeRideLimit ? await completedCarCustomerRides(deviceId) : 0;
+    if (enforceFreeRideLimit && completedRides >= CAR_FREE_RIDES) {
       return res.status(403).json({
         error: 'cadastro_cliente_obrigatorio',
         message: `Voce ja completou ${CAR_FREE_RIDES} corrida(s). Faca seu cadastro para continuar usando o CarroJa.`,
@@ -1873,6 +1873,19 @@ async function assertCarCustomerOrGuest(req, res, next) {
   } catch (error) {
     return next(error);
   }
+}
+
+function assertCarCustomerOrGuest(req, res, next) {
+  return resolveCarCustomerOrGuest(req, res, next, true);
+}
+
+function assertCarCustomerOrGuestAccess(req, res, next) {
+  return resolveCarCustomerOrGuest(req, res, next, false);
+}
+
+function carRideBelongsToRequester(ride = {}, req) {
+  if (req.carCustomerAuthenticated) return String(ride.passageiroId || '') === String(req.carCustomerId || '');
+  return !!req.carGuestDeviceId && validDeviceId(ride.clienteDeviceId) === req.carGuestDeviceId;
 }
 
 function carDriverStatus(driver = {}) {
@@ -2209,6 +2222,10 @@ function ridePublicData(ride) {
 }
 
 function carRidePublicData(ride = {}) {
+  const routeGeometry = Array.isArray(ride.routeGeometry)
+    ? ride.routeGeometry.slice(0, 700).map((point) => [Number(point?.[0]), Number(point?.[1])])
+      .filter(([lat, lon]) => validCoordinate({ lat, lon }))
+    : [];
   return {
     clientRequestId: String(ride.clientRequestId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80),
     origem: cleanText(ride.origem, 300),
@@ -2221,6 +2238,7 @@ function carRidePublicData(ride = {}) {
     destinoLon: Number(ride.destinoLon || 0),
     cidadeOperacao: cleanText(ride.cidadeOperacao, 80),
     observacao: cleanText(ride.observacao, 240),
+    routeGeometry,
     pagamentoModo: ['dinheiro', 'pix', 'mercadopago'].includes(String(ride.pagamentoModo || ''))
       ? String(ride.pagamentoModo)
       : 'pix'
@@ -2233,7 +2251,12 @@ function carRideForCustomer(id, ride = {}) {
     id,
     status: String(ride.status || ''),
     origem: cleanText(ride.origemEncontrada || ride.origem, 300),
+    origemLat: Number(ride.origemLat || 0),
+    origemLon: Number(ride.origemLon || 0),
     destino: cleanText(ride.destinoEncontrado || ride.destino, 300),
+    destinoLat: Number(ride.destinoLat || 0),
+    destinoLon: Number(ride.destinoLon || 0),
+    routeGeometry: Array.isArray(ride.routeGeometry) ? ride.routeGeometry : [],
     km: Number(ride.km || 0),
     valor: money(ride.valor),
     tarifaPeriodo: String(ride.tarifaPeriodo || ''),
@@ -2251,6 +2274,7 @@ function carRideForCustomer(id, ride = {}) {
     motoristaLocalizacao: ['aceita', 'motorista_chegou', 'em_andamento'].includes(ride.status)
       ? serializeFirestore(ride.motoristaLocalizacao || null)
       : null,
+    rastreamentoAtivo: ride.rastreamentoAtivo === true,
     pagamento: ride.pagamento ? {
       status: String(ride.pagamento.status || ''),
       valido: ride.pagamento.valido === true,
@@ -5437,7 +5461,9 @@ app.post('/api/car/customers/register', authLimiter, async (req, res, next) => {
     };
     let registrationError = null;
     await db.runTransaction(async (tx) => {
-      const [freshOtpSnap, cpfSnap] = await Promise.all([tx.get(otpRef), tx.get(cpfRef)]);
+      const [freshOtpSnap, cpfSnap, customerSnap] = await Promise.all([
+        tx.get(otpRef), tx.get(cpfRef), tx.get(customerRef)
+      ]);
       const freshOtp = freshOtpSnap.data() || {};
       if (!freshOtpSnap.exists || !freshOtp.verified || freshOtp.verificationExpiresAtMs < Date.now() || !safeEqual(hashSecret(verificationToken), freshOtp.verificationTokenHash || '')) {
         registrationError = { status: 401, code: 'whatsapp_nao_verificado', message: 'Confirme novamente o codigo enviado pelo WhatsApp.' };
@@ -5504,7 +5530,7 @@ app.post('/api/car/customers/logout', assertCarCustomer, async (req, res, next) 
   }
 });
 
-app.post('/api/car/rides', assertCarCustomer, createRideLimiter, async (req, res, next) => {
+app.post('/api/car/rides', assertCarCustomerOrGuest, createRideLimiter, async (req, res, next) => {
   try {
     const ride = carRidePublicData(req.body);
     const quote = verifyCarQuoteToken(req.body.quoteToken);
@@ -5525,8 +5551,23 @@ app.post('/api/car/rides', assertCarCustomer, createRideLimiter, async (req, res
     if (!coordinatesMatch) {
       return res.status(400).json({ error: 'rota_divergente', message: 'Os pontos mudaram. Calcule a rota novamente.' });
     }
+    if (!req.carCustomerAuthenticated) {
+      const guestRides = await db.collection('corridasCarro')
+        .where('clienteDeviceId', '==', req.carGuestDeviceId)
+        .limit(10)
+        .get();
+      const activeGuestRide = guestRides.docs.find((doc) => ['pendente', 'aceita', 'motorista_chegou', 'em_andamento'].includes(doc.data()?.status));
+      if (activeGuestRide) {
+        return res.status(409).json({
+          error: 'corrida_convidado_em_andamento',
+          message: 'Voce ja possui uma corrida em andamento neste aparelho.',
+          rideId: activeGuestRide.id
+        });
+      }
+    }
     const requestId = ride.clientRequestId || crypto.randomUUID().replace(/-/g, '');
-    const ref = db.collection('corridasCarro').doc(hashSecret(`${req.carCustomerId}:${requestId}`).slice(0, 48));
+    const requesterKey = req.carCustomerAuthenticated ? `customer:${req.carCustomerId}` : `guest:${req.carGuestDeviceId}`;
+    const ref = db.collection('corridasCarro').doc(hashSecret(`${requesterKey}:${requestId}`).slice(0, 48));
     const split = carRideSplit(quote.total);
     let created = false;
     await db.runTransaction(async (tx) => {
@@ -5535,10 +5576,16 @@ app.post('/api/car/rides', assertCarCustomer, createRideLimiter, async (req, res
       tx.set(ref, {
         ...ride,
         clientRequestId: requestId,
-        passageiroId: req.carCustomerId,
-        passageiroNome: cleanText(req.carCustomer.nome, 80),
-        passageiroTelefone: onlyDigits(req.carCustomer.telefoneCliente || req.carCustomerId).slice(0, 11),
-        passageiroFoto: validDriverPhoto(req.carCustomer.fotoCliente) || '',
+        passageiroId: req.carCustomerId || '',
+        clienteDeviceId: req.carCustomerAuthenticated
+          ? validDeviceId(req.carCustomer.clienteDeviceId || req.body.deviceId)
+          : req.carGuestDeviceId,
+        passageiroConvidado: !req.carCustomerAuthenticated,
+        passageiroNome: req.carCustomerAuthenticated ? cleanText(req.carCustomer.nome, 80) : 'Passageiro CarroJa',
+        passageiroTelefone: req.carCustomerAuthenticated
+          ? onlyDigits(req.carCustomer.telefoneCliente || req.carCustomerId).slice(0, 11)
+          : '',
+        passageiroFoto: req.carCustomerAuthenticated ? validDriverPhoto(req.carCustomer.fotoCliente) || '' : '',
         km: Number(quote.km),
         valor: money(quote.total),
         tarifaPeriodo: quote.period,
@@ -5564,12 +5611,12 @@ app.post('/api/car/rides', assertCarCustomer, createRideLimiter, async (req, res
   }
 });
 
-app.get('/api/car/rides/:rideId/status', assertCarCustomer, async (req, res, next) => {
+app.get('/api/car/rides/:rideId/status', assertCarCustomerOrGuestAccess, async (req, res, next) => {
   try {
     const snap = await db.collection('corridasCarro').doc(String(req.params.rideId || '')).get();
     if (!snap.exists) return res.status(404).json({ error: 'corrida_carro_nao_encontrada' });
     const ride = snap.data() || {};
-    if (String(ride.passageiroId || '') !== req.carCustomerId) return res.status(403).json({ error: 'corrida_nao_pertence_ao_passageiro' });
+    if (!carRideBelongsToRequester(ride, req)) return res.status(403).json({ error: 'corrida_nao_pertence_ao_passageiro' });
     return res.json({ ok: true, ride: carRideForCustomer(snap.id, ride) });
   } catch (error) {
     return next(error);
@@ -5588,7 +5635,7 @@ app.get('/api/car/customers/me/rides', assertCarCustomer, async (req, res, next)
   }
 });
 
-app.post('/api/car/rides/:rideId/cancel', assertCarCustomer, createRideLimiter, async (req, res, next) => {
+app.post('/api/car/rides/:rideId/cancel', assertCarCustomerOrGuestAccess, createRideLimiter, async (req, res, next) => {
   try {
     const ref = db.collection('corridasCarro').doc(String(req.params.rideId || ''));
     let cancelledDriverCpf = '';
@@ -5601,7 +5648,7 @@ app.post('/api/car/rides/:rideId/cancel', assertCarCustomer, createRideLimiter, 
         throw error;
       }
       const ride = snap.data() || {};
-      if (String(ride.passageiroId || '') !== req.carCustomerId) {
+      if (!carRideBelongsToRequester(ride, req)) {
         const error = new Error('Esta corrida nao pertence a sua conta.');
         error.status = 403;
         error.code = 'corrida_nao_pertence_ao_passageiro';
@@ -5629,6 +5676,8 @@ app.post('/api/car/rides/:rideId/cancel', assertCarCustomer, createRideLimiter, 
         canceladaPor: 'passageiro',
         motivoCancelamento: cleanText(req.body.reason || 'Cancelada pelo passageiro', 180),
         canceladaEm: admin.firestore.FieldValue.serverTimestamp(),
+        rastreamentoAtivo: false,
+        motoristaLocalizacao: admin.firestore.FieldValue.delete(),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
       if (driverRef && driverSnap?.exists) {
@@ -5793,7 +5842,11 @@ async function updateCarRideDriverState(req, res, next, config) {
       tx.set(ref, {
         status: config.to,
         [config.timestampField]: admin.firestore.FieldValue.serverTimestamp(),
-        ...(config.recordEarning ? { ganhoContabilizadoEm: admin.firestore.FieldValue.serverTimestamp() } : {}),
+        ...(config.recordEarning ? {
+          ganhoContabilizadoEm: admin.firestore.FieldValue.serverTimestamp(),
+          rastreamentoAtivo: false,
+          motoristaLocalizacao: admin.firestore.FieldValue.delete()
+        } : {}),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
       if (config.recordEarning && driverSnap.exists) {
@@ -5846,6 +5899,7 @@ app.post('/api/car/rides/:rideId/location', createRideLimiter, async (req, res, 
         clientTimestampMs: Number(req.body.clientTimestampMs || Date.now()),
         serverTimestampMs: Date.now()
       },
+      rastreamentoAtivo: true,
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
     return res.json({ ok: true });
@@ -5894,6 +5948,7 @@ app.post('/api/car/rides/:rideId/driver-cancel', createRideLimiter, async (req, 
         carro: {},
         aceitaEm: null,
         motoristaChegouEm: null,
+        rastreamentoAtivo: false,
         motoristaLocalizacao: admin.firestore.FieldValue.delete(),
         cancelamentosMotorista: admin.firestore.FieldValue.increment(1),
         ultimoCancelamentoMotoristaCpf: driverCpf,
@@ -5954,6 +6009,7 @@ app.post('/api/admin/car/rides/:rideId/cancel', assertOwner, async (req, res, ne
         canceladaPor: 'dono',
         motivoCancelamento: reason,
         canceladaEm: admin.firestore.FieldValue.serverTimestamp(),
+        rastreamentoAtivo: false,
         motoristaLocalizacao: admin.firestore.FieldValue.delete(),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });

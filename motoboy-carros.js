@@ -10,12 +10,27 @@
   let pollTimer = null;
   let locationWatch = null;
   let currentActiveRideId = "";
+  let lastLocation = null;
+  let lastLocationSentAt = 0;
+  let locationSending = false;
+  let locationErrorShown = false;
 
   const digits = (value) => String(value || "").replace(/\D/g, "");
   const escapeHtml = (value) => String(value || "").replace(/[&<>'"]/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
   })[character]);
   const money = (value) => Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+  function distanceMeters(a, b) {
+    if (!a || !b) return Infinity;
+    const toRad = (value) => Number(value) * Math.PI / 180;
+    const lat1 = toRad(a.latitude);
+    const lat2 = toRad(b.latitude);
+    const deltaLat = lat2 - lat1;
+    const deltaLon = toRad(b.longitude) - toRad(a.longitude);
+    const value = Math.sin(deltaLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
+    return 6371000 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+  }
 
   function readProfile() {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); } catch { return null; }
@@ -271,18 +286,41 @@
     stopLocation();
     currentActiveRideId = rideId;
     if (!navigator.geolocation) return;
-    locationWatch = navigator.geolocation.watchPosition(({ coords }) => {
+    locationWatch = navigator.geolocation.watchPosition(async ({ coords }) => {
       if (!currentActiveRideId) return;
-      api(`/api/car/rides/${encodeURIComponent(currentActiveRideId)}/location`, {
-        latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy, clientTimestampMs: Date.now(),
-      }).catch(() => {});
-    }, () => {}, { enableHighAccuracy: true, maximumAge: 12000, timeout: 20000 });
+      const location = { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy };
+      const elapsed = Date.now() - lastLocationSentAt;
+      const moved = distanceMeters(lastLocation, location);
+      if (locationSending || elapsed < 8000 || (moved < 12 && elapsed < 60000)) return;
+      locationSending = true;
+      try {
+        await api(`/api/car/rides/${encodeURIComponent(currentActiveRideId)}/location`, {
+          ...location, clientTimestampMs: Date.now(),
+        });
+        lastLocation = location;
+        lastLocationSentAt = Date.now();
+        locationErrorShown = false;
+      } catch (_error) {
+        // A próxima leitura válida tenta novamente sem interromper a corrida.
+      } finally {
+        locationSending = false;
+      }
+    }, (error) => {
+      if (locationErrorShown) return;
+      locationErrorShown = true;
+      alert(error.code === 1
+        ? "GPS bloqueado. Libere a localização para o passageiro acompanhar sua chegada."
+        : "Não consegui obter o GPS. Verifique a localização e a internet.");
+    }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
   }
 
   function stopLocation() {
     if (locationWatch !== null) navigator.geolocation?.clearWatch(locationWatch);
     locationWatch = null;
     currentActiveRideId = "";
+    lastLocation = null;
+    lastLocationSentAt = 0;
+    locationSending = false;
   }
 
   function initialize() {

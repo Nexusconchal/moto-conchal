@@ -13,7 +13,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
-    <link rel="stylesheet" href="./style.css?v=3">
+    <link rel="stylesheet" href="./style.css?v=4">
   </head>
   <body>
     <div id="boot" class="boot" aria-live="polite">
@@ -129,7 +129,7 @@
 
     <dialog id="authDialog" class="modal auth-modal">
       <div class="modal-shell">
-        <div class="auth-brand"><img src="./carroja-icon.svg" alt=""><div><small>NEXUS</small><strong>CarroJÁ</strong></div></div>
+        <div class="auth-brand"><img src="./carroja-icon.svg" alt=""><div><small>NEXUS</small><strong>CarroJÁ</strong></div><button id="authCloseButton" class="icon-button" type="button" aria-label="Continuar sem conta"><i data-lucide="x"></i></button></div>
         <div class="auth-tabs" role="tablist">
           <button class="active" type="button" data-auth-tab="login">Entrar</button>
           <button type="button" data-auth-tab="register">Criar conta</button>
@@ -178,6 +178,6 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-    <script src="./app.js?v=3" defer></script>
+    <script src="./app.js?v=4" defer></script>
   </body>
 </html>

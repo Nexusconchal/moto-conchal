@@ -325,6 +325,7 @@ h1, h2, h3, p { margin: 0; }
 .auth-brand div { display: grid; }
 .auth-brand small { color: var(--muted); font-weight: 850; }
 .auth-brand strong { font-size: 1.4rem; }
+.auth-brand .icon-button { margin-left: auto; }
 .auth-tabs { display: grid; grid-template-columns: 1fr 1fr; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: #0e1914; }
 .auth-tabs button { min-height: 42px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; cursor: pointer; font-weight: 750; }
 .auth-tabs button.active { color: #07110d; background: var(--green); }
