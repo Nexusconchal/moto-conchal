@@ -235,6 +235,23 @@ h1, h2, h3, p { margin: 0; }
 .route-field > svg { width: 19px; color: var(--muted); }
 .field-action { width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 7px; color: #7af0ac; background: rgba(25, 196, 107, 0.1); cursor: pointer; }
 .field-action svg { width: 18px; }
+.current-location-button {
+  width: 100%;
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 1px solid rgba(25, 196, 107, 0.32);
+  border-radius: 8px;
+  color: #7af0ac;
+  background: rgba(25, 196, 107, 0.08);
+  cursor: pointer;
+  font-weight: 800;
+}
+.current-location-button:hover { border-color: rgba(25, 196, 107, 0.58); background: rgba(25, 196, 107, 0.13); }
+.current-location-button:disabled { opacity: 0.55; cursor: wait; }
+.current-location-button svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .note-field { display: grid; gap: 8px; padding: 12px 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--field); font-size: 0.76rem; font-weight: 700; }
 .note-field small { color: var(--muted); font-weight: 500; }
 .primary-button, .secondary-button {
