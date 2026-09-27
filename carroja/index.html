@@ -13,7 +13,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
-    <link rel="stylesheet" href="./style.css?v=5">
+    <link rel="stylesheet" href="./style.css?v=6">
   </head>
   <body>
     <div id="boot" class="boot" aria-live="polite">
@@ -100,7 +100,11 @@
               <span><i data-lucide="clock-3"></i><b id="quotePeriod">Dia</b></span>
               <span><i data-lucide="badge-dollar-sign"></i><b id="quoteRate">R$ 4,20/km</b></span>
             </div>
-            <label class="payment-select"><span>Pagamento automático</span><select id="paymentMode"><option value="mercadopago">Mercado Pago</option></select></label>
+            <div class="payment-select">
+              <span><small>Pagamento pelo aplicativo</small><strong>Pix ou cartão</strong></span>
+              <span class="payment-provider"><i data-lucide="shield-check" aria-hidden="true"></i> Mercado Pago</span>
+              <input id="paymentMode" type="hidden" value="mercadopago">
+            </div>
             <button id="confirmButton" class="primary-button" type="button"><span>Confirmar corrida</span><i data-lucide="arrow-right"></i></button>
             <p class="price-note">O preço é fechado antes da confirmação. Alterações de destino exigem novo cálculo.</p>
           </div>
@@ -117,8 +121,12 @@
           <div class="active-route"><span></span><div><small>Partida</small><strong id="activeOrigin">-</strong></div><span></span><div><small>Destino</small><strong id="activeDestination">-</strong></div></div>
           <div class="active-price"><span>Valor da corrida</span><strong id="activePrice">R$ 0,00</strong></div>
           <div id="ridePayment" class="ride-payment hidden">
-            <div><small>Pagamento Mercado Pago</small><strong id="ridePaymentStatus">Aguardando motorista</strong></div>
-            <button id="payRideButton" class="primary-button hidden" type="button"><span>Pagar corrida</span><i data-lucide="external-link"></i></button>
+            <div class="ride-payment-heading">
+              <span class="ride-payment-icon"><i data-lucide="credit-card" aria-hidden="true"></i></span>
+              <div><small>Pagar pelo aplicativo</small><strong id="ridePaymentStatus">Aguardando motorista</strong></div>
+            </div>
+            <button id="payRideButton" class="primary-button hidden" type="button"><span id="payRideButtonLabel">Pagar com Pix / cartão</span><i data-lucide="external-link"></i></button>
+            <p>Pagamento seguro pelo Mercado Pago. O motorista recebe a confirmação automaticamente.</p>
           </div>
           <button id="cancelRideButton" class="secondary-button danger" type="button"><i data-lucide="x"></i><span>Cancelar corrida</span></button>
         </section>
@@ -183,6 +191,6 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-    <script src="./app.js?v=5" defer></script>
+    <script src="./app.js?v=6" defer></script>
   </body>
 </html>

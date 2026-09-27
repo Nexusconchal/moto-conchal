@@ -390,9 +390,11 @@
     const paymentApproved = payment?.status === "approved" && payment?.valido === true;
     const paymentReady = accepted && Boolean(payment?.initPoint);
     $("ridePayment").classList.toggle("hidden", !accepted);
+    $("ridePayment").classList.toggle("paid", paymentApproved);
     $("ridePaymentStatus").textContent = paymentApproved
       ? "Pagamento confirmado"
-      : paymentReady ? "Pagamento necessário antes do embarque" : "Preparando cobrança segura...";
+      : paymentReady ? "Escolha Pix ou cartão" : "Preparando cobrança segura...";
+    $("payRideButtonLabel").textContent = `Pagar com Pix / cartão (${money(payment?.total || ride.valor)})`;
     $("payRideButton").classList.toggle("hidden", !paymentReady || paymentApproved);
     $("payRideButton").dataset.checkoutUrl = paymentReady ? payment.initPoint : "";
     const finished = ["finalizada", "cancelada", "expirada"].includes(ride.status);
@@ -699,10 +701,21 @@
       }
     }
     const deviceStatus = await loadDeviceStatus();
-    const requestedRegistration = new URLSearchParams(location.search).get("cadastro") === "1";
+    const urlParams = new URLSearchParams(location.search);
+    const requestedRegistration = urlParams.get("cadastro") === "1";
+    const paymentResult = urlParams.get("pagamento");
     if (!customer && (registrationRequired || requestedRegistration)) openAuth("register");
     else if (!customer && deviceStatus) toast(`${freeRidesRemaining} corrida(s) sem cadastro disponível(is).`);
     if (localStorage.getItem(ACTIVE_RIDE_KEY)) startRidePolling();
+    if (paymentResult) {
+      const messages = {
+        ok: "Pagamento recebido. Estamos confirmando com o Mercado Pago.",
+        pendente: "Pagamento pendente. Assim que for aprovado, o app atualiza automaticamente.",
+        erro: "O pagamento não foi concluído. Você pode tentar novamente.",
+      };
+      toast(messages[paymentResult] || "Status do pagamento atualizado.", paymentResult === "erro");
+      history.replaceState({}, "", `${location.pathname}${location.hash}`);
+    }
     setTimeout(() => $("boot").classList.add("done"), 220);
   }
 
