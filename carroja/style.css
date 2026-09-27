@@ -419,12 +419,14 @@ h1, h2, h3, p { margin: 0; }
 .toast.show { transform: translate(-50%, 0); opacity: 1; visibility: visible; }
 .toast.error { border-color: rgba(255, 98, 98, 0.38); }
 
-.map-pin, .car-map-icon { display: grid; place-items: center; }
+.map-pin, .car-map-icon, .user-location-icon { display: grid; place-items: center; }
 .map-pin span { width: 30px; height: 30px; display: grid; place-items: center; border: 4px solid #fff; border-radius: 50% 50% 50% 3px; transform: rotate(-45deg); box-shadow: 0 8px 18px rgba(0, 0, 0, 0.4); }
 .map-pin.origin span { background: var(--green); }
 .map-pin.destination span { background: var(--orange); }
 .map-pin span::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #fff; }
 .car-map-icon span { width: 38px; height: 38px; display: grid; place-items: center; border: 3px solid #fff; border-radius: 50%; color: #07110d; background: var(--green); box-shadow: 0 9px 22px rgba(0, 0, 0, 0.45); font-size: 20px; }
+.user-location-icon span { width: 44px; height: 44px; display: grid; place-items: center; overflow: hidden; border: 3px solid var(--green); border-radius: 50%; background: #06100b; box-shadow: 0 0 0 5px rgba(25, 196, 107, 0.18), 0 10px 24px rgba(0, 0, 0, 0.48); }
+.user-location-icon img { width: 100%; height: 100%; object-fit: cover; }
 
 @media (max-width: 1180px) {
   .app-shell { grid-template-columns: 82px minmax(300px, 1fr) 410px; }

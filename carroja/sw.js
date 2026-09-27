@@ -1,5 +1,5 @@
-const CACHE = "nexus-carroja-v9-registration-otp";
-const ASSETS = ["./", "./index.html", "./style.css?v=7", "./app.js?v=8", "./carroja-icon-180.png", "./carroja-icon-192.png", "./carroja-icon-512.png", "./manifest.webmanifest"];
+const CACHE = "nexus-carroja-v10-location-marker";
+const ASSETS = ["./", "./index.html", "./style.css?v=8", "./app.js?v=9", "./carroja-icon-180.png", "./carroja-icon-192.png", "./carroja-icon-512.png", "./manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting()));

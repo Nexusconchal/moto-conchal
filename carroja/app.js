@@ -131,6 +131,15 @@
     return L.divIcon({ className: `map-pin ${kind}`, html: "<span></span>", iconSize: [34, 40], iconAnchor: [17, 36] });
   }
 
+  function userLocationIcon() {
+    return L.divIcon({
+      className: "user-location-icon",
+      html: '<span><img src="./carroja-icon-192.png" alt=""></span>',
+      iconSize: [48, 48],
+      iconAnchor: [24, 24],
+    });
+  }
+
   function carIcon() {
     return L.divIcon({ className: "car-map-icon", html: "<span>🚘</span>", iconSize: [42, 42], iconAnchor: [21, 21] });
   }
@@ -144,7 +153,10 @@
   function drawRoute(origin, destination, geometry = []) {
     if (!map || !window.L) return;
     clearRoute();
-    originMarker = L.marker([origin.lat, origin.lon], { icon: pinIcon("origin") }).addTo(map);
+    originMarker = L.marker([origin.lat, origin.lon], {
+      icon: origin.isCurrentLocation ? userLocationIcon() : pinIcon("origin"),
+      zIndexOffset: 700,
+    }).addTo(map);
     destinationMarker = L.marker([destination.lat, destination.lon], { icon: pinIcon("destination") }).addTo(map);
     const points = Array.isArray(geometry) && geometry.length > 1
       ? geometry.map((point) => [Number(point[0]), Number(point[1])])
@@ -203,11 +215,22 @@
       const properties = data.features?.[0]?.properties || {};
       point.text = properties.formatted || "Localização atual pelo GPS";
       point.city = properties.city || properties.municipality || properties.county || "";
+      point.isCurrentLocation = true;
       $("originInput").value = point.text;
       $("originInput").dataset.lat = point.lat;
       $("originInput").dataset.lon = point.lon;
       $("originInput").dataset.city = point.city;
+      $("originInput").dataset.source = "gps";
+      quote = null;
+      $("quoteCard").classList.add("hidden");
+      clearRoute();
+      if (map && window.L) {
+        originMarker = L.marker([point.lat, point.lon], { icon: userLocationIcon(), zIndexOffset: 700 })
+          .addTo(map)
+          .bindPopup("<strong>Sua localização atual</strong>");
+      }
       map?.setView([point.lat, point.lon], 16);
+      $("mapStatus").textContent = "Local de partida definido";
       toast("Local de partida atualizado pelo GPS.");
       return point;
     } finally {
@@ -219,15 +242,24 @@
     delete input.dataset.lat;
     delete input.dataset.lon;
     delete input.dataset.city;
+    delete input.dataset.source;
     quote = null;
     $("quoteCard").classList.add("hidden");
+    clearRoute();
+    $("mapStatus").textContent = "Informe seu destino";
   }
 
   async function resolveInput(input) {
     const savedLat = Number(input.dataset.lat);
     const savedLon = Number(input.dataset.lon);
     if (Number.isFinite(savedLat) && Number.isFinite(savedLon) && savedLat && savedLon) {
-      return { lat: savedLat, lon: savedLon, text: input.value.trim(), city: input.dataset.city || "" };
+      return {
+        lat: savedLat,
+        lon: savedLon,
+        text: input.value.trim(),
+        city: input.dataset.city || "",
+        isCurrentLocation: input.dataset.source === "gps",
+      };
     }
     const point = await geocode(input.value);
     input.value = point.text;
