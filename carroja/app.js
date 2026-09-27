@@ -637,7 +637,6 @@
   function bindEvents() {
     $("originInput").addEventListener("input", (event) => invalidatePoint(event.target));
     $("destinationInput").addEventListener("input", (event) => invalidatePoint(event.target));
-    $("originGpsButton").addEventListener("click", (event) => locateOrigin(event.currentTarget).catch((error) => toast(error.message, true)));
     $("currentLocationButton").addEventListener("click", (event) => locateOrigin(event.currentTarget).catch((error) => toast(error.message, true)));
     $("locateButton").addEventListener("click", (event) => locateOrigin(event.currentTarget).catch((error) => toast(error.message, true)));
     $("calculateButton").addEventListener("click", calculateRide);

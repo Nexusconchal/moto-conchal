@@ -204,7 +204,7 @@ h1, h2, h3, p { margin: 0; }
 .icon-button svg { width: 19px; height: 19px; }
 .booking-content { display: grid; gap: 14px; }
 .route-inputs { position: relative; display: grid; gap: 9px; }
-.route-inputs::before { content: ""; position: absolute; left: 20px; top: 47px; width: 1px; height: 37px; border-left: 1px dashed rgba(255, 255, 255, 0.28); }
+.route-inputs::before { content: ""; position: absolute; left: 20px; top: 47px; width: 1px; height: 138px; border-left: 1px dashed rgba(255, 255, 255, 0.28); }
 .route-field {
   min-height: 84px;
   display: grid;
@@ -216,6 +216,7 @@ h1, h2, h3, p { margin: 0; }
   border-radius: 8px;
   background: var(--field);
 }
+.origin-field { grid-template-columns: 20px minmax(0, 1fr); }
 .route-field:focus-within { border-color: rgba(25, 196, 107, 0.62); box-shadow: 0 0 0 3px rgba(25, 196, 107, 0.08); }
 .route-marker { width: 13px; height: 13px; border: 3px solid var(--green); border-radius: 50%; }
 .destination-field .route-marker { border-color: var(--orange); border-radius: 3px; }
@@ -233,10 +234,9 @@ h1, h2, h3, p { margin: 0; }
 }
 .field-content input::placeholder, .note-field input::placeholder, .auth-form input::placeholder { color: #66776e; }
 .route-field > svg { width: 19px; color: var(--muted); }
-.field-action { width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 7px; color: #7af0ac; background: rgba(25, 196, 107, 0.1); cursor: pointer; }
-.field-action svg { width: 18px; }
 .current-location-button {
-  width: 100%;
+  width: calc(100% - 30px);
+  margin-left: 30px;
   min-height: 46px;
   display: flex;
   align-items: center;
