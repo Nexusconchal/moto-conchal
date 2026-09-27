@@ -28,6 +28,7 @@ const COMPANY_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 const SUPPORT_SESSION_MS = 12 * 60 * 60 * 1000;
 const CUSTOMER_SESSION_MS = 90 * 24 * 60 * 60 * 1000;
 const CUSTOMER_OTP_MS = 10 * 60 * 1000;
+const CAR_CUSTOMER_OTP_MS = 15 * 60 * 1000;
 const CUSTOMER_VERIFICATION_MS = 20 * 60 * 1000;
 const CAR_CUSTOMER_SESSION_MS = 90 * 24 * 60 * 60 * 1000;
 const CAR_RIDE_EXPIRE_MS = Number(process.env.CAR_RIDE_EXPIRE_MINUTES || 8) * 60 * 1000;
@@ -5367,18 +5368,26 @@ app.post('/api/car/customers/otp/request', customerOtpLimiter, async (req, res, 
     }
     const code = String(crypto.randomInt(100000, 1000000));
     const otpRef = db.collection('carroCustomerOtp').doc(hashSecret(`${telefoneCliente}:${deviceId}`));
-    const delivery = await sendEvolutionText(`55${telefoneCliente}`, `Nexus CarroJa: seu codigo de confirmacao e ${code}. Ele vence em 10 minutos. Nao compartilhe este codigo.`);
+    const delivery = await sendEvolutionText(`55${telefoneCliente}`, `Nexus CarroJa: seu codigo de confirmacao e ${code}. Ele vence em 15 minutos. Use sempre o codigo mais recente. Nao compartilhe este codigo.`);
     if (!delivery.sent) {
       return res.status(503).json({ error: 'whatsapp_otp_indisponivel', message: 'A confirmacao pelo WhatsApp esta indisponivel. Fale com o suporte.' });
     }
-    await otpRef.set({
-      telefoneCliente,
-      deviceHash: hashSecret(deviceId),
-      codeHash: hashSecret(code),
-      expiresAtMs: Date.now() + CUSTOMER_OTP_MS,
-      attempts: 0,
-      verified: false,
-      criadaEm: admin.firestore.FieldValue.serverTimestamp()
+    await db.runTransaction(async (tx) => {
+      const previousSnap = await tx.get(otpRef);
+      const previous = previousSnap.data() || {};
+      const previousCode = previous.codeHash && Number(previous.expiresAtMs || 0) >= Date.now()
+        ? { previousCodeHash: previous.codeHash, previousExpiresAtMs: previous.expiresAtMs }
+        : {};
+      tx.set(otpRef, {
+        telefoneCliente,
+        deviceHash: hashSecret(deviceId),
+        codeHash: hashSecret(code),
+        expiresAtMs: Date.now() + CAR_CUSTOMER_OTP_MS,
+        ...previousCode,
+        attempts: 0,
+        verified: false,
+        criadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
     });
     return res.json({ ok: true, message: 'Codigo enviado pelo WhatsApp.' });
   } catch (error) {
@@ -5404,7 +5413,11 @@ app.post('/api/car/customers/otp/verify', authLimiter, async (req, res, next) =>
         verificationError = { code: 'codigo_expirado', message: 'Codigo expirado. Solicite um novo.' };
         return;
       }
-      if (!safeEqual(hashSecret(code), data.codeHash || '')) {
+      const suppliedHash = hashSecret(code);
+      const currentCodeMatches = safeEqual(suppliedHash, data.codeHash || '');
+      const previousCodeMatches = Number(data.previousExpiresAtMs || 0) >= Date.now()
+        && safeEqual(suppliedHash, data.previousCodeHash || '');
+      if (!currentCodeMatches && !previousCodeMatches) {
         tx.set(otpRef, { attempts: admin.firestore.FieldValue.increment(1) }, { merge: true });
         verificationError = { code: 'codigo_incorreto', message: 'Codigo incorreto. Confira e tente novamente.' };
         return;

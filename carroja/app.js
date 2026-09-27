@@ -24,6 +24,7 @@
   let installPrompt = null;
   let registrationRequired = false;
   let freeRidesRemaining = 3;
+  let otpCooldownTimer = null;
   let map;
   let routeLayer;
   let originMarker;
@@ -268,6 +269,62 @@
     return false;
   }
 
+  function validCpf(value) {
+    const cpf = digits(value);
+    if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
+    const digit = (length) => {
+      let sum = 0;
+      for (let index = 0; index < length; index += 1) sum += Number(cpf[index]) * (length + 1 - index);
+      const remainder = (sum * 10) % 11;
+      return remainder === 10 ? 0 : remainder;
+    };
+    return digit(9) === Number(cpf[9]) && digit(10) === Number(cpf[10]);
+  }
+
+  function validBirthDate(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const birth = new Date(`${value}T12:00:00Z`);
+    if (Number.isNaN(birth.getTime()) || birth.toISOString().slice(0, 10) !== value) return false;
+    const now = new Date();
+    let age = now.getUTCFullYear() - birth.getUTCFullYear();
+    const month = now.getUTCMonth() - birth.getUTCMonth();
+    if (month < 0 || (month === 0 && now.getUTCDate() < birth.getUTCDate())) age -= 1;
+    return age >= 13 && age <= 120;
+  }
+
+  function validateRegistrationDraft(requireCode = false) {
+    const fields = [
+      [$("registerName").value.trim().length >= 3, "Digite seu nome completo.", "registerName"],
+      [digits($("registerPhone").value).length >= 10, "Digite um WhatsApp válido com DDD.", "registerPhone"],
+      [validCpf($("registerCpf").value), "Digite um CPF válido.", "registerCpf"],
+      [validBirthDate($("registerBirth").value), "Informe uma data de nascimento válida.", "registerBirth"],
+      [Boolean(photoData), "Escolha uma foto do rosto.", "registerPhoto"],
+      [$("registerPassword").value.length >= 6, "Crie uma senha com pelo menos 6 caracteres.", "registerPassword"],
+    ];
+    if (requireCode) fields.push([digits($("registerOtp").value).length === 6, "Digite o código de 6 números enviado pelo WhatsApp.", "registerOtp"]);
+    const invalid = fields.find(([valid]) => !valid);
+    if (!invalid) return true;
+    setMessage("registerMessage", invalid[1]);
+    $(invalid[2]).focus();
+    return false;
+  }
+
+  function startOtpCooldown(seconds = 60) {
+    clearInterval(otpCooldownTimer);
+    const button = $("sendOtpButton");
+    let remaining = seconds;
+    const render = () => {
+      button.disabled = remaining > 0;
+      button.textContent = remaining > 0 ? `Reenviar em ${remaining}s` : "Reenviar código";
+    };
+    render();
+    otpCooldownTimer = setInterval(() => {
+      remaining -= 1;
+      render();
+      if (remaining <= 0) clearInterval(otpCooldownTimer);
+    }, 1000);
+  }
+
   async function loadDeviceStatus() {
     try {
       const data = await api("/api/car/customers/device-status", {
@@ -510,21 +567,25 @@
   }
 
   async function sendOtp() {
+    if (!validateRegistrationDraft()) return;
     const phone = digits($("registerPhone").value);
-    if (phone.length < 10) return setMessage("registerMessage", "Digite o WhatsApp com DDD.");
     const button = $("sendOtpButton");
+    let sent = false;
     setBusy(button, true, "Enviando...");
+    setMessage("registerMessage", "Enviando seu código pelo WhatsApp...");
     try {
       const data = await api("/api/car/customers/otp/request", {
         method: "POST", body: JSON.stringify({ telefoneCliente: phone, deviceId }),
       });
       verificationToken = "";
+      sent = true;
       setMessage("registerMessage", data.message || "Código enviado pelo WhatsApp.", true);
       $("registerOtp").focus();
     } catch (error) {
       setMessage("registerMessage", error.message);
     } finally {
       setBusy(button, false);
+      if (sent) startOtpCooldown();
     }
   }
 
@@ -554,10 +615,9 @@
 
   async function register(event) {
     event.preventDefault();
-    if (!photoData) return setMessage("registerMessage", "Escolha uma foto do rosto.");
+    if (!validateRegistrationDraft(true)) return;
     const phone = digits($("registerPhone").value);
     const code = digits($("registerOtp").value);
-    if (code.length !== 6) return setMessage("registerMessage", "Digite o código de 6 números enviado pelo WhatsApp.");
     const button = event.submitter;
     setBusy(button, true, "Criando conta...");
     setMessage("registerMessage", "Confirmando seu WhatsApp...");
@@ -655,6 +715,10 @@
     $("loginCpf").addEventListener("input", (event) => maskCpf(event.target));
     $("registerCpf").addEventListener("input", (event) => maskCpf(event.target));
     $("registerPhone").addEventListener("input", (event) => maskPhone(event.target));
+    $("registerPhone").addEventListener("change", () => {
+      verificationToken = "";
+      $("registerOtp").value = "";
+    });
     $("registerPhoto").addEventListener("change", async (event) => {
       try {
         photoData = await compressPhoto(event.target.files?.[0]);

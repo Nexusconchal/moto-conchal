@@ -162,9 +162,9 @@
           </div>
           <label>Foto do rosto<span class="file-field"><input id="registerPhoto" type="file" accept="image/*" capture="user" required><i data-lucide="camera"></i><span id="registerPhotoLabel">Escolher foto</span></span></label>
           <label>Senha<span class="password-wrap"><input id="registerPassword" type="password" autocomplete="new-password" minlength="6" placeholder="Mínimo de 6 caracteres" required><button type="button" data-toggle-password="registerPassword" aria-label="Mostrar senha"><i data-lucide="eye"></i></button></span></label>
-          <div class="otp-row"><button id="sendOtpButton" class="secondary-button" type="button">Enviar código</button><label>Código<input id="registerOtp" inputmode="numeric" maxlength="6" placeholder="000000"></label></div>
+          <div class="otp-row"><button id="sendOtpButton" class="secondary-button" type="button">Enviar código</button><label>Código<input id="registerOtp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000"></label></div>
+          <p id="registerMessage" class="form-message" role="alert" aria-live="polite"></p>
           <button class="primary-button" type="submit">Confirmar e criar conta</button>
-          <p id="registerMessage" class="form-message"></p>
         </form>
       </div>
     </dialog>
@@ -189,6 +189,6 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-    <script src="./app.js?v=7" defer></script>
+    <script src="./app.js?v=8" defer></script>
   </body>
 </html>
