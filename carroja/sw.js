@@ -1,5 +1,5 @@
-const CACHE = "nexus-carroja-v4-guest-gps";
-const ASSETS = ["./", "./index.html", "./style.css?v=4", "./app.js?v=4", "./carroja-icon.svg", "./manifest.webmanifest"];
+const CACHE = "nexus-carroja-v5-brand";
+const ASSETS = ["./", "./index.html", "./style.css?v=4", "./app.js?v=4", "./carroja-icon-180.png", "./carroja-icon-192.png", "./carroja-icon-512.png", "./manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting()));

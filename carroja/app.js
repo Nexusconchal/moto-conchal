@@ -377,7 +377,7 @@
         renderedActiveRouteId = ride.id;
       }
       $("acceptedDriverName").textContent = ride.motorista;
-      $("acceptedDriverPhoto").src = ride.motoristaFoto || "./carroja-icon.svg";
+      $("acceptedDriverPhoto").src = ride.motoristaFoto || "./carroja-icon-192.png";
       $("acceptedCar").textContent = [ride.carro?.modelo, ride.carro?.cor, ride.carro?.placa].filter(Boolean).join(" · ");
       $("driverMapName").textContent = ride.motorista;
       $("driverMapUpdate").textContent = ride.motoristaLocalizacao
@@ -475,7 +475,7 @@
     $("accountName").textContent = customer.nome || "Passageiro";
     $("accountPhone").textContent = customer.telefoneCliente || "";
     $("accountCpf").textContent = `CPF final ${customer.cpfFinal || "-"}`;
-    $("accountPhoto").src = customer.fotoCliente || "./carroja-icon.svg";
+    $("accountPhoto").src = customer.fotoCliente || "./carroja-icon-192.png";
   }
 
   async function compressPhoto(file, maxLength = 210000) {
