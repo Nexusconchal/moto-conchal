@@ -110,7 +110,7 @@
     if (carDriver.status === "aguardando_aprovacao") html += '<div class="car-empty">Cadastro recebido. O dono precisa conferir o carro e o CRLV antes de liberar corridas.</div>';
     if (carDriver.status === "bloqueado") html += `<div class="car-empty">${escapeHtml(carDriver.motivoBloqueio || "Cadastro de carro bloqueado. Fale com o suporte.")}</div>`;
     if (carDriver.status === "aprovado") {
-      html += `<div class="car-online"><div><strong>Receber corridas de carro</strong><small>${carDriver.online ? "Você aparece como disponível" : "Ative quando estiver com o carro"}</small></div><button id="carOnlineToggle" class="${carDriver.online ? "car-danger" : "car-primary"}" type="button">${carDriver.online ? "Ficar offline" : "Ficar online"}</button></div>
+      html += `<div class="car-online"><div><strong>Receber corridas de carro</strong><small>${carDriver.online ? "Você aparece como disponível" : "Ative quando estiver com o carro"}</small><small>${carDriver.mercadoPagoConectado ? "Mercado Pago conectado" : "Conecte o Mercado Pago no painel antes de ficar online"}</small></div><button id="carOnlineToggle" class="${carDriver.online ? "car-danger" : "car-primary"}" type="button" ${!carDriver.mercadoPagoConectado && !carDriver.online ? "disabled" : ""}>${carDriver.online ? "Ficar offline" : "Ficar online"}</button></div>
         <div class="car-tabs"><button class="car-tab ${scope === "pending" ? "active" : ""}" data-car-scope="pending" type="button">Disponíveis</button><button class="car-tab ${scope === "mine" ? "active" : ""}" data-car-scope="mine" type="button">Minha corrida</button></div><div id="carJobsList" class="car-jobs-list"><div class="car-empty">Carregando corridas...</div></div>`;
     }
     root.innerHTML = html;
@@ -210,7 +210,8 @@
       <div class="car-job-head"><strong>${escapeHtml(job.cidadeOperacao || "Corrida de carro")}</strong><span class="car-job-status">${escapeHtml(job.status)}</span></div>
       <div class="car-route"><i></i><div><small>Partida</small><span>${escapeHtml(job.origem)}</span></div><i></i><div><small>Destino</small><span>${escapeHtml(job.destino)}</span></div></div>
       ${job.passageiro ? `<div><small>Passageiro</small><strong>${escapeHtml(job.passageiro)}</strong></div>` : ""}
-      <div class="car-job-value"><span>${Number(job.km || 0).toFixed(2).replace(".", ",")} km · ${escapeHtml(job.pagamentoModo || "pix")}</span><strong>Você recebe ${money(job.motoristaRecebe)}</strong></div>
+      <div class="car-job-value"><span>${Number(job.km || 0).toFixed(2).replace(".", ",")} km · Mercado Pago</span><strong>Você recebe ${money(job.motoristaRecebe)}</strong></div>
+      ${scope === "mine" ? `<small>${job.pagamentoAprovado ? "Pagamento confirmado" : "Aguardando pagamento do passageiro"}</small>` : ""}
       ${job.observacao ? `<small>Observação: ${escapeHtml(job.observacao)}</small>` : ""}
       <div class="car-job-actions">${actions(job)}</div>
     </article>`).join("");
@@ -219,8 +220,9 @@
   function actions(job) {
     if (scope === "pending") return `<button class="car-primary" data-car-action="accept" data-id="${job.id}" type="button">Aceitar corrida</button>`;
     const whatsapp = job.passageiroTelefone ? `<a class="car-secondary" href="https://wa.me/55${digits(job.passageiroTelefone)}" target="_blank" rel="noopener" style="display:grid;place-items:center;text-decoration:none">Chamar passageiro</a>` : "";
-    if (job.status === "aceita") return `${whatsapp}<button class="car-primary" data-car-action="arrived" data-id="${job.id}" type="button">Cheguei ao embarque</button><button class="car-primary" data-car-action="start" data-id="${job.id}" type="button">Iniciar corrida</button><button class="car-danger" data-car-action="cancel" data-id="${job.id}" type="button">Cancelar aceite</button>`;
-    if (job.status === "motorista_chegou") return `${whatsapp}<button class="car-primary" data-car-action="start" data-id="${job.id}" type="button">Passageiro embarcou</button><button class="car-danger" data-car-action="cancel" data-id="${job.id}" type="button">Cancelar aceite</button>`;
+    const paymentDisabled = job.pagamentoAprovado ? "" : "disabled";
+    if (job.status === "aceita") return `${whatsapp}<button class="car-primary" data-car-action="arrived" data-id="${job.id}" type="button">Cheguei ao embarque</button><button class="car-primary" data-car-action="start" data-id="${job.id}" type="button" ${paymentDisabled}>${job.pagamentoAprovado ? "Iniciar corrida" : "Aguardando pagamento"}</button><button class="car-danger" data-car-action="cancel" data-id="${job.id}" type="button">Cancelar aceite</button>`;
+    if (job.status === "motorista_chegou") return `${whatsapp}<button class="car-primary" data-car-action="start" data-id="${job.id}" type="button" ${paymentDisabled}>${job.pagamentoAprovado ? "Passageiro embarcou" : "Aguardando pagamento"}</button><button class="car-danger" data-car-action="cancel" data-id="${job.id}" type="button">Cancelar aceite</button>`;
     if (job.status === "em_andamento") return `${whatsapp}<button class="car-primary" data-car-action="finish" data-id="${job.id}" type="button">Finalizar corrida</button>`;
     return "";
   }

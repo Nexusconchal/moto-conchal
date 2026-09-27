@@ -1,5 +1,5 @@
-const CACHE = "nexus-carroja-v2";
-const ASSETS = ["./", "./index.html", "./style.css?v=2", "./app.js?v=2", "./carroja-icon.svg", "./manifest.webmanifest"];
+const CACHE = "nexus-carroja-v3-mercadopago";
+const ASSETS = ["./", "./index.html", "./style.css?v=3", "./app.js?v=3", "./carroja-icon.svg", "./manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting()));

@@ -272,6 +272,11 @@ h1, h2, h3, p { margin: 0; }
 .price-note { color: var(--muted); font-size: 0.69rem; line-height: 1.45; text-align: center; }
 
 .active-ride { display: grid; gap: 15px; }
+.ride-payment { display: grid; gap: 10px; padding: 13px; border: 1px solid rgba(25, 196, 107, 0.28); border-radius: 8px; background: rgba(25, 196, 107, 0.07); }
+.ride-payment > div { display: grid; gap: 3px; }
+.ride-payment small { color: var(--muted); font-size: 0.69rem; font-weight: 750; }
+.ride-payment strong { font-size: 0.88rem; }
+.ride-payment .primary-button { width: 100%; }
 .active-head h2 { margin-top: 4px; font-size: 1.3rem; }
 .ride-status { padding: 7px 9px; border: 1px solid rgba(25, 196, 107, 0.25); border-radius: 999px; color: #86f2b4; background: rgba(25, 196, 107, 0.08); font-size: 0.67rem; font-weight: 850; }
 .search-animation { height: 115px; position: relative; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: #0d1813; }

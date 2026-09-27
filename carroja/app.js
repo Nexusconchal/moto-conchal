@@ -340,8 +340,17 @@
       $("driverWhatsapp").href = phone ? `https://wa.me/55${phone}` : "#";
       updateDriverMarker(ride.motoristaLocalizacao);
     }
+    const payment = ride.pagamento || null;
+    const paymentApproved = payment?.status === "approved" && payment?.valido === true;
+    const paymentReady = accepted && Boolean(payment?.initPoint);
+    $("ridePayment").classList.toggle("hidden", !accepted);
+    $("ridePaymentStatus").textContent = paymentApproved
+      ? "Pagamento confirmado"
+      : paymentReady ? "Pagamento necessário antes do embarque" : "Preparando cobrança segura...";
+    $("payRideButton").classList.toggle("hidden", !paymentReady || paymentApproved);
+    $("payRideButton").dataset.checkoutUrl = paymentReady ? payment.initPoint : "";
     const finished = ["finalizada", "cancelada", "expirada"].includes(ride.status);
-    $("cancelRideButton").classList.toggle("hidden", finished || ride.status === "em_andamento");
+    $("cancelRideButton").classList.toggle("hidden", finished || ride.status === "em_andamento" || paymentApproved);
     if (finished) {
       clearInterval(ridePollTimer);
       ridePollTimer = null;
@@ -355,6 +364,7 @@
     $("activeRide").classList.add("hidden");
     $("bookingForm").classList.remove("hidden");
     $("driverMapCard").classList.add("hidden");
+    $("ridePayment").classList.add("hidden");
     if (driverMarker && map) map.removeLayer(driverMarker);
     driverMarker = null;
     quote = null;
@@ -398,6 +408,12 @@
     } finally {
       setBusy(button, false);
     }
+  }
+
+  function openRidePayment() {
+    const checkoutUrl = $("payRideButton").dataset.checkoutUrl;
+    if (!checkoutUrl) return toast("A cobrança ainda está sendo preparada.", true);
+    window.location.href = checkoutUrl;
   }
 
   function openAuth(tab = "login") {
@@ -576,6 +592,7 @@
     $("calculateButton").addEventListener("click", calculateRide);
     $("confirmButton").addEventListener("click", confirmRide);
     $("cancelRideButton").addEventListener("click", cancelRide);
+    $("payRideButton").addEventListener("click", openRidePayment);
     ["historyButton", "panelHistoryButton", "mobileHistoryButton"].forEach((id) => $(id).addEventListener("click", openHistory));
     ["profileButton", "mobileProfileButton", "mobileAccountButton"].forEach((id) => $(id).addEventListener("click", openAccount));
     $("logoutButton").addEventListener("click", logout);
