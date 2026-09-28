@@ -719,10 +719,11 @@ function normalizeCapturedOrder(platform, source, body = {}) {
   };
 }
 
-function capturedOrderMissing(order = {}) {
+function capturedOrderMissing(order = {}, options = {}) {
+  const requireCustomerPhone = options.requireCustomerPhone !== false;
   return [
     !order.customer ? 'nome do cliente' : '',
-    onlyDigits(order.phone).length < 10 ? 'WhatsApp do cliente' : '',
+    requireCustomerPhone && onlyDigits(order.phone).length < 10 ? 'WhatsApp do cliente' : '',
     !order.address ? 'endereco de entrega' : '',
     Number(order.orderTotal || 0) <= 0 ? 'valor total' : ''
   ].filter(Boolean);
@@ -816,7 +817,9 @@ async function geocodeCapturedAddress(value, referencePoint = null) {
 }
 
 async function dispatchCapturedOrder(companyId, company, orderRef, captured, config) {
-  const missing = capturedOrderMissing(captured);
+  const missing = capturedOrderMissing(captured, {
+    requireCustomerPhone: config.requireCustomerPhone !== false
+  });
   if (missing.length) {
     const error = new Error(`Confira antes de chamar: ${missing.join(', ')}.`);
     error.status = 422;
@@ -923,6 +926,13 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     });
     tx.set(orderRef, {
+      origem: captured.platform,
+      pedidoId: captured.externalId || orderRef.id,
+      recebidoEmMs: Number(captured.receivedAtMs || Date.now()),
+      enderecoEntrega: captured.address,
+      cliente: captured.customer,
+      telefoneCliente: captured.phone,
+      valorPedido: money(captured.orderTotal),
       status: 'enviado_motoboy', deliveryId: deliveryRef.id, deliveryFare: delivery.valor,
       routeKm: delivery.km, dispatchedAtMs: Date.now(),
       atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
@@ -932,10 +942,10 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
 
   if (created) {
     emitSupportOperationsRefresh();
-    await Promise.allSettled([
+    Promise.allSettled([
       notifyTelegramAboutDelivery(deliveryRef.id, delivery),
       notifyDriversAboutDelivery(deliveryRef.id, delivery)
-    ]);
+    ]).catch((error) => console.error('captured delivery notifications failed', error));
   }
   return { deliveryId: deliveryRef.id, deliveryFare: delivery.valor, km: delivery.km, created };
 }
@@ -7231,6 +7241,36 @@ function integrationPendingRef(companyId, origem, externalId) {
     .doc(externalOrderDocId(origem, externalId));
 }
 
+function integrationPreviewAsCaptured(order = {}) {
+  const captured = normalizeCapturedOrder(order.origem || 'API', 'api', {
+    externalId: order.externalId || order.orderId,
+    customer: order.cliente,
+    phone: order.telefoneCliente,
+    address: order.enderecoEntrega,
+    items: order.itens,
+    orderTotal: order.valorPedido,
+    deliveryFee: order.taxaEntregaPediplus
+  });
+  captured.receivedAtMs = Number(order.recebidoEmMs || Date.now());
+  return captured;
+}
+
+async function dispatchIntegrationPreview(companyId, company, order, deliveryType) {
+  const origem = order.origem || 'API';
+  const externalId = order.externalId || order.orderId;
+  const orderRef = db.collection('empresas')
+    .doc(companyId)
+    .collection('integracaoPedidos')
+    .doc(externalOrderDocId(origem, externalId));
+  return dispatchCapturedOrder(
+    companyId,
+    company,
+    orderRef,
+    integrationPreviewAsCaptured(order),
+    { deliveryType, commissionPercent: 0, requireCustomerPhone: false }
+  );
+}
+
 async function fetchCardapioWebLatestOrder(apiKey, storeCode, company, companyId) {
   const base = cardapioWebBaseUrl();
   const ordersUrl = `${base}/orders?${new URLSearchParams({ status: 'waiting_confirmation' }).toString()}`;
@@ -7361,7 +7401,7 @@ async function cardapioWebRefreshActiveCompanies() {
     const snapshot = await db.collection('empresas')
       .where('integracaoAtiva', '==', true)
       .where('integracaoTokenEncrypted', '!=', '')
-      .select('integracaoTokenEncrypted', 'integracaoCodigoLoja', 'integracaoTipoEntrega', 'empresa', 'retirada', 'cidade', 'status', 'saldo', 'reservado')
+      .select('integracaoTokenEncrypted', 'integracaoCodigoLoja', 'integracaoTipoEntrega', 'empresa', 'responsavel', 'retirada', 'cidade', 'status', 'saldo', 'reservado')
       .get();
     const found = new Set();
     snapshot.docs.forEach((doc) => {
@@ -7531,20 +7571,12 @@ app.post('/api/companies/me/integration/pending-orders/:orderId/accept', assertC
       });
     }
 
-    // Mark as imported in Firebase (1 write — the ONLY Firebase cost per order)
-    const docId = externalOrderDocId(order.origem || 'Cardapio Web', orderId);
-    await db.collection('empresas').doc(req.companyId).collection('integracaoPedidos').doc(docId).set({
-      origem: order.origem || 'Cardapio Web',
-      pedidoId: orderId,
-      recebidoEm: order.recebidoEm || '',
-      recebidoEmMs: order.recebidoEmMs || 0,
-      aceitoEm: admin.firestore.FieldValue.serverTimestamp(),
-      aceitoEmMs: Date.now(),
-      enderecoEntrega: order.enderecoEntrega || '',
-      cliente: order.cliente || '',
-      telefoneCliente: order.telefoneCliente || '',
-      valorPedido: order.valorPedido || 0
-    }, { merge: true });
+    const dispatch = await dispatchIntegrationPreview(
+      req.companyId,
+      req.company,
+      order,
+      req.company.integracaoTipoEntrega || 'Lanche / pizza / pastel / marmita'
+    );
 
     // Remove from pending (memory)
     pending.delete(orderId);
@@ -7555,8 +7587,9 @@ app.post('/api/companies/me/integration/pending-orders/:orderId/accept', assertC
     // Return order data so frontend can fill the delivery form
     res.json({
       ok: true,
-      message: `Pedido ${orderId} aceito. Calculando entrega...`,
-      order
+      message: `Pedido ${orderId} enviado para os motoboys.`,
+      order,
+      dispatch
     });
   } catch (error) {
     next(error);
@@ -7666,7 +7699,7 @@ async function pediplusRefreshActiveCompanies() {
     const snapshot = await db.collection('empresas')
       .where('pediplusAtivo', '==', true)
       .where('pediplusTokenEncrypted', '!=', '')
-      .select('pediplusTokenEncrypted', 'pediplusTipoEntrega', 'empresa', 'retirada', 'cidade', 'status', 'saldo', 'reservado')
+      .select('pediplusTokenEncrypted', 'pediplusTipoEntrega', 'empresa', 'responsavel', 'retirada', 'cidade', 'status', 'saldo', 'reservado')
       .get();
     const found = new Set();
     snapshot.docs.forEach((doc) => {
@@ -7753,13 +7786,38 @@ async function pediplusPollSingleCompany(companyId, config) {
         continue;
       }
 
-      seen.add(preview.externalId);
-      pending.set(preview.externalId, {
+      const order = {
         ...preview,
         receivedAtMs: Date.now(),
         companyId
-      });
-      newCount++;
+      };
+
+      try {
+        const dispatch = await dispatchIntegrationPreview(
+          companyId,
+          config.companyData,
+          order,
+          config.tipoEntrega || 'Acai / pote de sorvete'
+        );
+        seen.add(preview.externalId);
+        pending.delete(preview.externalId);
+        if (dispatch.deliveryId) {
+          await updatePediplusOrderStatus(config.apiKey, preview.externalId, 'saiu_para_entrega', 'MotoJa Entregador');
+          io.to(`company:${companyId}`).emit('pediplus:order-accepted', {
+            orderId: preview.externalId,
+            deliveryId: dispatch.deliveryId,
+            at: Date.now()
+          });
+        }
+      } catch (error) {
+        seen.add(preview.externalId);
+        pending.set(preview.externalId, {
+          ...order,
+          dispatchError: cleanText(error.message || 'Nao foi possivel chamar o motoboy automaticamente.', 300)
+        });
+        newCount++;
+        console.error(`[pediplus] ${config.empresa || companyId}: pedido ${preview.externalId} ficou para revisao:`, error.message);
+      }
     }
 
     if (newCount > 0) {
@@ -7901,19 +7959,12 @@ app.post('/api/companies/me/pediplus/pending-orders/:orderId/accept', assertComp
       });
     }
 
-    const docId = externalOrderDocId(order.origem || 'PediPlus', orderId);
-    await db.collection('empresas').doc(req.companyId).collection('integracaoPedidos').doc(docId).set({
-      origem: order.origem || 'PediPlus',
-      pedidoId: orderId,
-      recebidoEm: order.recebidoEm || '',
-      recebidoEmMs: order.recebidoEmMs || 0,
-      aceitoEm: admin.firestore.FieldValue.serverTimestamp(),
-      aceitoEmMs: Date.now(),
-      enderecoEntrega: order.enderecoEntrega || '',
-      cliente: order.cliente || '',
-      telefoneCliente: order.telefoneCliente || '',
-      valorPedido: order.valorPedido || 0
-    }, { merge: true });
+    const dispatch = await dispatchIntegrationPreview(
+      req.companyId,
+      req.company,
+      order,
+      req.company.pediplusTipoEntrega || 'Acai / pote de sorvete'
+    );
 
     pending.delete(orderId);
     io.to(`company:${req.companyId}`).emit('pediplus:order-accepted', { orderId, at: Date.now() });
@@ -7925,7 +7976,7 @@ app.post('/api/companies/me/pediplus/pending-orders/:orderId/accept', assertComp
       }
     }
 
-    res.json({ ok: true, message: `Pedido ${orderId} aceito.`, order });
+    res.json({ ok: true, message: `Pedido ${orderId} enviado para os motoboys.`, order, dispatch });
   } catch (error) {
     next(error);
   }
