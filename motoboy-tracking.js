@@ -11,6 +11,44 @@
   let mineDeliveriesLoaded = false;
   let mineRidesLoaded = false;
   let decorationScheduled = false;
+  const gpsSubscribers = new Set();
+  let gpsWatchId = null;
+  let lastGpsAt = 0;
+  let gpsDenied = false;
+
+  function restartGps() {
+    if (gpsWatchId !== null) navigator.geolocation.clearWatch(gpsWatchId);
+    gpsWatchId = null;
+    if (!gpsSubscribers.size || !navigator.geolocation || gpsDenied) return;
+    lastGpsAt = Date.now();
+    gpsWatchId = navigator.geolocation.watchPosition((position) => {
+      lastGpsAt = Date.now();
+      const age = Date.now() - position.timestamp;
+      if (age > 30000 || age < -10000 || !Number.isFinite(position.coords.accuracy) || position.coords.accuracy > 100) {
+        gpsSubscribers.forEach((subscriber) => subscriber.error({ code: 2 }));
+        return;
+      }
+      gpsSubscribers.forEach((subscriber) => subscriber.next(position));
+    }, (error) => {
+      gpsDenied = error.code === 1;
+      gpsSubscribers.forEach((subscriber) => subscriber.error(error));
+    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+  }
+
+  function subscribeGps(next, error) {
+    const subscriber = { next, error };
+    gpsSubscribers.add(subscriber);
+    if (gpsWatchId === null) restartGps();
+    return subscriber;
+  }
+
+  function unsubscribeGps(subscriber) {
+    gpsSubscribers.delete(subscriber);
+    if (!gpsSubscribers.size && gpsWatchId !== null) {
+      navigator.geolocation.clearWatch(gpsWatchId);
+      gpsWatchId = null;
+    }
+  }
 
   function setButtonState(button, disabled, text) {
     if (!button) return;
@@ -72,14 +110,14 @@
   function stopTracking(deliveryId) {
     const current = watches.get(deliveryId);
     if (!current) return;
-    navigator.geolocation.clearWatch(current.watchId);
+    unsubscribeGps(current.watchId);
     watches.delete(deliveryId);
   }
 
   function startTracking(deliveryId) {
     if (watches.has(deliveryId) || !navigator.geolocation) return;
     const state = { watchId: 0, lastSentAt: 0, lastLocation: null, sending: false };
-    state.watchId = navigator.geolocation.watchPosition(async (position) => {
+    state.watchId = subscribeGps(async (position) => {
       const currentJob = jobs.get(deliveryId);
       if (!currentJob || currentJob.status !== 'retirada') {
         stopTracking(deliveryId);
@@ -94,7 +132,9 @@
         timestamp: position.timestamp || Date.now()
       };
       const elapsed = Date.now() - state.lastSentAt;
-      if (state.sending || (elapsed < 8000 && distanceMeters(state.lastLocation, location) < 12)) return;
+      if (!navigator.onLine || state.sending || Date.now() - (state.lastAttemptAt || 0) < 8000 ||
+          (elapsed < 20000 && distanceMeters(state.lastLocation, location) < 12)) return;
+      state.lastAttemptAt = Date.now();
       state.sending = true;
       try {
         await post(`/api/deliveries/${encodeURIComponent(deliveryId)}/location`, { ...proof(), ...location });
@@ -102,7 +142,10 @@
         state.lastLocation = location;
         setTrackingMessage(deliveryId, 'GPS ativo: a empresa esta acompanhando esta entrega.', false);
       } catch (error) {
-        if (/rastreamento_nao_ativo|finalizada|cancelada/i.test(error.message)) stopTracking(deliveryId);
+        if (/rastreamento_nao_ativo|finalizada|cancelada/i.test(error.message)) {
+          jobs.delete(deliveryId);
+          stopTracking(deliveryId);
+        }
         setTrackingMessage(deliveryId, error.message || 'Falha ao enviar GPS.', true);
       } finally {
         state.sending = false;
@@ -112,21 +155,21 @@
         ? 'GPS bloqueado. Libere a localizacao do app para continuar a entrega.'
         : 'Nao consegui obter o GPS. Verifique a localizacao e a internet.';
       setTrackingMessage(deliveryId, message, true);
-    }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+    });
     watches.set(deliveryId, state);
   }
 
   function stopRideTracking(rideId) {
     const current = rideWatches.get(rideId);
     if (!current) return;
-    navigator.geolocation.clearWatch(current.watchId);
+    unsubscribeGps(current.watchId);
     rideWatches.delete(rideId);
   }
 
   function startRideTracking(rideId) {
     if (rideWatches.has(rideId) || !navigator.geolocation) return;
     const state = { watchId: 0, lastSentAt: 0, lastLocation: null, sending: false };
-    state.watchId = navigator.geolocation.watchPosition(async (position) => {
+    state.watchId = subscribeGps(async (position) => {
       const ride = rideJobs.get(rideId);
       if (!ride || ride.status !== 'aceita' || !ride.clienteAvisadoEm) {
         stopRideTracking(rideId);
@@ -141,7 +184,9 @@
         timestamp: position.timestamp || Date.now()
       };
       const elapsed = Date.now() - state.lastSentAt;
-      if (state.sending || (elapsed < 8000 && distanceMeters(state.lastLocation, location) < 12)) return;
+      if (!navigator.onLine || state.sending || Date.now() - (state.lastAttemptAt || 0) < 8000 ||
+          (elapsed < 20000 && distanceMeters(state.lastLocation, location) < 12)) return;
+      state.lastAttemptAt = Date.now();
       state.sending = true;
       try {
         await post(`/api/rides/${encodeURIComponent(rideId)}/location`, { ...proof(), ...location });
@@ -149,7 +194,10 @@
         state.lastLocation = location;
         setTrackingMessage(rideId, 'GPS ativo: o cliente acompanha sua chegada. Mantenha o app aberto.', false);
       } catch (error) {
-        if (/rastreamento_nao_ativo|finalizada|cancelada/i.test(error.message)) stopRideTracking(rideId);
+        if (/rastreamento_nao_ativo|finalizada|cancelada/i.test(error.message)) {
+          rideJobs.delete(rideId);
+          stopRideTracking(rideId);
+        }
         setTrackingMessage(rideId, error.message || 'Falha ao enviar GPS.', true);
       } finally {
         state.sending = false;
@@ -159,7 +207,7 @@
         ? 'GPS bloqueado. Libere a localizacao para o cliente acompanhar sua chegada.'
         : 'Nao consegui obter o GPS. Verifique a localizacao e a internet.';
       setTrackingMessage(rideId, message, true);
-    }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+    });
     rideWatches.set(rideId, state);
   }
 
@@ -186,6 +234,7 @@
   }
 
   function decorateCards() {
+    jobs.forEach((job, id) => { if (job.status === 'retirada') startTracking(id); });
     document.querySelectorAll('[data-finalizar]').forEach((finishButton) => {
       const deliveryId = finishButton.dataset.finalizar;
       const job = jobs.get(deliveryId);
@@ -227,7 +276,8 @@
         setButtonState(pickupButton, true, 'Pedido retirado - GPS ativo');
         if (finishButton.disabled) finishButton.disabled = false;
         startTracking(deliveryId);
-        setTrackingMessage(deliveryId, 'GPS ativo: mantenha o app aberto durante o trajeto.', false);
+        const fresh = navigator.onLine && Date.now() - (watches.get(deliveryId)?.lastSentAt || 0) < 30000;
+        setTrackingMessage(deliveryId, fresh ? 'GPS atualizado. Mantenha o app aberto durante o trajeto.' : 'Aguardando sinal GPS e internet para atualizar a empresa.', !fresh);
       } else {
         if (!pickupButton.disabled) pickupButton.disabled = true;
         stopTracking(deliveryId);
@@ -236,13 +286,17 @@
   }
 
   function decorateRideCards() {
+    rideJobs.forEach((ride, id) => {
+      if (ride.status === 'aceita' && ride.clienteAvisadoEm) startRideTracking(id);
+    });
     document.querySelectorAll('[data-finalizar]').forEach((finishButton) => {
       const rideId = finishButton.dataset.finalizar;
       const ride = rideJobs.get(rideId);
       if (!ride || ride.tipo === 'entrega_empresarial') return;
       if (ride.status === 'aceita' && ride.clienteAvisadoEm) {
         startRideTracking(rideId);
-        setTrackingMessage(rideId, 'GPS ativo: o cliente acompanha sua chegada. Mantenha o app aberto.', false);
+        const fresh = navigator.onLine && Date.now() - (rideWatches.get(rideId)?.lastSentAt || 0) < 30000;
+        setTrackingMessage(rideId, fresh ? 'GPS atualizado. O cliente acompanha sua chegada.' : 'Aguardando sinal GPS e internet para atualizar o cliente.', !fresh);
       } else {
         stopRideTracking(rideId);
       }
@@ -354,7 +408,24 @@
       startRideTracking(rideId);
     });
     setInterval(() => {
-      if (document.visibilityState === 'visible' && (watches.size > 0 || rideWatches.size > 0)) refreshJobs();
+      if (document.visibilityState === 'visible' && (watches.size > 0 || rideWatches.size > 0)) {
+        mineDeliveriesLoaded = false;
+        mineRidesLoaded = false;
+        refreshJobs();
+      }
     }, 5 * 60 * 1000);
+    const recoverGps = () => {
+      if (document.visibilityState !== 'visible' || !navigator.onLine) return;
+      gpsDenied = false;
+      restartGps();
+      mineDeliveriesLoaded = false;
+      mineRidesLoaded = false;
+      refreshJobs();
+    };
+    window.addEventListener('online', recoverGps);
+    document.addEventListener('visibilitychange', recoverGps);
+    setInterval(() => {
+      if (document.visibilityState === 'visible' && navigator.onLine && !gpsDenied && Date.now() - lastGpsAt > 45000) restartGps();
+    }, 15000);
   });
 })();

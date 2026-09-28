@@ -8,6 +8,8 @@ import rateLimit from 'express-rate-limit';
 import crypto from 'crypto';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
+import { validateLocation } from './tracking-policy.js';
+import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state.js';
 
 const PORT = Number(process.env.PORT || 10000);
 const DRIVER_PERCENT = Number(process.env.DRIVER_PERCENT || 0.7);
@@ -439,7 +441,7 @@ async function calculateGeoapifyRoute(points = []) {
     error.code = 'rota_backend_nao_encontrada';
     throw error;
   }
-  return { km: money(Number(meters) / 1000), geometry: geoJsonLineToLatLon(feature.geometry), provider: 'geoapify' };
+  return { km: money(Number(meters) / 1000), durationSeconds: Number(feature.properties?.time) || null, geometry: geoJsonLineToLatLon(feature.geometry), provider: 'geoapify' };
 }
 
 async function calculateOsrmRoute(points = []) {
@@ -461,7 +463,7 @@ async function calculateOsrmRoute(points = []) {
     error.code = 'osrm_rota_nao_encontrada';
     throw error;
   }
-  return { km: money(Number(meters) / 1000), geometry: geoJsonLineToLatLon(route.geometry), provider: 'osrm' };
+  return { km: money(Number(meters) / 1000), durationSeconds: Number(route.duration) || null, geometry: geoJsonLineToLatLon(route.geometry), provider: 'osrm' };
 }
 
 async function calculateRoute(points = []) {
@@ -719,10 +721,11 @@ function normalizeCapturedOrder(platform, source, body = {}) {
   };
 }
 
-function capturedOrderMissing(order = {}) {
+function capturedOrderMissing(order = {}, options = {}) {
+  const requireCustomerPhone = options.requireCustomerPhone !== false;
   return [
     !order.customer ? 'nome do cliente' : '',
-    onlyDigits(order.phone).length < 10 ? 'WhatsApp do cliente' : '',
+    requireCustomerPhone && onlyDigits(order.phone).length < 10 ? 'WhatsApp do cliente' : '',
     !order.address ? 'endereco de entrega' : '',
     Number(order.orderTotal || 0) <= 0 ? 'valor total' : ''
   ].filter(Boolean);
@@ -816,7 +819,9 @@ async function geocodeCapturedAddress(value, referencePoint = null) {
 }
 
 async function dispatchCapturedOrder(companyId, company, orderRef, captured, config) {
-  const missing = capturedOrderMissing(captured);
+  const missing = capturedOrderMissing(captured, {
+    requireCustomerPhone: config.requireCustomerPhone !== false
+  });
   if (missing.length) {
     const error = new Error(`Confira antes de chamar: ${missing.join(', ')}.`);
     error.status = 422;
@@ -843,7 +848,7 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
   const km = await calculateRouteDistanceKm([pickup, destination]);
   ensureDistantRouteIsPlausible(km, captured.address, destination.text);
   const delivery = deliveryPublicData({
-    clientRequestId: `cap_${orderRef.id.slice(0, 60)}`,
+    clientRequestId: config.clientRequestId || `cap_${orderRef.id.slice(0, 60)}`,
     empresa: company.empresa || 'Empresa',
     responsavel: company.responsavel || company.empresa || 'Responsavel',
     telefoneEmpresa: companyId,
@@ -880,14 +885,45 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
 
   const deliveryRef = db.collection('entregas').doc(delivery.clientRequestId);
   let created = false;
+  let actualDeliveryId = deliveryRef.id;
   await db.runTransaction(async (tx) => {
+    created = false;
     const [existingDelivery, companySnap, capturedSnap] = await Promise.all([
       tx.get(deliveryRef),
       tx.get(db.collection('empresas').doc(companyId)),
       tx.get(orderRef)
     ]);
-    if (existingDelivery.exists || capturedSnap.data()?.deliveryId) return;
+    const saved = capturedSnap.data() || {};
+    const linkedId = saved.deliveryId || saved.entregaId;
+    if (linkedId) {
+      const linked = linkedId === deliveryRef.id ? existingDelivery : await tx.get(db.collection('entregas').doc(linkedId));
+      if (!linked.exists || linked.data().empresaId !== companyId) {
+        const error = new Error('Pedido com vinculo de entrega inconsistente. O suporte precisa conferir antes de reenviar.');
+        error.status = 409;
+        throw error;
+      }
+      actualDeliveryId = linkedId;
+      return;
+    }
+    if (config.integrationPreview && capturedSnap.exists && !isUnsentLegacyImport(saved)) {
+      const error = new Error('Pedido ja processado ou cancelado. Confira o historico antes de reenviar.');
+      error.status = 409;
+      throw error;
+    }
+    if (existingDelivery.exists) {
+      if (existingDelivery.data().empresaId !== companyId) {
+        const error = new Error('Identificador de entrega indisponivel. Fale com o suporte.');
+        error.status = 409;
+        throw error;
+      }
+      return;
+    }
     const latestCompany = companySnap.data() || {};
+    if (companyStatus(latestCompany) !== 'aprovada') {
+      const error = new Error('Empresa precisa estar aprovada para chamar motoboy.');
+      error.status = 403;
+      throw error;
+    }
     const balance = companyBalance(latestCompany);
     if (balance.disponivel < delivery.valor) {
       const error = new Error('Saldo insuficiente para chamar o motoboy. O pedido ficou na fila para revisao.');
@@ -923,6 +959,13 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     });
     tx.set(orderRef, {
+      origem: captured.platform,
+      pedidoId: captured.externalId || orderRef.id,
+      recebidoEmMs: Number(captured.receivedAtMs || Date.now()),
+      enderecoEntrega: captured.address,
+      cliente: captured.customer,
+      telefoneCliente: captured.phone,
+      valorPedido: money(captured.orderTotal),
       status: 'enviado_motoboy', deliveryId: deliveryRef.id, deliveryFare: delivery.valor,
       routeKm: delivery.km, dispatchedAtMs: Date.now(),
       atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
@@ -932,12 +975,12 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
 
   if (created) {
     emitSupportOperationsRefresh();
-    await Promise.allSettled([
+    Promise.allSettled([
       notifyTelegramAboutDelivery(deliveryRef.id, delivery),
       notifyDriversAboutDelivery(deliveryRef.id, delivery)
-    ]);
+    ]).catch((error) => console.error('captured delivery notifications failed', error));
   }
-  return { deliveryId: deliveryRef.id, deliveryFare: delivery.valor, km: delivery.km, created };
+  return { deliveryId: actualDeliveryId, deliveryFare: delivery.valor, km: delivery.km, created };
 }
 
 function normalizeText(value) {
@@ -1362,6 +1405,7 @@ async function collectionState(name, limit = 500, orderField = '') {
 
 function publicPendingJob(job = {}) {
   const copy = { ...job };
+  delete copy.clienteDeviceId;
   delete copy.telefoneCliente;
   delete copy.telefoneEmpresa;
   delete copy.telefoneRecebedor;
@@ -1409,6 +1453,7 @@ function driverPasswordValues() {
 
 function privateDriverJob(job = {}) {
   const copy = { ...job };
+  delete copy.clienteDeviceId;
   // A foto do proprio motoboy ja fica salva no perfil. Repeti-la em cada
   // corrida ou entrega torna a listagem muito pesada em conexoes moveis.
   delete copy.motoboyFoto;
@@ -7221,7 +7266,7 @@ async function alreadyImportedIntegrationOrder(companyId, origem, externalId) {
     .collection('integracaoPedidos')
     .doc(externalOrderDocId(origem, externalId))
     .get();
-  return doc.exists;
+  return doc.exists && !isUnsentLegacyImport(doc.data());
 }
 
 function integrationPendingRef(companyId, origem, externalId) {
@@ -7229,6 +7274,37 @@ function integrationPendingRef(companyId, origem, externalId) {
     .doc(companyId)
     .collection('integracaoPedidosDisponiveis')
     .doc(externalOrderDocId(origem, externalId));
+}
+
+function integrationPreviewAsCaptured(order = {}) {
+  const captured = normalizeCapturedOrder(order.origem || 'API', 'api', {
+    externalId: order.externalId || order.orderId,
+    customer: order.cliente,
+    phone: order.telefoneCliente,
+    address: order.enderecoEntrega,
+    items: order.itens,
+    orderTotal: order.valorPedido,
+    deliveryFee: order.taxaEntregaPediplus
+  });
+  captured.receivedAtMs = Number(order.recebidoEmMs || Date.now());
+  return captured;
+}
+
+async function dispatchIntegrationPreview(companyId, company, order, deliveryType) {
+  const origem = order.origem || 'API';
+  const externalId = order.externalId || order.orderId;
+  const orderRef = db.collection('empresas')
+    .doc(companyId)
+    .collection('integracaoPedidos')
+    .doc(externalOrderDocId(origem, externalId));
+  return dispatchCapturedOrder(
+    companyId,
+    company,
+    orderRef,
+    integrationPreviewAsCaptured(order),
+    { deliveryType, commissionPercent: 0, requireCustomerPhone: false,
+      integrationPreview: true, clientRequestId: integrationDeliveryId(companyId, origem, externalId) }
+  );
 }
 
 async function fetchCardapioWebLatestOrder(apiKey, storeCode, company, companyId) {
@@ -7361,7 +7437,7 @@ async function cardapioWebRefreshActiveCompanies() {
     const snapshot = await db.collection('empresas')
       .where('integracaoAtiva', '==', true)
       .where('integracaoTokenEncrypted', '!=', '')
-      .select('integracaoTokenEncrypted', 'integracaoCodigoLoja', 'integracaoTipoEntrega', 'empresa', 'retirada', 'cidade', 'status', 'saldo', 'reservado')
+      .select('integracaoTokenEncrypted', 'integracaoCodigoLoja', 'integracaoTipoEntrega', 'empresa', 'responsavel', 'retirada', 'cidade', 'status', 'saldo', 'reservado')
       .get();
     const found = new Set();
     snapshot.docs.forEach((doc) => {
@@ -7531,20 +7607,12 @@ app.post('/api/companies/me/integration/pending-orders/:orderId/accept', assertC
       });
     }
 
-    // Mark as imported in Firebase (1 write — the ONLY Firebase cost per order)
-    const docId = externalOrderDocId(order.origem || 'Cardapio Web', orderId);
-    await db.collection('empresas').doc(req.companyId).collection('integracaoPedidos').doc(docId).set({
-      origem: order.origem || 'Cardapio Web',
-      pedidoId: orderId,
-      recebidoEm: order.recebidoEm || '',
-      recebidoEmMs: order.recebidoEmMs || 0,
-      aceitoEm: admin.firestore.FieldValue.serverTimestamp(),
-      aceitoEmMs: Date.now(),
-      enderecoEntrega: order.enderecoEntrega || '',
-      cliente: order.cliente || '',
-      telefoneCliente: order.telefoneCliente || '',
-      valorPedido: order.valorPedido || 0
-    }, { merge: true });
+    const dispatch = await dispatchIntegrationPreview(
+      req.companyId,
+      req.company,
+      order,
+      req.company.integracaoTipoEntrega || 'Lanche / pizza / pastel / marmita'
+    );
 
     // Remove from pending (memory)
     pending.delete(orderId);
@@ -7555,8 +7623,9 @@ app.post('/api/companies/me/integration/pending-orders/:orderId/accept', assertC
     // Return order data so frontend can fill the delivery form
     res.json({
       ok: true,
-      message: `Pedido ${orderId} aceito. Calculando entrega...`,
-      order
+      message: `Pedido ${orderId} enviado para os motoboys.`,
+      order,
+      dispatch
     });
   } catch (error) {
     next(error);
@@ -7666,7 +7735,7 @@ async function pediplusRefreshActiveCompanies() {
     const snapshot = await db.collection('empresas')
       .where('pediplusAtivo', '==', true)
       .where('pediplusTokenEncrypted', '!=', '')
-      .select('pediplusTokenEncrypted', 'pediplusTipoEntrega', 'empresa', 'retirada', 'cidade', 'status', 'saldo', 'reservado')
+      .select('pediplusTokenEncrypted', 'pediplusTipoEntrega', 'empresa', 'responsavel', 'retirada', 'cidade', 'status', 'saldo', 'reservado')
       .get();
     const found = new Set();
     snapshot.docs.forEach((doc) => {
@@ -7739,6 +7808,11 @@ async function pediplusPollSingleCompany(companyId, config) {
       const preview = normalizePediplusDelivery(candidate, { empresa: config.empresa, cidade: config.cidade });
       if (!preview.externalId) continue;
 
+      if (/cancel|entregue|finaliz|conclu|delivered|completed/.test(normalizeText(preview.status))) {
+        seen.add(preview.externalId);
+        continue;
+      }
+
       if (seen.has(preview.externalId)) continue;
 
       // Only today's orders
@@ -7753,13 +7827,38 @@ async function pediplusPollSingleCompany(companyId, config) {
         continue;
       }
 
-      seen.add(preview.externalId);
-      pending.set(preview.externalId, {
+      const order = {
         ...preview,
         receivedAtMs: Date.now(),
         companyId
-      });
-      newCount++;
+      };
+
+      try {
+        const dispatch = await dispatchIntegrationPreview(
+          companyId,
+          config.companyData,
+          order,
+          config.tipoEntrega || 'Acai / pote de sorvete'
+        );
+        seen.add(preview.externalId);
+        pending.delete(preview.externalId);
+        if (dispatch.deliveryId) {
+          await updatePediplusOrderStatus(config.apiKey, preview.externalId, 'saiu_para_entrega', 'MotoJa Entregador');
+          io.to(`company:${companyId}`).emit('pediplus:order-accepted', {
+            orderId: preview.externalId,
+            deliveryId: dispatch.deliveryId,
+            at: Date.now()
+          });
+        }
+      } catch (error) {
+        seen.add(preview.externalId);
+        pending.set(preview.externalId, {
+          ...order,
+          dispatchError: cleanText(error.message || 'Nao foi possivel chamar o motoboy automaticamente.', 300)
+        });
+        newCount++;
+        console.error(`[pediplus] ${config.empresa || companyId}: pedido ${preview.externalId} ficou para revisao:`, error.message);
+      }
     }
 
     if (newCount > 0) {
@@ -7901,19 +8000,12 @@ app.post('/api/companies/me/pediplus/pending-orders/:orderId/accept', assertComp
       });
     }
 
-    const docId = externalOrderDocId(order.origem || 'PediPlus', orderId);
-    await db.collection('empresas').doc(req.companyId).collection('integracaoPedidos').doc(docId).set({
-      origem: order.origem || 'PediPlus',
-      pedidoId: orderId,
-      recebidoEm: order.recebidoEm || '',
-      recebidoEmMs: order.recebidoEmMs || 0,
-      aceitoEm: admin.firestore.FieldValue.serverTimestamp(),
-      aceitoEmMs: Date.now(),
-      enderecoEntrega: order.enderecoEntrega || '',
-      cliente: order.cliente || '',
-      telefoneCliente: order.telefoneCliente || '',
-      valorPedido: order.valorPedido || 0
-    }, { merge: true });
+    const dispatch = await dispatchIntegrationPreview(
+      req.companyId,
+      req.company,
+      order,
+      req.company.pediplusTipoEntrega || 'Acai / pote de sorvete'
+    );
 
     pending.delete(orderId);
     io.to(`company:${req.companyId}`).emit('pediplus:order-accepted', { orderId, at: Date.now() });
@@ -7925,7 +8017,7 @@ app.post('/api/companies/me/pediplus/pending-orders/:orderId/accept', assertComp
       }
     }
 
-    res.json({ ok: true, message: `Pedido ${orderId} aceito.`, order });
+    res.json({ ok: true, message: `Pedido ${orderId} enviado para os motoboys.`, order, dispatch });
   } catch (error) {
     next(error);
   }
@@ -8484,16 +8576,30 @@ app.post('/api/rides', createRideLimiter, async (req, res, next) => {
 const rideStatusCache = new Map();
 const RIDE_STATUS_CACHE_MS = 2200;
 
+async function canReadRideTracking(req, access) {
+  const deviceId = validDeviceId(req.header('x-customer-device'));
+  if (deviceId && access.deviceHash && hashSecret(deviceId) === access.deviceHash) return true;
+  const header = String(req.header('authorization') || '');
+  if (!header.startsWith('Bearer ')) return false;
+  const session = await findCustomerSession(header.slice(7).trim());
+  return !!session && !!access.customerId && session.customerId === access.customerId;
+}
+
 app.get('/api/rides/:rideId/status', async (req, res, next) => {
   try {
+    res.set('cache-control', 'no-store');
     const rideId = String(req.params.rideId || '');
     const cached = rideStatusCache.get(rideId);
     if (cached && (Date.now() - cached.at) < RIDE_STATUS_CACHE_MS) {
+      if (!await canReadRideTracking(req, cached.access)) return res.status(403).json({ error: 'acompanhamento_nao_autorizado' });
       return res.json(cached.payload);
     }
     const doc = await db.collection('corridas').doc(rideId).get();
     if (!doc.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
     const ride = doc.data() || {};
+    const access = { deviceHash: ride.clienteDeviceId ? hashSecret(ride.clienteDeviceId) : '', customerId: ride.customerId || '' };
+    if (!await canReadRideTracking(req, access)) return res.status(403).json({ error: 'acompanhamento_nao_autorizado' });
+    res.set('cache-control', 'no-store');
     const payload = {
       ok: true,
       rideId: doc.id,
@@ -8524,7 +8630,7 @@ app.get('/api/rides/:rideId/status', async (req, res, next) => {
         metodo: ride.pagamento.metodo || ''
       } : null
     };
-    rideStatusCache.set(rideId, { at: Date.now(), payload });
+    rideStatusCache.set(rideId, { at: Date.now(), payload, access });
     if (rideStatusCache.size > 200) {
       const now = Date.now();
       for (const [k, v] of rideStatusCache.entries()) {
@@ -8832,14 +8938,21 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
       const pendingIntegrationRef = integrationDocId ? integrationPendingRef(req.companyId, delivery.integracaoOrigem, delivery.integracaoPedidoId) : null;
       if (integrationRef) {
         const integrationSnap = await tx.get(integrationRef);
-        if (integrationSnap.exists) {
+        const legacyImport = integrationSnap.exists && isUnsentLegacyImport(integrationSnap.data());
+        if (integrationSnap.exists && !legacyImport) {
           const error = new Error('Esse pedido da API ja foi enviado para os motoboys.');
           error.status = 409;
           error.code = 'pedido_integracao_ja_processado';
           throw error;
         }
         const pendingSnap = await tx.get(pendingIntegrationRef);
-        const pending = pendingSnap.exists ? pendingSnap.data() || {} : null;
+        const legacy = legacyImport ? integrationSnap.data() : null;
+        const legacyMs = Number(legacy?.recebidoEmMs || 0);
+        const pending = pendingSnap.exists ? pendingSnap.data() || {} : legacyMs ? {
+          ...legacy,
+          recebidoDia: dateKeySaoPaulo(new Date(legacyMs)),
+          validUntilMs: legacyMs + 24 * 60 * 60 * 1000
+        } : null;
         if (!pending || pending.recebidoDia !== todayKeySaoPaulo() || Number(pending.validUntilMs || 0) < Date.now()) {
           const error = new Error('Pedido da API nao esta mais liberado. Teste a integracao novamente para carregar somente pedidos de hoje.');
           error.status = 409;
@@ -9420,6 +9533,7 @@ app.get('/api/companies/me/active-deliveries', assertCompany, assertCompanyAppro
   try {
     const snapshot = await db.collection('entregas')
       .where('empresaId', '==', req.companyId)
+      .where('status', 'in', ['pendente', 'aceita', 'retirada'])
       .limit(100)
       .get();
     const deliveries = snapshot.docs
@@ -9506,8 +9620,37 @@ app.post('/api/deliveries/:deliveryId/pickup', async (req, res, next) => {
   }
 });
 
+async function saveTrackedLocation(ref, driverCpf, body, isDelivery) {
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const job = snap.data();
+    if (!job || onlyDigits(job.motoboyCpf) !== driverCpf ||
+        job.status !== (isDelivery ? 'retirada' : 'aceita') ||
+        job.rastreamentoAtivo === false || (!isDelivery && !job.clienteAvisadoEm)) {
+      const error = new Error('rastreamento_nao_ativo');
+      error.status = 409;
+      throw error;
+    }
+    const result = validateLocation(body, job.motoboyLocalizacao);
+    if (result.error) {
+      const error = new Error(result.error);
+      error.status = 422;
+      throw error;
+    }
+    if (result.ignored) return result;
+    tx.update(ref, {
+      motoboyLocalizacao: result.location,
+      localizacaoAtualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return { ...result, companyId: job.empresaId || job.telefoneEmpresa, motoboy: job.motoboy || '' };
+  });
+}
+
 app.post('/api/deliveries/:deliveryId/location', async (req, res, next) => {
   try {
+    const validation = validateLocation(req.body);
+    if (validation.error) return res.status(422).json({ error: validation.error, message: validation.error });
     const driverCpf = onlyDigits(req.body.driverCpf);
     const latitude = Number(req.body.latitude);
     const longitude = Number(req.body.longitude);
@@ -9523,37 +9666,14 @@ app.post('/api/deliveries/:deliveryId/location', async (req, res, next) => {
     await getDriverWithProof(driverCpf, req.body);
 
     const deliveryRef = db.collection('entregas').doc(req.params.deliveryId);
-    const deliverySnap = await deliveryRef.get();
-    if (!deliverySnap.exists) return res.status(404).json({ error: 'entrega_nao_encontrada' });
-    const delivery = deliverySnap.data();
-    if (onlyDigits(delivery.motoboyCpf) !== driverCpf) {
-      return res.status(409).json({ error: 'entrega_nao_pertence_ao_motoboy' });
-    }
-    if (delivery.status !== 'retirada' || delivery.rastreamentoAtivo === false) {
-      return res.status(409).json({ error: 'rastreamento_nao_ativo' });
-    }
-
-    const location = {
-      latitude,
-      longitude,
-      accuracy: Math.min(5000, accuracy),
-      heading: Number.isFinite(Number(req.body.heading)) ? Number(req.body.heading) : null,
-      speed: Number.isFinite(Number(req.body.speed)) ? Math.max(0, Number(req.body.speed)) : null,
-      clientTimestamp,
-      serverTimestampMs: Date.now()
-    };
-    await deliveryRef.set({
-      motoboyLocalizacao: location,
-      localizacaoAtualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
-      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
-
-    emitDeliveryTracking(delivery.empresaId || delivery.telefoneEmpresa, {
+    const result = await saveTrackedLocation(deliveryRef, driverCpf, req.body, true);
+    if (result.ignored) return res.json({ ok: true, ignored: result.ignored });
+    emitDeliveryTracking(result.companyId, {
       deliveryId: deliveryRef.id,
       status: 'retirada',
       rastreamentoAtivo: true,
-      motoboy: delivery.motoboy || '',
-      location
+      motoboy: result.motoboy,
+      location: result.location
     });
     return res.json({ ok: true });
   } catch (error) {
@@ -10153,6 +10273,8 @@ app.post('/api/drivers/:cpf/mercadopago/oauth-link', authLimiter, async (req, re
 
 app.post('/api/rides/:rideId/location', async (req, res, next) => {
   try {
+    const validation = validateLocation(req.body);
+    if (validation.error) return res.status(422).json({ error: validation.error, message: validation.error });
     const driverCpf = onlyDigits(req.body.driverCpf);
     const latitude = Number(req.body.latitude);
     const longitude = Number(req.body.longitude);
@@ -10168,29 +10290,8 @@ app.post('/api/rides/:rideId/location', async (req, res, next) => {
     await getDriverWithProof(driverCpf, req.body);
 
     const rideRef = db.collection('corridas').doc(req.params.rideId);
-    const rideSnap = await rideRef.get();
-    if (!rideSnap.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
-    const ride = rideSnap.data();
-    if (onlyDigits(ride.motoboyCpf) !== driverCpf) {
-      return res.status(409).json({ error: 'corrida_nao_pertence_ao_motoboy' });
-    }
-    if (ride.status !== 'aceita' || !ride.clienteAvisadoEm || ride.rastreamentoAtivo === false) {
-      return res.status(409).json({ error: 'rastreamento_nao_ativo' });
-    }
-
-    await rideRef.set({
-      motoboyLocalizacao: {
-        latitude,
-        longitude,
-        accuracy: Math.min(5000, accuracy),
-        heading: Number.isFinite(Number(req.body.heading)) ? Number(req.body.heading) : null,
-        speed: Number.isFinite(Number(req.body.speed)) ? Math.max(0, Number(req.body.speed)) : null,
-        clientTimestamp,
-        serverTimestampMs: Date.now()
-      },
-      localizacaoAtualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
-      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+    const result = await saveTrackedLocation(rideRef, driverCpf, req.body, false);
+    if (result.ignored) return res.json({ ok: true, ignored: result.ignored });
     rideStatusCache.delete(req.params.rideId);
     return res.json({ ok: true });
   } catch (error) {
