@@ -1812,12 +1812,12 @@
             <option value="Acai / pote de sorvete">
               Acai / pote de sorvete - R$ 6,50 ou R$ 16,00
             </option>
-            <option value="Encomendas">Encomendas - R$ 2,00/km</option>
+            <option value="Encomendas">Encomendas - R$ 2,50/km</option>
             <option value="Roupa / tenis / acessorio">
-              Roupa / tenis / acessorio - R$ 2,00/km
+              Roupa / tenis / acessorio - R$ 2,50/km
             </option>
             <option value="Farmacia">Farmacia - R$ 6,50 ou R$ 16,00</option>
-            <option value="Outro">Outro - R$ 2,00/km</option>
+            <option value="Outro">Outro - R$ 2,50/km</option>
           </select>
         </label>
         <div
@@ -1912,7 +1912,7 @@
           Lanche, pizza, pastel, marmita, acai, pote de sorvete e farmacia:
           R$ 6,50 por entrega. Para Martinho Prado, Tujuguaba ou Iate:
           R$ 16,00 por entrega. Encomendas, roupas, acessorios e outros:
-          R$ 2,00 por km.
+          R$ 2,50 por km.
         </p>
       </section>
       <section class="box app-area hidden">
@@ -1958,6 +1958,7 @@
           backend: "https://motoboy-conchal.onrender.com",
           suporte: "5519992306488",
         },
+        ENTREGA_EMPRESA_VALOR_KM = 2.5,
         $ = (id) => document.getElementById(id),
         statusBox = $("status"),
         resultadoBox = $("resultado");
@@ -2491,12 +2492,12 @@
           }
           return Math.round(total * 100) / 100;
         }
-        return Math.ceil(Number(km || 0)) * 2;
+        return Math.ceil(Number(km || 0)) * ENTREGA_EMPRESA_VALOR_KM;
       }
       function labelPreco(tipo, paradas, pontos = []) {
         if (tipoPlanoDiario(tipo))
           return "Plano Diario MotoJa Pro ativo: R$ 4,00 por entrega/ponto";
-        if (!comidaFixa(tipo)) return "R$ 2,00 por km";
+        if (!comidaFixa(tipo)) return "R$ 2,50 por km";
         const especiais = pontos.filter(destinoComidaEspecial).length,
           normais = Math.max(0, Math.max(1, paradas) - especiais);
         return `R$ 6,50 por entrega${especiais ? ` + ${especiais} ponto(s) distante(s) a R$ 16,00` : ""} (${normais} normal / ${especiais} distante)`;

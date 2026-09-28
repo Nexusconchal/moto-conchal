@@ -181,6 +181,7 @@ const DAILY_PLAN_TYPE = 'Plano Diario MotoJa Pro';
 const DAILY_PLAN_PRICE = 70;
 const DAILY_PLAN_DELIVERY_FEE = 4;
 const DAILY_PLAN_APP_FEE = 1;
+const COMPANY_DELIVERY_RATE_PER_KM = 2.5;
 
 function todayKeySaoPaulo(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(date);
@@ -377,7 +378,7 @@ function expectedDeliveryFare(distanceKm, stops = 1, type = '', delivery = {}) {
     return fixedFoodDeliveryFare({ ...delivery, paradas: deliveryStops, tipoEntrega: type });
   }
 
-  return money(Math.ceil(distance) * 2);
+  return money(Math.ceil(distance) * COMPANY_DELIVERY_RATE_PER_KM);
 }
 
 function deliveryStopCount(stops = 1) {
@@ -869,7 +870,7 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
   delivery.valor = expectedDeliveryFare(delivery.km, 1, delivery.tipoEntrega, delivery);
   delivery.precoLabel = isFixedFoodDelivery(delivery.tipoEntrega)
     ? 'Tabela de alimentos Nexus MotoJa'
-    : 'R$ 2,00 por km';
+    : 'R$ 2,50 por km';
   if (!delivery.valor) {
     const error = new Error('Nao consegui calcular o valor da entrega.');
     error.status = 422;
