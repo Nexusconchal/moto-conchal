@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import { validateLocation } from './tracking-policy.js';
+import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state.js';
 
 const PORT = Number(process.env.PORT || 10000);
 const DRIVER_PERCENT = Number(process.env.DRIVER_PERCENT || 0.7);
@@ -847,7 +848,7 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
   const km = await calculateRouteDistanceKm([pickup, destination]);
   ensureDistantRouteIsPlausible(km, captured.address, destination.text);
   const delivery = deliveryPublicData({
-    clientRequestId: `cap_${orderRef.id.slice(0, 60)}`,
+    clientRequestId: config.clientRequestId || `cap_${orderRef.id.slice(0, 60)}`,
     empresa: company.empresa || 'Empresa',
     responsavel: company.responsavel || company.empresa || 'Responsavel',
     telefoneEmpresa: companyId,
@@ -884,14 +885,45 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
 
   const deliveryRef = db.collection('entregas').doc(delivery.clientRequestId);
   let created = false;
+  let actualDeliveryId = deliveryRef.id;
   await db.runTransaction(async (tx) => {
+    created = false;
     const [existingDelivery, companySnap, capturedSnap] = await Promise.all([
       tx.get(deliveryRef),
       tx.get(db.collection('empresas').doc(companyId)),
       tx.get(orderRef)
     ]);
-    if (existingDelivery.exists || capturedSnap.data()?.deliveryId) return;
+    const saved = capturedSnap.data() || {};
+    const linkedId = saved.deliveryId || saved.entregaId;
+    if (linkedId) {
+      const linked = linkedId === deliveryRef.id ? existingDelivery : await tx.get(db.collection('entregas').doc(linkedId));
+      if (!linked.exists || linked.data().empresaId !== companyId) {
+        const error = new Error('Pedido com vinculo de entrega inconsistente. O suporte precisa conferir antes de reenviar.');
+        error.status = 409;
+        throw error;
+      }
+      actualDeliveryId = linkedId;
+      return;
+    }
+    if (config.integrationPreview && capturedSnap.exists && !isUnsentLegacyImport(saved)) {
+      const error = new Error('Pedido ja processado ou cancelado. Confira o historico antes de reenviar.');
+      error.status = 409;
+      throw error;
+    }
+    if (existingDelivery.exists) {
+      if (existingDelivery.data().empresaId !== companyId) {
+        const error = new Error('Identificador de entrega indisponivel. Fale com o suporte.');
+        error.status = 409;
+        throw error;
+      }
+      return;
+    }
     const latestCompany = companySnap.data() || {};
+    if (companyStatus(latestCompany) !== 'aprovada') {
+      const error = new Error('Empresa precisa estar aprovada para chamar motoboy.');
+      error.status = 403;
+      throw error;
+    }
     const balance = companyBalance(latestCompany);
     if (balance.disponivel < delivery.valor) {
       const error = new Error('Saldo insuficiente para chamar o motoboy. O pedido ficou na fila para revisao.');
@@ -948,7 +980,7 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
       notifyDriversAboutDelivery(deliveryRef.id, delivery)
     ]).catch((error) => console.error('captured delivery notifications failed', error));
   }
-  return { deliveryId: deliveryRef.id, deliveryFare: delivery.valor, km: delivery.km, created };
+  return { deliveryId: actualDeliveryId, deliveryFare: delivery.valor, km: delivery.km, created };
 }
 
 function normalizeText(value) {
@@ -7234,7 +7266,7 @@ async function alreadyImportedIntegrationOrder(companyId, origem, externalId) {
     .collection('integracaoPedidos')
     .doc(externalOrderDocId(origem, externalId))
     .get();
-  return doc.exists;
+  return doc.exists && !isUnsentLegacyImport(doc.data());
 }
 
 function integrationPendingRef(companyId, origem, externalId) {
@@ -7270,7 +7302,8 @@ async function dispatchIntegrationPreview(companyId, company, order, deliveryTyp
     company,
     orderRef,
     integrationPreviewAsCaptured(order),
-    { deliveryType, commissionPercent: 0, requireCustomerPhone: false }
+    { deliveryType, commissionPercent: 0, requireCustomerPhone: false,
+      integrationPreview: true, clientRequestId: integrationDeliveryId(companyId, origem, externalId) }
   );
 }
 
@@ -7774,6 +7807,11 @@ async function pediplusPollSingleCompany(companyId, config) {
     for (const candidate of deliveries.slice(0, 20)) {
       const preview = normalizePediplusDelivery(candidate, { empresa: config.empresa, cidade: config.cidade });
       if (!preview.externalId) continue;
+
+      if (/cancel|entregue|finaliz|conclu|delivered|completed/.test(normalizeText(preview.status))) {
+        seen.add(preview.externalId);
+        continue;
+      }
 
       if (seen.has(preview.externalId)) continue;
 
@@ -8900,14 +8938,21 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
       const pendingIntegrationRef = integrationDocId ? integrationPendingRef(req.companyId, delivery.integracaoOrigem, delivery.integracaoPedidoId) : null;
       if (integrationRef) {
         const integrationSnap = await tx.get(integrationRef);
-        if (integrationSnap.exists) {
+        const legacyImport = integrationSnap.exists && isUnsentLegacyImport(integrationSnap.data());
+        if (integrationSnap.exists && !legacyImport) {
           const error = new Error('Esse pedido da API ja foi enviado para os motoboys.');
           error.status = 409;
           error.code = 'pedido_integracao_ja_processado';
           throw error;
         }
         const pendingSnap = await tx.get(pendingIntegrationRef);
-        const pending = pendingSnap.exists ? pendingSnap.data() || {} : null;
+        const legacy = legacyImport ? integrationSnap.data() : null;
+        const legacyMs = Number(legacy?.recebidoEmMs || 0);
+        const pending = pendingSnap.exists ? pendingSnap.data() || {} : legacyMs ? {
+          ...legacy,
+          recebidoDia: dateKeySaoPaulo(new Date(legacyMs)),
+          validUntilMs: legacyMs + 24 * 60 * 60 * 1000
+        } : null;
         if (!pending || pending.recebidoDia !== todayKeySaoPaulo() || Number(pending.validUntilMs || 0) < Date.now()) {
           const error = new Error('Pedido da API nao esta mais liberado. Teste a integracao novamente para carregar somente pedidos de hoje.');
           error.status = 409;

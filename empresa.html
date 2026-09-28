@@ -3639,7 +3639,7 @@
         if (o.cliente || o.telefoneCliente || itens) mostrarDetalhesEntrega(true);
         if (o.externalId)
           $("observacao").value =
-            `Pedido Cardapio Web ${o.externalId}${o.complemento ? " - " + o.complemento : ""}`;
+            `Pedido ${o.origem || "Cardapio Web"} ${o.externalId}${o.complemento ? " - " + o.complemento : ""}`;
         entregaCalculada = null;
         pedidoIntegracaoAtual = {
           origem: o.origem || "Cardapio Web",
