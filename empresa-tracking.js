@@ -15,6 +15,24 @@
   let socket = null;
   let lastToken = '';
   let mapResizeObserver = null;
+  let refreshRunning = false;
+  let refreshAgain = false;
+  let lastRefreshAt = 0;
+  let framedDeliveryId = '';
+  let markerDeliveryId = '';
+  const finishedEvents = new Map();
+
+  function updateSignalStatus() {
+    const location = locationOf(deliveries.get(selectedId));
+    if (!location || !window.MotoTracking) return;
+    const age = window.MotoTracking.age(location);
+    const stale = age > 30000 || !navigator.onLine;
+    if (driverMarker) driverMarker.setOpacity(stale ? 0.5 : 1);
+    const status = document.getElementById('mapaEntregaStatus');
+    if (status) status.textContent = stale
+      ? 'Sinal GPS atrasado. Exibindo a ultima posicao recebida; aguardando reconexao.'
+      : `Motoboy em trajeto. GPS atualizado ${relativeTime(location.clientTimestamp || location.serverTimestampMs)}.`;
+  }
 
   function token() {
     return localStorage.getItem(TOKEN_KEY) || '';
@@ -170,6 +188,12 @@
     requestAnimationFrame(() => map?.invalidateSize({ pan: false }));
     setTimeout(() => map?.invalidateSize({ pan: false }), 180);
     const delivery = deliveries.get(selectedId);
+    if (markerDeliveryId !== selectedId) {
+      if (driverMarker) map.removeLayer(driverMarker);
+      driverMarker = null;
+      markerDeliveryId = selectedId;
+      framedDeliveryId = '';
+    }
     const location = locationOf(delivery);
     const mapStatus = document.getElementById('mapaEntregaStatus');
     if (!delivery) {
@@ -234,17 +258,21 @@
     const driverPopup = `<b>Motoboy: ${escapeHtml(delivery.motoboy || 'Em trajeto')}</b><br>${location.speed ? 'Velocidade: ' + Math.round(location.speed * 3.6) + ' km/h' : 'Em deslocamento'}`;
     if (!driverMarker) driverMarker = window.L.marker(point, { icon }).addTo(map).bindPopup(driverPopup);
     else {
-      driverMarker.setLatLng(point);
+      if (window.MotoTracking) window.MotoTracking.move(driverMarker, point, location);
+      else driverMarker.setLatLng(point);
       driverMarker.setPopupContent(driverPopup);
     }
-    if (routeLayer) {
+    if (routeLayer && framedDeliveryId !== selectedId) {
       const bounds = routeLayer.getBounds();
       bounds.extend(point);
       map.fitBounds(bounds, { padding: [34, 34], maxZoom: 16 });
-    } else {
+      framedDeliveryId = selectedId;
+    } else if (framedDeliveryId !== selectedId) {
       map.panTo(point, { animate: true, duration: 0.5 });
+      framedDeliveryId = selectedId;
     }
     if (mapStatus) mapStatus.textContent = `Motoboy em trajeto! Localizacao atualizada ${relativeTime(location.serverTimestampMs || location.clientTimestamp)}.`;
+    updateSignalStatus();
   }
 
   function render() {
@@ -276,21 +304,46 @@
 
   async function refresh() {
     const sessionToken = token();
-    if (!sessionToken) return;
+    if (!sessionToken) {
+      socket?.disconnect();
+      socket = null;
+      lastToken = '';
+      deliveries.clear();
+      render();
+      return;
+    }
+    if (refreshRunning) { refreshAgain = true; return; }
+    refreshRunning = true;
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
     try {
       const response = await fetch(`${BACKEND}/api/companies/me/active-deliveries`, {
         headers: { authorization: `Bearer ${sessionToken}` },
+        signal: controller.signal,
         cache: 'no-store'
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || data.error || 'Falha ao carregar rastreamento.');
+      if (token() !== sessionToken) return;
+      const newer = [...deliveries.values()].filter((item) => item._eventAt >= startedAt);
       deliveries.clear();
       (data.deliveries || []).forEach((delivery) => deliveries.set(delivery.id, delivery));
+      newer.forEach((delivery) => deliveries.set(delivery.id, delivery));
+      for (const [id, at] of finishedEvents) {
+        if (at >= startedAt) deliveries.delete(id);
+        else finishedEvents.delete(id);
+      }
+      lastRefreshAt = Date.now();
       render();
       await connectSocket(sessionToken);
     } catch (error) {
       const status = document.getElementById('mapaEntregaStatus');
       if (status) status.textContent = error.message || 'Nao consegui atualizar o mapa.';
+    } finally {
+      clearTimeout(timeout);
+      refreshRunning = false;
+      if (refreshAgain) { refreshAgain = false; refresh(); }
     }
   }
 
@@ -303,11 +356,14 @@
       auth: { token: sessionToken },
       transports: ['websocket', 'polling']
     });
+    socket.on('connect', () => refresh());
     socket.on('delivery:tracking', (event) => {
       const deliveryId = event.deliveryId;
       if (!deliveryId) return;
-      if (event.status === 'finalizada' || event.status === 'cancelada') {
+      if (['finalizada', 'cancelada', 'expirada'].includes(event.status)) {
+        finishedEvents.set(deliveryId, Date.now());
         deliveries.delete(deliveryId);
+        refreshAgain = refreshRunning;
         render();
         return;
       }
@@ -316,12 +372,15 @@
         refresh();
         return;
       }
+      if (event.location && current.motoboyLocalizacao &&
+          Number(event.location.clientTimestamp) <= Number(current.motoboyLocalizacao.clientTimestamp)) return;
       deliveries.set(deliveryId, {
         ...current,
         status: event.status || current.status,
         rastreamentoAtivo: event.rastreamentoAtivo,
         motoboy: event.motoboy || current.motoboy,
-        motoboyLocalizacao: event.location || current.motoboyLocalizacao
+        motoboyLocalizacao: event.location || current.motoboyLocalizacao,
+        _eventAt: Date.now()
       });
       render();
     });
@@ -340,12 +399,14 @@
     }
     refresh();
     setInterval(() => {
-      if (token() && document.visibilityState === 'visible') refresh();
+      updateSignalStatus();
+      if (token() && document.visibilityState === 'visible' && Date.now() - lastRefreshAt >= (socket?.connected ? 60000 : 15000)) refresh();
     }, 15 * 1000);
     window.addEventListener('storage', (event) => {
       if (event.key === TOKEN_KEY) refresh();
     });
     window.addEventListener('delivery:created', () => refresh());
+    window.addEventListener('online', () => refresh());
     window.addEventListener('focus', () => {
       if (token()) refresh();
     });
