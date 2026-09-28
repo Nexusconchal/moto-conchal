@@ -1985,6 +1985,162 @@
       const MEMORIA_EMPRESA = "nexusEmpresaDados",
         MEMORIA_PEDIDOS_PREPARADOS = "nexusEmpresaPedidosPreparados",
         TOKEN_EMPRESA = "nexusEmpresaToken";
+
+      const ACENTOS_INTERFACE = Object.freeze({
+        acai: "açaí",
+        acessorio: "acessório",
+        acessorios: "acessórios",
+        acoes: "ações",
+        aprovacao: "aprovação",
+        ate: "até",
+        automatica: "automática",
+        automaticas: "automáticas",
+        automatico: "automático",
+        automaticos: "automáticos",
+        botao: "botão",
+        botoes: "botões",
+        calculo: "cálculo",
+        calculos: "cálculos",
+        cardapio: "cardápio",
+        cartao: "cartão",
+        codigo: "código",
+        codigos: "códigos",
+        comecar: "começar",
+        conferencia: "conferência",
+        conexao: "conexão",
+        conexoes: "conexões",
+        configuracao: "configuração",
+        configuracoes: "configurações",
+        credito: "crédito",
+        creditos: "créditos",
+        deposito: "depósito",
+        depositos: "depósitos",
+        descricao: "descrição",
+        diario: "diário",
+        disponivel: "disponível",
+        disponiveis: "disponíveis",
+        distancia: "distância",
+        endereco: "endereço",
+        enderecos: "endereços",
+        entrarao: "entrarão",
+        estao: "estão",
+        farmacia: "farmácia",
+        informacao: "informação",
+        informacoes: "informações",
+        inicio: "início",
+        integracao: "integração",
+        integracoes: "integrações",
+        invalido: "inválido",
+        invalidos: "inválidos",
+        ja: "já",
+        lancado: "lançado",
+        liberacao: "liberação",
+        liquido: "líquido",
+        liquidos: "líquidos",
+        minimo: "mínimo",
+        minima: "mínima",
+        nao: "não",
+        necessario: "necessário",
+        necessaria: "necessária",
+        notificacao: "notificação",
+        notificacoes: "notificações",
+        numero: "número",
+        numeros: "números",
+        observacao: "observação",
+        observacoes: "observações",
+        opcao: "opção",
+        opcoes: "opções",
+        periodo: "período",
+        periodos: "períodos",
+        poderao: "poderão",
+        possivel: "possível",
+        preco: "preço",
+        precos: "preços",
+        rapida: "rápida",
+        recuperacao: "recuperação",
+        relatorio: "relatório",
+        relatorios: "relatórios",
+        responsavel: "responsável",
+        responsaveis: "responsáveis",
+        seguranca: "segurança",
+        sera: "será",
+        sessao: "sessão",
+        sessoes: "sessões",
+        sincronizacao: "sincronização",
+        so: "só",
+        tambem: "também",
+        tenis: "tênis",
+        ultimas: "últimas",
+        ultimos: "últimos",
+        visao: "visão",
+        voce: "você",
+        voces: "vocês",
+      });
+      const REGEX_ACENTOS_INTERFACE = new RegExp(
+        `\\b(${Object.keys(ACENTOS_INTERFACE).sort((a, b) => b.length - a.length).join("|")})\\b`,
+        "gi",
+      );
+      function preservarCaixaAcento(original, corrigida) {
+        if (/^motoja$/i.test(original)) {
+          if (original === original.toUpperCase()) return "MOTOJÁ";
+          if (/^MotoJ(?:a|A)$/.test(original)) return "MotoJÁ";
+        }
+        if (original === original.toUpperCase()) return corrigida.toUpperCase();
+        if (original[0] === original[0].toUpperCase())
+          return corrigida[0].toUpperCase() + corrigida.slice(1);
+        return corrigida;
+      }
+      function acentuarTextoInterface(valor) {
+        return String(valor || "")
+          .replace(/\bTudo aqui e opcional\b/g, "Tudo aqui é opcional")
+          .replace(/\bQuem paga essa taxa e a empresa\b/g, "Quem paga essa taxa é a empresa")
+          .replace(/\bE necessario\b/g, "É necessário")
+          .replace(/\besta (?=(salv[oa]|preparad[oa]|corret[oa]|bloquead[oa]|ativ[oa]|liberad[oa]|protegida|conectad[oa]))/gi, (trecho) =>
+            trecho[0] === trecho[0].toUpperCase() ? "Está " : "está ",
+          )
+          .replace(/\bMotoJ(?:a|A)\b/g, "MotoJÁ")
+          .replace(REGEX_ACENTOS_INTERFACE, (palavra) =>
+            preservarCaixaAcento(palavra, ACENTOS_INTERFACE[palavra.toLowerCase()]),
+          );
+      }
+      const confirmarNativo = window.confirm.bind(window),
+        alertarNativo = window.alert.bind(window);
+      window.confirm = (mensagem) =>
+        confirmarNativo(acentuarTextoInterface(mensagem));
+      window.alert = (mensagem) => alertarNativo(acentuarTextoInterface(mensagem));
+      function corrigirAcentosInterface(raiz) {
+        if (!raiz) return;
+        if (raiz.nodeType === Node.TEXT_NODE) {
+          const pai = raiz.parentElement;
+          if (!pai || /^(SCRIPT|STYLE|TEXTAREA)$/.test(pai.tagName)) return;
+          if (pai.tagName === "OPTION" && !pai.hasAttribute("value"))
+            pai.setAttribute("value", pai.textContent.trim());
+          const corrigido = acentuarTextoInterface(raiz.nodeValue);
+          if (corrigido !== raiz.nodeValue) raiz.nodeValue = corrigido;
+          return;
+        }
+        if (raiz.nodeType !== Node.ELEMENT_NODE) return;
+        ["placeholder", "title", "aria-label"].forEach((atributo) => {
+          if (!raiz.hasAttribute(atributo)) return;
+          const atual = raiz.getAttribute(atributo);
+          const corrigido = acentuarTextoInterface(atual);
+          if (corrigido !== atual) raiz.setAttribute(atributo, corrigido);
+        });
+        raiz.childNodes.forEach(corrigirAcentosInterface);
+      }
+      corrigirAcentosInterface(document.body);
+      new MutationObserver((alteracoes) => {
+        alteracoes.forEach((alteracao) => {
+          if (alteracao.type === "characterData")
+            corrigirAcentosInterface(alteracao.target);
+          alteracao.addedNodes.forEach(corrigirAcentosInterface);
+        });
+      }).observe(document.body, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+
       let empresaToken = localStorage.getItem(TOKEN_EMPRESA) || "";
       function mostrarTelaConta(tela, mensagem = "") {
         contaTela = tela;
