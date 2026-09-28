@@ -7893,6 +7893,7 @@ app.post('/api/companies/me/pediplus/save', assertCompany, assertCompanyApproved
     const token = typeof req.body.token === 'string' ? req.body.token.trim() : '';
     const ativo = req.body.ativo !== undefined ? !!req.body.ativo : !!req.body.ativa;
     const tipoEntrega = String(req.body.tipoEntrega || 'Acai / pote de sorvete').slice(0, 50);
+    const tokenFinal = token || decryptSecretSafe(req.company.pediplusTokenEncrypted || '');
 
     const balance = companyBalance(req.company || {});
     if (ativo && balance.disponivel < MIN_INTEGRATION_BALANCE) {
@@ -7900,6 +7901,38 @@ app.post('/api/companies/me/pediplus/save', assertCompany, assertCompanyApproved
         error: 'saldo_insuficiente',
         message: `Saldo insuficiente (R$ ${balance.disponivel.toFixed(2).replace('.', ',')}). Para ativar o modo automatico e necessario ter no minimo R$ 6,50 de saldo disponivel. Adicione saldo no Financeiro primeiro.`
       });
+    }
+    if (ativo && !tokenFinal) {
+      return res.status(400).json({
+        error: 'pediplus_token_indisponivel',
+        message: 'O token salvo nao pode mais ser aberto pelo servidor. Clique em Trocar token, cole novamente o Token Secreto do PediPlus e tente ligar.'
+      });
+    }
+
+    if (ativo) {
+      let testResponse;
+      try {
+        testResponse = await fetch('https://pediplus.online/api/public/deliveries?status=pendentes', {
+          headers: {
+            'Authorization': `Bearer ${tokenFinal}`,
+            'Accept': 'application/json'
+          },
+          signal: AbortSignal.timeout(12000)
+        });
+      } catch (_error) {
+        return res.status(502).json({
+          error: 'pediplus_indisponivel',
+          message: 'Nao consegui falar com o PediPlus agora. O automatico continua desligado; tente novamente em instantes.'
+        });
+      }
+      if (!testResponse.ok) {
+        return res.status(400).json({
+          error: 'pediplus_token_invalido',
+          message: testResponse.status === 401 || testResponse.status === 403
+            ? 'O PediPlus recusou o token salvo. Clique em Trocar token e cole um Token Secreto valido.'
+            : `O PediPlus respondeu com erro ${testResponse.status}. O automatico continua desligado.`
+        });
+      }
     }
 
     const updates = {
@@ -7914,7 +7947,6 @@ app.post('/api/companies/me/pediplus/save', assertCompany, assertCompanyApproved
     }
     await req.companySnap.ref.set(updates, { merge: true });
 
-    const tokenFinal = token || decryptSecretSafe(req.company.pediplusTokenEncrypted || '');
     if (ativo && tokenFinal && balance.disponivel >= MIN_INTEGRATION_BALANCE) {
       pediplusActiveCompanies.set(req.companyId, {
         apiKey: tokenFinal,

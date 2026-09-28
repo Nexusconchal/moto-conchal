@@ -3888,6 +3888,16 @@
       function pediplusTipoValor() {
         return $("pediplusTipoEntrega")?.value || "Acai / pote de sorvete";
       }
+      function mostrarPediplusStatus(mensagem, erro = false) {
+        const box = $("pediplusStatus");
+        if (box) {
+          box.textContent = mensagem;
+          box.className = `status show${erro ? " error" : ""}`;
+          box.style.borderColor = erro ? "rgba(239, 68, 68, 0.55)" : "";
+          box.style.color = erro ? "#fca5a5" : "";
+        }
+        mostrarStatus(mensagem, erro);
+      }
       function atualizarPediplusUI() {
         const box = $("pediplusStatus"),
           btn = $("togglePediplus"),
@@ -3988,14 +3998,14 @@
         const ligar = !pediplusAtivo;
         const token = $("pediplusToken").value.trim();
         if (ligar && (saldoEmpresa.disponivel || 0) < 6.50) {
-          mostrarStatus(
+          mostrarPediplusStatus(
             `Saldo insuficiente (${moeda(saldoEmpresa.disponivel)}). Para ligar o modo automatico e necessario ter no minimo R$ 6,50 de saldo disponivel. Adicione saldo no Financeiro primeiro.`,
             true,
           );
           return;
         }
         if (ligar && !pediplusProtegido && !token) {
-          mostrarStatus("Cole o Token do PediPlus antes de ligar.", true);
+          mostrarPediplusStatus("Cole o Token do PediPlus antes de ligar.", true);
           return;
         }
         const btn = $("togglePediplus");
@@ -4021,13 +4031,13 @@
           pediplusAtivo = !!d.pediplusAtivo;
           pediplusProtegido = !!d.pediplusProtegido;
           atualizarPediplusUI();
-          mostrarStatus(pediplusAtivo ? "Automatico PediPlus ligado! Buscando novos pedidos..." : "Automatico PediPlus desligado.");
+          mostrarPediplusStatus(pediplusAtivo ? "Automatico PediPlus ligado! Buscando novos pedidos..." : "Automatico PediPlus desligado.");
           if (pediplusAtivo) {
             pediplusLoadPending();
           }
         } catch (e) {
-          mostrarStatus(e.message, true);
           atualizarPediplusUI();
+          mostrarPediplusStatus(e.message || "Nao consegui mudar o modo automatico.", true);
         } finally {
           btn.disabled = false;
         }
