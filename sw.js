@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexus-motoja-v191-pix-copy';
+const CACHE_NAME = 'nexus-motoja-v192-network-first-pages';
 const ARQUIVOS = ['./', './index.html', './motoboy.html', './motoboy-tracking.js', './dono.html', './owner-dashboard.css', './owner-dashboard.js', './owner-workspace.css', './owner-workspace.js', './empresa.html', './empresa-tracking.js', './empresa-pedidos.js', './privacy.html', './cliente.webmanifest', './motorista.webmanifest', './dono.webmanifest', './empresa.webmanifest', './firebase-messaging-sw.js', './nexus-motoja-logo-mark.png', './nexus-motoja-site-logo.png', './motorista-icon.svg', './nexus-motoja-icon-180.png', './nexus-motoja-icon-192.png', './nexus-motoja-icon-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -23,6 +23,21 @@ self.addEventListener('fetch', (event) => {
   if (url.origin.includes('firebaseio.com')) return;
   if (url.origin.includes('nominatim.openstreetmap.org')) return;
   if (url.origin.includes('router.project-osrm.org')) return;
+
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request, { cache: 'no-store' })
+        .then((response) => {
+          if (response && response.status === 200 && response.type === 'basic') {
+            const copia = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copia));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request, { ignoreSearch: true }))
+    );
+    return;
+  }
 
   event.respondWith(
     caches.match(event.request).then((cached) => {
