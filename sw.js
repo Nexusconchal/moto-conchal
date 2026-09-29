@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexus-motoja-v192-network-first-pages';
+const CACHE_NAME = 'nexus-motoja-v193-pix-controls';
 const ARQUIVOS = ['./', './index.html', './motoboy.html', './motoboy-tracking.js', './dono.html', './owner-dashboard.css', './owner-dashboard.js', './owner-workspace.css', './owner-workspace.js', './empresa.html', './empresa-tracking.js', './empresa-pedidos.js', './privacy.html', './cliente.webmanifest', './motorista.webmanifest', './dono.webmanifest', './empresa.webmanifest', './firebase-messaging-sw.js', './nexus-motoja-logo-mark.png', './nexus-motoja-site-logo.png', './motorista-icon.svg', './nexus-motoja-icon-180.png', './nexus-motoja-icon-192.png', './nexus-motoja-icon-512.png'];
 
 self.addEventListener('install', (event) => {

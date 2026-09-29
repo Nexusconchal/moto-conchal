@@ -142,6 +142,43 @@
         grid-template-columns: 1fr 1fr;
         gap: 8px;
       }
+      .pix-key-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 52px;
+        gap: 8px;
+        align-items: stretch;
+      }
+      .pix-key-row input {
+        min-width: 0;
+        font-weight: 800;
+      }
+      .pix-eye-button {
+        min-height: 52px;
+        width: 52px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        display: grid;
+        place-items: center;
+      }
+      .pix-eye-icon {
+        width: 22px;
+        height: 15px;
+        border: 2px solid currentColor;
+        border-radius: 75% 15%;
+        transform: rotate(45deg);
+        position: relative;
+      }
+      .pix-eye-icon::after {
+        content: "";
+        position: absolute;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+        left: 6px;
+        top: 3px;
+      }
       .box {
         border: 1px solid var(--line);
         border-radius: 20px;
@@ -1394,11 +1431,15 @@
         </p>
         <div id="pixManualBox" class="status show" style="display: none; gap: 10px; text-align: left">
           <span class="muted">Chave Pix aleatória - Bradesco</span>
-          <strong id="pixManualKey" style="font-size: 1rem; overflow-wrap: anywhere"></strong>
+          <div class="pix-key-row">
+            <input id="pixManualKey" type="password" readonly aria-label="Chave Pix aleatória" />
+            <button id="alternarPix" class="pix-eye-button" type="button" aria-label="Mostrar chave Pix" title="Mostrar chave Pix"><span class="pix-eye-icon" aria-hidden="true"></span></button>
+          </div>
           <div class="grid2 compact-buttons">
             <button id="copiarPix" type="button" class="green">Copiar chave Pix</button>
-            <button id="pegarPix" type="button" class="secondary">Enviar comprovante no WhatsApp</button>
+            <button id="pegarPix" type="button">Enviar comprovante no WhatsApp</button>
           </div>
+          <span id="pixManualFeedback" class="muted" aria-live="polite"></span>
           <span id="pixManualCodigo" class="muted"></span>
         </div>
       </section>
@@ -1973,6 +2014,7 @@
         enviando = false,
         ultimoDepositoWhatsapp = "",
         ultimoDepositoPix = "",
+        pixManualVisivel = false,
         pedidoIntegracaoAtual = null,
         pedidoPreparadoAtivoId = "",
         pedidosPreparados = [],
@@ -2393,9 +2435,18 @@
           depositId = typeof dados === "string" ? "" : dados.depositId || "";
         ultimoDepositoWhatsapp = link;
         ultimoDepositoPix = pixKey;
+        pixManualVisivel = false;
         const box = $("pixManualBox");
         if (box) box.style.display = link && pixKey ? "grid" : "none";
-        if ($("pixManualKey")) $("pixManualKey").textContent = pixKey;
+        if ($("pixManualKey")) {
+          $("pixManualKey").value = pixKey;
+          $("pixManualKey").type = "password";
+        }
+        if ($("alternarPix")) {
+          $("alternarPix").setAttribute("aria-label", "Mostrar chave Pix");
+          $("alternarPix").title = "Mostrar chave Pix";
+        }
+        if ($("pixManualFeedback")) $("pixManualFeedback").textContent = "";
         if ($("pixManualCodigo"))
           $("pixManualCodigo").textContent = depositId
             ? `Pedido de deposito: ${depositId}. Envie o comprovante para liberar o saldo.`
@@ -4591,13 +4642,33 @@
           );
       };
       $("copiarPix").onclick = async () => {
+        const btn = $("copiarPix"), textoOriginal = "Copiar chave Pix";
+        btn.disabled = true;
+        btn.textContent = "Copiando...";
         const copiado = await copiarTextoSeguro(ultimoDepositoPix);
+        btn.textContent = copiado ? "Chave copiada!" : "Não foi possível copiar";
+        if ($("pixManualFeedback"))
+          $("pixManualFeedback").textContent = copiado
+            ? "Chave copiada. Faça o pagamento e envie o comprovante."
+            : "Toque no olho, selecione a chave e copie manualmente.";
+        if (copiado && navigator.vibrate) navigator.vibrate(40);
         mostrarStatus(
           copiado
             ? "Chave Pix copiada. Depois do pagamento, envie o comprovante no WhatsApp."
             : "Nao consegui copiar automaticamente. Toque e segure a chave Pix para copiar.",
           !copiado,
         );
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.textContent = textoOriginal;
+        }, 1800);
+      };
+      $("alternarPix").onclick = () => {
+        pixManualVisivel = !pixManualVisivel;
+        $("pixManualKey").type = pixManualVisivel ? "text" : "password";
+        const acao = pixManualVisivel ? "Ocultar" : "Mostrar";
+        $("alternarPix").setAttribute("aria-label", `${acao} chave Pix`);
+        $("alternarPix").title = `${acao} chave Pix`;
       };
       $("valorDeposito").addEventListener("input", () => mostrarBotaoPix());
       $("toggleDetalhesEntrega").onclick = () => {
@@ -4927,7 +4998,7 @@
       };
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker
-          .register("./sw.js?v=192", { updateViaCache: "none" })
+          .register("./sw.js?v=193", { updateViaCache: "none" })
           .then((r) => r.update())
           .catch(() => {});
       }
