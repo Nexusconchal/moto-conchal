@@ -1392,9 +1392,15 @@
           Deposito minimo: R$ 10,00. O saldo so entra depois que o dono conferir
           o pagamento e aprovar no painel.
         </p>
-        <button id="pegarPix" type="button" class="green" style="display: none">
-          Pegar Pix e enviar comprovante
-        </button>
+        <div id="pixManualBox" class="status show" style="display: none; gap: 10px; text-align: left">
+          <span class="muted">Chave Pix aleatória - Bradesco</span>
+          <strong id="pixManualKey" style="font-size: 1rem; overflow-wrap: anywhere"></strong>
+          <div class="grid2 compact-buttons">
+            <button id="copiarPix" type="button" class="green">Copiar chave Pix</button>
+            <button id="pegarPix" type="button" class="secondary">Enviar comprovante no WhatsApp</button>
+          </div>
+          <span id="pixManualCodigo" class="muted"></span>
+        </div>
       </section>
       <section class="box app-area hidden">
         <h2>Plano Diario MotoJa Pro</h2>
@@ -1966,6 +1972,7 @@
       let entregaCalculada = null,
         enviando = false,
         ultimoDepositoWhatsapp = "",
+        ultimoDepositoPix = "",
         pedidoIntegracaoAtual = null,
         pedidoPreparadoAtivoId = "",
         pedidosPreparados = [],
@@ -2380,9 +2387,37 @@
         statusBox.className = "status";
         statusBox.textContent = "";
       }
-      function mostrarBotaoPix(link = "") {
+      function mostrarBotaoPix(dados = {}) {
+        const link = typeof dados === "string" ? dados : dados.whatsapp || "",
+          pixKey = typeof dados === "string" ? "" : dados.pixKey || "",
+          depositId = typeof dados === "string" ? "" : dados.depositId || "";
         ultimoDepositoWhatsapp = link;
-        $("pegarPix").style.display = link ? "block" : "none";
+        ultimoDepositoPix = pixKey;
+        const box = $("pixManualBox");
+        if (box) box.style.display = link && pixKey ? "grid" : "none";
+        if ($("pixManualKey")) $("pixManualKey").textContent = pixKey;
+        if ($("pixManualCodigo"))
+          $("pixManualCodigo").textContent = depositId
+            ? `Pedido de deposito: ${depositId}. Envie o comprovante para liberar o saldo.`
+            : "";
+      }
+      async function copiarTextoSeguro(texto) {
+        if (!texto) return false;
+        try {
+          await navigator.clipboard.writeText(texto);
+          return true;
+        } catch (_) {
+          const campo = document.createElement("textarea");
+          campo.value = texto;
+          campo.setAttribute("readonly", "");
+          campo.style.position = "fixed";
+          campo.style.opacity = "0";
+          document.body.appendChild(campo);
+          campo.select();
+          const copiado = document.execCommand("copy");
+          campo.remove();
+          return copiado;
+        }
       }
       function salvarEmpresa() {
         try {
@@ -4514,7 +4549,7 @@
             mostrarStatus(
               `Pagamento criado no Mercado Pago. Codigo: ${d.depositId}. Depois de aprovado, o saldo entra automatico.`,
             );
-            mostrarBotaoPix("");
+            mostrarBotaoPix();
             location.href = d.initPoint || d.sandboxInitPoint;
             return;
           }
@@ -4537,9 +4572,9 @@
               d.message || d.error || "Nao consegui solicitar deposito.",
             );
           mostrarStatus(
-            `Pedido de deposito criado. Codigo: ${d.depositId}. Clique em Pegar Pix e envie o comprovante para liberar o saldo.`,
+            `Pedido de deposito criado. Copie a chave Pix abaixo, pague e depois envie o comprovante para liberar o saldo.`,
           );
-          mostrarBotaoPix(d.whatsapp || "");
+          mostrarBotaoPix(d);
         } catch (e) {
           mostrarStatus(e.message || "Erro ao pedir deposito.", true);
         } finally {
@@ -4555,7 +4590,16 @@
             true,
           );
       };
-      $("valorDeposito").addEventListener("input", () => mostrarBotaoPix(""));
+      $("copiarPix").onclick = async () => {
+        const copiado = await copiarTextoSeguro(ultimoDepositoPix);
+        mostrarStatus(
+          copiado
+            ? "Chave Pix copiada. Depois do pagamento, envie o comprovante no WhatsApp."
+            : "Nao consegui copiar automaticamente. Toque e segure a chave Pix para copiar.",
+          !copiado,
+        );
+      };
+      $("valorDeposito").addEventListener("input", () => mostrarBotaoPix());
       $("toggleDetalhesEntrega").onclick = () => {
         const abrir = $("detalhesEntrega").classList.contains("hidden");
         mostrarDetalhesEntrega(abrir);
