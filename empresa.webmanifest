@@ -3,7 +3,7 @@
   "name": "Nexus Entregas",
   "short_name": "Nexus Entregas",
   "description": "App de empresas para chamar entregas e delivery pela Nexus.",
-  "start_url": "./empresa.html?app=nexus-entregas-empresa",
+  "start_url": "./empresa.html?app=nexus-entregas-empresa&v=192",
   "scope": "./",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui", "browser"],
