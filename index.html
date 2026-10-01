@@ -2864,15 +2864,17 @@
         return textoBusca(resultado).includes(esperado);
       }
       function resultadoEnderecoConfiavel(entrada, props, formatado) {
-        const texto = textoBusca(entrada),
-          resultado = textoBusca(formatado),
-          pediuRuaOuNumero =
-            /\d|\br\.?\b|rua|avenida|av\.?|estrada|rodovia|travessa/.test(
-              texto,
-            );
-        if (!pediuRuaOuNumero) return true;
-        if (props.street || props.housenumber) return true;
-        return /rua|avenida|av\.?|estrada|rodovia|travessa/.test(resultado);
+        const normalizar = (valor) => textoBusca(valor)
+          .replace(/\bzanochett?a\b|\bzanchett?a\b/g, "zancheta");
+        const texto = normalizar(entrada);
+        if (["city", "county", "state", "country", "postcode", "district", "suburb"].includes(props.result_type)) return false;
+        const rua = texto.match(/(?:^|\s)(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+([^,]+)/);
+        if (!rua) return !!(props.street || props.housenumber || props.name);
+        if (!props.street) return false;
+        const palavras = rua[1].replace(/\d+.*/, "").split(/\s+/)
+          .filter((p) => p.length > 1 && !["de", "da", "do", "das", "dos"].includes(p));
+        const encontrada = normalizar(props.street).split(/[^a-z0-9]+/);
+        return palavras.length > 0 && palavras.every((p) => encontrada.includes(p));
       }
       function rotaDistantePlausivel(km, ...textos) {
         const distante = textos.some((t) =>
@@ -2891,6 +2893,7 @@
           .replace(/https?:\/\/\S+/gi, " ")
           .replace(/\s+/g, " ")
           .trim();
+        texto = texto.replace(/\bzanochett?a\b/gi, "Zancheta").replace(/\bzanchett?a\b/gi, "Zancheta");
         const busca = textoBusca(texto);
         if (busca.includes("arthur nogueira"))
           texto = texto.replace(/arthur nogueira/gi, "Artur Nogueira");
@@ -3004,13 +3007,10 @@
               continue;
             }
             if (
-              !resultadoEnderecoConfiavel(base, props, formatado) &&
-              !textoBusca(formatado).includes(
-                localEsperado(base) || tentativa.esperado || "conchal",
-              )
+              !resultadoEnderecoConfiavel(base, props, formatado)
             ) {
               ultimoErro =
-                "O mapa achou apenas a cidade, não o endereço. Digite rua, número, bairro e cidade para evitar preço errado.";
+                "O mapa não confirmou a rua informada. Digite rua, número, bairro e cidade para evitar preço errado.";
               continue;
             }
             const [lon, lat] = feature.geometry.coordinates;
