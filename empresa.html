@@ -2633,15 +2633,17 @@
         return textoBusca(resultado).includes(esperado);
       }
       function resultadoEnderecoConfiavel(entrada, props, formatado) {
-        const texto = textoBusca(entrada),
-          resultado = textoBusca(formatado),
-          pediuRuaOuNumero =
-            /\d|\br\.?\b|rua|avenida|av\.?|estrada|rodovia|travessa/.test(
-              texto,
-            );
-        if (!pediuRuaOuNumero) return true;
-        if (props.street || props.housenumber) return true;
-        return /rua|avenida|av\.?|estrada|rodovia|travessa/.test(resultado);
+        const normalizar = (valor) => textoBusca(valor)
+          .replace(/\bzanochett?a\b|\bzanchett?a\b/g, "zancheta");
+        const texto = normalizar(entrada);
+        if (["city", "county", "state", "country", "postcode", "district", "suburb"].includes(props.result_type)) return false;
+        const rua = texto.match(/(?:^|\s)(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+([^,]+)/);
+        if (!rua) return !!(props.street || props.housenumber || props.name);
+        if (!props.street) return false;
+        const palavras = rua[1].replace(/\d+.*/, "").split(/\s+/)
+          .filter((p) => p.length > 1 && !["de", "da", "do", "das", "dos"].includes(p));
+        const encontrada = normalizar(props.street).split(/[^a-z0-9]+/);
+        return palavras.length > 0 && palavras.every((p) => encontrada.includes(p));
       }
       function destinoComidaEspecial(v) {
         return /martinho\s*prado|tujuguaba|iate/.test(textoBusca(v));
@@ -2796,9 +2798,10 @@
             ? salvos.slice(0, 30).map((pedido, index) => ({
                 ...pedidoPreparadoVazio(index + 1),
                 ...pedido,
+                ...(pedido.status === "enviado" ? pedidoPreparadoVazio(index + 1) : {}),
                 ordem: index + 1,
-                telefoneRecebedor: soNumeros(pedido.telefoneRecebedor).slice(0, 11),
-                status: pedido.status === "enviado" ? "enviado" : "rascunho",
+                telefoneRecebedor: pedido.status === "enviado" ? "" : soNumeros(pedido.telefoneRecebedor).slice(0, 11),
+                status: "rascunho",
               }))
             : [];
         } catch (_) {
@@ -3001,13 +3004,10 @@
               continue;
             }
             if (
-              !resultadoEnderecoConfiavel(base, props, formatado) &&
-              !textoBusca(formatado).includes(
-                localEsperado(base) || tentativa.esperado || "conchal",
-              )
+              !resultadoEnderecoConfiavel(base, props, formatado)
             ) {
               ultimoErro =
-                "O mapa achou apenas a cidade, nao o endereco. Digite rua, numero, bairro e cidade para evitar preco errado.";
+                "O mapa nao confirmou a rua informada. Digite rua, numero, bairro e cidade para evitar preco errado.";
               continue;
             }
             const [lon, lat] = feature.geometry.coordinates;
@@ -4953,8 +4953,14 @@
               )
             : null;
           if (pedidoPreparadoEnviado) {
-            pedidoPreparadoEnviado.status = "enviado";
-            pedidoPreparadoEnviado.deliveryId = data.deliveryId || "";
+            Object.assign(pedidoPreparadoEnviado, pedidoPreparadoVazio(pedidoPreparadoEnviado.ordem), {
+              id: pedidoPreparadoEnviado.id,
+              ordem: pedidoPreparadoEnviado.ordem,
+            });
+            ["entrega", "recebedor", "telefoneRecebedor", "descricao", "observacao", "enderecosExtras"].forEach((id) => {
+              if ($(id)) $(id).value = "";
+            });
+            pedidoIntegracaoAtual = null;
             pedidoPreparadoAtivoId = "";
             entregaCalculada = null;
             enviando = false;
@@ -4998,7 +5004,7 @@
       };
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker
-          .register("./sw.js?v=193", { updateViaCache: "none" })
+          .register("./sw.js?v=194", { updateViaCache: "none" })
           .then((r) => r.update())
           .catch(() => {});
       }
