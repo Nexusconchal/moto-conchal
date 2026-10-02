@@ -1573,29 +1573,57 @@ function verifyCarQuoteToken(token) {
   }
 }
 
+// Keep the existing IV.tag.ciphertext format so stored records remain compatible.
+function encryptionKeySources() {
+  const current = process.env.DATA_ENCRYPTION_KEY || ownerPasswordValue();
+  if (!current) return [];
+  let previous = [];
+  try {
+    const configured = JSON.parse(process.env.DATA_ENCRYPTION_PREVIOUS_KEYS || '[]');
+    if (Array.isArray(configured)) previous = configured.filter((key) => typeof key === 'string' && key.length > 0).slice(0, 5);
+  } catch (_) {
+    // A malformed optional setting must not interrupt reads with the current key.
+  }
+  return [...new Set([String(current), ...previous])];
+}
+
 function encryptSecret(value) {
   const keySource = process.env.DATA_ENCRYPTION_KEY || ownerPasswordValue();
   if (!keySource || !value) return '';
   const key = crypto.createHash('sha256').update(String(keySource)).digest();
   const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv, { authTagLength: 16 });
   const encrypted = Buffer.concat([cipher.update(String(value), 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
   return `${iv.toString('base64')}.${tag.toString('base64')}.${encrypted.toString('base64')}`;
 }
 
 function decryptSecret(value) {
-  const keySource = process.env.DATA_ENCRYPTION_KEY || ownerPasswordValue();
-  if (!keySource || !value) return '';
-  const [ivText, tagText, encryptedText] = String(value).split('.');
+  const sources = encryptionKeySources();
+  if (!sources.length || !value) return '';
+  const parts = String(value).split('.');
+  if (parts.length !== 3) throw new Error('Dado criptografado invalido.');
+  const [ivText, tagText, encryptedText] = parts;
   if (!ivText || !tagText || !encryptedText) return '';
-  const key = crypto.createHash('sha256').update(String(keySource)).digest();
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivText, 'base64'));
-  decipher.setAuthTag(Buffer.from(tagText, 'base64'));
-  return Buffer.concat([
-    decipher.update(Buffer.from(encryptedText, 'base64')),
-    decipher.final()
-  ]).toString('utf8');
+  const decode = (text) => {
+    const bytes = Buffer.from(text, 'base64');
+    if (bytes.toString('base64') !== text) throw new Error('Dado criptografado invalido.');
+    return bytes;
+  };
+  const iv = decode(ivText), tag = decode(tagText), encrypted = decode(encryptedText);
+  if (iv.length !== 12 || tag.length !== 16) throw new Error('Dado criptografado invalido.');
+  for (const source of sources) {
+    try {
+      const key = crypto.createHash('sha256').update(source).digest();
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, { authTagLength: 16 });
+      decipher.setAuthTag(tag);
+      // Release plaintext only after final() verifies the complete authentication tag.
+      return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
+    } catch (_) {
+      // Try configured historical keys, never return unauthenticated plaintext.
+    }
+  }
+  throw new Error('Nao foi possivel autenticar o dado criptografado.');
 }
 
 function passwordHash(password, salt = crypto.randomBytes(16).toString('hex')) {
