@@ -11054,7 +11054,7 @@ app.post('/api/admin/support-automation/setup', authLimiter, assertOwner, async 
     const connectedPhone = brazilPhone(String(selected?.ownerJid || selected?.instance?.owner || '').split('@')[0]);
     if (!selected || connectedPhone !== SUPPORT_PHONE || (selected.connectionStatus || selected.instance?.status) !== 'open') return res.status(409).json({ error: 'conecte_whatsapp_suporte', phone: SUPPORT_PHONE });
     const previous = await supportEvolution(`/webhook/find/${supportInstancePath}`);
-    const webhook = previous.webhook || previous;
+    const webhook = previous?.webhook || previous || {};
     const url = `${BACKEND_BASE_URL}/api/support/whatsapp/webhook`;
     if (webhook.enabled && webhook.url !== url) return res.status(409).json({ error: 'webhook_existente_preservado' });
     const groups = await supportEvolution(`/group/fetchAllGroups/${supportInstancePath}?getParticipants=false`);
