@@ -2835,7 +2835,7 @@
       }
       function mensagemErroAmigavel(e) {
         const m = String((e && e.message) || e || "");
-        if (/failed to fetch|networkerror|load failed/i.test(m))
+        if (/failed to fetch|networkerror|load failed|abort|timeout/i.test(m))
           return "Nao consegui conectar ao mapa agora. Verifique a internet e tente de novo em alguns segundos.";
         return m || "Nao consegui calcular agora.";
       }
@@ -2920,7 +2920,7 @@
         const partes = [principal];
         if (limpo && limpo !== principal) partes.push(limpo);
         const trechoEndereco = principal.match(
-          /((?:av(?:enida)?\.?|rua|r\.?|rodovia|estrada|travessa)\s+[^,.;]+(?:,\s*\d+)?)/i,
+          /((?:av(?:enida)?\.?|rua|r\.?|rodovia|estrada|travessa)\s+[^,;]+(?:,\s*\d+)?)/i,
         );
         if (trechoEndereco && !partes.includes(trechoEndereco[1]))
           partes.push(trechoEndereco[1]);
@@ -3927,7 +3927,7 @@
         abrirWhatsApp("Olá, esqueci a senha da minha conta de cliente Nexus MotoJá e preciso de ajuda."),
       );
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=196", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=197", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
       }
       verificarAcessoCliente(true);
       verificarPedidoAtivo(false);

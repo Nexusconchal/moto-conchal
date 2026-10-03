@@ -8,6 +8,11 @@ const context = vm.createContext({});
 function load(name, next) { vm.runInContext(source.slice(source.indexOf(`function ${name}(`), source.indexOf(`function ${next}(`)), context); }
 load('textoBusca', 'cidadesAtendidas'); load('cidadesAtendidas', 'dicaLocal'); load('dicaLocal', 'localEsperado');
 load('resultadoEnderecoConfiavel', 'rotaDistantePlausivel'); load('rotaDistantePlausivel', 'textoMapa');
+load('textoMapa', 'variantesEnderecoMapa'); load('variantesEnderecoMapa', 'tentativasGeocode');
+test('fallback geocoding preserves Dr. and A. abbreviations and the street number', () => {
+  const variants = context.variantesEnderecoMapa('Av. Centenário Dr. Paulo de A. Nogueira, 421, Cosmópolis - SP, 13150-000');
+  assert.ok(variants.includes('Av. Centenário Dr. Paulo de A. Nogueira, 421'));
+});
 test('Cosmópolis is recognized instead of appending Conchal to its address', () => {
   assert.equal(context.dicaLocal('Av. Centenário Dr. Paulo de A. Nogueira, 421, Cosmópolis'), 'cosmopolis');
 });
