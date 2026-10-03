@@ -16,6 +16,7 @@ test('abbreviated screenshot destination matches the official avenue name', () =
   assert.equal(context.resultadoEnderecoConfiavel('Rua Antônio Coraini, 610, Terra Nobre, Conchal', { result_type: 'building', street: 'Rua Antonio Coraini' }), true);
 });
 test('wrong streets and city centroids remain rejected', () => {
+  assert.equal(context.resultadoEnderecoConfiavel('Av. Centenário Dr. Paulo de A. Nogueira, 421, Cosmópolis', { result_type: 'amenity', street: 'Avenida Centenario Do Doutor Paulo De Almeida Nogueira', housenumber: '327' }), false);
   assert.equal(context.resultadoEnderecoConfiavel('Rua Antônio Coraini, 610, Conchal', { result_type: 'street', street: 'Rua das Azaleias' }), false);
   assert.equal(context.resultadoEnderecoConfiavel('Rodoviária de Cosmópolis', { result_type: 'city', name: 'Cosmópolis' }), false);
   assert.throws(() => context.rotaDistantePlausivel(2, 'Cosmópolis'), /curta demais/);

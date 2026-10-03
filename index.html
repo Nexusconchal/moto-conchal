@@ -2872,6 +2872,8 @@
         const rua = texto.match(/(?:^|\s)(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+([^,]+)/);
         if (!rua) return !!(props.street || props.housenumber || props.name);
         if (!props.street) return false;
+        const numero = texto.match(/,\s*(\d+)\b/)?.[1] || rua[1].match(/\s+(\d+)(?:\s|$)/)?.[1];
+        if (numero && props.housenumber && String(props.housenumber).trim() !== numero) return false;
         const palavras = rua[1].replace(/\s+\d+.*$/, "").split(/[^a-z0-9]+/)
           .filter((p) => p.length > 1 && !["de", "da", "do", "das", "dos", "dr", "dra", "doutor", "doutora"].includes(p));
         const encontrada = normalizar(props.street).split(/[^a-z0-9]+/);
@@ -3925,7 +3927,7 @@
         abrirWhatsApp("Olá, esqueci a senha da minha conta de cliente Nexus MotoJá e preciso de ajuda."),
       );
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=171", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=196", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
       }
       verificarAcessoCliente(true);
       verificarPedidoAtivo(false);
