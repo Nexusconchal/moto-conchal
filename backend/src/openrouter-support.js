@@ -15,7 +15,7 @@ export function createOpenRouterSupport({ fetchImpl = fetch, now = () => Date.no
     });
     try {
       const response = await fetchImpl('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' }, signal: AbortSignal.timeout(6000),
+        method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' }, signal: AbortSignal.timeout(12000),
         body: JSON.stringify({ model: OPENROUTER_FREE_MODEL, temperature: 0.3, max_tokens: 500,
           provider: { require_parameters: true, data_collection: 'deny', max_price: { prompt: 0, completion: 0 } },
           messages: [{ role: 'system', content: SUPPORT_AI_INSTRUCTIONS }, ...turns.map(turn => ({ role: turn.role === 'model' ? 'assistant' : 'user', content: turn.text })), { role: 'user', content: `Assunto anterior: ${['request', 'address', 'payment', 'menu', 'other'].includes(topic) ? topic : 'menu'}. Dúvida: ${filtered}` }],
