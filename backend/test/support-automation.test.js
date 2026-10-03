@@ -6,7 +6,7 @@ const NOW = 1800000000000;
 function message(overrides = {}, id = 'message1') {
   return { instance: 'support', event: 'messages.upsert', data: { key: { id, remoteJid: '5519999990000@s.whatsapp.net', fromMe: false, ...overrides }, messageTimestamp: NOW / 1000, message: { conversation: 'Minha corrida está aguardando' } } };
 }
-function harness(isSystemOutgoing = () => false) {
+function harness(isSystemOutgoing = () => false, generateReply = async () => null) {
   const records = new Map([['configuracoes/atendimentoAutomatico', { enabled: true, groupAlerts: true, driverGroupJid: '123@g.us' }]]);
   const sent = [], telegram = [];
   let time = NOW, lock = Promise.resolve(), beforeRead;
@@ -20,7 +20,7 @@ function harness(isSystemOutgoing = () => false) {
     } }; return query;
   } });
   const db = { collection, batch() { const deletions = []; return { delete: ref => deletions.push(ref.path), commit: async () => { deletions.forEach(path => records.delete(path)); } }; }, runTransaction(callback) { const work = lock.then(() => callback({ get: ref => ref.get(), set: (ref, value, options) => ref.set(value, options) })); lock = work.catch(() => {}); return work; } };
-  const service = createSupportAutomation({ db, instance: 'support', isSystemOutgoing, encrypt: value => `encrypted:${value}`, now: () => time, rideExpireMs: 300000, deliveryExpireMs: 900000, sendText: async (phone, text) => { sent.push({ phone, text }); return { sent: true, id: `reply${sent.length}` }; }, sendTelegram: async (job, text) => { telegram.push({ job, text }); return { sent: true }; } });
+  const service = createSupportAutomation({ db, instance: 'support', isSystemOutgoing, generateReply, encrypt: value => `encrypted:${value}`, decrypt: value => value.slice('encrypted:'.length), now: () => time, rideExpireMs: 300000, deliveryExpireMs: 900000, sendText: async (phone, text) => { sent.push({ phone, text }); return { sent: true, id: `reply${sent.length}` }; }, sendTelegram: async (job, text) => { telegram.push({ job, text }); return { sent: true }; } });
   return { service, records, sent, telegram, advance: delta => { time += delta; }, beforeRead: callback => { beforeRead = callback; } };
 }
 
@@ -177,6 +177,39 @@ test('reopening a resolved ticket clears its previous expiration', async () => {
   const menu = message({}, 'menu'); menu.data.message.conversation = 'MENU'; await h.service.handle(menu);
   await h.service.handle({ ...event, data: { ...event.data, key: { ...event.data.key, id: 'new-human' } } });
   await h.service.tick(); assert.equal(h.records.get(ticketPath).status, 'aguardando');
+});
+
+test('AI conversation keeps encrypted short history per customer, without phone or ride data', async () => {
+  const inputs = [];
+  const h = harness(() => false, async input => {
+    inputs.push(input); assert.equal(input.phone, undefined); assert.equal(input.ride, undefined);
+    return { answer: { text: 'Vamos conferir o problema no aplicativo. O erro acontece antes de calcular?', topic: 'address' }, history: [{ role: 'user', text: input.text }, { role: 'model', text: 'Ajuda sobre o aplicativo.' }] };
+  });
+  const event = message(); event.data.message.conversation = 'Quero ajuda com o GPS'; await h.service.handle(event);
+  assert.match(h.sent[0].text, /Vamos conferir/); assert.match(h.sent[0].text, /ATENDENTE/);
+  const state = [...h.records.values()].find(x => x.aiContextCriptografado);
+  assert.ok(state.aiContextCriptografado.startsWith('encrypted:'));
+  const next = message({}, 'followup'); next.data.message.conversation = 'Sim, antes de calcular'; await h.service.handle(next);
+  assert.equal(inputs[1].history.length, 2);
+  const other = message({ remoteJid: '5519888887777@s.whatsapp.net' }, 'different-phone'); other.data.message.conversation = 'Quero ajuda'; await h.service.handle(other);
+  assert.deepEqual(inputs[2].history, []);
+});
+
+test('critical ride facts, menu and human handoff never invoke the AI', async () => {
+  let calls = 0; const h = harness(() => false, async () => { calls++; throw Error('must not call'); });
+  for (const [i, text] of ['2', 'MENU', 'ATENDENTE'].entries()) {
+    const event = message({}, `critical-${i}`); event.data.message.conversation = text; await h.service.handle(event);
+  }
+  assert.equal(calls, 0); assert.equal(h.sent.length, 3);
+});
+
+test('AI failure preserves the deterministic answer and AI handoff writes the same protected ticket', async () => {
+  const failed = harness(() => false, async () => { throw Error('provider offline'); });
+  const event = message(); event.data.message.conversation = 'GPS está errado'; await failed.service.handle(event);
+  assert.match(failed.sent[0].text, /saída, no destino/);
+  const human = harness(() => false, async () => ({ answer: { human: true, text: 'Untrusted generated promise', topic: 'human' } }));
+  await human.service.handle(event); assert.doesNotMatch(human.sent[0].text, /Untrusted/);
+  assert.ok([...human.records.values()].some(ticket => ticket.status === 'aguardando' && ticket.telefoneCriptografado));
 });
 
 test('paused automation ignores customer messages and does not alert groups', async () => {

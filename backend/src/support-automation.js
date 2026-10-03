@@ -107,7 +107,7 @@ export function pendingNotice(job, kind, stage, expireMs, now = Date.now()) {
 }
 
 // This assistant never creates bookings, changes fares or accepts a job.
-export function createSupportAutomation({ db, sendText, encrypt, instance, rideExpireMs, deliveryExpireMs, sendTelegram, isSystemOutgoing = () => false, now = () => Date.now() }) {
+export function createSupportAutomation({ db, sendText, encrypt, decrypt = () => '', generateReply = async () => null, instance, rideExpireMs, deliveryExpireMs, sendTelegram, isSystemOutgoing = () => false, now = () => Date.now() }) {
   const configRef = db.collection('configuracoes').doc('atendimentoAutomatico');
   let cache, cacheUntil = 0, ticking = false, lastPrune = 0;
   async function config(refresh = false) {
@@ -161,7 +161,7 @@ export function createSupportAutomation({ db, sendText, encrypt, instance, rideE
       }
       if (state.pausedUntil > now() && !resumes) { waitingHuman = state.pauseReason === 'human' || state.topic === 'human'; return; }
       if ((!wantsHuman && !resumes && state.lastReplyAt > now() - 2000 && state.lastIncomingHash === hash(event.text)) || state.busyUntil > now()) return;
-      tx.set(chatRef, { busyUntil: now() + 60000, ...(resumes ? { pausedUntil: 0, pauseReason: '' } : {}), expiresAt: new Date(now() + 7 * 86400000) }, { merge: true });
+      tx.set(chatRef, { busyUntil: now() + 60000, ...(resumes ? { pausedUntil: 0, pauseReason: '', aiContextCriptografado: '', aiContextUntil: 0 } : {}), expiresAt: new Date(now() + 7 * 86400000) }, { merge: true });
       claim = true;
     });
     if (!claim) {
@@ -171,9 +171,22 @@ export function createSupportAutomation({ db, sendText, encrypt, instance, rideE
     try {
       // Greetings and help must work even when the ride lookup is unavailable.
       const ride = ['status', 'human', 'other'].includes(intent) ? await findRide(event.phone, event.text).catch(() => null) : null;
-      const answer = supportAnswer(event.text, ride, rideExpireMs, now(), context);
+      let answer = supportAnswer(event.text, ride, rideExpireMs, now(), context);
+      let aiState = { aiContextCriptografado: '', aiContextUntil: 0 };
+      // Booking facts, media, explicit handoff and numeric menu choices stay deterministic.
+      if (event.text.trim() && !['status', 'human', 'menu'].includes(intent) && !/^[0-5]$/.test(event.text.trim())) {
+        let history = [];
+        try { if (context.aiContextUntil > now() && context.aiContextCriptografado) history = JSON.parse(decrypt(context.aiContextCriptografado)); } catch { /* Ignore expired or unreadable history. */ }
+        const generated = await generateReply({ text: event.text, history: Array.isArray(history) ? history : [], topic: context.topic || 'menu' }, settings).catch(() => null);
+        if (generated?.answer?.human) answer = supportAnswer('ATENDENTE', ride, rideExpireMs, now(), context);
+        else if (generated?.answer?.text) {
+          const introduction = !context.lastReplyAt || context.lastReplyAt < now() - 30 * 60000 ? 'Sou o atendimento automático da Nexus MotoJá.\n\n' : '';
+          answer = { topic: generated.answer.topic, text: introduction + generated.answer.text + FOOTER };
+          aiState = { aiContextCriptografado: encrypt(JSON.stringify(generated.history || [])), aiContextUntil: now() + 30 * 60000 };
+        }
+      }
       // Record fingerprint before sending because the provider can echo before POST returns.
-      await chatRef.set({ outgoingHash: hash(answer.text), outgoingUntil: now() + 120000, lastIncomingHash: hash(event.text), topic: answer.topic || context.topic || 'menu', lastReplyAt: now(), ...(answer.human ? { pausedUntil: now() + 30 * 60000, pauseReason: 'human' } : {}) }, { merge: true });
+      await chatRef.set({ ...aiState, outgoingHash: hash(answer.text), outgoingUntil: now() + 120000, lastIncomingHash: hash(event.text), topic: answer.topic || context.topic || 'menu', lastReplyAt: now(), ...(answer.human ? { pausedUntil: now() + 30 * 60000, pauseReason: 'human' } : {}) }, { merge: true });
       if (answer.human) await db.collection('supportAutomationTickets').doc(hash(event.phone)).set({ telefoneCriptografado: encrypt(event.phone), ultimaMensagemCriptografada: encrypt(event.text), rideId: ride?.id || '', status: 'aguardando', requestedAt: now(), expiresAt: null }, { merge: true });
       const sent = await sendText(event.phone, answer.text);
       await chatRef.set({ outgoingId: sent.id || '', busyUntil: 0 }, { merge: true });

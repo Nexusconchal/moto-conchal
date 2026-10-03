@@ -3,8 +3,8 @@
   const backend = 'https://motoboy-conchal.onrender.com';
   let password = '';
   const el = id => document.getElementById(id);
-  async function api(path, method = 'GET') {
-    const response = await fetch(`${backend}/api/admin/support-automation${path}`, { method, headers: { 'x-owner-password': password }, cache: 'no-store', signal: AbortSignal.timeout(90000) });
+  async function api(path, method = 'GET', payload) {
+    const response = await fetch(`${backend}/api/admin/support-automation${path}`, { method, headers: { 'x-owner-password': password, ...(payload ? { 'content-type': 'application/json' } : {}) }, ...(payload ? { body: JSON.stringify(payload) } : {}), cache: 'no-store', signal: AbortSignal.timeout(90000) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.message || ({ senha_incorreta: 'Senha incorreta.', conecte_whatsapp_suporte: 'Conecte o WhatsApp (19) 99230-6488 na integração.', webhook_existente_preservado: 'Já existe outra integração recebendo as mensagens. Ela foi preservada.', grupo_motoristas_nao_identificado: 'Não foi possível identificar um único grupo Nexus MotoJá - MOTORISTA.' }[data.error]) || 'Não consegui consultar o atendimento. Tente novamente.');
     return data;
@@ -12,6 +12,9 @@
   async function refresh() {
     const data = await api('');
     el('status').textContent = `Atendimento: ${data.enabled ? 'ATIVO' : 'PAUSADO'}\nAvisos: ${data.groupAlerts ? 'ativos' : 'pausados'}\nGrupo WhatsApp: ${data.groupName || 'aguardando configuração'}`;
+    const aiLabel = ai => !ai?.configured ? 'aguardando chave' : !ai.enabled ? 'pausada' : ai.reason === 'quota' ? 'cota temporariamente atingida; usando reserva' : ai.reason ? 'indisponível; usando reserva' : 'habilitada';
+    el('ai-status').textContent = `Gemini: ${aiLabel(data.gemini)} • OpenRouter: ${aiLabel(data.openrouter)}`;
+    if (data.gemini?.model) el('gemini-model').value = data.gemini.model;
     el('tickets').replaceChildren();
     if (!data.tickets.length) el('tickets').textContent = 'Nenhum pedido aguardando.';
     for (const ticket of data.tickets.sort((a, b) => b.requestedAt - a.requestedAt)) {
@@ -37,4 +40,8 @@
   el('refresh').onclick = () => run(refresh);
   el('setup').onclick = () => run(async () => { el('status').textContent = 'Verificando WhatsApp e grupo…'; await api('/setup', 'POST'); await refresh(); });
   el('pause').onclick = () => run(async () => { await api('/pause', 'POST'); await refresh(); });
+  el('gemini-form').onsubmit = event => { event.preventDefault(); run(async () => { try { await api('/gemini', 'POST', { enabled: true, apiKey: el('gemini-key').value.trim(), model: el('gemini-model').value, freeTierConfirmed: el('gemini-free').checked }); await refresh(); } finally { el('gemini-key').value = ''; } }); };
+  el('openrouter-form').onsubmit = event => { event.preventDefault(); run(async () => { try { await api('/openrouter', 'POST', { enabled: true, apiKey: el('openrouter-key').value.trim() }); await refresh(); } finally { el('openrouter-key').value = ''; } }); };
+  el('gemini-pause').onclick = () => run(async () => { await api('/gemini', 'POST', { enabled: false }); await refresh(); });
+  el('openrouter-pause').onclick = () => run(async () => { await api('/openrouter', 'POST', { enabled: false }); await refresh(); });
 })();

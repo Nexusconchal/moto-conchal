@@ -11,6 +11,8 @@ import { Server as SocketIOServer } from 'socket.io';
 import { validateLocation } from './tracking-policy.js';
 import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state.js';
 import { createSupportAutomation, enrichSupportMessage, SUPPORT_PHONE, chooseDriverGroup, brazilPhone } from './support-automation.js';
+import { createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
+import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
 
 const PORT = Number(process.env.PORT || 10000);
 const DRIVER_PERCENT = Number(process.env.DRIVER_PERCENT || 0.7);
@@ -11001,8 +11003,11 @@ async function supportEvolution(path, method = 'GET', body) {
 
 const supportInstance = String(process.env.EVOLUTION_INSTANCE || '').trim();
 const supportInstancePath = encodeURIComponent(supportInstance);
+const geminiSupport = createGeminiSupport({ reserveBudget: () => reserveGeminiQuota(db) });
+const openrouterSupport = createOpenRouterSupport({ reserveBudget: () => reserveSupportAiQuota(db, 'openrouter') });
 const supportAutomation = createSupportAutomation({
-  db, instance: supportInstance, encrypt: encryptSecret,
+  db, instance: supportInstance, encrypt: encryptSecret, decrypt: decryptSecret,
+  generateReply: createSupportAiChain({ gemini: geminiSupport, openRouter: openrouterSupport, decrypt: decryptSecretSafe }),
   isSystemOutgoing: event => (automaticWhatsappMessages.get(hashSecret(`${event.phone}:${event.text}`)) || 0) > Date.now(),
   rideExpireMs: RIDE_EXPIRE_MS, deliveryExpireMs: DELIVERY_EXPIRE_MS,
   async sendText(number, text) {
@@ -11041,8 +11046,51 @@ app.get('/api/admin/support-automation', authLimiter, assertOwner, async (_req, 
     const settings = await supportAutomation.config(true);
     const tickets = await db.collection('supportAutomationTickets').where('status', '==', 'aguardando').get();
     res.json({ enabled: !!settings.enabled, groupAlerts: !!settings.groupAlerts, groupName: settings.driverGroupName || '', phone: SUPPORT_PHONE,
+      gemini: { enabled: !!settings.geminiEnabled, configured: !!settings.geminiKeyEncrypted, model: settings.geminiModel || GEMINI_DEFAULT_MODEL, ...geminiSupport.status(), dailyLimit: 100, minuteLimit: 4 },
+      openrouter: { enabled: !!settings.openrouterEnabled, configured: !!settings.openrouterKeyEncrypted, model: OPENROUTER_FREE_MODEL, ...openrouterSupport.status(), dailyLimit: 50, minuteLimit: 4 },
       tickets: tickets.docs.map(doc => ({ id: doc.id, telefone: decryptSecretSafe(doc.data().telefoneCriptografado), mensagem: decryptSecretSafe(doc.data().ultimaMensagemCriptografada), rideId: doc.data().rideId, requestedAt: doc.data().requestedAt })) });
   } catch (error) { next(error); }
+});
+
+app.post('/api/admin/support-automation/gemini', authLimiter, assertOwner, async (req, res) => {
+  try {
+    if (req.body?.enabled === false) {
+      await supportAutomation.saveConfig({ geminiEnabled: false });
+      return res.json({ ok: true, enabled: false });
+    }
+    const model = req.body?.model || GEMINI_DEFAULT_MODEL;
+    if (!GEMINI_MODELS.includes(model)) return res.status(400).json({ error: 'modelo_gemini_invalido' });
+    if (req.body?.freeTierConfirmed !== true) return res.status(400).json({ error: 'confirme_projeto_gratuito', message: 'Use uma chave de projeto Free Tier, sem faturamento vinculado. A assinatura do aplicativo Gemini não cobre esta API.' });
+    const current = await supportAutomation.config(true);
+    const apiKey = String(req.body?.apiKey || decryptSecretSafe(current.geminiKeyEncrypted) || '').trim();
+    if (!/^[A-Za-z0-9_-]{20,200}$/.test(apiKey)) return res.status(400).json({ error: 'chave_gemini_invalida', message: 'Cole a chave do Google AI Studio neste painel. Não envie no chat.' });
+    geminiSupport.reset();
+    const probe = await geminiSupport.generate({ apiKey, model, text: 'Como faço para pedir uma corrida pelo aplicativo?' });
+    if (!probe.answer) return res.status(503).json({ error: 'gemini_nao_confirmado', message: probe.reason === 'quota' || probe.reason === 'local_limit' ? 'Limite de uso atingido. O atendimento atual continua funcionando; tente ativar a IA depois.' : 'Não consegui confirmar o Gemini. Confira a chave e a disponibilidade do modelo no AI Studio. O atendimento atual continua funcionando.' });
+    await supportAutomation.saveConfig({ geminiKeyEncrypted: encryptSecret(apiKey), geminiEnabled: true, geminiFreeTierConfirmed: true, geminiModel: model, geminiActivatedAt: Date.now() });
+    return res.json({ ok: true, enabled: true, model });
+  } catch {
+    return res.status(503).json({ error: 'gemini_indisponivel', message: 'A IA está indisponível. O atendimento atual continua funcionando.' });
+  }
+});
+
+app.post('/api/admin/support-automation/openrouter', authLimiter, assertOwner, async (req, res) => {
+  try {
+    if (req.body?.enabled === false) {
+      await supportAutomation.saveConfig({ openrouterEnabled: false });
+      return res.json({ ok: true, enabled: false });
+    }
+    const current = await supportAutomation.config(true);
+    const apiKey = String(req.body?.apiKey || decryptSecretSafe(current.openrouterKeyEncrypted) || '').trim();
+    if (!/^[A-Za-z0-9_-]{20,200}$/.test(apiKey)) return res.status(400).json({ error: 'chave_openrouter_invalida', message: 'Cole a chave da OpenRouter neste painel. Não envie no chat.' });
+    openrouterSupport.reset();
+    const probe = await openrouterSupport.generate({ apiKey, text: 'Como faço para pedir uma corrida pelo aplicativo?' });
+    if (!probe.answer) return res.status(503).json({ error: 'openrouter_nao_confirmada', message: 'Não consegui confirmar um modelo gratuito disponível. Confira a chave ou tente depois. O atendimento atual continua funcionando.' });
+    await supportAutomation.saveConfig({ openrouterKeyEncrypted: encryptSecret(apiKey), openrouterEnabled: true, openrouterActivatedAt: Date.now() });
+    return res.json({ ok: true, enabled: true, model: OPENROUTER_FREE_MODEL });
+  } catch {
+    return res.status(503).json({ error: 'openrouter_indisponivel', message: 'A IA reserva está indisponível. O atendimento atual continua funcionando.' });
+  }
 });
 
 app.post('/api/admin/support-automation/tickets/:ticketId/resolve', authLimiter, assertOwner, async (req, res, next) => {
