@@ -2928,8 +2928,8 @@
       }
       function tentativasGeocode(base, cidadePreferida = "conchal") {
         const cidade = dicaLocal(base),
-          basesMapa = variantesEnderecoMapa(base),
           cidadeExplicita = buscaCidadeExplicitada(base),
+          basesMapa = variantesEnderecoMapa(base).sort((a, b) => cidadeExplicita ? a.length - b.length : 0),
           broad = "rect:-48.25,-23.15,-46.55,-21.70",
           configCidade =
             CIDADES_OPERACAO[cidadePreferida] || CIDADES_OPERACAO.conchal,
@@ -2945,7 +2945,7 @@
                 : cidade === "artur nogueira"
                   ? "Artur Nogueira"
                   : cidade.replace(/\b\w/g, (l) => l.toUpperCase());
-            add(`${baseMapa}, ${cidadeNome}, SP, Brasil`, broad, cidade);
+            if (!dicaLocal(baseMapa)) add(`${baseMapa}, ${cidadeNome}, SP, Brasil`, broad, cidade);
             add(`${baseMapa}, SP, Brasil`, broad, cidade);
             add(`${baseMapa}, Brasil`, broad, cidade);
             continue;
@@ -3927,7 +3927,7 @@
         abrirWhatsApp("Olá, esqueci a senha da minha conta de cliente Nexus MotoJá e preciso de ajuda."),
       );
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=197", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=198", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
       }
       verificarAcessoCliente(true);
       verificarPedidoAtivo(false);
