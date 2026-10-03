@@ -14,14 +14,15 @@ O webhook autenticado é `/api/support/whatsapp/webhook`, cabeçalho `x-motoja-w
 
 - Responde a conversas individuais consultando exclusivamente corridas do número remetente. Um código informado também exige que o telefone da corrida corresponda ao remetente. Várias corridas ativas exigem informar o código.
 - Áudios, imagens e localização pedem uma descrição em texto. O endereço recebido aqui não cria uma solicitação; o cliente é orientado a usar o app.
-- `ATENDENTE` ou uma reclamação reconhecida registra um pedido na fila do painel. O bot pausa essa conversa por 30 minutos. Uma mensagem manual enviada pelo suporte também pausa o bot por 30 minutos. A fila exige acompanhamento por uma pessoa; não representa atendimento humano garantido.
+- Saudações mostram opções para pedir corrida, acompanhar, endereço/erro, pagamento/troco e atendimento humano. Aceita números e frases, lembra o assunto para a próxima mensagem e aceita escolhas imediatas sem o antigo bloqueio de 15 segundos. Não é um modelo de IA generativa.
+- `ATENDENTE`, opção `5` ou uma reclamação reconhecida registra um pedido na fila do painel. O bot pede uma descrição; as mensagens seguintes durante a pausa atualizam o último detalhe criptografado no ticket. O bot pausa essa conversa por 30 minutos. `MENU` reativa a ajuda automática sem apagar o pedido humano. Uma mensagem manual enviada pelo suporte também pausa o bot por 30 minutos. A fila exige acompanhamento por uma pessoa; não representa atendimento humano garantido.
 - A cada minuto, envia avisos de corridas e entregas pendentes ao grupo WhatsApp confirmado. Após dois minutos, envia um lembrete ao WhatsApp e Telegram. Revalida estado e validade antes de enviar. Cada etapa/canal é tentada uma única vez por geração do pedido; renovação pode gerar novos avisos.
 - Os novos avisos de grupo mostram valor, tipo e código, sem endereço, nome ou telefone do cliente. O aceite continua no app.
 - Não reenvia automaticamente após timeout ambíguo do provedor, para evitar duplicatas. A disponibilidade da Evolution, WhatsApp, Telegram e hospedagem afeta o atendimento.
 
 ## Dados e operação
 
-As coleções `supportAutomationEvents`, `supportAutomationChats` e `supportAutomationNotices` guardam hashes e metadados para evitar duplicatas; não armazenam o conteúdo da conversa. Eventos expiram em 24 horas; chats e avisos em 7 dias. A limpeza roda por hora em lotes de até 100 por coleção enquanto a automação está ativa. A fila guarda o telefone criptografado com AES-GCM e o código da corrida, acessíveis só ao dono. Tickets resolvidos são removidos após 7 dias. As regras Firestore do repositório negam acesso direto aos clientes.
+As coleções `supportAutomationEvents`, `supportAutomationChats` e `supportAutomationNotices` guardam hashes, assunto e metadados para evitar duplicatas; não armazenam o conteúdo da conversa. Eventos expiram em 24 horas; chats e avisos em 7 dias. A limpeza roda por hora em lotes de até 100 por coleção enquanto a automação está ativa. A fila guarda o telefone e o último detalhe do pedido humano criptografados com AES-GCM e o código da corrida, acessíveis só ao dono. Tickets resolvidos são removidos após 7 dias. As regras Firestore do repositório negam acesso direto aos clientes.
 
 Para pausar, use **Pausar automação** no painel; a mesma integração permanece conectada para OTP e demais funções existentes. A senha do dono fica apenas na memória da página de atendimento. Sem cobrança de IA, mas continuam os custos e limites dos serviços existentes.
 

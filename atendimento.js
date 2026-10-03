@@ -19,6 +19,7 @@
       const info = document.createElement('p');
       info.textContent = `${ticket.telefone || 'Telefone indisponível'} • ${new Date(ticket.requestedAt).toLocaleString('pt-BR')}${ticket.rideId ? ` • Corrida ${ticket.rideId}` : ''}`;
       row.append(info);
+      if (ticket.mensagem) { const detail = document.createElement('p'); detail.textContent = ticket.mensagem; row.append(detail); }
       if (/^55\d{10,11}$/.test(ticket.telefone)) {
         const link = document.createElement('a'); link.href = `https://wa.me/${ticket.telefone}`; link.textContent = 'Abrir conversa'; link.target = '_blank'; link.rel = 'noopener'; row.append(link);
       }

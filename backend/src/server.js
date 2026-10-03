@@ -10,7 +10,7 @@ import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import { validateLocation } from './tracking-policy.js';
 import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state.js';
-import { createSupportAutomation, SUPPORT_PHONE, chooseDriverGroup, brazilPhone } from './support-automation.js';
+import { createSupportAutomation, enrichSupportMessage, SUPPORT_PHONE, chooseDriverGroup, brazilPhone } from './support-automation.js';
 
 const PORT = Number(process.env.PORT || 10000);
 const DRIVER_PERCENT = Number(process.env.DRIVER_PERCENT || 0.7);
@@ -11027,7 +11027,8 @@ app.post('/api/support/whatsapp/webhook', async (req, res) => {
     const settings = await supportAutomation.config();
     const secret = settings.webhookSecret ? decryptSecret(settings.webhookSecret) : '';
     if (!secret || !safeEqual(req.header('x-motoja-webhook-secret'), secret)) return res.status(401).json({ error: 'webhook_nao_autorizado' });
-    return res.json({ ok: true, ...await supportAutomation.handle(req.body) });
+    const body = await enrichSupportMessage(req.body, supportInstance, id => supportEvolution(`/chat/findMessages/${supportInstancePath}`, 'POST', { where: { key: { id } }, limit: 10 }));
+    return res.json({ ok: true, ...await supportAutomation.handle(body) });
   } catch {
     // Provider payloads and keys must never be logged or returned.
     console.error('support automation webhook failed');
@@ -11040,7 +11041,7 @@ app.get('/api/admin/support-automation', authLimiter, assertOwner, async (_req, 
     const settings = await supportAutomation.config(true);
     const tickets = await db.collection('supportAutomationTickets').where('status', '==', 'aguardando').get();
     res.json({ enabled: !!settings.enabled, groupAlerts: !!settings.groupAlerts, groupName: settings.driverGroupName || '', phone: SUPPORT_PHONE,
-      tickets: tickets.docs.map(doc => ({ id: doc.id, telefone: decryptSecretSafe(doc.data().telefoneCriptografado), rideId: doc.data().rideId, requestedAt: doc.data().requestedAt })) });
+      tickets: tickets.docs.map(doc => ({ id: doc.id, telefone: decryptSecretSafe(doc.data().telefoneCriptografado), mensagem: decryptSecretSafe(doc.data().ultimaMensagemCriptografada), rideId: doc.data().rideId, requestedAt: doc.data().requestedAt })) });
   } catch (error) { next(error); }
 });
 

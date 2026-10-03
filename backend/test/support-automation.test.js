@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { brazilPhone, parseSupportMessage, requestedRideId, supportAnswer, chooseDriverGroup, pendingNotice, createSupportAutomation } from '../src/support-automation.js';
+import { brazilPhone, parseSupportMessage, enrichSupportMessage, requestedRideId, supportAnswer, supportIntent, chooseDriverGroup, pendingNotice, createSupportAutomation } from '../src/support-automation.js';
 
 const NOW = 1800000000000;
 function message(overrides = {}, id = 'message1') {
@@ -107,7 +107,7 @@ test('existing automatic OTP sender does not pause customer support', async () =
 test('ATENDENTE writes encrypted callback phone and pauses further auto responses', async () => {
   const h = harness(); const event = message(); event.data.message.conversation = 'quero atendente';
   await h.service.handle(event);
-  assert.match(h.sent[0].text, /30 minutos/);
+  assert.match(h.sent[0].text, /Qual é o problema/);
   const ticket = [...h.records.entries()].find(([path]) => path.startsWith('supportAutomationTickets/'))[1];
   assert.equal(ticket.telefoneCriptografado, 'encrypted:5519999990000');
   assert.equal(ticket.telefone, undefined);
@@ -117,8 +117,66 @@ test('ATENDENTE writes encrypted callback phone and pauses further auto response
 test('human handoff is accepted immediately after an automatic answer', async () => {
   const h = harness(); await h.service.handle(message());
   const event = message({}, 'human-immediate'); event.data.message.conversation = 'ATENDENTE';
-  await h.service.handle(event); assert.equal(h.sent.length, 2); assert.match(h.sent[1].text, /pedido de atendimento humano/);
+  await h.service.handle(event); assert.equal(h.sent.length, 2); assert.match(h.sent[1].text, /pessoa do suporte/);
   assert.ok([...h.records.keys()].some(path => path.startsWith('supportAutomationTickets/')));
+});
+
+test('new customers get a useful greeting and immediate menu choice', async () => {
+  const h = harness(); const greeting = message(); greeting.data.message.conversation = 'Boa noite';
+  await h.service.handle(greeting); assert.match(h.sent[0].text, /1 • Pedir corrida/);
+  const choice = message({}, 'choice'); choice.data.message.conversation = '1';
+  await h.service.handle(choice); assert.equal(h.sent.length, 2); assert.match(h.sent[1].text, /Chamar motoboy/);
+  const customer = message({ remoteJid: '5519888887777@s.whatsapp.net' }, 'other-customer'); customer.data.message.conversation = 'Olá';
+  await h.service.handle(customer); assert.match(h.sent[2].text, /5 • Falar com uma pessoa/);
+});
+
+test('human queue stores the problem encrypted; MENU resumes without removing ticket', async () => {
+  const h = harness(); const event = message(); event.data.message.conversation = 'atendente';
+  await h.service.handle(event);
+  const detail = message({}, 'detail'); detail.data.message.conversation = 'Motorista não apareceu';
+  await h.service.handle(detail); assert.equal(h.sent.length, 1);
+  const ticket = [...h.records.values()].find(item => item.status === 'aguardando');
+  assert.equal(ticket.ultimaMensagemCriptografada, 'encrypted:Motorista não apareceu');
+  const menu = message({}, 'resume'); menu.data.message.conversation = 'MENU';
+  await h.service.handle(menu); assert.equal(h.sent.length, 2); assert.match(h.sent[1].text, /1 • Pedir corrida/);
+  assert.equal(ticket.status, 'aguardando');
+});
+
+test('recognizes payment, address, thanks and preserves address topic for follow-up', () => {
+  assert.equal(supportIntent('quanto custa?'), 'payment');
+  assert.match(supportAnswer('preciso de troco', null, 300000, NOW).text, /confirme com o motorista/);
+  assert.match(supportAnswer('GPS errado', null, 300000, NOW).text, /saída, no destino/);
+  assert.equal(supportAnswer('Rua das Flores 22', null, 300000, NOW, { topic: 'address' }).topic, 'address');
+  assert.match(supportAnswer('valeu', null, 300000, NOW).text, /Por nada/);
+});
+
+test('batch webhook deliveries and ephemeral text are processed, not discarded', async () => {
+  const h = harness(); const event = message(); event.data.message = { ephemeralMessage: { message: { conversation: 'Olá' } } };
+  await h.service.handle({ ...event, data: [event.data] }); assert.match(h.sent[0].text, /Pedir corrida/);
+  const mapped = message({ remoteJid: '123456789123456@lid', senderPn: '5519999990000@s.whatsapp.net' });
+  assert.equal(parseSupportMessage(mapped, 'support', NOW).phone, '5519999990000');
+});
+
+test('missing LID mapping is resolved only from the same provider message and JID', async () => {
+  const event = message({ remoteJid: '123456789123456@lid' });
+  const source = { messages: { records: [{ key: { id: 'message1', remoteJid: '123456789123456@lid', remoteJidAlt: '5519999990000@s.whatsapp.net' } }] } };
+  const enriched = await enrichSupportMessage(event, 'support', async id => { assert.equal(id, 'message1'); return source; });
+  assert.equal(parseSupportMessage(enriched, 'support', NOW).phone, '5519999990000');
+  for (const key of [{ ...source.messages.records[0].key, id: 'other' }, { ...source.messages.records[0].key, remoteJid: '999@lid' }]) {
+    const unsafe = await enrichSupportMessage(event, 'support', async () => ({ records: [{ key }] }));
+    assert.equal(parseSupportMessage(unsafe, 'support', NOW), null);
+  }
+  const failed = await enrichSupportMessage(event, 'support', async () => { throw Error('offline'); });
+  assert.equal(parseSupportMessage(failed, 'support', NOW), null);
+});
+
+test('reopening a resolved ticket clears its previous expiration', async () => {
+  const h = harness(); const event = message(); event.data.message.conversation = 'ATENDENTE'; await h.service.handle(event);
+  const ticketPath = [...h.records.keys()].find(path => path.startsWith('supportAutomationTickets/'));
+  h.records.set(ticketPath, { ...h.records.get(ticketPath), status: 'resolvido', expiresAt: new Date(NOW - 1) });
+  const menu = message({}, 'menu'); menu.data.message.conversation = 'MENU'; await h.service.handle(menu);
+  await h.service.handle({ ...event, data: { ...event.data, key: { ...event.data.key, id: 'new-human' } } });
+  await h.service.tick(); assert.equal(h.records.get(ticketPath).status, 'aguardando');
 });
 
 test('paused automation ignores customer messages and does not alert groups', async () => {

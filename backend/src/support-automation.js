@@ -20,15 +20,35 @@ export function parseSupportMessage(body, instance, now = Date.now()) {
   if (!data || Array.isArray(data) || !data.key?.id) return null;
   const jid = String(data.key.remoteJid || '');
   if (!/@(?:s\.whatsapp\.net|lid)$/.test(jid)) return null;
-  const phoneJid = jid.endsWith('@lid') ? String(data.key.remoteJidAlt || '') : jid;
+  const phoneJid = jid.endsWith('@lid') ? String(data.key.remoteJidAlt || data.key.senderPn || data.senderPn || '') : jid;
   if (!phoneJid.endsWith('@s.whatsapp.net')) return null; // Never interpret a LID as a phone.
   const phone = brazilPhone(phoneJid.split('@')[0]);
   const time = Number(data.messageTimestamp?.low ?? data.messageTimestamp) * 1000;
   if (!phone || !Number.isFinite(time) || now - time > 5 * 60000 || time > now + 60000) return null;
-  const message = data.message || {};
-  const text = String(message.conversation || message.extendedTextMessage?.text || '').slice(0, 2000);
+  const rawMessage = data.message || {};
+  const message = rawMessage.ephemeralMessage?.message || rawMessage.viewOnceMessage?.message || rawMessage;
+  const text = String(message.conversation || message.extendedTextMessage?.text || message.buttonsResponseMessage?.selectedButtonId || message.listResponseMessage?.singleSelectReply?.selectedRowId || '').slice(0, 2000);
   if (!text && !message.audioMessage && !message.imageMessage && !message.locationMessage && !message.documentMessage) return null;
   return { id: String(data.key.id).slice(0, 160), phone, fromMe: data.key.fromMe === true, text };
+}
+
+// Some Evolution webhook payloads omit the LID mapping present in stored messages.
+// Only a matching provider message ID AND JID can supply a phone; never guess it.
+export async function enrichSupportMessage(body, instance, findMessages) {
+  if (body?.instance !== instance || !['messages.upsert', 'MESSAGES_UPSERT', 'send.message', 'SEND_MESSAGE'].includes(body?.event)) return body;
+  if (Array.isArray(body.data)) {
+    const data = [];
+    for (const item of body.data.slice(0, 50)) data.push((await enrichSupportMessage({ ...body, data: item }, instance, findMessages)).data);
+    return { ...body, data };
+  }
+  const key = body.data?.key;
+  if (!key?.id || !/^\d+@lid$/.test(String(key.remoteJid)) || String(key.remoteJidAlt || key.senderPn || body.data.senderPn || '').endsWith('@s.whatsapp.net')) return body;
+  const result = await findMessages(String(key.id)).catch(() => null);
+  const records = result?.messages?.records || result?.records || [];
+  const matches = records.filter(item => item.key?.id === key.id && (item.key.remoteJid === key.remoteJid || item.key.remoteJidAlt === key.remoteJid));
+  const phones = [...new Set(matches.flatMap(item => [item.key.remoteJid, item.key.remoteJidAlt]).filter(jid => /^\d+@s\.whatsapp\.net$/.test(String(jid))))];
+  if (phones.length !== 1) return body;
+  return { ...body, data: { ...body.data, key: { ...key, remoteJidAlt: phones[0] } } };
 }
 
 export function requestedRideId(text) {
@@ -36,11 +56,30 @@ export function requestedRideId(text) {
     || String(text).match(/(?:codigo(?: da corrida)?|corrida|pedido)\s*[:#]\s*([a-zA-Z0-9_-]{8,80})\b/i)?.[1] || '';
 }
 
-export function supportAnswer(text, ride, expireMs, now = Date.now()) {
+const MENU = '1 • Pedir corrida\n2 • Acompanhar corrida\n3 • Endereço ou erro no app\n4 • Pagamento e troco\n5 • Falar com uma pessoa';
+const FOOTER = '\n\nDigite MENU para ver as opções ou ATENDENTE para falar com uma pessoa.';
+export function supportIntent(text) {
+  const t = plain(text).trim();
+  if (/^(menu|inicio|voltar|0)$/.test(t)) return 'menu';
+  if (t === '5' || /\b(humano|pessoa|atendente|reclamacao|reclamar|acidente|emergencia|nao responde|nao tem troco)\b/.test(t)) return 'human';
+  if (t === '3' || /endereco|localizacao|gps|cosmopolis|calcular|calcula|mapa|erro|nao consigo|nao conseguindo|nao funciona/.test(t)) return 'address';
+  if (t === '4' || /pagamento|pagar|pix|dinheiro|troco|cartao|valor|preco|quanto/.test(t)) return 'payment';
+  if (t === '2' || requestedRideId(text) || /acompanhar|aguard|esper|aceit|demor|motorista|motoboy|confirmar/.test(t)) return 'status';
+  if (t === '1' || /pedir|chamar|preciso|quero.*corrida|solicitar|como.*corrida/.test(t)) return 'request';
+  if (/^(oi|ola|opa|bom dia|boa tarde|boa noite|tudo bem)[!?.\s]*$/.test(t)) return 'greeting';
+  if (/^(obrigad[oa]|valeu|vlw|ok|certo|beleza)[!?.\s]*$/.test(t)) return 'thanks';
+  return 'other';
+}
+export function supportAnswer(text, ride, expireMs, now = Date.now(), context = {}) {
   const t = plain(text);
-  const human = /\b(humano|pessoa|atendente|reclamacao|reclamar|acidente|emergencia|nao responde|nao tem troco)\b/.test(t);
-  if (human) return { human: true, text: 'Sou o atendimento automático da Nexus MotoJá. Registrei seu pedido de atendimento humano. Vou pausar as respostas automáticas por 30 minutos. O retorno depende da disponibilidade do suporte; não consigo garantir um prazo.' };
+  const intent = supportIntent(text);
+  if (intent === 'human') return { human: true, topic: 'human', text: 'Registrei seu pedido para uma pessoa do suporte. Qual é o problema? Pode escrever aqui; sua mensagem ficará junto do pedido. O retorno depende de alguém disponível.\n\nEnquanto aguarda, digite MENU se quiser voltar à ajuda automática.' };
   if (!String(text).trim()) return { text: 'Sou o atendimento automático da Nexus MotoJá. Ainda não interpreto áudio, imagem ou localização recebida aqui. Escreva sua dúvida ou o código da corrida. Para uma pessoa, escreva ATENDENTE.' };
+  if (intent === 'menu' || intent === 'greeting') return { topic: 'menu', text: `Olá! Sou o atendimento automático da Nexus MotoJá. Posso ajudar com sua corrida. O que você precisa?\n\n${MENU}\n\nPode responder com o número ou escrever sua dúvida.` };
+  if (intent === 'thanks') return { topic: context.topic || 'menu', text: `Por nada! Se precisar de mais ajuda, é só escolher uma opção.\n\n${MENU}` };
+  if (intent === 'request') return { topic: 'request', text: `Vamos lá! Abra ${APP}\n\n1. Informe o endereço de saída ou use sua localização.\n2. Coloque rua, número e cidade do destino.\n3. Calcule, confira o valor e o mapa e toque em “Chamar motoboy”.\n\nA corrida fica confirmada quando um motorista aceitar. Você está com dificuldade no endereço ou já pediu e está esperando?${FOOTER}` };
+  if (intent === 'address' || (intent === 'other' && context.topic === 'address')) return { topic: 'address', text: `${context.topic === 'address' ? 'Obrigado pelo detalhe. ' : ''}O problema é no endereço de saída, no destino ou aparece alguma mensagem de erro?\n\nNo app, escreva rua, número e cidade. Confira o ponto no mapa antes de pedir. Se o GPS estiver errado, digite a saída manualmente. Para outra cidade, inclua o nome dela no destino.\n\nSe continuar falhando, envie o texto do erro e escreva ATENDENTE para o suporte verificar. Enviar o endereço aqui não cria uma corrida.${FOOTER}` };
+  if (intent === 'payment') return { topic: 'payment', text: `O preço é calculado no app antes de chamar. Confira as formas de pagamento disponíveis nele.\n\nSe for pagar em dinheiro e precisar de troco, informe para quanto nas observações e confirme com o motorista após o aceite. Não tenho como garantir que ele terá troco.\n\nSe houve cobrança indevida ou dificuldade com o pagamento, escreva ATENDENTE e explique o que aconteceu. Não envie senha, código de confirmação ou dados de cartão aqui.${FOOTER}` };
   let status = '';
   if (ride) {
     const expired = ride.status === 'pendente' && now - ms(ride.criadaEm) >= expireMs;
@@ -51,8 +90,8 @@ export function supportAnswer(text, ride, expireMs, now = Date.now()) {
     else if (['finalizada', 'concluida'].includes(ride.status)) status = 'Sua corrida consta como finalizada. Para falar sobre o atendimento, escreva ATENDENTE.';
     else status = 'Encontrei sua solicitação. Confira a etapa atual no app ou escreva ATENDENTE.';
   } else status = 'Não encontrei uma corrida recente vinculada a este WhatsApp. Use no app o mesmo número desta conversa. Se já pediu, envie o código da corrida; se precisar de ajuda, escreva ATENDENTE.';
-  if (/endereco|localizacao|gps|cosmopolis|calcular|calcula|mapa|erro|nao consigo|nao conseguindo/.test(t)) status += '\n\nPara calcular, informe rua, número e cidade no destino (ex.: Av. Centenário Dr. Paulo de A. Nogueira, 421, Cosmópolis). Confira o ponto no mapa. Se o GPS da origem estiver incorreto, digite o endereço de saída. Enviar endereço aqui não solicita a corrida.';
-  return { text: `Sou o atendimento automático da Nexus MotoJá.\n\n${status}\n\nApp: ${APP}\nPara atendimento humano, escreva ATENDENTE.` };
+  if (intent === 'other' && !ride) return { topic: 'menu', text: `Posso te ajudar a pedir ou acompanhar uma corrida, resolver endereço e tirar dúvidas de pagamento. Qual dessas opções combina com o que você precisa?\n\n${MENU}\n\nApp: ${APP}` };
+  return { topic: 'status', text: `${status}\n\nApp: ${APP}${FOOTER}` };
 }
 
 export function chooseDriverGroup(groups) {
@@ -96,33 +135,46 @@ export function createSupportAutomation({ db, sendText, encrypt, instance, rideE
   async function handle(body) {
     const settings = await config();
     if (!settings.enabled) return { ignored: true };
+    if (Array.isArray(body?.data)) {
+      const results = [];
+      for (const data of body.data.slice(0, 50)) results.push(await handle({ ...body, data }));
+      return { replied: results.some(result => result.replied), processed: results.length };
+    }
     const event = parseSupportMessage(body, instance, now());
     if (!event) return { ignored: true };
-    const wantsHuman = !event.fromMe && supportAnswer(event.text, null, rideExpireMs, now()).human === true;
+    const intent = supportIntent(event.text);
+    const wantsHuman = !event.fromMe && intent === 'human';
+    const resumes = !event.fromMe && intent === 'menu';
     const chatRef = db.collection('supportAutomationChats').doc(hash(event.phone));
     const messageRef = db.collection('supportAutomationEvents').doc(hash(`${instance}:${event.id}`));
-    let claim = false;
+    let claim = false, context = {}, waitingHuman = false;
     await db.runTransaction(async tx => {
       claim = false;
       const [message, chat] = await Promise.all([tx.get(messageRef), tx.get(chatRef)]);
       if (message.exists) return;
       const state = chat.data() || {};
+      context = state;
       tx.set(messageRef, { createdAt: now(), expiresAt: new Date(now() + 86400000) });
       if (event.fromMe) {
-        if (!isSystemOutgoing(event) && !(state.outgoingHash === hash(event.text) && state.outgoingUntil > now()) && event.id !== state.outgoingId) tx.set(chatRef, { pausedUntil: now() + 30 * 60000 }, { merge: true });
+        if (!isSystemOutgoing(event) && !(state.outgoingHash === hash(event.text) && state.outgoingUntil > now()) && event.id !== state.outgoingId) tx.set(chatRef, { pausedUntil: now() + 30 * 60000, pauseReason: 'manual' }, { merge: true });
         return;
       }
-      if (state.pausedUntil > now() || (!wantsHuman && state.lastReplyAt > now() - 15000) || state.busyUntil > now()) return;
-      tx.set(chatRef, { busyUntil: now() + 60000, expiresAt: new Date(now() + 7 * 86400000) }, { merge: true });
+      if (state.pausedUntil > now() && !resumes) { waitingHuman = state.pauseReason === 'human' || state.topic === 'human'; return; }
+      if ((!wantsHuman && !resumes && state.lastReplyAt > now() - 2000 && state.lastIncomingHash === hash(event.text)) || state.busyUntil > now()) return;
+      tx.set(chatRef, { busyUntil: now() + 60000, ...(resumes ? { pausedUntil: 0, pauseReason: '' } : {}), expiresAt: new Date(now() + 7 * 86400000) }, { merge: true });
       claim = true;
     });
-    if (!claim) return { ignored: true };
+    if (!claim) {
+      if (waitingHuman && event.text.trim()) await db.collection('supportAutomationTickets').doc(hash(event.phone)).set({ ultimaMensagemCriptografada: encrypt(event.text), updatedAt: now() }, { merge: true });
+      return { ignored: true };
+    }
     try {
-      const ride = await findRide(event.phone, event.text);
-      const answer = supportAnswer(event.text, ride, rideExpireMs, now());
+      // Greetings and help must work even when the ride lookup is unavailable.
+      const ride = ['status', 'human', 'other'].includes(intent) ? await findRide(event.phone, event.text).catch(() => null) : null;
+      const answer = supportAnswer(event.text, ride, rideExpireMs, now(), context);
       // Record fingerprint before sending because the provider can echo before POST returns.
-      await chatRef.set({ outgoingHash: hash(answer.text), outgoingUntil: now() + 120000, lastReplyAt: now(), ...(answer.human ? { pausedUntil: now() + 30 * 60000 } : {}) }, { merge: true });
-      if (answer.human) await db.collection('supportAutomationTickets').doc(hash(event.phone)).set({ telefoneCriptografado: encrypt(event.phone), rideId: ride?.id || '', status: 'aguardando', requestedAt: now() }, { merge: true });
+      await chatRef.set({ outgoingHash: hash(answer.text), outgoingUntil: now() + 120000, lastIncomingHash: hash(event.text), topic: answer.topic || context.topic || 'menu', lastReplyAt: now(), ...(answer.human ? { pausedUntil: now() + 30 * 60000, pauseReason: 'human' } : {}) }, { merge: true });
+      if (answer.human) await db.collection('supportAutomationTickets').doc(hash(event.phone)).set({ telefoneCriptografado: encrypt(event.phone), ultimaMensagemCriptografada: encrypt(event.text), rideId: ride?.id || '', status: 'aguardando', requestedAt: now(), expiresAt: null }, { merge: true });
       const sent = await sendText(event.phone, answer.text);
       await chatRef.set({ outgoingId: sent.id || '', busyUntil: 0 }, { merge: true });
       return { replied: !!sent.sent, human: !!answer.human };
@@ -180,7 +232,7 @@ export function createSupportAutomation({ db, sendText, encrypt, instance, rideE
           const expired = await db.collection(name).where('expiresAt', '<', new Date(now())).limit(100).get();
           if (!expired.empty) {
             const batch = db.batch();
-            expired.docs.forEach(doc => batch.delete(doc.ref));
+            expired.docs.forEach(doc => { if (name !== 'supportAutomationTickets' || doc.data().status === 'resolvido') batch.delete(doc.ref); });
             await batch.commit();
           }
         }
