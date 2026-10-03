@@ -98,6 +98,7 @@ export function createSupportAutomation({ db, sendText, encrypt, instance, rideE
     if (!settings.enabled) return { ignored: true };
     const event = parseSupportMessage(body, instance, now());
     if (!event) return { ignored: true };
+    const wantsHuman = !event.fromMe && supportAnswer(event.text, null, rideExpireMs, now()).human === true;
     const chatRef = db.collection('supportAutomationChats').doc(hash(event.phone));
     const messageRef = db.collection('supportAutomationEvents').doc(hash(`${instance}:${event.id}`));
     let claim = false;
@@ -111,7 +112,7 @@ export function createSupportAutomation({ db, sendText, encrypt, instance, rideE
         if (!(state.outgoingHash === hash(event.text) && state.outgoingUntil > now()) && event.id !== state.outgoingId) tx.set(chatRef, { pausedUntil: now() + 30 * 60000 }, { merge: true });
         return;
       }
-      if (state.pausedUntil > now() || state.lastReplyAt > now() - 15000 || state.busyUntil > now()) return;
+      if (state.pausedUntil > now() || (!wantsHuman && state.lastReplyAt > now() - 15000) || state.busyUntil > now()) return;
       tx.set(chatRef, { busyUntil: now() + 60000, expiresAt: new Date(now() + 7 * 86400000) }, { merge: true });
       claim = true;
     });

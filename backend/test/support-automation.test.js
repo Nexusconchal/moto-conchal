@@ -108,6 +108,13 @@ test('ATENDENTE writes encrypted callback phone and pauses further auto response
   await h.service.handle(message({}, 'again')); assert.equal(h.sent.length, 1);
 });
 
+test('human handoff is accepted immediately after an automatic answer', async () => {
+  const h = harness(); await h.service.handle(message());
+  const event = message({}, 'human-immediate'); event.data.message.conversation = 'ATENDENTE';
+  await h.service.handle(event); assert.equal(h.sent.length, 2); assert.match(h.sent[1].text, /pedido de atendimento humano/);
+  assert.ok([...h.records.keys()].some(path => path.startsWith('supportAutomationTickets/')));
+});
+
 test('paused automation ignores customer messages and does not alert groups', async () => {
   const h = harness(); await h.service.saveConfig({ enabled: false }); await h.service.handle(message()); await h.service.tick(); assert.equal(h.sent.length, 0);
 });
