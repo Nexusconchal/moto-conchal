@@ -2839,7 +2839,7 @@
           return "Nao consegui conectar ao mapa agora. Verifique a internet e tente de novo em alguns segundos.";
         return m || "Nao consegui calcular agora.";
       }
-      async function fetchMapaComRetry(url, opcoes = {}, ms = 12000) {
+      async function fetchMapaComRetry(url, opcoes = {}, ms = 20000) {
         let ultimo;
         for (let i = 0; i < 2; i++) {
           const ctrl = new AbortController(),
@@ -3927,7 +3927,7 @@
         abrirWhatsApp("Olá, esqueci a senha da minha conta de cliente Nexus MotoJá e preciso de ajuda."),
       );
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=198", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=199", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
       }
       verificarAcessoCliente(true);
       verificarPedidoAtivo(false);
