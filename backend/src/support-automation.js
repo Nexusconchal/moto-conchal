@@ -68,7 +68,7 @@ export function pendingNotice(job, kind, stage, expireMs, now = Date.now()) {
 }
 
 // This assistant never creates bookings, changes fares or accepts a job.
-export function createSupportAutomation({ db, sendText, encrypt, instance, rideExpireMs, deliveryExpireMs, sendTelegram, now = () => Date.now() }) {
+export function createSupportAutomation({ db, sendText, encrypt, instance, rideExpireMs, deliveryExpireMs, sendTelegram, isSystemOutgoing = () => false, now = () => Date.now() }) {
   const configRef = db.collection('configuracoes').doc('atendimentoAutomatico');
   let cache, cacheUntil = 0, ticking = false, lastPrune = 0;
   async function config(refresh = false) {
@@ -109,7 +109,7 @@ export function createSupportAutomation({ db, sendText, encrypt, instance, rideE
       const state = chat.data() || {};
       tx.set(messageRef, { createdAt: now(), expiresAt: new Date(now() + 86400000) });
       if (event.fromMe) {
-        if (!(state.outgoingHash === hash(event.text) && state.outgoingUntil > now()) && event.id !== state.outgoingId) tx.set(chatRef, { pausedUntil: now() + 30 * 60000 }, { merge: true });
+        if (!isSystemOutgoing(event) && !(state.outgoingHash === hash(event.text) && state.outgoingUntil > now()) && event.id !== state.outgoingId) tx.set(chatRef, { pausedUntil: now() + 30 * 60000 }, { merge: true });
         return;
       }
       if (state.pausedUntil > now() || (!wantsHuman && state.lastReplyAt > now() - 15000) || state.busyUntil > now()) return;

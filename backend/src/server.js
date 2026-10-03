@@ -48,6 +48,7 @@ let adminStateCache = null;
 let supportOperationsCache = null;
 let cleanupRunning = false;
 const driverEarningsInitializations = new Map();
+const automaticWhatsappMessages = new Map();
 
 // ── Integration constants & minimum balance ──
 const MIN_INTEGRATION_BALANCE = 6.50;
@@ -627,6 +628,9 @@ async function sendEvolutionText(number, text) {
   if (!baseUrl || !apiKey || !instance || !number) {
     return { sent: false, reason: 'evolution_nao_configurada' };
   }
+  // OTPs and existing automatic notices must not be mistaken for a human reply.
+  automaticWhatsappMessages.set(hashSecret(`${number}:${text}`), Date.now() + 120000);
+  if (automaticWhatsappMessages.size > 500) automaticWhatsappMessages.delete(automaticWhatsappMessages.keys().next().value);
   const response = await fetch(`${baseUrl}/message/sendText/${encodeURIComponent(instance)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', apikey: apiKey },
@@ -10999,6 +11003,7 @@ const supportInstance = String(process.env.EVOLUTION_INSTANCE || '').trim();
 const supportInstancePath = encodeURIComponent(supportInstance);
 const supportAutomation = createSupportAutomation({
   db, instance: supportInstance, encrypt: encryptSecret,
+  isSystemOutgoing: event => (automaticWhatsappMessages.get(hashSecret(`${event.phone}:${event.text}`)) || 0) > Date.now(),
   rideExpireMs: RIDE_EXPIRE_MS, deliveryExpireMs: DELIVERY_EXPIRE_MS,
   async sendText(number, text) {
     const data = await supportEvolution(`/message/sendText/${supportInstancePath}`, 'POST', { number, text });

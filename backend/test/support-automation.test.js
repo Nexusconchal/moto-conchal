@@ -6,7 +6,7 @@ const NOW = 1800000000000;
 function message(overrides = {}, id = 'message1') {
   return { instance: 'support', event: 'messages.upsert', data: { key: { id, remoteJid: '5519999990000@s.whatsapp.net', fromMe: false, ...overrides }, messageTimestamp: NOW / 1000, message: { conversation: 'Minha corrida está aguardando' } } };
 }
-function harness() {
+function harness(isSystemOutgoing = () => false) {
   const records = new Map([['configuracoes/atendimentoAutomatico', { enabled: true, groupAlerts: true, driverGroupJid: '123@g.us' }]]);
   const sent = [], telegram = [];
   let time = NOW, lock = Promise.resolve(), beforeRead;
@@ -20,7 +20,7 @@ function harness() {
     } }; return query;
   } });
   const db = { collection, batch() { const deletions = []; return { delete: ref => deletions.push(ref.path), commit: async () => { deletions.forEach(path => records.delete(path)); } }; }, runTransaction(callback) { const work = lock.then(() => callback({ get: ref => ref.get(), set: (ref, value, options) => ref.set(value, options) })); lock = work.catch(() => {}); return work; } };
-  const service = createSupportAutomation({ db, instance: 'support', encrypt: value => `encrypted:${value}`, now: () => time, rideExpireMs: 300000, deliveryExpireMs: 900000, sendText: async (phone, text) => { sent.push({ phone, text }); return { sent: true, id: `reply${sent.length}` }; }, sendTelegram: async (job, text) => { telegram.push({ job, text }); return { sent: true }; } });
+  const service = createSupportAutomation({ db, instance: 'support', isSystemOutgoing, encrypt: value => `encrypted:${value}`, now: () => time, rideExpireMs: 300000, deliveryExpireMs: 900000, sendText: async (phone, text) => { sent.push({ phone, text }); return { sent: true, id: `reply${sent.length}` }; }, sendTelegram: async (job, text) => { telegram.push({ job, text }); return { sent: true }; } });
   return { service, records, sent, telegram, advance: delta => { time += delta; }, beforeRead: callback => { beforeRead = callback; } };
 }
 
@@ -96,6 +96,12 @@ test('outgoing bot echo does not pause next conversation', async () => {
   await h.service.handle(echo); h.advance(16000);
   const next = message({}, 'next'); next.data.messageTimestamp += 16;
   await h.service.handle(next); assert.equal(h.sent.length, 2);
+});
+
+test('existing automatic OTP sender does not pause customer support', async () => {
+  const h = harness(event => event.id === 'otp-system-message');
+  await h.service.handle(message({ fromMe: true }, 'otp-system-message'));
+  await h.service.handle(message({}, 'customer-followup')); assert.equal(h.sent.length, 1);
 });
 
 test('ATENDENTE writes encrypted callback phone and pauses further auto responses', async () => {
