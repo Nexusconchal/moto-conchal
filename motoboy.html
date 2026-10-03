@@ -2404,7 +2404,7 @@
             })
             .catch(function () {});
           const swReg = await navigator.serviceWorker.register(
-            `${swScope}firebase-messaging-sw.js?v=135`,
+            `${swScope}firebase-messaging-sw.js?v=195`,
             { scope: swScope, updateViaCache: "none" },
           );
           await swReg.update().catch(function () {});
@@ -2453,7 +2453,7 @@
         );
       }
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=179", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=195", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
         fetch("https://motoboy-conchal.onrender.com/health", {
           cache: "no-store",
         }).catch(() => {});
@@ -2590,31 +2590,9 @@
           }
         };
         checarMercadoPago();
-        $("btn-push").onclick = async () => {
-          const btn = $("btn-push");
-          btn.disabled = true;
-          btn.textContent = "Abrindo grupo...";
-          try {
-            const r = await fetch(
-              `${CONFIG.backend}/api/drivers/${motoboyCpf}/telegram-link`,
-              {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify(driverProof()),
-              },
-            );
-            const d = await r.json().catch(() => ({}));
-            if (!r.ok || !d.link)
-              throw new Error(
-                d.message || "Grupo do Telegram ainda nao configurado.",
-              );
-            location.href = d.link;
-          } catch (e) {
-            alert(e.message || "Nao consegui abrir o grupo.");
-          } finally {
-            btn.disabled = false;
-            btn.textContent = "Entrar no grupo de avisos no Telegram";
-          }
+        $("btn-push").onclick = () => {
+          // Open directly in the click gesture; joining must not depend on an API request.
+          location.href = "https://t.me/+M49aycYVf_kyZjUx";
         };
         const sair = $("sair-conta");
         if (sair)

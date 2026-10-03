@@ -149,6 +149,7 @@
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button id="btnRecarregarSuporte" type="button" class="secondary" style="min-height:36px;padding:0 14px;font-size:.82rem">Recarregar contas</button>
           <a href="./suporte/" target="_blank" rel="noopener">Abrir site do suporte</a>
+          <a href="./atendimento.html" target="_blank" rel="noopener">Atendimento automático e fila humana</a>
         </div>
       </div>
       <div class="owner-support-security"><strong>Acesso protegido</strong><span>CPF, nascimento e foto ficam disponíveis somente nesta área do dono. O suporte não recebe dados financeiros.</span></div>

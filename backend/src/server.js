@@ -10,6 +10,7 @@ import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import { validateLocation } from './tracking-policy.js';
 import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state.js';
+import { createSupportAutomation, SUPPORT_PHONE, chooseDriverGroup, brazilPhone } from './support-automation.js';
 
 const PORT = Number(process.env.PORT || 10000);
 const DRIVER_PERCENT = Number(process.env.DRIVER_PERCENT || 0.7);
@@ -225,7 +226,8 @@ function requestedPlaceHint(value) {
     'leme',
     'pirassununga',
     'rio claro',
-    'campinas'
+    'campinas',
+    'cosmopolis'
   ].find((hint) => text.includes(hint)) || '';
 }
 
@@ -278,7 +280,8 @@ function ensureDistantRouteIsPlausible(distanceKm, ...texts) {
     'leme',
     'pirassununga',
     'rio claro',
-    'campinas'
+    'campinas',
+    'cosmopolis'
   ];
   const hasDistantPlace = texts.some((text) => {
     const normalized = normalizeText(text);
@@ -2596,7 +2599,7 @@ app.use(cors({
 }));
 app.use(helmet());
 app.use(express.json({ limit: '8mb' }));
-app.use(['/api/support', '/api/admin/support'], (_req, res, next) => {
+app.use(['/api/support', '/api/admin/support', '/api/admin/support-automation'], (_req, res, next) => {
   res.set('cache-control', 'no-store, max-age=0');
   res.set('pragma', 'no-cache');
   next();
@@ -4918,7 +4921,7 @@ app.post('/api/drivers/:cpf/telegram-link', async (req, res, next) => {
     const driverCpf = onlyDigits(req.params.cpf);
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
     await getDriverWithProof(driverCpf, req.body);
-    const link = String(process.env.TELEGRAM_GROUP_LINK || '').trim();
+    const link = String(process.env.TELEGRAM_GROUP_LINK || 'https://t.me/+M49aycYVf_kyZjUx').trim();
     if (!/^https:\/\/t\.me\//i.test(link)) {
       return res.status(404).json({
         error: 'telegram_nao_configurado',
@@ -10979,6 +10982,105 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
   }
 });
 
+async function supportEvolution(path, method = 'GET', body) {
+  const base = String(process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
+  const key = String(process.env.EVOLUTION_API_KEY || '').trim();
+  if (!base || !key || !process.env.EVOLUTION_INSTANCE) throw new Error('whatsapp_nao_configurado');
+  const response = await fetch(`${base}${path}`, {
+    method, headers: { apikey: key, 'content-type': 'application/json' },
+    ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(15000)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(`whatsapp_integracao_${response.status}`);
+  return data;
+}
+
+const supportInstance = String(process.env.EVOLUTION_INSTANCE || '').trim();
+const supportInstancePath = encodeURIComponent(supportInstance);
+const supportAutomation = createSupportAutomation({
+  db, instance: supportInstance, encrypt: encryptSecret,
+  rideExpireMs: RIDE_EXPIRE_MS, deliveryExpireMs: DELIVERY_EXPIRE_MS,
+  async sendText(number, text) {
+    const data = await supportEvolution(`/message/sendText/${supportInstancePath}`, 'POST', { number, text });
+    return { sent: true, id: data.key?.id || data.messageId || '' };
+  },
+  async sendTelegram(job, text) {
+    const city = rideOperatingCity(job);
+    const chat = city === 'aguai' ? process.env.TELEGRAM_CHAT_ID_AGUAI || process.env.TELEGRAM_CHAT_ID
+      : city === 'engenheiro_coelho' ? process.env.TELEGRAM_CHAT_ID_ENGENHEIRO_COELHO || process.env.TELEGRAM_CHAT_ID : process.env.TELEGRAM_CHAT_ID;
+    if (!chat || !process.env.TELEGRAM_BOT_TOKEN) return { sent: false };
+    const response = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: chat, text, disable_web_page_preview: true }), signal: AbortSignal.timeout(10000)
+    });
+    return { sent: response.ok };
+  }
+});
+
+app.post('/api/support/whatsapp/webhook', async (req, res) => {
+  try {
+    const settings = await supportAutomation.config();
+    const secret = settings.webhookSecret ? decryptSecret(settings.webhookSecret) : '';
+    if (!secret || !safeEqual(req.header('x-motoja-webhook-secret'), secret)) return res.status(401).json({ error: 'webhook_nao_autorizado' });
+    return res.json({ ok: true, ...await supportAutomation.handle(req.body) });
+  } catch {
+    // Provider payloads and keys must never be logged or returned.
+    console.error('support automation webhook failed');
+    return res.status(503).json({ error: 'atendimento_temporariamente_indisponivel' });
+  }
+});
+
+app.get('/api/admin/support-automation', authLimiter, assertOwner, async (_req, res, next) => {
+  try {
+    const settings = await supportAutomation.config(true);
+    const tickets = await db.collection('supportAutomationTickets').where('status', '==', 'aguardando').get();
+    res.json({ enabled: !!settings.enabled, groupAlerts: !!settings.groupAlerts, groupName: settings.driverGroupName || '', phone: SUPPORT_PHONE,
+      tickets: tickets.docs.map(doc => ({ id: doc.id, telefone: decryptSecretSafe(doc.data().telefoneCriptografado), rideId: doc.data().rideId, requestedAt: doc.data().requestedAt })) });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/admin/support-automation/tickets/:ticketId/resolve', authLimiter, assertOwner, async (req, res, next) => {
+  try {
+    if (!/^[a-f0-9]{64}$/.test(req.params.ticketId)) return res.status(400).json({ error: 'ticket_invalido' });
+    await db.collection('supportAutomationTickets').doc(req.params.ticketId).set({ status: 'resolvido', resolvedAt: Date.now(), expiresAt: new Date(Date.now() + 7 * 86400000) }, { merge: true });
+    res.json({ ok: true });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/admin/support-automation/setup', authLimiter, assertOwner, async (_req, res) => {
+  try {
+    const list = await supportEvolution(`/instance/fetchInstances?instanceName=${supportInstancePath}`);
+    const selected = (Array.isArray(list) ? list : []).find(item => (item.name || item.instance?.instanceName) === supportInstance);
+    const connectedPhone = brazilPhone(String(selected?.ownerJid || selected?.instance?.owner || '').split('@')[0]);
+    if (!selected || connectedPhone !== SUPPORT_PHONE || (selected.connectionStatus || selected.instance?.status) !== 'open') return res.status(409).json({ error: 'conecte_whatsapp_suporte', phone: SUPPORT_PHONE });
+    const previous = await supportEvolution(`/webhook/find/${supportInstancePath}`);
+    const webhook = previous.webhook || previous;
+    const url = `${BACKEND_BASE_URL}/api/support/whatsapp/webhook`;
+    if (webhook.enabled && webhook.url !== url) return res.status(409).json({ error: 'webhook_existente_preservado' });
+    const groups = await supportEvolution(`/group/fetchAllGroups/${supportInstancePath}?getParticipants=false`);
+    const group = chooseDriverGroup(groups);
+    if (!group) return res.status(409).json({ error: 'grupo_motoristas_nao_identificado' });
+    const existing = await supportAutomation.config(true);
+    const secret = existing.webhookSecret ? decryptSecret(existing.webhookSecret) : crypto.randomBytes(32).toString('hex');
+    await supportAutomation.saveConfig({ webhookSecret: encryptSecret(secret), driverGroupJid: group.id, driverGroupName: group.subject });
+    await supportEvolution(`/webhook/set/${supportInstancePath}`, 'POST', { webhook: {
+      enabled: true, url, byEvents: false, base64: false, events: ['MESSAGES_UPSERT', 'SEND_MESSAGE'], headers: { 'x-motoja-webhook-secret': secret }
+    } });
+    const verified = await supportEvolution(`/webhook/find/${supportInstancePath}`);
+    const saved = verified.webhook || verified;
+    if (!saved.enabled || saved.url !== url || saved.headers?.['x-motoja-webhook-secret'] !== secret || !saved.events?.includes('MESSAGES_UPSERT')) throw new Error('webhook_nao_confirmado');
+    await supportAutomation.saveConfig({ enabled: true, groupAlerts: true, activatedAt: Date.now() });
+    return res.json({ ok: true, enabled: true, phone: SUPPORT_PHONE, groupName: group.subject });
+  } catch {
+    return res.status(503).json({ error: 'integracao_whatsapp_indisponivel', message: 'Não consegui confirmar a configuração. Confira a conexão da Evolution e tente novamente.' });
+  }
+});
+
+app.post('/api/admin/support-automation/pause', authLimiter, assertOwner, async (_req, res, next) => {
+  try { await supportAutomation.saveConfig({ enabled: false, groupAlerts: false }); res.json({ ok: true }); }
+  catch (error) { next(error); }
+});
+
 app.post('/api/jobs/cleanup', assertAdmin, async (_req, res, next) => {
   try {
     res.json(await cleanupRides());
@@ -11000,6 +11102,10 @@ async function scheduledCleanup() {
 }
 
 setInterval(scheduledCleanup, CLEANUP_INTERVAL_MS);
+
+setInterval(() => {
+  supportAutomation.tick().catch(() => console.error('support automation tick failed'));
+}, 60 * 1000);
 
 setInterval(() => {
   runCustomerReminderTick().catch((error) => console.error('customer reminder failed', error));

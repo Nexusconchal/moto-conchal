@@ -2813,6 +2813,7 @@
           "pirassununga",
           "rio claro",
           "campinas",
+          "cosmopolis",
         ];
       }
       function dicaLocal(v) {
@@ -2871,14 +2872,14 @@
         const rua = texto.match(/(?:^|\s)(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+([^,]+)/);
         if (!rua) return !!(props.street || props.housenumber || props.name);
         if (!props.street) return false;
-        const palavras = rua[1].replace(/\d+.*/, "").split(/\s+/)
-          .filter((p) => p.length > 1 && !["de", "da", "do", "das", "dos"].includes(p));
+        const palavras = rua[1].replace(/\s+\d+.*$/, "").split(/[^a-z0-9]+/)
+          .filter((p) => p.length > 1 && !["de", "da", "do", "das", "dos", "dr", "dra", "doutor", "doutora"].includes(p));
         const encontrada = normalizar(props.street).split(/[^a-z0-9]+/);
         return palavras.length > 0 && palavras.every((p) => encontrada.includes(p));
       }
       function rotaDistantePlausivel(km, ...textos) {
         const distante = textos.some((t) =>
-          /martinho\s*prado|tujuguaba|iate|engenheiro\s+coelho|artur\s+nogueira|arthur\s+nogueira|mogi\s+mirim|mogi\s+guacu|araras|americana|limeira|leme|pirassununga|rio\s+claro|campinas/.test(
+          /martinho\s*prado|tujuguaba|iate|engenheiro\s+coelho|artur\s+nogueira|arthur\s+nogueira|mogi\s+mirim|mogi\s+guacu|araras|americana|limeira|leme|pirassununga|rio\s+claro|campinas|cosmopolis/.test(
             textoBusca(t),
           ),
         );
