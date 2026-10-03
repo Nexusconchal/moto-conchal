@@ -22,6 +22,8 @@ Usa as variáveis existentes `EVOLUTION_API_URL`, `EVOLUTION_API_KEY`, `EVOLUTIO
 
 O webhook autenticado é `/api/support/whatsapp/webhook`, cabeçalho `x-motoja-webhook-secret`, eventos `MESSAGES_UPSERT` e `SEND_MESSAGE`. Mídia não é enviada em base64. Grupos, broadcasts, eventos de outras instâncias e mensagens antigas são ignorados. LIDs só são aceitos com mapeamento explícito para número em `remoteJidAlt`.
 
+Quando o cliente pergunta sobre demora ou espera, o atendimento consulta a corrida vinculada ao número autenticado. Se ela continuar pendente e válida, solicita um reforço no grupo dos motoboys no WhatsApp e no Telegram, sem encaminhar a mensagem, telefone ou endereço do cliente. A resposta só afirma envio nos canais que confirmaram sucesso. Avisos recentes são reaproveitados; cada geração da corrida permite um reforço solicitado pelo cliente por canal. Avisos automáticos de corrida se repetem a cada dois minutos enquanto houver tempo antes da expiração, parando com aceite, cancelamento ou expiração. Entregas mantêm o lembrete existente de dois minutos. Uma trava compartilhada evita avisos concorrentes ou separados por menos de um minuto no mesmo canal. Nenhuma IA escolhe destinatário ou gera esses avisos; eles dependem do estado real no servidor. A disponibilidade da Evolution continua necessária: o plano gratuito do Render pode suspender o serviço por inatividade.
+
 ## Comportamento
 
 - Responde a conversas individuais consultando exclusivamente corridas do número remetente. Um código informado também exige que o telefone da corrida corresponda ao remetente. Várias corridas ativas exigem informar o código.

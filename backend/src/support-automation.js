@@ -101,9 +101,10 @@ export function chooseDriverGroup(groups) {
 
 export function pendingNotice(job, kind, stage, expireMs, now = Date.now()) {
   const age = now - ms(job.criadaEm);
-  if (job.status !== 'pendente' || !ms(job.criadaEm) || age < (stage === 'reminder' ? 120000 : 0) || (stage === 'initial' && age >= 120000) || age >= expireMs) return '';
+  const reminderMinutes = stage === 'reminder' ? 2 : Number(stage.match(/^reminder-(\d+)m$/)?.[1] || 0);
+  if (job.status !== 'pendente' || !ms(job.criadaEm) || age < reminderMinutes * 60000 || (stage === 'initial' && age >= 120000) || age >= expireMs) return '';
   const value = Number(job.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-  return `${stage === 'reminder' ? 'ATENÇÃO, MOTOBOYS: solicitação aguardando há pelo menos 2 minutos' : 'NOVA SOLICITAÇÃO NEXUS MOTOJÁ'}\n${kind === 'corridas' ? 'Corrida' : 'Entrega'} disponível: ${value}.\nQuem estiver disponível, confira e aceite no app:\n${DRIVER_APP}\nCódigo: ${job.id}\nA disponibilidade deve ser conferida no app. Não confirme pelo grupo.`;
+  return `${stage === 'customer' ? 'ATENÇÃO, MOTOBOYS: cliente pediu ajuda porque está aguardando aceite' : reminderMinutes ? `ATENÇÃO, MOTOBOYS: solicitação aguardando há pelo menos ${reminderMinutes} minutos` : 'NOVA SOLICITAÇÃO NEXUS MOTOJÁ'}\n${kind === 'corridas' ? 'Corrida' : 'Entrega'} disponível: ${value}.\nQuem estiver disponível, confira e aceite no app:\n${DRIVER_APP}\nCódigo: ${job.id}\nA disponibilidade deve ser conferida no app. Não confirme pelo grupo.`;
 }
 
 // This assistant never creates bookings, changes fares or accepts a job.
@@ -172,6 +173,28 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
       // Greetings and help must work even when the ride lookup is unavailable.
       const ride = ['status', 'human', 'other'].includes(intent) ? await findRide(event.phone, event.text).catch(() => null) : null;
       let answer = supportAnswer(event.text, ride, rideExpireMs, now(), context);
+      // Customer complaints can request a real group notice, never an AI action.
+      // Ownership is checked by findRide and notify rechecks the live job before sending.
+      if (intent === 'status' && ride?.status === 'pendente' && /demor|aguard|esper|nao.*aceit|ninguem.*aceit/.test(plain(event.text)) && settings.groupAlerts) {
+        const ref = db.collection('corridas').doc(ride.id);
+        const results = [];
+        if (settings.driverGroupJid) results.push(await notify(ref, 'corridas', 'customer', 'whatsapp', settings).catch(() => ({ channel: 'whatsapp', status: 'failed' })));
+        results.push(await notify(ref, 'corridas', 'customer', 'telegram', settings).catch(() => ({ channel: 'telegram', status: 'failed' })));
+        const current = await ref.get().catch(() => null);
+        const freshRide = current?.exists ? { ...current.data(), id: current.id } : null;
+        answer = current ? supportAnswer(event.text, freshRide, rideExpireMs, now(), context) : { topic: 'status', text: `Não consegui confirmar a etapa atual da corrida agora. Confira pelo app ou escreva ATENDENTE para uma pessoa verificar.${FOOTER}` };
+        const stillPending = freshRide?.status === 'pendente' && now() - ms(freshRide.criadaEm) < rideExpireMs;
+        if (stillPending) {
+          const labels = { whatsapp: 'grupo dos motoboys no WhatsApp', telegram: 'Telegram' };
+          const sent = results.filter(result => result.status === 'sent').map(result => labels[result.channel]);
+          const recent = results.filter(result => result.status === 'recent').map(result => labels[result.channel]);
+          const failed = results.some(result => result.status === 'failed');
+          const detail = sent.length ? `Enviei um reforço ao ${sent.join(' e ao ')}. ` : '';
+          const previous = recent.length ? `Já há um aviso recente no ${recent.join(' e no ')}. ` : '';
+          const failure = failed ? 'Não consegui confirmar o envio em todos os grupos. ' : '';
+          answer.text = `Sua corrida ainda está aguardando aceite. ${detail}${previous}${failure}Não consigo garantir um motoboy ou horário de chegada. Você pode acompanhar pelo app ou escrever ATENDENTE para uma pessoa verificar.${FOOTER}`;
+        }
+      }
       let aiState = { aiContextCriptografado: '', aiContextUntil: 0 };
       // Booking facts, media, explicit handoff and numeric menu choices stay deterministic.
       if (event.text.trim() && !['status', 'human', 'menu'].includes(intent) && !/^[0-5]$/.test(event.text.trim())) {
@@ -200,27 +223,38 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
     const initial = await ref.get();
     const job = { ...initial.data(), id: initial.id };
     const expire = kind === 'corridas' ? rideExpireMs : deliveryExpireMs;
-    if (!pendingNotice(job, kind, stage, expire, now())) return;
+    if (!pendingNotice(job, kind, stage, expire, now())) return { channel, status: 'ignored' };
     const marker = db.collection('supportAutomationNotices').doc(hash(`${kind}:${job.id}:${ms(job.criadaEm)}:${stage}:${channel}`));
-    let claim = false;
+    const lastMarker = db.collection('supportAutomationNotices').doc(hash(`${kind}:${job.id}:${ms(job.criadaEm)}:last:${channel}`));
+    let claim = false, status = 'ignored';
     await db.runTransaction(async tx => {
-      claim = false;
-      const previous = await tx.get(marker);
-      if (previous.exists) return;
+      claim = false; status = 'ignored';
+      // Include legacy initial/reminder markers when upgrading an existing deployment.
+      const [previous, ...notices] = await Promise.all([tx.get(marker), tx.get(lastMarker), ...['initial', 'reminder'].map(value => tx.get(db.collection('supportAutomationNotices').doc(hash(`${kind}:${job.id}:${ms(job.criadaEm)}:${value}:${channel}`))))]);
+      if (previous.exists) { status = previous.data().status === 'sent' ? 'recent' : previous.data().status === 'failed' ? 'failed' : 'sending'; return; }
+      if (stage === 'customer' || stage.startsWith('reminder')) {
+        const active = notices.map(snap => snap.data()).find(data => data && ['claimed', 'sent'].includes(data.status) && ms(data.createdAt) > now() - 60000);
+        if (active) { status = active.status === 'sent' ? 'recent' : 'sending'; return; }
+      }
       tx.set(marker, { createdAt: now(), expiresAt: new Date(now() + 7 * 86400000), status: 'claimed' });
+      tx.set(lastMarker, { createdAt: now(), expiresAt: new Date(now() + 7 * 86400000), status: 'claimed' });
       claim = true;
     });
-    if (!claim) return;
+    if (!claim) return { channel, status };
     const current = await ref.get();
     const fresh = { ...current.data(), id: current.id };
     const text = ms(fresh.criadaEm) === ms(job.criadaEm) && pendingNotice(fresh, kind, stage, expire, now());
-    if (!text) return;
+    if (!text) return { channel, status: 'ignored' };
     // At most one attempt: an ambiguous network timeout must not spam a group.
     try {
       const sent = channel === 'whatsapp' ? await sendText(settings.driverGroupJid, text) : await sendTelegram(fresh, text);
       await marker.set({ status: sent.sent ? 'sent' : 'failed', completedAt: now() }, { merge: true });
+      await lastMarker.set({ status: sent.sent ? 'sent' : 'failed', completedAt: now() }, { merge: true });
+      return { channel, status: sent.sent ? 'sent' : 'failed' };
     } catch {
       await marker.set({ status: 'failed', completedAt: now() }, { merge: true });
+      await lastMarker.set({ status: 'failed', completedAt: now() }, { merge: true });
+      return { channel, status: 'failed' };
     }
   }
   async function tick() {
@@ -232,11 +266,12 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
       for (const kind of ['corridas', 'entregas']) {
         const pending = await db.collection(kind).where('status', '==', 'pendente').get();
         for (const doc of pending.docs) {
+          const reminders = kind === 'corridas' ? Array.from({ length: Math.max(0, Math.ceil(rideExpireMs / 120000) - 1) }, (_, index) => index === 0 ? 'reminder' : `reminder-${(index + 1) * 2}m`) : ['reminder'];
           if (settings.driverGroupJid) {
             await notify(doc.ref, kind, 'initial', 'whatsapp', settings);
-            await notify(doc.ref, kind, 'reminder', 'whatsapp', settings);
+            for (const stage of reminders) await notify(doc.ref, kind, stage, 'whatsapp', settings);
           }
-          await notify(doc.ref, kind, 'reminder', 'telegram', settings);
+          for (const stage of reminders) await notify(doc.ref, kind, stage, 'telegram', settings);
         }
       }
       if (now() - lastPrune >= 3600000) {

@@ -6,7 +6,7 @@ const NOW = 1800000000000;
 function message(overrides = {}, id = 'message1') {
   return { instance: 'support', event: 'messages.upsert', data: { key: { id, remoteJid: '5519999990000@s.whatsapp.net', fromMe: false, ...overrides }, messageTimestamp: NOW / 1000, message: { conversation: 'Minha corrida está aguardando' } } };
 }
-function harness(isSystemOutgoing = () => false, generateReply = async () => null) {
+function harness(isSystemOutgoing = () => false, generateReply = async () => null, failures = {}) {
   const records = new Map([['configuracoes/atendimentoAutomatico', { enabled: true, groupAlerts: true, driverGroupJid: '123@g.us' }]]);
   const sent = [], telegram = [];
   let time = NOW, lock = Promise.resolve(), beforeRead;
@@ -20,7 +20,7 @@ function harness(isSystemOutgoing = () => false, generateReply = async () => nul
     } }; return query;
   } });
   const db = { collection, batch() { const deletions = []; return { delete: ref => deletions.push(ref.path), commit: async () => { deletions.forEach(path => records.delete(path)); } }; }, runTransaction(callback) { const work = lock.then(() => callback({ get: ref => ref.get(), set: (ref, value, options) => ref.set(value, options) })); lock = work.catch(() => {}); return work; } };
-  const service = createSupportAutomation({ db, instance: 'support', isSystemOutgoing, generateReply, encrypt: value => `encrypted:${value}`, decrypt: value => value.slice('encrypted:'.length), now: () => time, rideExpireMs: 300000, deliveryExpireMs: 900000, sendText: async (phone, text) => { sent.push({ phone, text }); return { sent: true, id: `reply${sent.length}` }; }, sendTelegram: async (job, text) => { telegram.push({ job, text }); return { sent: true }; } });
+  const service = createSupportAutomation({ db, instance: 'support', isSystemOutgoing, generateReply, encrypt: value => `encrypted:${value}`, decrypt: value => value.slice('encrypted:'.length), now: () => time, rideExpireMs: 300000, deliveryExpireMs: 900000, sendText: async (phone, text) => { sent.push({ phone, text }); return { sent: !(failures.whatsapp && phone.endsWith('@g.us')), id: `reply${sent.length}` }; }, sendTelegram: async (job, text) => { telegram.push({ job, text }); return { sent: !failures.telegram }; } });
   return { service, records, sent, telegram, advance: delta => { time += delta; }, beforeRead: callback => { beforeRead = callback; } };
 }
 
@@ -227,6 +227,57 @@ test('rechecks acceptance between claim and sending group notice', async () => {
   const h = harness(); h.records.set('corridas/ride', { status: 'pendente', criadaEm: NOW - 121000 });
   let reads = 0; h.beforeRead(path => { if (path === 'corridas/ride' && ++reads === 2) h.records.set(path, { status: 'aceita', criadaEm: NOW - 121000 }); });
   await h.service.tick(); assert.equal(h.sent.length, 0); assert.equal(h.telegram.length, 0);
+});
+
+test('customer waiting complaint alerts both groups once and confirms actual delivery without personal details', async () => {
+  const h = harness();
+  h.records.set('corridas/current', { status: 'pendente', criadaEm: NOW - 180000, telefoneCliente: '19999990000', origem: 'Rua privada, 123', valor: 12 });
+  await h.service.handle(message());
+  const group = h.sent.find(item => item.phone === '123@g.us');
+  assert.match(group.text, /cliente pediu ajuda/); assert.doesNotMatch(group.text, /Rua privada|19999990000/);
+  assert.equal(h.telegram.length, 1);
+  assert.match(h.sent.find(item => item.phone === '5519999990000').text, /Enviei um reforço ao grupo dos motoboys no WhatsApp e ao Telegram/);
+  h.advance(16000); const next = message({}, 'repeated-delay'); next.data.messageTimestamp += 16;
+  next.data.message.conversation = 'Por que está demorando tanto?'; await h.service.handle(next);
+  assert.equal(h.sent.filter(item => item.phone === '123@g.us').length, 1); assert.equal(h.telegram.length, 1);
+  assert.match(h.sent.at(-1).text, /Já há um aviso recente/);
+});
+
+test('automatic waiting reminders repeat every two minutes and stop on acceptance or expiry', async () => {
+  for (const stop of ['accepted', 'expired']) {
+    const h = harness(); h.records.set('corridas/ride', { status: 'pendente', criadaEm: NOW - 121000 });
+    await h.service.tick(); h.advance(120000); await h.service.tick(); await h.service.tick();
+    assert.equal(h.sent.length, 2); assert.equal(h.telegram.length, 2); assert.match(h.sent[1].text, /4 minutos/);
+    if (stop === 'accepted') h.records.set('corridas/ride', { status: 'aceita', criadaEm: NOW - 121000 });
+    h.advance(60000); await h.service.tick(); assert.equal(h.sent.length, 2); assert.equal(h.telegram.length, 2);
+  }
+});
+
+test('customer notice never confirms a failed group send', async () => {
+  const h = harness(() => false, async () => null, { whatsapp: true, telegram: true });
+  h.records.set('corridas/current', { status: 'pendente', criadaEm: NOW - 180000, telefoneCliente: '19999990000' });
+  await h.service.handle(message());
+  assert.match(h.sent.at(-1).text, /Não consegui confirmar o envio/); assert.doesNotMatch(h.sent.at(-1).text, /Enviei um reforço/);
+});
+
+test('customer group requests require an owned, unexpired pending ride and enabled alerts', async () => {
+  for (const state of ['aceita', 'cancelada', 'expirada', 'expired-pending', 'unowned', 'disabled']) {
+    const h = harness(); h.records.set('corridas/c59de63b4-39799232', { status: ['unowned', 'disabled', 'expired-pending'].includes(state) ? 'pendente' : state, criadaEm: NOW - (state === 'expired-pending' ? 300001 : 180000), telefoneCliente: state === 'unowned' ? '19888880000' : '19999990000' });
+    if (state === 'disabled') await h.service.saveConfig({ groupAlerts: false });
+    const event = message(); event.data.message.conversation = 'Minha corrida c59de63b4-39799232 está demorando'; await h.service.handle(event);
+    assert.equal(h.sent.filter(item => item.phone.endsWith('@g.us')).length, 0); assert.equal(h.telegram.length, 0);
+  }
+});
+
+test('a recent automatic notice avoids a duplicate customer reminder; acceptance race returns current status', async () => {
+  const recent = harness(); recent.records.set('corridas/current', { status: 'pendente', criadaEm: NOW - 121000, telefoneCliente: '19999990000' });
+  await recent.service.tick(); await recent.service.handle(message());
+  assert.equal(recent.sent.filter(item => item.phone.endsWith('@g.us')).length, 1); assert.equal(recent.telegram.length, 1);
+  assert.match(recent.sent.at(-1).text, /Já há um aviso recente/);
+  const raced = harness(); raced.records.set('corridas/current', { status: 'pendente', criadaEm: NOW - 180000, telefoneCliente: '19999990000' });
+  let reads = 0; raced.beforeRead(path => { if (path === 'corridas/current' && ++reads === 2) raced.records.set(path, { status: 'aceita', criadaEm: NOW - 180000, telefoneCliente: '19999990000' }); });
+  await raced.service.handle(message()); assert.equal(raced.telegram.length, 0);
+  assert.equal(raced.sent.length, 1); assert.match(raced.sent[0].text, /já foi aceita/); assert.doesNotMatch(raced.sent[0].text, /Enviei um reforço/);
 });
 
 test('retention clears expired metadata but preserves unresolved human tickets', async () => {
