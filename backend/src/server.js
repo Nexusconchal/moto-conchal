@@ -199,6 +199,24 @@ function dailyPlanRef(companyId, dayKey = todayKeySaoPaulo()) {
   return db.collection('empresas').doc(companyId).collection('planosDiarios').doc(dayKey);
 }
 
+async function assertQuickDailyPlanRenewable(tx, delivery, companyId) {
+  if (!delivery.entregaNaNota || !isDailyPlanDelivery(delivery.tipoEntrega)) return;
+  const day = todayKeySaoPaulo();
+  if (delivery.planoDiarioDia !== day) {
+    const error = new Error('A diaria deste chamado venceu. Ative o plano de hoje e crie uma nova chamada.');
+    error.status = 403;
+    error.code = 'plano_diario_vencido';
+    throw error;
+  }
+  const plan = await tx.get(dailyPlanRef(companyId, day));
+  if (!plan.exists || plan.data().status !== 'ativo') {
+    const error = new Error('O Plano Diario MotoJa Pro nao esta ativo hoje.');
+    error.status = 403;
+    error.code = 'plano_diario_inativo';
+    throw error;
+  }
+}
+
 function isFixedFoodDelivery(type) {
   return /lanche|comida|pizza|pastel|acai|sorvete|marmita|farmacia/i.test(String(type || ''));
 }
@@ -378,7 +396,7 @@ function isPricedDeliveryType(type) {
 }
 
 function expectedDeliveryFare(distanceKm, stops = 1, type = '', delivery = {}) {
-  if (delivery.entregaNaNota === true && isFixedFoodDelivery(type)) return quickDeliveryFare(delivery);
+  if (delivery.entregaNaNota === true && (isFixedFoodDelivery(type) || isDailyPlanDelivery(type))) return quickDeliveryFare(delivery);
   const distance = Number(distanceKm || 0);
   const deliveryStops = deliveryStopCount(stops);
   if (!Number.isFinite(distance) || distance <= 0) return 0;
@@ -9320,6 +9338,7 @@ app.post('/api/deliveries/:deliveryId/renew', assertCompany, assertCompanyApprov
         throw error;
       }
 
+      await assertQuickDailyPlanRenewable(tx, delivery, req.companyId);
       const valor = money(delivery.saldoReservado || delivery.valor || 0);
       const companyRef = req.companySnap.ref;
       const companySnap = await tx.get(companyRef);
@@ -9418,6 +9437,7 @@ app.post('/api/admin/deliveries/:deliveryId/renew', assertOwner, async (req, res
         throw error;
       }
 
+      await assertQuickDailyPlanRenewable(tx, delivery, companyRef.id);
       const companySnap = await tx.get(companyRef);
       const balance = companyBalance(companySnap.exists ? companySnap.data() : {});
       const precisaReservar = delivery.status === 'expirada' || !!delivery.saldoLiberadoEm;

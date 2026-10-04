@@ -1419,7 +1419,7 @@
         );
       }
       function appValorEntrega(c) {
-        if (c?.entregaNaNota === true) return dinheiro(Math.max(1, Number(c.paradas || 1)) * (c.regiaoEntrega === "conchal" ? 1.5 : 2));
+        if (c?.entregaNaNota === true && !planoDiario(c)) return dinheiro(Math.max(1, Number(c.paradas || 1)) * (c.regiaoEntrega === "conchal" ? 1.5 : 2));
         if (servicoExclusivo(c))
           return Number(c.ganhoApp || c.valorApp || c.ganhoAppPrevisto || 20);
         if (planoDiario(c))

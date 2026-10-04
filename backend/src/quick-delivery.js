@@ -9,7 +9,8 @@ export function prepareQuickDelivery(delivery, rawCount, company, fixedType) {
   const count = Number(rawCount);
   const region = Object.hasOwn(QUICK_DELIVERY_REGIONS, delivery.regiaoEntrega) ? QUICK_DELIVERY_REGIONS[delivery.regiaoEntrega] : null;
   const type = String(delivery.tipoEntrega || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  if (!Number.isInteger(count) || count < 1 || count > 30 || !region || !fixedType || !['lanche / pizza / pastel / marmita', 'acai / pote de sorvete', 'farmacia'].includes(type) || delivery.integracaoOrigem || delivery.integracaoPedidoId) {
+  const dailyPlan = type === 'plano diario motoja pro';
+  if (!Number.isInteger(count) || count < 1 || count > 30 || !region || (!fixedType && !dailyPlan) || !['lanche / pizza / pastel / marmita', 'acai / pote de sorvete', 'farmacia', 'plano diario motoja pro'].includes(type) || delivery.integracaoOrigem || delivery.integracaoPedidoId) {
     const error = new Error('Na chamada sem endereco, selecione de 1 a 30 entregas, uma regiao e um tipo com tarifa fixa. Pedidos integrados continuam com endereco.');
     error.status = 400;
     error.code = 'chamada_rapida_invalida';
@@ -21,15 +22,17 @@ export function prepareQuickDelivery(delivery, rawCount, company, fixedType) {
     entregaEncontrada: 'Enderecos nas notas — rota nao calculada',
     entregaLat: null, entregaLon: null,
     paradas: count, quantidadeEntregas: count, km: 0,
-    valor: Math.round(count * region.fare * 100) / 100,
-    precoLabel: `${count} entrega(s) × R$ ${region.fare.toFixed(2).replace('.', ',')} — ${region.label}`,
+    valor: Math.round(count * (dailyPlan ? 4 : region.fare) * 100) / 100,
+    precoLabel: `${count} entrega(s) × R$ ${(dailyPlan ? 4 : region.fare).toFixed(2).replace('.', ',')} — ${region.label}${dailyPlan ? ' — plano diario' : ''}`,
     recebedor: '', telefoneRecebedor: '', descricao: '', observacao: '',
     pontosExtras: [], enderecosExtras: '', dadosNaNota: true
   });
+  if (dailyPlan) delivery.tipoEntrega = 'Plano Diario MotoJa Pro';
   return region;
 }
 
 export function quickDeliveryFare(delivery, appFee = false) {
+  if (String(delivery.tipoEntrega || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() === 'plano diario motoja pro') return Math.round(Number(delivery.paradas) * (appFee ? 1 : 4) * 100) / 100;
   const region = QUICK_DELIVERY_REGIONS[delivery.regiaoEntrega];
   return Math.round(Number(delivery.paradas) * Number(region?.[appFee ? 'appFee' : 'fare'] || 0) * 100) / 100;
 }

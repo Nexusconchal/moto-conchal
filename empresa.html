@@ -2566,6 +2566,7 @@
         if (planoDiarioAtivo) mostrarPlanoDiarioAviso("");
         if (!planoDiarioAtivo && $("tipoEntrega").value === PLANO_DIARIO_TIPO)
           $("tipoEntrega").value = "";
+        atualizarResumoLote();
       }
       async function carregarPlanoDiario() {
         if (!empresaToken) {
@@ -4745,11 +4746,17 @@
           $("confirmar").style.display = "none";
         }),
       );
+      function tipoLotePermitido(tipo) {
+        return tipoPlanoDiario(tipo) ? planoDiarioAtivo : comidaFixa(tipo);
+      }
+      function tarifaLote(tipo, regiao) {
+        return tipoPlanoDiario(tipo) ? 4 : regiao === "conchal" ? 6.5 : 16;
+      }
       function atualizarResumoLote() {
         const count = Number($("quantidadeLote").value), tipo = $("tipoEntrega").value;
-        const valido = Number.isInteger(count) && count >= 1 && count <= 30 && comidaFixa(tipo);
-        const tarifa = $("regiaoLote").value === "conchal" ? 6.5 : 16;
-        $("resumoLote").textContent = valido ? `${count} entrega(s) × ${moeda(tarifa)} = ${moeda(count * tarifa)}. Um motoboy para o lote.` : "Selecione um tipo com tarifa fixa e uma quantidade de 1 a 30 entregas. Para cobrança por km ou plano diário, use Entrega com endereço.";
+        const valido = Number.isInteger(count) && count >= 1 && count <= 30 && tipoLotePermitido(tipo);
+        const tarifa = tarifaLote(tipo, $("regiaoLote").value);
+        $("resumoLote").textContent = valido ? `${count} entrega(s) × ${moeda(tarifa)} = ${moeda(count * tarifa)}. Um motoboy para o lote.${tipoPlanoDiario(tipo) ? ' Plano diário ativo hoje.' : ''}` : "Selecione um tipo com tarifa fixa e uma quantidade de 1 a 30 entregas. O plano diário exige ativação de R$ 70,00 hoje. Para cobrança por km, use Entrega com endereço.";
         $("chamarLote").disabled = !valido || enviando;
       }
       function selecionarModoEntrega(semEndereco) {
@@ -4780,10 +4787,10 @@
         if (enviando || !modoChamadaSemEndereco) return;
         limparStatus();
         const count = Number($("quantidadeLote").value), tipo = $("tipoEntrega").value;
-        if (!comidaFixa(tipo) || !Number.isInteger(count) || count < 1 || count > 30) return atualizarResumoLote();
+        if (!tipoLotePermitido(tipo) || !Number.isInteger(count) || count < 1 || count > 30) return atualizarResumoLote();
         const retiradaTxt = $("retirada").value.trim(), empresa = $("empresa").value.trim(), responsavel = $("responsavel").value.trim(), telefoneEmpresa = soNumeros($("telefoneEmpresa").value);
         if (!retiradaTxt || !empresa || !responsavel || telefoneEmpresa.length < 10) return mostrarStatus("Confira o cadastro e o endereço de retirada da loja.", true);
-        const regiaoEntrega = $("regiaoLote").value, valor = count * (regiaoEntrega === "conchal" ? 6.5 : 16);
+        const regiaoEntrega = $("regiaoLote").value, valor = count * tarifaLote(tipo, regiaoEntrega);
         entregaCalculada = { entregaNaNota: true, regiaoEntrega, empresa, responsavel, telefoneEmpresa, tipoEntrega: tipo, retiradaTxt,
           retirada: { texto: retiradaTxt, lat: null, lon: null }, retiradaMapa: "", entregaTxt: "Endereços nas notas", entrega: { texto: "Endereços nas notas", lat: null, lon: null },
           paradas: count, km: 0, valor, precoLabel: "Tarifa fixa por região", recebedor: "", telefoneRecebedor: "", descricao: "", observacao: "", extras: [], enderecosExtras: "",
