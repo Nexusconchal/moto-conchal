@@ -7,6 +7,22 @@
         { "fieldPath": "telefoneEmpresa", "order": "ASCENDING" },
         { "fieldPath": "criadaEm", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "empresas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "integracaoAtiva", "order": "ASCENDING" },
+        { "fieldPath": "integracaoTokenEncrypted", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "empresas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "pediplusAtivo", "order": "ASCENDING" },
+        { "fieldPath": "pediplusTokenEncrypted", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
