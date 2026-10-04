@@ -43,6 +43,14 @@ test('quantity guards old jobs, normal multi-stop deliveries and exclusive total
   assert.equal(deliveryReportQuantity({ tipo: 'servico_exclusivo', quantidadeEntregasExclusivo: 8 }), 8);
 });
 
+test('legacy geocoder country or postal-code labels are never presented as neighborhoods', () => {
+  for (const label of ['Brasil', '13835-000', 'Conchal', '', 'SP']) {
+    const result = buildCompanyDeliveryReport([{ ...jobs[5], bairroEntrega: label }], [], { ...helpers, bairroFromAddress: () => label }, { sinceMs: reportStart, untilMs: reportStart + 86399999 });
+    assert.equal(result.ultimas[0].bairroEntrega, 'Bairro não informado');
+    assert.equal(result.totalGasto,6.5); assert.equal(result.totalChamadas,1);
+  }
+});
+
 test('driver event and real aggregate writes count a batch once with N deliveries, retries add no earnings', async () => {
   const records = new Map(), increments = [], written = [];
   const ref = path => ({ path });

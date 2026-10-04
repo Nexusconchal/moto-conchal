@@ -6,6 +6,10 @@ export function deliveryReportQuantity(job = {}) {
 }
 
 export function buildCompanyDeliveryReport(jobs, plans, { timestampMs, money, deliverySplit, bairroFromAddress }, range) {
+  const neighborhoodLabel = item => {
+    const value = String(item.bairroEntrega || bairroFromAddress(item.entregaEncontrada || item.entrega) || '').trim().slice(0, 120);
+    return !value || /^(?:brasil|brazil|conchal|s[aã]o paulo|sp|[\d\s.-]+)$/i.test(value) ? 'Bairro não informado' : value;
+  };
   const rows = jobs.map((item) => {
     const charged = item.status === 'finalizada';
     const active = ['pendente', 'aceita', 'retirada'].includes(item.status);
@@ -17,7 +21,7 @@ export function buildCompanyDeliveryReport(jobs, plans, { timestampMs, money, de
       quantidade: deliveryReportQuantity(item), retirada: item.retirada || '', entrega: item.entrega || '',
       enderecosExtras: String(item.enderecosExtras || '').slice(0, 10000),
       pontosExtras: (Array.isArray(item.pontosExtras) ? item.pontosExtras : []).slice(0, 29).map(point => ({ ordem: Number(point.ordem || 0), digitado: String(point.digitado || point.encontrado || '').slice(0, 300) })),
-      bairroEntrega: item.entregaNaNota ? ({ conchal: 'Conchal urbano', martinho_prado: 'Martinho Prado', tujuguaba: 'Tujuguaba', iate: 'Iate' }[item.regiaoEntrega] || 'Região não informada') : item.bairroEntrega || bairroFromAddress(item.entregaEncontrada || item.entrega),
+      bairroEntrega: item.entregaNaNota ? ({ conchal: 'Conchal urbano', martinho_prado: 'Martinho Prado', tujuguaba: 'Tujuguaba', iate: 'Iate' }[item.regiaoEntrega] || 'Região não informada') : neighborhoodLabel(item),
       motoboy: item.motoboy || '', motoboyFoto: item.motoboyFoto || '',
       valor: money(item.valor), cobrado: charged ? money(item.valor) : 0,
       reservado: active ? money(item.saldoReservado || 0) : 0,
