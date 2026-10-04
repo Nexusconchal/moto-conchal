@@ -2576,6 +2576,7 @@
       function cidadesAtendidas() {
         return [
           "conchal",
+          "aguai",
           "martinho prado",
           "tujuguaba",
           "iate",
@@ -2591,6 +2592,7 @@
           "pirassununga",
           "rio claro",
           "campinas",
+          "cosmopolis",
         ];
       }
       function dicaLocal(v) {
@@ -2646,11 +2648,13 @@
           .replace(/\bzanochett?a\b|\bzanchett?a\b/g, "zancheta");
         const texto = normalizar(entrada);
         if (["city", "county", "state", "country", "postcode", "district", "suburb"].includes(props.result_type)) return false;
-        const rua = texto.match(/(?:^|\s)(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+([^,]+)/);
+        const partes = separarRuaNumeroMapa(texto);
+        const rua = (partes?.rua || texto).match(/(?:^|\s)(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+([^,]+)/);
+        if (partes && props.housenumber && String(props.housenumber).trim().toLowerCase() !== partes.numero) return false;
         if (!rua) return !!(props.street || props.housenumber || props.name);
         if (!props.street) return false;
-        const palavras = rua[1].replace(/\d+.*/, "").split(/\s+/)
-          .filter((p) => p.length > 1 && !["de", "da", "do", "das", "dos"].includes(p));
+        const palavras = rua[1].split(/[^a-z0-9]+/)
+          .filter((p) => (p.length > 1 || /^\d+$/.test(p)) && !["de", "da", "do", "das", "dos", "dr", "dra", "doutor", "doutora"].includes(p));
         const encontrada = normalizar(props.street).split(/[^a-z0-9]+/);
         return palavras.length > 0 && palavras.every((p) => encontrada.includes(p));
       }
@@ -2681,6 +2685,10 @@
           .replace(/\bzanchett?a\b/gi, "Zancheta");
         return texto;
       }
+      function separarRuaNumeroMapa(base) {
+        const m = String(base || "").trim().match(/^(.+?)(?:,\s*|\s+)(?:n[ºo°.]*\s*)?(\d+[a-z]?)(?=\s*(?:[,;]|$|\b(?:jd\.?|jardim|bairro|vila|parque|conchal|sp)\b))/i);
+        return m ? { rua: m[1].trim().replace(/,$/, ""), numero: m[2] } : null;
+      }
       function variantesEnderecoMapa(base) {
         const principal = textoMapa(base),
           limpo = principal
@@ -2692,10 +2700,11 @@
               /\b(rua|r\.?|avenida|av\.?)\s+d[ao]s?\s+([a-záàâãéèêíóôõúç])/i,
               "$1 $2",
             );
-        const partes = [principal];
+        const numerado = separarRuaNumeroMapa(principal);
+        const partes = numerado ? [`${numerado.rua}, ${numerado.numero}`, principal] : [principal];
         if (limpo && limpo !== principal) partes.push(limpo);
         const trechoEndereco = principal.match(
-          /((?:av(?:enida)?\.?|rua|r\.?|rodovia|estrada|travessa)\s+[^,.;]+(?:,\s*\d+)?)/i,
+          /((?:av(?:enida)?\.?|rua|r\.?|rodovia|estrada|travessa)\s+[^,;]+(?:,\s*\d+)?)/i,
         );
         if (trechoEndereco && !partes.includes(trechoEndereco[1]))
           partes.push(trechoEndereco[1]);
@@ -2718,9 +2727,7 @@
                 : cidade === "artur nogueira"
                   ? "Artur Nogueira"
                   : cidade.replace(/\b\w/g, (l) => l.toUpperCase());
-            add(`${baseMapa}, ${cidadeNome}, SP, Brasil`, broad, cidade);
-            add(`${baseMapa}, SP, Brasil`, broad, cidade);
-            add(`${baseMapa}, Brasil`, broad, cidade);
+            add(dicaLocal(baseMapa) ? `${baseMapa}, SP, Brasil` : `${baseMapa}, ${cidadeNome}, SP, Brasil`, broad, cidade);
             continue;
           }
           add(`${baseMapa}, Conchal, SP, Brasil`, local, "conchal");

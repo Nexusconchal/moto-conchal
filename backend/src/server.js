@@ -11,6 +11,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import { validateLocation } from './tracking-policy.js';
 import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state.js';
 import { createSupportAutomation, enrichSupportMessage, SUPPORT_PHONE, chooseDriverGroup, brazilPhone } from './support-automation.js';
+import { addressSearchVariants, addressFeatureMatches } from './address-search.js';
 import { createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
 import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
 
@@ -775,7 +776,8 @@ async function geocodeCapturedAddress(value, referencePoint = null) {
     .replace(/\bzanochett?a\b/gi, 'Zancheta')
     .replace(/\bzanchett?a\b/gi, 'Zancheta');
   const placeHint = requestedPlaceHint(normalizedAddress);
-  const query = placeHint ? normalizedAddress : `${normalizedAddress}, Conchal, SP, Brasil`;
+  const queries = addressSearchVariants(normalizedAddress, placeHint || 'Conchal').map(query => requestedPlaceHint(query) ? query : `${query}, Conchal, SP, Brasil`);
+  for (const query of queries) {
   const params = new URLSearchParams({
     text: query,
     lang: 'pt',
@@ -787,14 +789,14 @@ async function geocodeCapturedAddress(value, referencePoint = null) {
   const response = await fetch(`https://api.geoapify.com/v1/geocode/search?${params.toString()}`);
   const data = await response.json().catch(() => ({}));
   const features = Array.isArray(data.features) ? data.features : [];
-  if (!response.ok || !features.length) {
-    const error = new Error(`Nao consegui localizar o endereco: ${address}. Confira o pedido na fila.`);
-    error.status = 422;
-    error.code = 'endereco_nao_localizado';
-    throw error;
-  }
+  if (!response.ok) throw Object.assign(new Error('Nao consegui consultar o mapa agora.'), { status: 502, code: 'geoapify_falhou' });
+  if (!features.length) continue;
 
-  const candidates = features.map((feature) => {
+  const candidates = features.filter(feature => {
+    const props = feature.properties || {};
+    const location = ['martinho prado', 'tujuguaba', 'iate'].includes(placeHint) ? `${props.city || ''} ${props.district || ''} ${props.suburb || ''} ${props.formatted || ''}` : props.city || props.county || props.formatted;
+    return addressFeatureMatches(address, props) && normalizeText(location).replace(/-/g, ' ').includes(placeHint || 'conchal');
+  }).map((feature) => {
     const properties = feature.properties || {};
     return {
       lat: Number(properties.lat ?? feature.geometry?.coordinates?.[1]),
@@ -802,12 +804,7 @@ async function geocodeCapturedAddress(value, referencePoint = null) {
       text: cleanText(properties.formatted || properties.address_line2 || query, 300)
     };
   }).filter(validCoordinate);
-  if (!candidates.length) {
-    const error = new Error(`O mapa nao devolveu coordenadas validas para: ${address}.`);
-    error.status = 422;
-    error.code = 'coordenadas_invalidas';
-    throw error;
-  }
+  if (!candidates.length) continue;
 
   const matching = candidates.filter((candidate) => {
     try {
@@ -825,6 +822,8 @@ async function geocodeCapturedAddress(value, referencePoint = null) {
   ensureResolvedPlaceMatches(address, result.text, 'Endereco');
   ensureResolvedAddressIsSpecific(address, result.text, 'Endereco');
   return result;
+  }
+  throw Object.assign(new Error(`Nao consegui confirmar a rua e o numero de ${address}. Confira o endereco e calcule novamente.`), { status: 422, code: 'endereco_nao_localizado' });
 }
 
 async function dispatchCapturedOrder(companyId, company, orderRef, captured, config) {
