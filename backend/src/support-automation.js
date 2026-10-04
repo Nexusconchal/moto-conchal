@@ -6,6 +6,7 @@ const ms = value => typeof value?.toMillis === 'function' ? value.toMillis() : N
 export const SUPPORT_PHONE = '5519992306488';
 export const DRIVER_GROUP_NAME = 'Nexus MotoJá - MOTORISTA';
 const APP = 'https://nexusmotoja.com.br/';
+const SHARED_APP = `${APP}?origem=suporte&v=202`;
 const DRIVER_APP = `${APP}motoboy.html`;
 
 export function brazilPhone(value) {
@@ -56,27 +57,31 @@ export function requestedRideId(text) {
     || String(text).match(/(?:codigo(?: da corrida)?|corrida|pedido)\s*[:#]\s*([a-zA-Z0-9_-]{8,80})\b/i)?.[1] || '';
 }
 
-const MENU = '1 • Pedir corrida\n2 • Acompanhar corrida\n3 • Endereço ou erro no app\n4 • Pagamento e troco\n5 • Falar com uma pessoa';
+const MENU = '1 • Pedir corrida\n2 • Acompanhar corrida ou entrega\n3 • Endereço ou erro no app\n4 • Pagamento e troco\n5 • Falar com uma pessoa\n6 • Empresas: pedir entrega';
 const FOOTER = '\n\nDigite MENU para ver as opções ou ATENDENTE para falar com uma pessoa.';
 export function supportIntent(text) {
   const t = plain(text).trim();
   if (/^(menu|inicio|voltar|0)$/.test(t)) return 'menu';
   if (t === '5' || /\b(humano|pessoa|atendente|reclamacao|reclamar|acidente|emergencia|nao responde|nao tem troco)\b/.test(t)) return 'human';
+  if (requestedRideId(text)) return 'status';
   if (t === '3' || /endereco|localizacao|gps|cosmopolis|calcular|calcula|mapa|erro|nao consigo|nao conseguindo|nao funciona/.test(t)) return 'address';
   if (t === '4' || /pagamento|pagar|pix|dinheiro|troco|cartao|valor|preco|quanto/.test(t)) return 'payment';
   if (t === '2' || requestedRideId(text) || /acompanhar|aguard|esper|aceit|demor|motorista|motoboy|confirmar/.test(t)) return 'status';
+  if (t === '6' || /entrega|empresa|comercio|lojista|restaurante/.test(t)) return 'delivery';
   if (t === '1' || /pedir|chamar|preciso|quero.*corrida|solicitar|como.*corrida/.test(t)) return 'request';
-  if (/^(oi|ola|opa|bom dia|boa tarde|boa noite|tudo bem)[!?.\s]*$/.test(t)) return 'greeting';
+  const greeting = t.replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+  if (/^(oi|ola|opa|bom dia|boa tarde|boa noite|tudo bem)( tudo bem)?$/.test(greeting)) return 'greeting';
   if (/^(obrigad[oa]|valeu|vlw|ok|certo|beleza)[!?.\s]*$/.test(t)) return 'thanks';
   return 'other';
 }
 export function supportAnswer(text, ride, expireMs, now = Date.now(), context = {}) {
   const t = plain(text);
   const intent = supportIntent(text);
-  if (intent === 'human') return { human: true, topic: 'human', text: 'Registrei seu pedido para uma pessoa do suporte. Qual é o problema? Pode escrever aqui; sua mensagem ficará junto do pedido. O retorno depende de alguém disponível.\n\nEnquanto aguarda, digite MENU se quiser voltar à ajuda automática.' };
+  if (intent === 'human') return { human: true, topic: 'human', text: 'Registrei seu pedido para uma pessoa do suporte. Qual é o problema? Pode escrever aqui; sua mensagem ficará junto do pedido. O retorno depende de alguém disponível.\n\nEnquanto aguarda, posso continuar ajudando com suas dúvidas. Quando uma pessoa responder, deixo a conversa com ela. Digite MENU para ver as opções.' };
   if (!String(text).trim()) return { text: 'Sou o atendimento automático da Nexus MotoJá. Ainda não interpreto áudio, imagem ou localização recebida aqui. Escreva sua dúvida ou o código da corrida. Para uma pessoa, escreva ATENDENTE.' };
-  if (intent === 'menu' || intent === 'greeting') return { topic: 'menu', text: `Olá! Sou o atendimento automático da Nexus MotoJá. Posso ajudar com sua corrida. O que você precisa?\n\n${MENU}\n\nPode responder com o número ou escrever sua dúvida.` };
+  if (intent === 'menu' || intent === 'greeting') return { topic: 'menu', text: `Olá! Sou o atendimento automático da Nexus MotoJá. Posso ajudar mesmo se você ainda não pediu uma corrida. O que você precisa?\n\n${MENU}\n\nPode responder com o número ou escrever sua dúvida. Digite ATENDENTE se quiser uma pessoa do suporte.\n\nApp: ${SHARED_APP}` };
   if (intent === 'thanks') return { topic: context.topic || 'menu', text: `Por nada! Se precisar de mais ajuda, é só escolher uma opção.\n\n${MENU}` };
+  if (intent === 'delivery') return { topic: 'delivery', text: `Para pedir uma entrega, entre no app das empresas: ${APP}empresa.html\n\nInforme o endereço de entrega, calcule o pedido e confira o valor e o mapa antes de chamar o motoboy. O aceite deve ser acompanhado no app.\n\nO problema acontece ao entrar, calcular o endereço ou chamar o motoboy?${FOOTER}` };
   if (intent === 'request') return { topic: 'request', text: `Vamos lá! Abra ${APP}\n\n1. Informe o endereço de saída ou use sua localização.\n2. Coloque rua, número e cidade do destino.\n3. Calcule, confira o valor e o mapa e toque em “Chamar motoboy”.\n\nA corrida fica confirmada quando um motorista aceitar. Você está com dificuldade no endereço ou já pediu e está esperando?${FOOTER}` };
   if (intent === 'address' || (intent === 'other' && context.topic === 'address')) return { topic: 'address', text: `${context.topic === 'address' ? 'Obrigado pelo detalhe. ' : ''}O problema é no endereço de saída, no destino ou aparece alguma mensagem de erro?\n\nNo app, escreva rua, número e cidade. Confira o ponto no mapa antes de pedir. Se o GPS estiver errado, digite a saída manualmente. Para outra cidade, inclua o nome dela no destino.\n\nSe continuar falhando, envie o texto do erro e escreva ATENDENTE para o suporte verificar. Enviar o endereço aqui não cria uma corrida.${FOOTER}` };
   if (intent === 'payment') return { topic: 'payment', text: `O preço é calculado no app antes de chamar. Confira as formas de pagamento disponíveis nele.\n\nSe for pagar em dinheiro e precisar de troco, informe para quanto nas observações e confirme com o motorista após o aceite. Não tenho como garantir que ele terá troco.\n\nSe houve cobrança indevida ou dificuldade com o pagamento, escreva ATENDENTE e explique o que aconteceu. Não envie senha, código de confirmação ou dados de cartão aqui.${FOOTER}` };
@@ -91,7 +96,8 @@ export function supportAnswer(text, ride, expireMs, now = Date.now(), context = 
     else status = 'Encontrei sua solicitação. Confira a etapa atual no app ou escreva ATENDENTE.';
   } else status = 'Não encontrei uma corrida recente vinculada a este WhatsApp. Use no app o mesmo número desta conversa. Se já pediu, envie o código da corrida; se precisar de ajuda, escreva ATENDENTE.';
   if (intent === 'other' && !ride) return { topic: 'menu', text: `Posso te ajudar a pedir ou acompanhar uma corrida, resolver endereço e tirar dúvidas de pagamento. Qual dessas opções combina com o que você precisa?\n\n${MENU}\n\nApp: ${APP}` };
-  return { topic: 'status', text: `${status}\n\nApp: ${APP}${FOOTER}` };
+  if (ride?.kind === 'entregas') status = status.replace(/Sua corrida/g, 'Sua entrega').replace(/corrida/g, 'entrega').replace(/motorista/g, 'motoboy');
+  return { topic: ride?.kind === 'entregas' ? 'delivery' : 'status', text: `${status}\n\nApp: ${ride?.kind === 'entregas' ? `${APP}empresa.html` : APP}${FOOTER}` };
 }
 
 export function chooseDriverGroup(groups) {
@@ -111,6 +117,12 @@ export function pendingNotice(job, kind, stage, expireMs, now = Date.now()) {
 export function createSupportAutomation({ db, sendText, encrypt, decrypt = () => '', generateReply = async () => null, instance, rideExpireMs, deliveryExpireMs, sendTelegram, isSystemOutgoing = () => false, now = () => Date.now() }) {
   const configRef = db.collection('configuracoes').doc('atendimentoAutomatico');
   let cache, cacheUntil = 0, ticking = false, lastPrune = 0;
+  const completedNotices = new Map(), outgoingEchoes = new Map();
+  function remember(map, key, value, lifetime = 120000) {
+    if (map.size >= 2000) { for (const [id, entry] of map) if (entry.until <= now()) map.delete(id); }
+    if (map.size >= 2000) map.delete(map.keys().next().value);
+    map.set(key, { value, until: now() + lifetime });
+  }
   async function config(refresh = false) {
     if (!refresh && cache && cacheUntil > now()) return cache;
     cache = (await configRef.get()).data() || {};
@@ -120,18 +132,23 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
   async function saveConfig(data) {
     await configRef.set(data, { merge: true }); cacheUntil = 0;
   }
-  async function findRide(phone, text) {
+  async function findRide(phone, text, context = {}) {
     const id = requestedRideId(text);
     if (id) {
       const snap = await db.collection('corridas').doc(id).get();
       const ride = snap.data();
-      return ride && brazilPhone(ride.telefoneCliente) === phone ? { ...ride, id: snap.id } : null;
+      if (ride) return brazilPhone(ride.telefoneCliente) === phone ? { ...ride, kind: 'corridas', id: snap.id } : null;
+      const deliverySnap = await db.collection('entregas').doc(id).get();
+      const delivery = deliverySnap.data();
+      return delivery && brazilPhone(delivery.telefoneEmpresa) === phone ? { ...delivery, kind: 'entregas', id: deliverySnap.id } : null;
     }
-    const result = await db.collection('corridas').where('telefoneCliente', '==', phone.slice(2)).get();
+    const kind = /entrega|pedido|empresa|comercio|lojista|restaurante/.test(plain(text)) || context.topic === 'delivery' ? 'entregas' : 'corridas';
+    const result = await db.collection(kind).where(kind === 'entregas' ? 'telefoneEmpresa' : 'telefoneCliente', '==', phone.slice(2)).get();
     const rides = result.docs.map(snap => ({ ...snap.data(), id: snap.id })).filter(ride => now() - ms(ride.criadaEm) < 86400000).sort((a, b) => ms(b.criadaEm) - ms(a.criadaEm));
     const active = rides.filter(ride => ['pendente', 'aceita', 'iniciada', 'em_andamento'].includes(ride.status));
     if (active.length > 1) return null;
-    return active[0] || rides[0] || null;
+    const job = active[0] || rides[0];
+    return job ? { ...job, kind } : null;
   }
   async function handle(body) {
     const settings = await config();
@@ -143,6 +160,8 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
     }
     const event = parseSupportMessage(body, instance, now());
     if (!event) return { ignored: true };
+    const echo = outgoingEchoes.get(hash(`${event.phone}:${event.text}`));
+    if (event.fromMe && (isSystemOutgoing(event) || echo?.until > now())) return { ignored: true };
     const intent = supportIntent(event.text);
     const wantsHuman = !event.fromMe && intent === 'human';
     const resumes = !event.fromMe && intent === 'menu';
@@ -157,33 +176,37 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
       context = state;
       tx.set(messageRef, { createdAt: now(), expiresAt: new Date(now() + 86400000) });
       if (event.fromMe) {
-        if (!isSystemOutgoing(event) && !(state.outgoingHash === hash(event.text) && state.outgoingUntil > now()) && event.id !== state.outgoingId) tx.set(chatRef, { pausedUntil: now() + 30 * 60000, pauseReason: 'manual' }, { merge: true });
+        if (!isSystemOutgoing(event) && !(state.outgoingHash === hash(event.text) && state.outgoingUntil > now()) && event.id !== state.outgoingId) tx.set(chatRef, { pausedUntil: now() + 30 * 60000, pauseReason: 'manual', awaitingHuman: false }, { merge: true });
         return;
       }
-      if (state.pausedUntil > now() && !resumes) { waitingHuman = state.pauseReason === 'human' || state.topic === 'human'; return; }
+      waitingHuman = state.awaitingHuman === true || state.pauseReason === 'human';
+      if (state.pausedUntil > now() && state.pauseReason !== 'human' && !resumes) return;
       if ((!wantsHuman && !resumes && state.lastReplyAt > now() - 2000 && state.lastIncomingHash === hash(event.text)) || state.busyUntil > now()) return;
-      tx.set(chatRef, { busyUntil: now() + 60000, ...(resumes ? { pausedUntil: 0, pauseReason: '', aiContextCriptografado: '', aiContextUntil: 0 } : {}), expiresAt: new Date(now() + 7 * 86400000) }, { merge: true });
+      tx.set(chatRef, { busyUntil: now() + 60000, ...(resumes || state.pauseReason === 'human' ? { pausedUntil: 0, pauseReason: '', ...(waitingHuman ? { awaitingHuman: true } : {}) } : {}), ...(resumes ? { aiContextCriptografado: '', aiContextUntil: 0 } : {}), expiresAt: new Date(now() + 7 * 86400000) }, { merge: true });
       claim = true;
     });
     if (!claim) {
-      if (waitingHuman && event.text.trim()) await db.collection('supportAutomationTickets').doc(hash(event.phone)).set({ ultimaMensagemCriptografada: encrypt(event.text), updatedAt: now() }, { merge: true });
+      if (waitingHuman && event.text.trim() && !['menu', 'greeting', 'thanks'].includes(intent)) await db.collection('supportAutomationTickets').doc(hash(event.phone)).set({ ultimaMensagemCriptografada: encrypt(event.text), updatedAt: now() }, { merge: true });
       return { ignored: true };
     }
     try {
+      if (waitingHuman && event.text.trim() && !['menu', 'greeting', 'thanks'].includes(intent)) await db.collection('supportAutomationTickets').doc(hash(event.phone)).set({ ultimaMensagemCriptografada: encrypt(event.text), updatedAt: now() }, { merge: true });
       // Greetings and help must work even when the ride lookup is unavailable.
-      const ride = ['status', 'human', 'other'].includes(intent) ? await findRide(event.phone, event.text).catch(() => null) : null;
-      let answer = supportAnswer(event.text, ride, rideExpireMs, now(), context);
+      const ride = ['status', 'human', 'other'].includes(intent) ? await findRide(event.phone, event.text, context).catch(() => null) : null;
+      const jobKind = ride?.kind || 'corridas';
+      const jobExpireMs = jobKind === 'entregas' ? deliveryExpireMs : rideExpireMs;
+      let answer = supportAnswer(event.text, ride, jobExpireMs, now(), context);
       // Customer complaints can request a real group notice, never an AI action.
       // Ownership is checked by findRide and notify rechecks the live job before sending.
       if (intent === 'status' && ride?.status === 'pendente' && /demor|aguard|esper|nao.*aceit|ninguem.*aceit/.test(plain(event.text)) && settings.groupAlerts) {
-        const ref = db.collection('corridas').doc(ride.id);
+        const ref = db.collection(jobKind).doc(ride.id);
         const results = [];
-        if (settings.driverGroupJid) results.push(await notify(ref, 'corridas', 'customer', 'whatsapp', settings).catch(() => ({ channel: 'whatsapp', status: 'failed' })));
-        results.push(await notify(ref, 'corridas', 'customer', 'telegram', settings).catch(() => ({ channel: 'telegram', status: 'failed' })));
+        if (settings.driverGroupJid) results.push(await notify(ref, jobKind, 'customer', 'whatsapp', settings).catch(() => ({ channel: 'whatsapp', status: 'failed' })));
+        results.push(await notify(ref, jobKind, 'customer', 'telegram', settings).catch(() => ({ channel: 'telegram', status: 'failed' })));
         const current = await ref.get().catch(() => null);
-        const freshRide = current?.exists ? { ...current.data(), id: current.id } : null;
-        answer = current ? supportAnswer(event.text, freshRide, rideExpireMs, now(), context) : { topic: 'status', text: `Não consegui confirmar a etapa atual da corrida agora. Confira pelo app ou escreva ATENDENTE para uma pessoa verificar.${FOOTER}` };
-        const stillPending = freshRide?.status === 'pendente' && now() - ms(freshRide.criadaEm) < rideExpireMs;
+        const freshRide = current?.exists ? { ...current.data(), kind: jobKind, id: current.id } : null;
+        answer = current ? supportAnswer(event.text, freshRide, jobExpireMs, now(), context) : { topic: 'status', text: `Não consegui confirmar a etapa atual do pedido agora. Confira pelo app ou escreva ATENDENTE para uma pessoa verificar.${FOOTER}` };
+        const stillPending = freshRide?.status === 'pendente' && now() - ms(freshRide.criadaEm) < jobExpireMs;
         if (stillPending) {
           const labels = { whatsapp: 'grupo dos motoboys no WhatsApp', telegram: 'Telegram' };
           const sent = results.filter(result => result.status === 'sent').map(result => labels[result.channel]);
@@ -192,12 +215,13 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
           const detail = sent.length ? `Enviei um reforço ao ${sent.join(' e ao ')}. ` : '';
           const previous = recent.length ? `Já há um aviso recente no ${recent.join(' e no ')}. ` : '';
           const failure = failed ? 'Não consegui confirmar o envio em todos os grupos. ' : '';
-          answer.text = `Sua corrida ainda está aguardando aceite. ${detail}${previous}${failure}Não consigo garantir um motoboy ou horário de chegada. Você pode acompanhar pelo app ou escrever ATENDENTE para uma pessoa verificar.${FOOTER}`;
+          answer.topic = jobKind === 'entregas' ? 'delivery' : 'status';
+          answer.text = `Sua ${jobKind === 'entregas' ? 'entrega' : 'corrida'} ainda está aguardando aceite. ${detail}${previous}${failure}Não consigo garantir um motoboy ou horário de chegada. Você pode acompanhar pelo app ou escrever ATENDENTE para uma pessoa verificar.${FOOTER}`;
         }
       }
       let aiState = { aiContextCriptografado: '', aiContextUntil: 0 };
       // Booking facts, media, explicit handoff and numeric menu choices stay deterministic.
-      if (event.text.trim() && !['status', 'human', 'menu'].includes(intent) && !/^[0-5]$/.test(event.text.trim())) {
+      if (event.text.trim() && !['status', 'human', 'menu', 'greeting', 'delivery'].includes(intent) && !/^[0-6]$/.test(event.text.trim())) {
         let history = [];
         try { if (context.aiContextUntil > now() && context.aiContextCriptografado) history = JSON.parse(decrypt(context.aiContextCriptografado)); } catch { /* Ignore expired or unreadable history. */ }
         const generated = await generateReply({ text: event.text, history: Array.isArray(history) ? history : [], topic: context.topic || 'menu' }, settings).catch(() => null);
@@ -209,7 +233,9 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
         }
       }
       // Record fingerprint before sending because the provider can echo before POST returns.
-      await chatRef.set({ ...aiState, outgoingHash: hash(answer.text), outgoingUntil: now() + 120000, lastIncomingHash: hash(event.text), topic: answer.topic || context.topic || 'menu', lastReplyAt: now(), ...(answer.human ? { pausedUntil: now() + 30 * 60000, pauseReason: 'human' } : {}) }, { merge: true });
+      answer.text = answer.text.replace(/https:\/\/nexusmotoja\.com\.br\/(?:empresa\.html)?(?:\?origem=suporte&v=202)?(?=\s|$)/g, url => url.includes('empresa.html') ? `${APP}empresa.html?origem=suporte&v=202` : SHARED_APP);
+      remember(outgoingEchoes, hash(`${event.phone}:${answer.text}`), true);
+      await chatRef.set({ ...aiState, outgoingHash: hash(answer.text), outgoingUntil: now() + 120000, lastIncomingHash: hash(event.text), topic: answer.topic || context.topic || 'menu', lastReplyAt: now(), ...(answer.human ? { awaitingHuman: true, pausedUntil: 0, pauseReason: '' } : {}) }, { merge: true });
       if (answer.human) await db.collection('supportAutomationTickets').doc(hash(event.phone)).set({ telefoneCriptografado: encrypt(event.phone), ultimaMensagemCriptografada: encrypt(event.text), rideId: ride?.id || '', status: 'aguardando', requestedAt: now(), expiresAt: null }, { merge: true });
       const sent = await sendText(event.phone, answer.text);
       await chatRef.set({ outgoingId: sent.id || '', busyUntil: 0 }, { merge: true });
@@ -219,19 +245,21 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
       throw error;
     }
   }
-  async function notify(ref, kind, stage, channel, settings) {
-    const initial = await ref.get();
+  async function notify(ref, kind, stage, channel, settings, snapshotData) {
+    const initial = snapshotData ? { data: () => snapshotData, id: ref.id } : await ref.get();
     const job = { ...initial.data(), id: initial.id };
     const expire = kind === 'corridas' ? rideExpireMs : deliveryExpireMs;
     if (!pendingNotice(job, kind, stage, expire, now())) return { channel, status: 'ignored' };
     const marker = db.collection('supportAutomationNotices').doc(hash(`${kind}:${job.id}:${ms(job.criadaEm)}:${stage}:${channel}`));
+    const memo = completedNotices.get(marker.id);
+    if (memo?.until > now()) return { channel, status: memo.value };
     const lastMarker = db.collection('supportAutomationNotices').doc(hash(`${kind}:${job.id}:${ms(job.criadaEm)}:last:${channel}`));
-    let claim = false, status = 'ignored';
+    let claim = false, status = 'ignored', completed = false;
     await db.runTransaction(async tx => {
-      claim = false; status = 'ignored';
+      claim = false; status = 'ignored'; completed = false;
       // Include legacy initial/reminder markers when upgrading an existing deployment.
       const [previous, ...notices] = await Promise.all([tx.get(marker), tx.get(lastMarker), ...['initial', 'reminder'].map(value => tx.get(db.collection('supportAutomationNotices').doc(hash(`${kind}:${job.id}:${ms(job.criadaEm)}:${value}:${channel}`))))]);
-      if (previous.exists) { status = previous.data().status === 'sent' ? 'recent' : previous.data().status === 'failed' ? 'failed' : 'sending'; return; }
+      if (previous.exists) { completed = true; status = previous.data().status === 'sent' ? 'recent' : previous.data().status === 'failed' ? 'failed' : 'sending'; return; }
       if (stage === 'customer' || stage.startsWith('reminder')) {
         const active = notices.map(snap => snap.data()).find(data => data && ['claimed', 'sent'].includes(data.status) && ms(data.createdAt) > now() - 60000);
         if (active) { status = active.status === 'sent' ? 'recent' : 'sending'; return; }
@@ -240,7 +268,10 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
       tx.set(lastMarker, { createdAt: now(), expiresAt: new Date(now() + 7 * 86400000), status: 'claimed' });
       claim = true;
     });
-    if (!claim) return { channel, status };
+    if (!claim) {
+      if (['recent', 'failed'].includes(status)) remember(completedNotices, marker.id, status, completed ? expire : 30000);
+      return { channel, status };
+    }
     const current = await ref.get();
     const fresh = { ...current.data(), id: current.id };
     const text = ms(fresh.criadaEm) === ms(job.criadaEm) && pendingNotice(fresh, kind, stage, expire, now());
@@ -250,10 +281,12 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
       const sent = channel === 'whatsapp' ? await sendText(settings.driverGroupJid, text) : await sendTelegram(fresh, text);
       await marker.set({ status: sent.sent ? 'sent' : 'failed', completedAt: now() }, { merge: true });
       await lastMarker.set({ status: sent.sent ? 'sent' : 'failed', completedAt: now() }, { merge: true });
+      remember(completedNotices, marker.id, sent.sent ? 'recent' : 'failed', expire);
       return { channel, status: sent.sent ? 'sent' : 'failed' };
     } catch {
       await marker.set({ status: 'failed', completedAt: now() }, { merge: true });
       await lastMarker.set({ status: 'failed', completedAt: now() }, { merge: true });
+      remember(completedNotices, marker.id, 'failed', expire);
       return { channel, status: 'failed' };
     }
   }
@@ -268,10 +301,10 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
         for (const doc of pending.docs) {
           const reminders = kind === 'corridas' ? Array.from({ length: Math.max(0, Math.ceil(rideExpireMs / 120000) - 1) }, (_, index) => index === 0 ? 'reminder' : `reminder-${(index + 1) * 2}m`) : ['reminder'];
           if (settings.driverGroupJid) {
-            await notify(doc.ref, kind, 'initial', 'whatsapp', settings);
-            for (const stage of reminders) await notify(doc.ref, kind, stage, 'whatsapp', settings);
+            await notify(doc.ref, kind, 'initial', 'whatsapp', settings, doc.data());
+            for (const stage of reminders) await notify(doc.ref, kind, stage, 'whatsapp', settings, doc.data());
           }
-          for (const stage of reminders) await notify(doc.ref, kind, stage, 'telegram', settings);
+          for (const stage of reminders) await notify(doc.ref, kind, stage, 'telegram', settings, doc.data());
         }
       }
       if (now() - lastPrune >= 3600000) {

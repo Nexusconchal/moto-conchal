@@ -10,18 +10,20 @@ function harness(isSystemOutgoing = () => false, generateReply = async () => nul
   const records = new Map([['configuracoes/atendimentoAutomatico', { enabled: true, groupAlerts: true, driverGroupJid: '123@g.us' }]]);
   const sent = [], telegram = [];
   let time = NOW, lock = Promise.resolve(), beforeRead;
+  const usage = { reads: 0, writes: 0 };
   const snapshot = ref => ({ id: ref.id, ref, exists: records.has(ref.path), data: () => records.get(ref.path) });
-  const ref = path => ({ path, id: path.split('/').at(-1), async get() { if (beforeRead) beforeRead(path); return snapshot(this); }, async set(data, options) { records.set(path, options?.merge ? { ...records.get(path), ...data } : data); } });
+  const ref = path => ({ path, id: path.split('/').at(-1), async get() { usage.reads++; if (beforeRead) beforeRead(path); return snapshot(this); }, async set(data, options) { usage.writes++; records.set(path, options?.merge ? { ...records.get(path), ...data } : data); } });
   const collection = name => ({ doc: id => ref(`${name}/${id}`), where: (key, op, value) => {
     let max = Infinity;
     const query = { limit(count) { max = count; return query; }, async get() {
       const docs = [...records.keys()].filter(path => path.startsWith(`${name}/`) && (op === '<' ? records.get(path)[key] < value : records.get(path)[key] === value)).slice(0, max).map(path => snapshot(ref(path)));
+      usage.reads += Math.max(1, docs.length);
       return { docs, empty: !docs.length };
     } }; return query;
   } });
   const db = { collection, batch() { const deletions = []; return { delete: ref => deletions.push(ref.path), commit: async () => { deletions.forEach(path => records.delete(path)); } }; }, runTransaction(callback) { const work = lock.then(() => callback({ get: ref => ref.get(), set: (ref, value, options) => ref.set(value, options) })); lock = work.catch(() => {}); return work; } };
   const service = createSupportAutomation({ db, instance: 'support', isSystemOutgoing, generateReply, encrypt: value => `encrypted:${value}`, decrypt: value => value.slice('encrypted:'.length), now: () => time, rideExpireMs: 300000, deliveryExpireMs: 900000, sendText: async (phone, text) => { sent.push({ phone, text }); return { sent: !(failures.whatsapp && phone.endsWith('@g.us')), id: `reply${sent.length}` }; }, sendTelegram: async (job, text) => { telegram.push({ job, text }); return { sent: !failures.telegram }; } });
-  return { service, records, sent, telegram, advance: delta => { time += delta; }, beforeRead: callback => { beforeRead = callback; } };
+  return { service, records, sent, telegram, usage, advance: delta => { time += delta; }, beforeRead: callback => { beforeRead = callback; } };
 }
 
 test('Brazil numbers preserve national digits and reject a LID without phone mapping', () => {
@@ -104,14 +106,15 @@ test('existing automatic OTP sender does not pause customer support', async () =
   await h.service.handle(message({}, 'customer-followup')); assert.equal(h.sent.length, 1);
 });
 
-test('ATENDENTE writes encrypted callback phone and pauses further auto responses', async () => {
+test('ATENDENTE writes encrypted callback phone and keeps helping while a human is unavailable', async () => {
   const h = harness(); const event = message(); event.data.message.conversation = 'quero atendente';
   await h.service.handle(event);
   assert.match(h.sent[0].text, /Qual é o problema/);
   const ticket = [...h.records.entries()].find(([path]) => path.startsWith('supportAutomationTickets/'))[1];
   assert.equal(ticket.telefoneCriptografado, 'encrypted:5519999990000');
   assert.equal(ticket.telefone, undefined);
-  await h.service.handle(message({}, 'again')); assert.equal(h.sent.length, 1);
+  await h.service.handle(message({}, 'again')); assert.equal(h.sent.length, 2);
+  assert.match(h.sent[0].text, /continuar ajudando/);
 });
 
 test('human handoff is accepted immediately after an automatic answer', async () => {
@@ -134,11 +137,12 @@ test('human queue stores the problem encrypted; MENU resumes without removing ti
   const h = harness(); const event = message(); event.data.message.conversation = 'atendente';
   await h.service.handle(event);
   const detail = message({}, 'detail'); detail.data.message.conversation = 'Motorista não apareceu';
-  await h.service.handle(detail); assert.equal(h.sent.length, 1);
+  await h.service.handle(detail); assert.equal(h.sent.length, 2);
   const ticket = [...h.records.values()].find(item => item.status === 'aguardando');
   assert.equal(ticket.ultimaMensagemCriptografada, 'encrypted:Motorista não apareceu');
   const menu = message({}, 'resume'); menu.data.message.conversation = 'MENU';
-  await h.service.handle(menu); assert.equal(h.sent.length, 2); assert.match(h.sent[1].text, /1 • Pedir corrida/);
+  await h.service.handle(menu); assert.equal(h.sent.length, 3); assert.match(h.sent[2].text, /1 • Pedir corrida/);
+  assert.equal([...h.records.values()].find(item => item.status === 'aguardando').ultimaMensagemCriptografada, 'encrypted:Motorista não apareceu');
   assert.equal(ticket.status, 'aguardando');
 });
 
@@ -148,6 +152,72 @@ test('recognizes payment, address, thanks and preserves address topic for follow
   assert.match(supportAnswer('GPS errado', null, 300000, NOW).text, /saída, no destino/);
   assert.equal(supportAnswer('Rua das Flores 22', null, 300000, NOW, { topic: 'address' }).topic, 'address');
   assert.match(supportAnswer('valeu', null, 300000, NOW).text, /Por nada/);
+});
+
+test('greetings with emoji always show the menu without AI or booking reads', async () => {
+  const h = harness(() => false, async () => { throw Error('Greeting must not use AI'); });
+  const greeting = message(); greeting.data.message.conversation = 'Bom dia, tudo bem? 😊';
+  await h.service.handle(greeting);
+  assert.match(h.sent[0].text, /ATENDENTE/);
+  assert.match(h.sent[0].text, /6 • Empresas/);
+  assert.match(h.sent[0].text, /\?origem=suporte&v=202/);
+  assert.doesNotMatch(h.sent[0].text, /v=202\?/);
+  assert.equal(h.usage.reads, 3); // Config plus two deduplication reads; no ride lookup.
+});
+
+test('payment text with a ride code returns owned status instead of asking to book again', async () => {
+  const h = harness(() => false, async () => { throw Error('Status must not use AI'); });
+  h.records.set('corridas/c41053bd0-39800856', { status: 'aceita', telefoneCliente: '19999990000', criadaEm: NOW });
+  const event = message(); event.data.message.conversation = 'pagamento efetuado antes de iniciar a corrida. Pode confirmar? Código da corrida: c41053bd0-39800856';
+  await h.service.handle(event);
+  assert.match(h.sent[0].text, /já foi aceita/);
+  assert.doesNotMatch(h.sent[0].text, /Informe o endereço/);
+});
+
+test('human queue continues AI until actual manual reply takes over', async () => {
+  let calls = 0;
+  const h = harness(() => false, async () => { calls++; return { answer: { text: 'O erro aparece ao entrar na conta ou ao calcular o pedido?', topic: 'address' } }; });
+  const human = message(); human.data.message.conversation = 'ATENDENTE'; await h.service.handle(human);
+  const detail = message({}, 'waiting-detail'); detail.data.message.conversation = 'Sou empresa e dá erro no aplicativo'; await h.service.handle(detail);
+  assert.equal(calls, 1); assert.match(h.sent[1].text, /entrar na conta/);
+  const manual = message({ fromMe: true }, 'real-person'); manual.data.message.conversation = 'Olá, sou do suporte e estou verificando'; await h.service.handle(manual);
+  const next = message({}, 'after-human'); next.data.message.conversation = 'Ainda aparece erro'; await h.service.handle(next);
+  assert.equal(calls, 1); assert.equal(h.sent.length, 2);
+});
+
+test('known outgoing echoes incur no extra Firestore reads or writes', async () => {
+  const h = harness(); const event = message(); event.data.message.conversation = 'Bom dia'; await h.service.handle(event);
+  const baseline = { ...h.usage };
+  const echo = message({ fromMe: true }, 'echo'); echo.data.message.conversation = h.sent[0].text;
+  await h.service.handle(echo); assert.deepEqual(h.usage, baseline);
+});
+
+test('completed reminders reuse memory and only reread the two live queues', async () => {
+  const h = harness(); h.records.set('corridas/cache', { status: 'pendente', criadaEm: NOW - 130000, valor: 12 });
+  await h.service.tick(); const baseline = { ...h.usage };
+  await h.service.tick(); assert.equal(h.usage.reads - baseline.reads, 2); assert.equal(h.usage.writes, baseline.writes);
+  assert.equal(h.sent.length, 1); assert.equal(h.telegram.length, 1);
+});
+
+test('business menu has a valid URL and delivery lookup enforces company phone ownership', async () => {
+  const h = harness(); const event = message(); event.data.message.conversation = '6'; await h.service.handle(event);
+  assert.match(h.sent[0].text, /https:\/\/nexusmotoja.com.br\/empresa.html\?origem=suporte&v=202/);
+  assert.doesNotMatch(h.sent[0].text, /v=202empresa/);
+  h.records.set('entregas/c41053bd0-39800856', { status: 'aceita', telefoneEmpresa: '19999990000', criadaEm: NOW });
+  const status = message({}, 'delivery-code'); status.data.message.conversation = 'Código do pedido: c41053bd0-39800856'; await h.service.handle(status);
+  assert.match(h.sent[1].text, /Sua entrega já foi aceita/);
+  const stranger = message({ remoteJid: '5519888887777@s.whatsapp.net' }, 'stranger-delivery'); stranger.data.message.conversation = status.data.message.conversation; await h.service.handle(stranger);
+  assert.doesNotMatch(h.sent[2].text, /já foi aceita/);
+});
+
+test('business waiting complaint uses delivery expiry and notifies both driver channels', async () => {
+  const h = harness(); h.records.set('entregas/c41053bd0-39800856', { status: 'pendente', telefoneEmpresa: '19999990000', criadaEm: NOW - 350000, valor: 12 });
+  const event = message(); event.data.message.conversation = 'Minha entrega está demorando, pedido: c41053bd0-39800856'; await h.service.handle(event);
+  assert.match(h.sent[0].text, /Entrega disponível/); assert.equal(h.telegram.length, 1);
+  assert.match(h.sent[1].text, /Sua entrega ainda está aguardando/);
+  h.records.set('entregas/c41053bd0-39800856', { status: 'aceita', telefoneEmpresa: '19999990000', criadaEm: NOW - 350000 });
+  const next = message({}, 'delivery-followup'); next.data.message.conversation = 'E a entrega, já foi aceita?'; await h.service.handle(next);
+  assert.match(h.sent.at(-1).text, /Sua entrega já foi aceita/);
 });
 
 test('batch webhook deliveries and ephemeral text are processed, not discarded', async () => {
@@ -225,7 +295,7 @@ test('group reminders are once per generation and channel; renewal can alert aga
 
 test('rechecks acceptance between claim and sending group notice', async () => {
   const h = harness(); h.records.set('corridas/ride', { status: 'pendente', criadaEm: NOW - 121000 });
-  let reads = 0; h.beforeRead(path => { if (path === 'corridas/ride' && ++reads === 2) h.records.set(path, { status: 'aceita', criadaEm: NOW - 121000 }); });
+  h.beforeRead(path => { if (path.startsWith('supportAutomationNotices/')) h.records.set('corridas/ride', { status: 'aceita', criadaEm: NOW - 121000 }); });
   await h.service.tick(); assert.equal(h.sent.length, 0); assert.equal(h.telegram.length, 0);
 });
 
