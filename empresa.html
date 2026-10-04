@@ -909,7 +909,12 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
       }
+      #modoEntrega button { min-height: 68px; }
+      #chamadaSemEndereco { gap: 12px; }
+      #chamadaSemEndereco .quick-order-note { margin: 0; }
       .delivery-form > #editarCadastroLoja,
+      .delivery-form > #modoEntrega,
+      .delivery-form > #chamadaSemEndereco,
       .delivery-form > #cadastroLoja,
       .delivery-form > #tipoEntregaAviso,
       .delivery-form > .grid2,
@@ -1856,6 +1861,10 @@
             proximos pedidos.
           </p>
         </div>
+        <div id="modoEntrega" class="grid2" role="group" aria-label="Modo da entrega">
+          <button id="modoComEndereco" type="button" aria-pressed="true">Entrega com endereço</button>
+          <button id="modoSemEndereco" type="button" class="secondary" aria-pressed="false">Só chamar motoboy<br><small>Endereços nas notas</small></button>
+        </div>
         <label
           >Tipo de entrega
           <select id="tipoEntrega">
@@ -1883,6 +1892,7 @@
           aria-live="polite"
         ></div>
         <label id="campoEntregaPrincipal"
+          data-modo="endereco"
           >Endereco de entrega<input
             id="entrega"
             placeholder="Rua, numero, bairro"
@@ -1954,6 +1964,20 @@
             ></textarea>
           </label>
         </div>
+        <div id="chamadaSemEndereco" style="display:none">
+          <div class="grid2">
+            <label>Quantidade de entregas<input id="quantidadeLote" type="number" min="1" max="30" step="1" value="1"></label>
+            <label>Região das entregas<select id="regiaoLote">
+              <option value="conchal">Conchal — área urbana</option>
+              <option value="martinho_prado">Martinho Prado</option>
+              <option value="tujuguaba">Tujuguaba</option>
+              <option value="iate">Iate</option>
+            </select></label>
+          </div>
+          <p class="quick-order-note">Um motoboy retira o lote na loja. Entregue as notas com os endereços. Todos os pedidos deste lote devem ser da região selecionada.</p>
+          <div id="resumoLote" class="result show" aria-live="polite"></div>
+          <button id="chamarLote" type="button">Chamar motoboy</button>
+        </div>
         <div id="status" class="status"></div>
         <div id="resultado" class="result"></div>
         <button id="calcular" type="button">Calcular entrega</button>
@@ -2019,6 +2043,7 @@
         $ = (id) => document.getElementById(id),
         statusBox = $("status"),
         resultadoBox = $("resultado");
+      let modoChamadaSemEndereco = false;
       let entregaCalculada = null,
         enviando = false,
         ultimoDepositoWhatsapp = "",
@@ -2772,6 +2797,7 @@
         return Number(valor || 1);
       }
       function atualizarCampoManual() {
+        if (modoChamadaSemEndereco) { $("campoParadasManual").style.display = "none"; return; }
         const manual = $("paradas").value === "manual";
         $("campoParadasManual").style.display = manual ? "grid" : "none";
         if (!manual) $("paradasManual").value = "";
@@ -2949,6 +2975,11 @@
         );
       }
       function atualizarCampoExtras() {
+        if (modoChamadaSemEndereco) {
+          ["campoEnderecosExtras", "campoEntregaPrincipal", "avisoChamadaRapida", "toggleDetalhesEntrega", "calcular"].forEach(id => $(id).style.display = "none");
+          mostrarDetalhesEntrega(false);
+          return;
+        }
         carregarPedidosPreparados();
         const pontos = quantidadePontos();
         const mostrar = Number.isFinite(pontos) && pontos > 1;
@@ -3729,6 +3760,7 @@
           .join(", ");
       }
       function preencherPedidoIntegracao(o) {
+        if (modoChamadaSemEndereco) selecionarModoEntrega(false);
         pedidoPreparadoAtivoId = "";
         $("paradas").value = "1";
         atualizarCampoManual();
@@ -4529,6 +4561,7 @@
 
       $("tipoEntrega").addEventListener("change", () => {
         mostrarTipoEntregaAviso("");
+        atualizarResumoLote();
       });
       $("integracaoTipoEntrega").addEventListener("change", atualizarIntegracaoUI);
       $("paradas").addEventListener("change", () => {
@@ -4712,6 +4745,53 @@
           $("confirmar").style.display = "none";
         }),
       );
+      function atualizarResumoLote() {
+        const count = Number($("quantidadeLote").value), tipo = $("tipoEntrega").value;
+        const valido = Number.isInteger(count) && count >= 1 && count <= 30 && comidaFixa(tipo);
+        const tarifa = $("regiaoLote").value === "conchal" ? 6.5 : 16;
+        $("resumoLote").textContent = valido ? `${count} entrega(s) × ${moeda(tarifa)} = ${moeda(count * tarifa)}. Um motoboy para o lote.` : "Selecione um tipo com tarifa fixa e uma quantidade de 1 a 30 entregas. Para cobrança por km ou plano diário, use Entrega com endereço.";
+        $("chamarLote").disabled = !valido || enviando;
+      }
+      function selecionarModoEntrega(semEndereco) {
+        if (enviando) return;
+        modoChamadaSemEndereco = semEndereco;
+        entregaCalculada = null;
+        pedidoPreparadoAtivoId = "";
+        pedidoIntegracaoAtual = null;
+        $("confirmar").style.display = "none";
+        resultadoBox.className = "result";
+        resultadoBox.textContent = "";
+        $("chamadaSemEndereco").style.display = semEndereco ? "grid" : "none";
+        $("tipoEntrega").parentElement.style.gridColumn = semEndereco ? "1 / -1" : "";
+        $("paradas").parentElement.style.display = semEndereco ? "none" : "grid";
+        $("campoParadasManual").style.display = !semEndereco && $("paradas").value === "manual" ? "grid" : "none";
+        $("modoComEndereco").className = semEndereco ? "secondary" : "";
+        $("modoSemEndereco").className = semEndereco ? "" : "secondary";
+        $("modoComEndereco").setAttribute("aria-pressed", String(!semEndereco));
+        $("modoSemEndereco").setAttribute("aria-pressed", String(semEndereco));
+        atualizarCampoExtras();
+        atualizarResumoLote();
+      }
+      $("modoComEndereco").onclick = () => selecionarModoEntrega(false);
+      $("modoSemEndereco").onclick = () => selecionarModoEntrega(true);
+      $("quantidadeLote").oninput = atualizarResumoLote;
+      $("regiaoLote").onchange = atualizarResumoLote;
+      $("chamarLote").onclick = async () => {
+        if (enviando || !modoChamadaSemEndereco) return;
+        limparStatus();
+        const count = Number($("quantidadeLote").value), tipo = $("tipoEntrega").value;
+        if (!comidaFixa(tipo) || !Number.isInteger(count) || count < 1 || count > 30) return atualizarResumoLote();
+        const retiradaTxt = $("retirada").value.trim(), empresa = $("empresa").value.trim(), responsavel = $("responsavel").value.trim(), telefoneEmpresa = soNumeros($("telefoneEmpresa").value);
+        if (!retiradaTxt || !empresa || !responsavel || telefoneEmpresa.length < 10) return mostrarStatus("Confira o cadastro e o endereço de retirada da loja.", true);
+        const regiaoEntrega = $("regiaoLote").value, valor = count * (regiaoEntrega === "conchal" ? 6.5 : 16);
+        entregaCalculada = { entregaNaNota: true, regiaoEntrega, empresa, responsavel, telefoneEmpresa, tipoEntrega: tipo, retiradaTxt,
+          retirada: { texto: retiradaTxt, lat: null, lon: null }, retiradaMapa: "", entregaTxt: "Endereços nas notas", entrega: { texto: "Endereços nas notas", lat: null, lon: null },
+          paradas: count, km: 0, valor, precoLabel: "Tarifa fixa por região", recebedor: "", telefoneRecebedor: "", descricao: "", observacao: "", extras: [], enderecosExtras: "",
+          assinatura: `${empresa}|lote|${tipo}|${regiaoEntrega}|${count}|${retiradaTxt}` };
+        $("chamarLote").disabled = true;
+        try { await $("confirmar").onclick(); } finally { atualizarResumoLote(); }
+      };
+      atualizarResumoLote();
       $("calcular").onclick = async () => {
         limparStatus();
         resultadoBox.className = "result";
@@ -4908,6 +4988,8 @@
               headers: { "content-type": "application/json", ...authHeaders() },
               body: JSON.stringify({
                 clientRequestId,
+                entregaNaNota: d.entregaNaNota === true,
+                regiaoEntrega: d.regiaoEntrega || "",
                 integracaoOrigem: pedidoIntegracaoAtual?.origem || "",
                 integracaoPedidoId: pedidoIntegracaoAtual?.externalId || "",
                 integracaoPedidoRecebidoEm:
@@ -4987,6 +5069,7 @@
             renderizarPedidosPreparados();
           } else {
             prepararNovaEntrega();
+            if (d.entregaNaNota) { $("quantidadeLote").value = "1"; atualizarResumoLote(); }
           }
           resultadoBox.innerHTML = `${pedidoPreparadoEnviado ? `Pedido ${pedidoPreparadoEnviado.ordem} enviado separadamente.<br>` : "Entrega enviada para os motoboys.<br>"}Codigo: <strong>${data.deliveryId}</strong><br>A entrega fica disponivel por ate 15 minutos para os motoboys aceitarem.<br><button id="novaEntrega" type="button" class="green" style="margin-top:12px">${pedidoPreparadoEnviado ? "Continuar com os outros pedidos" : "Fazer outra entrega"}</button>`;
           resultadoBox.className = "result show";
@@ -5123,7 +5206,7 @@
         delivery.classList.add("delivery-form");
         const deliveryTitle = document.createElement("div");
         deliveryTitle.className = "section-title";
-        deliveryTitle.innerHTML = '<div><h2>Nova entrega</h2><p class="muted">Preencha o destino, calcule o valor e chame um motoboy.</p></div>';
+        deliveryTitle.innerHTML = '<div><h2>Nova entrega</h2><p class="muted">Escolha entrega com endereço ou chame um motoboy com os endereços nas notas.</p></div>';
         delivery.prepend(deliveryTitle);
         operationsView.append(delivery, tracking);
         if (autoCardapio) operationsView.append(autoCardapio);

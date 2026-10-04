@@ -12,6 +12,7 @@ import { validateLocation } from './tracking-policy.js';
 import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state.js';
 import { createSupportAutomation, enrichSupportMessage, SUPPORT_PHONE, chooseDriverGroup, brazilPhone } from './support-automation.js';
 import { addressSearchVariants, addressFeatureMatches } from './address-search.js';
+import { prepareQuickDelivery, quickDeliveryFare } from './quick-delivery.js';
 import { createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
 import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
 
@@ -300,6 +301,7 @@ function ensureDistantRouteIsPlausible(distanceKm, ...texts) {
 }
 
 function fixedFoodDeliveryFare(delivery = {}) {
+  if (delivery.entregaNaNota === true) return quickDeliveryFare(delivery);
   const deliveryStops = deliveryStopCount(delivery.paradas);
   const destinations = [
     `${delivery.entrega || ''} ${delivery.entregaEncontrada || ''}`,
@@ -316,6 +318,7 @@ function fixedFoodDeliveryFare(delivery = {}) {
 }
 
 function fixedFoodDeliveryAppFee(delivery = {}) {
+  if (delivery.entregaNaNota === true) return quickDeliveryFare(delivery, true);
   const deliveryStops = deliveryStopCount(delivery.paradas);
   const destinations = [
     `${delivery.entrega || ''} ${delivery.entregaEncontrada || ''}`,
@@ -375,6 +378,7 @@ function isPricedDeliveryType(type) {
 }
 
 function expectedDeliveryFare(distanceKm, stops = 1, type = '', delivery = {}) {
+  if (delivery.entregaNaNota === true && isFixedFoodDelivery(type)) return quickDeliveryFare(delivery);
   const distance = Number(distanceKm || 0);
   const deliveryStops = deliveryStopCount(stops);
   if (!Number.isFinite(distance) || distance <= 0) return 0;
@@ -2373,6 +2377,8 @@ function carRideForCustomer(id, ride = {}) {
 
 function deliveryPublicData(delivery) {
   return {
+    entregaNaNota: delivery.entregaNaNota === true,
+    regiaoEntrega: cleanText(delivery.regiaoEntrega || '', 40),
     clientRequestId: String(delivery.clientRequestId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80),
     empresa: String(delivery.empresa || '').slice(0, 120).trim(),
     responsavel: String(delivery.responsavel || '').slice(0, 120).trim(),
@@ -2493,8 +2499,8 @@ async function notifyTelegramAboutDelivery(deliveryId, delivery) {
     `<b>Responsavel:</b> ${escapeTelegram(delivery.responsavel || '-')}`,
     `<b>Tipo:</b> ${escapeTelegram(delivery.tipoEntrega || 'Delivery / encomendas')}`,
     `<b>Valor:</b> ${escapeTelegram(value)}`,
-    `<b>Distancia:</b> ${escapeTelegram(km)} km`,
-    `<b>Paradas:</b> ${escapeTelegram(delivery.paradas || 1)}`,
+    delivery.entregaNaNota ? '<b>Chamada sem endereco:</b> um motoboy retira o lote; enderecos nas notas; rota nao calculada.' : `<b>Distancia:</b> ${escapeTelegram(km)} km`,
+    `<b>${delivery.entregaNaNota ? 'Quantidade de entregas' : 'Paradas'}:</b> ${escapeTelegram(delivery.paradas || 1)}`,
     `<b>Retirada:</b> ${escapeTelegram(delivery.retirada || '-')}${escapeTelegram(pickupMap)}`,
     `<b>Entrega:</b> ${escapeTelegram(delivery.entrega || '-')}`,
     Array.isArray(delivery.pontosExtras) && delivery.pontosExtras.length ? `<b>Pontos extras:</b>\n${delivery.pontosExtras.map((p) => `${escapeTelegram(p.ordem || '')}. ${escapeTelegram(p.digitado || '')}\nRecebe: ${escapeTelegram(p.recebedor || '-')}\nWhatsApp: ${escapeTelegram(p.telefoneRecebedor || '-')}${p.mapa ? `\nMapa: ${escapeTelegram(p.mapa)}` : ''}`).join('\n\n')}` : (delivery.enderecosExtras ? `<b>Pontos extras:</b> ${escapeTelegram(delivery.enderecosExtras)}` : ''),
@@ -3133,7 +3139,7 @@ async function notifyDriversAboutDelivery(deliveryId, delivery) {
     tokens,
     notification: {
       title: 'Nova entrega Nexus MotoJa',
-      body: `${delivery.empresa || 'Empresa'} - ${money(delivery.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`
+      body: `${delivery.empresa || 'Empresa'}${delivery.entregaNaNota ? ` — lote de ${delivery.paradas} entregas, enderecos nas notas` : ''} - ${money(delivery.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`
     },
     webpush: {
       fcmOptions: {
@@ -3278,7 +3284,9 @@ async function findRecentDuplicateDelivery(delivery) {
     const data = doc.data();
     const createdAt = timestampMs(data.criadaEm);
     if (!createdAt || now - createdAt > DUPLICATE_RIDE_MS) continue;
-    if (normalizeText(data.retirada) === retirada && normalizeText(data.entrega) === entrega) {
+    if (normalizeText(data.retirada) === retirada && normalizeText(data.entrega) === entrega
+      && (data.entregaNaNota === true) === (delivery.entregaNaNota === true)
+      && (!delivery.entregaNaNota || (data.tipoEntrega === delivery.tipoEntrega && data.paradas === delivery.paradas))) {
       return doc.id;
     }
   }
@@ -8894,6 +8902,9 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
     delivery.telefoneEmpresa = req.companyId;
     delivery.empresa = cleanText(req.company.empresa || delivery.empresa, 120);
     delivery.responsavel = cleanText(req.company.responsavel || delivery.responsavel, 120);
+    if (delivery.entregaNaNota) {
+      prepareQuickDelivery(delivery, req.body.paradas, req.company, isFixedFoodDelivery(delivery.tipoEntrega));
+    }
     if (!delivery.empresa || !delivery.responsavel || !delivery.retirada || !delivery.entrega || delivery.telefoneEmpresa.length < 10 || delivery.telefoneEmpresa.length > 11) {
       return res.status(400).json({ error: 'preencha_empresa_responsavel_telefone_retirada_entrega' });
     }
@@ -8903,81 +8914,89 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
     if (!isPricedDeliveryType(delivery.tipoEntrega)) {
       return res.status(400).json({ error: 'tipo_entrega_sem_preco', message: 'Selecione um tipo de entrega com preco definido.' });
     }
-    if (delivery.paradas > 1 && !delivery.enderecosExtras) {
-      return res.status(400).json({ error: 'enderecos_extras_obrigatorios', message: 'Informe os enderecos dos pontos extras.' });
-    }
-    const pontosExtras = Array.isArray(delivery.pontosExtras) ? delivery.pontosExtras : [];
-    if (delivery.paradas > 1 && pontosExtras.length !== delivery.paradas - 1) {
-      return res.status(400).json({ error: 'pontos_extras_invalidos', message: `Informe exatamente ${delivery.paradas - 1} ponto(s) extra(s).` });
-    }
-    if (pontosExtras.some((p) => {
-      const telefone = onlyDigits(p.telefoneRecebedor);
-      return !String(p.digitado || '').trim() || (telefone && (telefone.length < 10 || telefone.length > 11)) || !validCoordinate(p);
-    })) {
-      return res.status(400).json({ error: 'pontos_extras_invalidos', message: 'Confira o endereco de cada ponto extra e qualquer WhatsApp opcional preenchido.' });
-    }
-    ensureResolvedPlaceMatches(delivery.retirada, delivery.retiradaEncontrada || delivery.retirada, 'Endereco de retirada');
-    ensureResolvedAddressIsSpecific(delivery.retirada, delivery.retiradaEncontrada || delivery.retirada, 'Endereco de retirada');
-    ensureResolvedPlaceMatches(delivery.entrega, delivery.entregaEncontrada || delivery.entrega, 'Endereco de entrega');
-    ensureResolvedAddressIsSpecific(delivery.entrega, delivery.entregaEncontrada || delivery.entrega, 'Endereco de entrega');
-    pontosExtras.forEach((point) => {
-      ensureResolvedPlaceMatches(point.digitado, point.encontrado || point.digitado, `Ponto ${point.ordem || ''}`.trim());
-      ensureResolvedAddressIsSpecific(point.digitado, point.encontrado || point.digitado, `Ponto ${point.ordem || ''}`.trim());
-    });
-    const addressesToVerify = [
-      { label: 'retirada', text: delivery.retirada, point: { lat: delivery.retiradaLat, lon: delivery.retiradaLon } },
-      { label: 'entrega', text: delivery.entrega, point: { lat: delivery.entregaLat, lon: delivery.entregaLon } },
-      ...pontosExtras.map((point, index) => ({
-        label: `ponto ${index + 2}`,
-        text: point.digitado,
-        point: { lat: point.lat, lon: point.lon }
-      }))
-    ];
-    const verifiedAddresses = await Promise.all(addressesToVerify.map(async (item) => {
-      const verified = await geocodeCapturedAddress(item.text, item.point);
-      const differenceKm = coordinateDistanceKm(item.point, verified);
-      if (!Number.isFinite(differenceKm) || differenceKm > 2.5) {
-        const error = new Error(`As coordenadas do endereco de ${item.label} nao conferem com o endereco digitado. Calcule novamente.`);
-        error.status = 400;
-        error.code = 'coordenadas_endereco_divergentes';
-        throw error;
+    if (delivery.entregaNaNota) {
+      const pickup = await geocodeCapturedAddress(delivery.retirada);
+      delivery.retiradaLat = pickup.lat;
+      delivery.retiradaLon = pickup.lon;
+      delivery.retiradaEncontrada = pickup.text;
+      delivery.retiradaMapa = `https://www.google.com/maps?q=${pickup.lat},${pickup.lon}`;
+    } else {
+      if (delivery.paradas > 1 && !delivery.enderecosExtras) {
+        return res.status(400).json({ error: 'enderecos_extras_obrigatorios', message: 'Informe os enderecos dos pontos extras.' });
       }
-      return verified;
-    }));
-    delivery.retiradaLat = verifiedAddresses[0].lat;
-    delivery.retiradaLon = verifiedAddresses[0].lon;
-    delivery.retiradaEncontrada = verifiedAddresses[0].text;
-    delivery.entregaLat = verifiedAddresses[1].lat;
-    delivery.entregaLon = verifiedAddresses[1].lon;
-    delivery.entregaEncontrada = verifiedAddresses[1].text;
-    pontosExtras.forEach((point, index) => {
-      const verified = verifiedAddresses[index + 2];
-      point.lat = verified.lat;
-      point.lon = verified.lon;
-      point.encontrado = verified.text;
-      point.mapa = `https://www.google.com/maps?q=${verified.lat},${verified.lon}`;
-    });
-    if (!isFixedFoodDelivery(delivery.tipoEntrega)) {
-      const serverKm = await calculateRouteDistanceKm([
-        { lat: delivery.retiradaLat, lon: delivery.retiradaLon },
-        { lat: delivery.entregaLat, lon: delivery.entregaLon },
-        ...pontosExtras.map((point) => ({ lat: point.lat, lon: point.lon }))
-      ]);
-      delivery.km = serverKm;
-    }
-    ensureDistantRouteIsPlausible(
-      delivery.km,
-      delivery.entrega,
-      delivery.entregaEncontrada,
-      ...pontosExtras.flatMap((point) => [point.digitado, point.encontrado])
-    );
-    if (!delivery.valor || delivery.valor <= 0) {
-      return res.status(400).json({ error: 'valor_invalido' });
-    }
-    if (money(delivery.valor) !== expectedDeliveryFare(delivery.km, delivery.paradas, delivery.tipoEntrega, delivery)) {
-      return res.status(400).json({ error: 'valor_nao_confere_com_tabela_entrega' });
-    }
+      const pontosExtras = Array.isArray(delivery.pontosExtras) ? delivery.pontosExtras : [];
+      if (delivery.paradas > 1 && pontosExtras.length !== delivery.paradas - 1) {
+        return res.status(400).json({ error: 'pontos_extras_invalidos', message: `Informe exatamente ${delivery.paradas - 1} ponto(s) extra(s).` });
+      }
+      if (pontosExtras.some((p) => {
+        const telefone = onlyDigits(p.telefoneRecebedor);
+        return !String(p.digitado || '').trim() || (telefone && (telefone.length < 10 || telefone.length > 11)) || !validCoordinate(p);
+      })) {
+        return res.status(400).json({ error: 'pontos_extras_invalidos', message: 'Confira o endereco de cada ponto extra e qualquer WhatsApp opcional preenchido.' });
+      }
+      ensureResolvedPlaceMatches(delivery.retirada, delivery.retiradaEncontrada || delivery.retirada, 'Endereco de retirada');
+      ensureResolvedAddressIsSpecific(delivery.retirada, delivery.retiradaEncontrada || delivery.retirada, 'Endereco de retirada');
+      ensureResolvedPlaceMatches(delivery.entrega, delivery.entregaEncontrada || delivery.entrega, 'Endereco de entrega');
+      ensureResolvedAddressIsSpecific(delivery.entrega, delivery.entregaEncontrada || delivery.entrega, 'Endereco de entrega');
+      pontosExtras.forEach((point) => {
+        ensureResolvedPlaceMatches(point.digitado, point.encontrado || point.digitado, `Ponto ${point.ordem || ''}`.trim());
+        ensureResolvedAddressIsSpecific(point.digitado, point.encontrado || point.digitado, `Ponto ${point.ordem || ''}`.trim());
+      });
+      const addressesToVerify = [
+        { label: 'retirada', text: delivery.retirada, point: { lat: delivery.retiradaLat, lon: delivery.retiradaLon } },
+        { label: 'entrega', text: delivery.entrega, point: { lat: delivery.entregaLat, lon: delivery.entregaLon } },
+        ...pontosExtras.map((point, index) => ({
+          label: `ponto ${index + 2}`,
+          text: point.digitado,
+          point: { lat: point.lat, lon: point.lon }
+        }))
+      ];
+      const verifiedAddresses = await Promise.all(addressesToVerify.map(async (item) => {
+        const verified = await geocodeCapturedAddress(item.text, item.point);
+        const differenceKm = coordinateDistanceKm(item.point, verified);
+        if (!Number.isFinite(differenceKm) || differenceKm > 2.5) {
+          const error = new Error(`As coordenadas do endereco de ${item.label} nao conferem com o endereco digitado. Calcule novamente.`);
+          error.status = 400;
+          error.code = 'coordenadas_endereco_divergentes';
+          throw error;
+        }
+        return verified;
+      }));
+      delivery.retiradaLat = verifiedAddresses[0].lat;
+      delivery.retiradaLon = verifiedAddresses[0].lon;
+      delivery.retiradaEncontrada = verifiedAddresses[0].text;
+      delivery.entregaLat = verifiedAddresses[1].lat;
+      delivery.entregaLon = verifiedAddresses[1].lon;
+      delivery.entregaEncontrada = verifiedAddresses[1].text;
+      pontosExtras.forEach((point, index) => {
+        const verified = verifiedAddresses[index + 2];
+        point.lat = verified.lat;
+        point.lon = verified.lon;
+        point.encontrado = verified.text;
+        point.mapa = `https://www.google.com/maps?q=${verified.lat},${verified.lon}`;
+      });
+      if (!isFixedFoodDelivery(delivery.tipoEntrega)) {
+        const serverKm = await calculateRouteDistanceKm([
+          { lat: delivery.retiradaLat, lon: delivery.retiradaLon },
+          { lat: delivery.entregaLat, lon: delivery.entregaLon },
+          ...pontosExtras.map((point) => ({ lat: point.lat, lon: point.lon }))
+        ]);
+        delivery.km = serverKm;
+      }
+      ensureDistantRouteIsPlausible(
+        delivery.km,
+        delivery.entrega,
+        delivery.entregaEncontrada,
+        ...pontosExtras.flatMap((point) => [point.digitado, point.encontrado])
+      );
+      if (!delivery.valor || delivery.valor <= 0) {
+        return res.status(400).json({ error: 'valor_invalido' });
+      }
+      if (money(delivery.valor) !== expectedDeliveryFare(delivery.km, delivery.paradas, delivery.tipoEntrega, delivery)) {
+        return res.status(400).json({ error: 'valor_nao_confere_com_tabela_entrega' });
+      }
 
+    }
     const duplicateDeliveryId = await findRecentDuplicateDelivery(delivery);
     if (duplicateDeliveryId) {
       return res.status(200).json({
@@ -8995,7 +9014,18 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
 
     await db.runTransaction(async (tx) => {
       const existing = await tx.get(ref);
-      if (existing.exists) return;
+      if (existing.exists) {
+        const previous = existing.data() || {};
+        if (onlyDigits(previous.telefoneEmpresa || previous.empresaId) !== delivery.telefoneEmpresa
+          || (previous.entregaNaNota === true) !== delivery.entregaNaNota
+          || (delivery.entregaNaNota && (previous.regiaoEntrega !== delivery.regiaoEntrega || previous.paradas !== delivery.paradas || previous.tipoEntrega !== delivery.tipoEntrega))) {
+          const error = new Error('Codigo de chamada ja utilizado por outro pedido. Atualize a tela e tente novamente.');
+          error.status = 409;
+          error.code = 'codigo_chamada_divergente';
+          throw error;
+        }
+        return;
+      }
 
       const companyRef = req.companySnap.ref;
       const companySnap = await tx.get(companyRef);
@@ -10218,22 +10248,30 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
           error.code = 'localizacao_finalizacao_desatualizada';
           throw error;
         }
-        const finalExtra = Array.isArray(delivery.pontosExtras) && delivery.pontosExtras.length
-          ? delivery.pontosExtras[delivery.pontosExtras.length - 1]
-          : null;
-        const finalDestination = finalExtra
-          ? { lat: finalExtra.lat, lon: finalExtra.lon }
-          : { lat: delivery.entregaLat, lon: delivery.entregaLon };
-        const distanceToDestination = coordinateDistanceKm(
-          { lat: location.latitude, lon: location.longitude },
-          finalDestination
-        );
-        const allowedDistanceKm = Math.max(2, Math.min(5, Number(location.accuracy || 0) / 1000 + 0.5));
-        if (!Number.isFinite(distanceToDestination) || distanceToDestination > allowedDistanceKm) {
-          const error = new Error('Chegue mais perto do endereco de entrega para finalizar.');
+        if (delivery.entregaNaNota && req.body.confirmarLoteEntregue !== true) {
+          const error = new Error('Confirme que todas as entregas do lote foram concluidas.');
           error.status = 409;
-          error.code = 'motoboy_longe_do_destino';
+          error.code = 'confirme_lote_entregue';
           throw error;
+        }
+        if (!delivery.entregaNaNota) {
+          const finalExtra = Array.isArray(delivery.pontosExtras) && delivery.pontosExtras.length
+            ? delivery.pontosExtras[delivery.pontosExtras.length - 1]
+            : null;
+          const finalDestination = finalExtra
+            ? { lat: finalExtra.lat, lon: finalExtra.lon }
+            : { lat: delivery.entregaLat, lon: delivery.entregaLon };
+          const distanceToDestination = coordinateDistanceKm(
+            { lat: location.latitude, lon: location.longitude },
+            finalDestination
+          );
+          const allowedDistanceKm = Math.max(2, Math.min(5, Number(location.accuracy || 0) / 1000 + 0.5));
+          if (!Number.isFinite(distanceToDestination) || distanceToDestination > allowedDistanceKm) {
+            const error = new Error('Chegue mais perto do endereco de entrega para finalizar.');
+            error.status = 409;
+            error.code = 'motoboy_longe_do_destino';
+            throw error;
+          }
         }
       }
 
