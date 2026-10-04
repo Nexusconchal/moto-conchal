@@ -1707,7 +1707,7 @@
             ? `<div class="earnings-chart" aria-label="Ganhos por dia">${ganhosDias
                 .map((dia) => {
                   const altura = Math.max(3, Math.round((Number(dia.ganho || 0) / maior) * 94));
-                  return `<div class="earnings-bar" title="${escSeguro(dia.dia)}: ${escSeguro(moeda(dia.ganho))}"><i style="height:${altura}px"></i><small>${escSeguro(String(dia.dia || "").slice(8, 10))}/${escSeguro(String(dia.dia || "").slice(5, 7))}</small></div>`;
+                  return `<div class="earnings-bar" title="${escSeguro(dia.dia)}: ${escSeguro(moeda(dia.ganho))} · ${Number(dia.entregas || 0)} entregas"><i style="height:${altura}px"></i><small>${escSeguro(String(dia.dia || "").slice(8, 10))}/${escSeguro(String(dia.dia || "").slice(5, 7))}</small></div>`;
                 })
                 .join("")}</div>`
             : '<div class="empty">O total geral reúne todos os serviços finalizados.</div>',
@@ -1715,7 +1715,7 @@
             ? ganhosHistorico
                 .map(
                   (item) =>
-                    `<div class="earning-row"><div><strong>${item.tipo === "entrega" ? "Entrega" : "Corrida"} · ${escSeguro(item.titulo || "Serviço")}</strong><p class="muted">${new Date(Number(item.finalizadaEmMs || 0)).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}</p></div><strong>${moeda(item.ganho)}</strong><div class="earning-route">${escSeguro(item.origem || "-")} → ${escSeguro(item.destino || "-")}${Number(item.quilometros || 0) ? ` · ${Number(item.quilometros).toFixed(2).replace(".", ",")} km` : ""}</div></div>`,
+                    `<div class="earning-row"><div><strong>${item.tipo === "entrega" ? (item.entregaNaNota ? "Lote de " + Number(item.quantidadeEntregas || 1) + " entregas" : Number(item.quantidadeEntregas || 1) + " entrega(s)") : "Corrida"} · ${escSeguro(item.titulo || "Serviço")}</strong><p class="muted">${new Date(Number(item.finalizadaEmMs || 0)).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}</p></div><strong>${moeda(item.ganho)}</strong><div class="earning-route">${escSeguro(item.origem || "-")} → ${escSeguro(item.destino || "-")}${Number(item.quilometros || 0) ? ` · ${Number(item.quilometros).toFixed(2).replace(".", ",")} km` : ""}</div></div>`,
                 )
                 .join("")
             : '<div class="empty">Nenhum serviço finalizado no histórico.</div>';

@@ -103,8 +103,15 @@
     );
   }
 
+  function deliveryQuantity(item) {
+    if (item.tipo === 'servico_exclusivo') return Math.max(0, Number(item.quantidadeEntregasExclusivo || 0));
+    return Math.max(1, Math.min(30, Number(item.paradas || 1)));
+  }
   function deliveryAppValue(item) {
     const value = Number(item.valor || 0);
+    if (item.ganhoApp != null || item.valorApp != null) return Number(item.ganhoApp ?? item.valorApp);
+    if (/plano.*diario/i.test(String(item.tipoEntrega || "").normalize("NFD").replace(/[\u0300-\u036f]/g, ""))) return Math.min(value, deliveryQuantity(item));
+    if (item.entregaNaNota) return Math.min(value, deliveryQuantity(item) * (item.regiaoEntrega === "conchal" ? 1.5 : 2));
     if (item.tipo === "servico_exclusivo" || /exclusivo/i.test(String(item.tipoEntrega || ""))) {
       return Number(item.ganhoApp || item.valorApp || item.ganhoAppPrevisto || 20);
     }
@@ -260,7 +267,7 @@
     if (!entries.length) return `<div class="owner-empty">${emptyText}</div>`;
     return entries
       .map(
-        (item, index) => `<div class="owner-rank-row"><span>${index + 1}</span><div><strong>${escapeHtml(item.name)}</strong><small>${item.count} serviço${item.count === 1 ? "" : "s"}</small></div><b>${money(item.value)}</b></div>`,
+        (item, index) => `<div class="owner-rank-row"><span>${index + 1}</span><div><strong>${escapeHtml(item.name)}</strong><small>${item.count} ${item.unit || "serviço(s)"}${item.deliveries ? " · " + item.deliveries + " entregas" : ""}</small></div><b>${money(item.value)}</b></div>`,
       )
       .join("");
   }
@@ -280,8 +287,8 @@
       .filter((item) => item.status === "finalizada")
       .forEach((item) => {
         const name = item.empresa || "Empresa não informada";
-        const row = companies.get(name) || { name, count: 0, value: 0 };
-        row.count += 1;
+        const row = companies.get(name) || { name, count: 0, value: 0, unit: "entrega(s)" };
+        row.count += deliveryQuantity(item);
         row.value += Number(item.valor || 0);
         companies.set(name, row);
       });
@@ -290,6 +297,7 @@
       const name = item.motoboy || "Sem motoboy";
       const row = drivers.get(name) || { name, count: 0, value: 0 };
       row.count += 1;
+      row.deliveries = (row.deliveries || 0) + (item.serviceType === "delivery" ? deliveryQuantity(item) : 0);
       row.value += Number(item.valor || 0) - appValue(item, item.serviceType);
       drivers.set(name, row);
     });
@@ -325,7 +333,7 @@
     document.getElementById("ownerPeriodLabel").textContent = periodLabel();
     document.getElementById("ownerUpdatedAt").textContent = `Atualizado às ${new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(new Date())}`;
     document.getElementById("ownerMetrics").innerHTML = [
-      metric("Solicitações", summary.jobs.length, `${summary.rides.length} corridas e ${summary.deliveries.length} entregas`),
+      metric("Solicitações", summary.jobs.length, `${summary.rides.length} corridas e ${summary.deliveries.length} chamadas de entrega (${summary.deliveries.reduce((n, item) => n + deliveryQuantity(item), 0)} entregas)`),
       metric("Finalizadas", summary.finished.length, `${number(summary.completionRate)}% de conclusão`, "good"),
       metric("Em operação", summary.jobs.filter((item) => ["aceita", "retirada"].includes(item.status)).length, "Aceitas ou retiradas", "info"),
       metric("Pendentes", summary.jobs.filter((item) => item.status === "pendente").length, "Aguardando motoboy", "attention"),

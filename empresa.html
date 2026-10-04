@@ -1997,17 +1997,25 @@
         </p>
       </section>
       <section class="box app-area hidden">
-        <h2>Relatorio da empresa</h2>
+        <h2>Relatório da empresa</h2>
         <p class="muted">
-          Use no fim do turno para conferir as entregas de hoje deste WhatsApp
-          da empresa.
+          Confira as chamadas, entregas e cobranças da sua empresa por período.
         </p>
-        <button id="verRelatorioDia" type="button">Ver relatorio do dia</button>
+        <div class="report-controls">
+          <label>Período<select id="periodoRelatorio"><option value="today">Hoje</option><option value="7days">Últimos 7 dias</option><option value="month">Este mês</option><option value="custom">Escolher período</option></select></label>
+          <label>De<input type="date" id="inicioRelatorio"></label><label>Até<input type="date" id="fimRelatorio"></label>
+        </div><div class="report-actions"><button id="verRelatorioDia" type="button">Ver relatório</button><button id="baixarRelatorioExcel" type="button" class="secondary" disabled>Baixar Excel</button><button id="baixarRelatorioPdf" type="button" class="secondary" disabled>Baixar PDF</button></div>
+        <p class="small">Até 31 dias e 500 chamadas por consulta. Downloads usam os mesmos dados do relatório carregado.</p>
         <div id="relatorioEmpresa" class="result show">
-          Clique em Ver relatorio do dia quando quiser conferir.
+          Escolha o período e clique em Ver relatório.
         </div>
       </section>
     </main>
+    <style>
+      .report-controls{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin:14px 0}.report-controls label{display:grid;gap:7px;font-weight:600}.report-actions{display:flex;gap:10px;flex-wrap:wrap}.report-actions button{flex:1;min-width:130px}.report-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px;margin:16px 0}.report-metric{padding:14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:10px}.report-metric span{display:block;font-size:13px;color:#b9c6d3}.report-metric strong{display:block;font-size:22px;margin-top:5px}.report-table{overflow-x:auto;margin:16px 0}.report-table table{width:100%;border-collapse:collapse;min-width:860px}.report-table th,.report-table td{text-align:left;padding:12px 10px;border-bottom:1px solid rgba(255,255,255,.12);vertical-align:top}.report-table th{color:#ffac4f}.report-table small{color:#bcc7d1}#relatorioEmpresa{background:#11181e;color:#f3f6fa} @media(max-width:650px){.report-controls{grid-template-columns:1fr 1fr}.report-controls label:first-child{grid-column:1/-1}.report-actions button:first-child{flex-basis:100%}}
+    </style>
+    <script src="./report-export.js?v=207"></script>
+    <script src="./company-reports.js?v=207"></script>
     <script>
       (() => {
         const originalFetch = window.fetch.bind(window);
@@ -2352,49 +2360,8 @@
         if (typeof atualizarIntegracaoUI === "function") atualizarIntegracaoUI();
         if (typeof atualizarPediplusUI === "function") atualizarPediplusUI();
       }
-      function renderRelatorioEmpresa(d = {}) {
-        const box = $("relatorioEmpresa");
-        if (!d.ok) {
-          box.innerHTML =
-            "Preencha o WhatsApp da empresa e clique em Ver relatorio do dia.";
-          return;
-        }
-        const bairros =
-          (d.porBairro || [])
-            .slice(0, 6)
-            .map(
-              (b) =>
-                `${esc(b.bairro)}: <strong>${Number(b.quantidade || 0)}</strong> entrega(s) - ${moeda(b.total)}`,
-            )
-            .join("<br>") || "Nenhuma entrega ainda.";
-        const fotoMotoboy = (e) =>
-          safeImg(e.motoboyFoto)
-            ? ` <img src="${esc(safeImg(e.motoboyFoto))}" style="width:24px;height:24px;border-radius:50%;object-fit:cover;border:1px solid #ff9a00;vertical-align:middle" alt="Foto">`
-            : "";
-        const primeiras =
-          (d.ultimas || [])
-            .slice(0, 5)
-            .map(
-              (e) =>
-                `${fotoMotoboy(e)} ${new Date(e.criadaEm || Date.now()).toLocaleDateString("pt-BR")} - ${esc(e.bairroEntrega || "bairro nao informado")} - ${moeda(e.valor)} - ${esc(e.status)}${e.motoboy ? " - " + esc(e.motoboy) : ""}`,
-            )
-            .join("<br>") || "Nenhuma entrega registrada.";
-        const todas = (d.ultimas || [])
-          .map(
-            (e) =>
-              `${fotoMotoboy(e)} ${new Date(e.criadaEm || Date.now()).toLocaleDateString("pt-BR")} - ${esc(e.bairroEntrega || "bairro nao informado")} - ${moeda(e.valor)} - ${esc(e.status)}${e.motoboy ? " - Motoboy: " + esc(e.motoboy) : ""} - ${esc(e.entrega || "-")}${Array.isArray(e.pontosExtras) && e.pontosExtras.length ? `<br><span class="muted">Pontos extras:<br>${e.pontosExtras.map((p) => `${Number(p.ordem || 0) || ""}. ${esc(p.digitado || "-")} - ${esc(p.recebedor || "-")} - ${esc(p.telefoneRecebedor || "-")}`).join("<br>")}</span>` : e.enderecosExtras ? `<br><span class="muted">Pontos extras: ${esc(e.enderecosExtras)}</span>` : ""}`,
-          )
-          .join("<br><br>");
-        box.innerHTML = `Relatorio de hoje<br>Total de chamadas: <strong>${d.totalEntregas || 0}</strong><br>Entregas cobradas: <strong>${d.faturaveis || 0}</strong><br>Total usado: <strong>${moeda(d.totalGasto || 0)}</strong><br>Motoboys receberam: <strong>${moeda(d.totalMotoboy || 0)}</strong><br>App MotoJa ficou: <strong>${moeda(d.totalApp || 0)}</strong><br><br><strong>Por entrega:</strong><br>${bairros}<br><br><strong>Ultimas entregas:</strong><br>${primeiras}<br><br>${(d.ultimas || []).length > 5 ? '<button type="button" id="toggleDetalhesRelatorio" class="secondary">Ver detalhes</button><div id="detalhesRelatorio" style="display:none;margin-top:10px"><strong>Detalhes do dia:</strong><br>' + todas + "</div>" : ""}`;
-        const toggle = $("toggleDetalhesRelatorio");
-        if (toggle)
-          toggle.onclick = () => {
-            const det = $("detalhesRelatorio"),
-              aberto = det.style.display !== "none";
-            det.style.display = aberto ? "none" : "block";
-            toggle.textContent = aberto ? "Ver detalhes" : "Ocultar detalhes";
-          };
-      }
+      let companyReport = null;
+      function renderRelatorioEmpresa(d = {}) { if (companyReport) companyReport.render(d); }
       async function carregarSaldo() {
         const tel = soNumeros($("telefoneEmpresa").value);
         if (!empresaToken && tel.length < 10) {
@@ -2417,39 +2384,7 @@
           if (r.ok) atualizarSaldoUI(d);
         } catch {}
       }
-      async function carregarRelatorioDia() {
-        const tel = soNumeros($("telefoneEmpresa").value);
-        if (tel.length < 10) {
-          renderRelatorioEmpresa({});
-          return;
-        }
-        const inicio = new Date();
-        inicio.setHours(0, 0, 0, 0);
-        const fim = new Date();
-        fim.setHours(23, 59, 59, 999);
-        const btn = $("verRelatorioDia");
-        btn.disabled = true;
-        btn.textContent = "Carregando relatorio...";
-        try {
-          const rr = await fetchComTempo(
-            `${CONFIG.backend}/api/companies/${tel}/delivery-report?sinceMs=${inicio.getTime()}&untilMs=${fim.getTime()}`,
-            { cache: "no-store", headers: authHeaders() },
-            12000,
-          );
-          const rd = await rr.json().catch(() => ({}));
-          if (!rr.ok)
-            throw new Error(
-              rd.message || rd.error || "Nao consegui carregar o relatorio.",
-            );
-          renderRelatorioEmpresa(rd);
-        } catch (e) {
-          $("relatorioEmpresa").innerHTML =
-            e.message || "Erro ao carregar relatorio.";
-        } finally {
-          btn.disabled = false;
-          btn.textContent = "Ver relatorio do dia";
-        }
-      }
+      async function carregarRelatorioDia() { if (companyReport) await companyReport.load(); }
       function valorDecimal(v) {
         return (
           Number(
@@ -3253,6 +3188,7 @@
         } catch (e) {
           if (e.status === 401 || e.status === 403) {
             empresaToken = "";
+            if (companyReport) companyReport.reset();
             empresaAprovada = false;
             localStorage.removeItem(TOKEN_EMPRESA);
             atualizarTelaEmpresa();
@@ -3354,6 +3290,7 @@
           }
           if (cadastro) {
             empresaToken = "";
+            if (companyReport) companyReport.reset();
             empresaAprovada = false;
             localStorage.removeItem(TOKEN_EMPRESA);
             $("tituloCadastroEnviado").textContent = "Cadastro enviado";
@@ -3532,6 +3469,19 @@
           atualizarPlanoDiarioUI();
         }
       };
+      companyReport = window.MotojaCompanyReports.create({
+        identity: () => empresaToken ? empresaToken + ':' + soNumeros($("telefoneEmpresa").value) : '',
+        escapeHtml: esc, money: moeda,
+        fetchReport: async (sinceMs, untilMs) => {
+          const tel = soNumeros($("telefoneEmpresa").value);
+          const r = await fetchComTempo(
+            CONFIG.backend + '/api/companies/' + tel + '/delivery-report?sinceMs=' + sinceMs + '&untilMs=' + untilMs,
+            { cache: 'no-store', headers: authHeaders() }, 20000);
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.message || d.error || 'Não consegui carregar o relatório.');
+          return d;
+        }
+      });
       $("verRelatorioDia").onclick = carregarRelatorioDia;
       $("abrirCadastroEmpresa").onclick = () =>
         mostrarTelaConta("cadastro");
@@ -3599,6 +3549,7 @@
       };
       $("sairContaEmpresa").onclick = () => {
         empresaToken = "";
+            if (companyReport) companyReport.reset();
         localStorage.removeItem(TOKEN_EMPRESA);
         atualizarTelaEmpresa();
         $("contaStatus").textContent =

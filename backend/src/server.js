@@ -13,6 +13,7 @@ import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state
 import { createSupportAutomation, enrichSupportMessage, SUPPORT_PHONE, chooseDriverGroup, brazilPhone } from './support-automation.js';
 import { addressSearchVariants, addressFeatureMatches } from './address-search.js';
 import { prepareQuickDelivery, quickDeliveryFare } from './quick-delivery.js';
+import { deliveryReportQuantity, buildCompanyDeliveryReport } from './delivery-report.js';
 import { createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
 import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
 
@@ -1162,6 +1163,8 @@ function driverEarningEvent(kind, serviceId, job = {}, finishedAtMs = Date.now()
     titulo: cleanText(isDelivery ? (job.empresa || 'Empresa') : isCar ? (job.passageiroNome || 'Passageiro') : (job.nome || 'Cliente'), 100),
     origem: cleanText(isDelivery ? job.retirada : job.origem, 180),
     destino: cleanText(isDelivery ? job.entrega : job.destino, 180),
+    quantidadeEntregas: isDelivery ? deliveryReportQuantity(job) : 0,
+    entregaNaNota: isDelivery && job.entregaNaNota === true,
     ganhoCentavos: Math.max(0, Math.round(driverAmount * 100)),
     quilometrosMetros: Math.max(0, Math.round(Number(job.km || 0) * 1000)),
     finalizadaEmMs: Number(finishedAtMs || Date.now()),
@@ -1182,7 +1185,7 @@ function driverEarningDayIncrements(event, direction = 1) {
     ganhoCentavos: admin.firestore.FieldValue.increment(direction * Number(event.ganhoCentavos || 0)),
     servicos: admin.firestore.FieldValue.increment(direction),
     corridas: admin.firestore.FieldValue.increment(direction * (event.tipo === 'corrida' ? 1 : 0)),
-    entregas: admin.firestore.FieldValue.increment(direction * (event.tipo === 'entrega' ? 1 : 0)),
+    entregas: admin.firestore.FieldValue.increment(direction * (event.tipo === 'entrega' ? Math.max(0, Number(event.quantidadeEntregas ?? 1)) : 0)),
     quilometrosMetros: admin.firestore.FieldValue.increment(direction * Number(event.quilometrosMetros || 0)),
     atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
   };
@@ -1198,7 +1201,7 @@ async function recordDriverEarning(tx, driverCpf, event) {
     ganhoCentavos: admin.firestore.FieldValue.increment(event.ganhoCentavos),
     servicos: admin.firestore.FieldValue.increment(1),
     corridas: admin.firestore.FieldValue.increment(event.tipo === 'corrida' ? 1 : 0),
-    entregas: admin.firestore.FieldValue.increment(event.tipo === 'entrega' ? 1 : 0),
+    entregas: admin.firestore.FieldValue.increment(event.tipo === 'entrega' ? Math.max(0, Number(event.quantidadeEntregas ?? 1)) : 0),
     quilometrosMetros: admin.firestore.FieldValue.increment(event.quilometrosMetros),
     atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
   };
@@ -1215,7 +1218,7 @@ function addDriverEarningToSummary(summary, event) {
   summary.ganhoCentavos += event.ganhoCentavos;
   summary.servicos += 1;
   summary.corridas += event.tipo === 'corrida' ? 1 : 0;
-  summary.entregas += event.tipo === 'entrega' ? 1 : 0;
+  summary.entregas += event.tipo === 'entrega' ? Math.max(0, Number(event.quantidadeEntregas ?? 1)) : 0;
   summary.quilometrosMetros += event.quilometrosMetros;
 }
 
@@ -1304,10 +1307,35 @@ async function rebuildDriverEarnings(driverCpf) {
   }, { merge: true });
 }
 
+
+// Upgrade only legacy quick batches once per driver/process. No full historical rebuild.
+async function repairQuickDeliveryEarnings(cpf) {
+  const snapshot = await db.collection('entregas').where('motoboyCpf', '==', cpf).where('entregaNaNota', '==', true).limit(100).get();
+  for (const docSnap of snapshot.docs) {
+    const job = docSnap.data() || {};
+    if (job.status !== 'finalizada' || deliveryReportQuantity(job) <= 1) continue;
+    await db.runTransaction(async (tx) => {
+      const eventRef = driverEarningEventRef(cpf, 'entrega', docSnap.id);
+      const eventSnap = await tx.get(eventRef);
+      if (!eventSnap.exists) return;
+      const event = eventSnap.data() || {};
+      const count = deliveryReportQuantity(job);
+      const delta = count - Number(event.quantidadeEntregas ?? 1);
+      if (delta <= 0) return;
+      const increment = { entregas: admin.firestore.FieldValue.increment(delta), atualizadaEm: admin.firestore.FieldValue.serverTimestamp() };
+      tx.set(eventRef, { quantidadeEntregas: count, entregaNaNota: true }, { merge: true });
+      tx.set(driverEarningsRef(cpf), increment, { merge: true });
+      tx.set(driverEarningsDayRef(cpf, event.dia), increment, { merge: true });
+    });
+  }
+}
+
 async function initializeDriverEarnings(driverCpf) {
   const cpf = onlyDigits(driverCpf);
   if (driverEarningsInitializations.has(cpf)) return driverEarningsInitializations.get(cpf);
-  const task = rebuildDriverEarnings(cpf).catch((error) => {
+  const task = rebuildDriverEarnings(cpf).then(() => repairQuickDeliveryEarnings(cpf).catch(() => {
+    console.error('Legacy quick-delivery count repair deferred; existing earnings remain available.');
+  })).catch((error) => {
     driverEarningsInitializations.delete(cpf);
     throw error;
   });
@@ -4893,6 +4921,8 @@ app.post('/api/drivers/:cpf/earnings/history', async (req, res, next) => {
       return {
         id: docSnap.id,
         tipo: data.tipo === 'entrega' ? 'entrega' : 'corrida',
+        quantidadeEntregas: data.tipo === 'entrega' ? Math.max(0, Number(data.quantidadeEntregas ?? 1)) : 0,
+        entregaNaNota: data.entregaNaNota === true,
         titulo: cleanText(data.titulo, 100),
         origem: cleanText(data.origem, 180),
         destino: cleanText(data.destino, 180),
@@ -8154,70 +8184,54 @@ app.get('/api/company/balance', assertCompany, async (req, res) => {
   res.json({ ok: true, telefoneEmpresa: req.companyId, ...companyBalance(req.company) });
 });
 
-app.get('/api/companies/:phone/delivery-report', assertCompany, async (req, res, next) => {
+const companyReportCache = new Map();
+const companyReportLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, keyGenerator: req => req.companyId,
+  message: { error: 'relatorio_limite', message: 'Aguarde um minuto antes de atualizar novamente.' } });
+
+app.get('/api/companies/:phone/delivery-report', assertCompany, companyReportLimiter, async (req, res, next) => {
   try {
     const phone = onlyDigits(req.params.phone);
     if (phone.length < 10 || phone.length > 11) return res.status(400).json({ error: 'telefone_empresa_invalido' });
     if (phone !== req.companyId) return res.status(403).json({ error: 'empresa_nao_autorizada' });
-
-    const snapshot = await db.collection('entregas')
-      .where('telefoneEmpresa', '==', phone)
-      .limit(200)
-      .get();
-
-    const sinceMs = Number(req.query.sinceMs || 0);
-    const untilMs = Number(req.query.untilMs || 0);
-    const deliveries = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
-      .sort((a, b) => timestampMs(b.criadaEm) - timestampMs(a.criadaEm));
-    const scopedDeliveries = deliveries.filter((item) => {
-      const created = timestampMs(item.criadaEm);
-      if (sinceMs && created < sinceMs) return false;
-      if (untilMs && created > untilMs) return false;
-      return true;
-    });
-    const billable = scopedDeliveries.filter((item) => item.status !== 'cancelada' && item.status !== 'expirada');
-    const byNeighborhood = {};
-
-    billable.forEach((item) => {
-      const bairro = item.bairroEntrega || bairroFromAddress(item.entregaEncontrada || item.entrega);
-      const split = deliverySplit(item);
-      byNeighborhood[bairro] ??= { bairro, quantidade: 0, total: 0 };
-      byNeighborhood[bairro].quantidade += 1;
-      byNeighborhood[bairro].total = money(byNeighborhood[bairro].total + money(item.valor));
-      byNeighborhood[bairro].motoboy = money((byNeighborhood[bairro].motoboy || 0) + split.driverAmount);
-      byNeighborhood[bairro].app = money((byNeighborhood[bairro].app || 0) + split.appFee);
-    });
-    const totalMotoboy = money(billable.reduce((sum, item) => sum + deliverySplit(item).driverAmount, 0));
-    const totalApp = money(billable.reduce((sum, item) => sum + deliverySplit(item).appFee, 0));
-
-    res.json({
-      ok: true,
-      totalEntregas: scopedDeliveries.length,
-      faturaveis: billable.length,
-      totalGasto: money(billable.reduce((sum, item) => sum + money(item.valor), 0)),
-      totalMotoboy,
-      totalApp,
-      porBairro: Object.values(byNeighborhood).sort((a, b) => b.quantidade - a.quantidade),
-      ultimas: scopedDeliveries.slice(0, 20).map((item) => ({
-        id: item.id,
-        status: item.status || '',
-        tipoEntrega: item.tipoEntrega || '',
-        entrega: item.entrega || '',
-        enderecosExtras: item.enderecosExtras || '',
-        pontosExtras: item.pontosExtras || [],
-        bairroEntrega: item.bairroEntrega || bairroFromAddress(item.entregaEncontrada || item.entrega),
-        motoboy: item.motoboy || '',
-        motoboyFoto: item.motoboyFoto || '',
-        valor: money(item.valor),
-        criadaEm: timestampMs(item.criadaEm),
-        quantidadeEntregasExclusivo: Number(item.quantidadeEntregasExclusivo || 0),
-        taxaFixaEntrega: money(item.taxaFixaEntrega || 0),
-        empresaFicaPorTaxa: money(item.empresaFicaPorTaxa || 0)
-      }))
-    });
-  } catch (error) {
-    next(error);
-  }
+    const today = todayKeySaoPaulo();
+    const sinceMs = Number(req.query.sinceMs || new Date(today + 'T00:00:00-03:00').getTime());
+    const untilMs = Number(req.query.untilMs || new Date(today + 'T23:59:59.999-03:00').getTime());
+    if (!Number.isSafeInteger(sinceMs) || !Number.isSafeInteger(untilMs) || sinceMs <= 0 || untilMs < sinceMs || untilMs - sinceMs >= 31 * 86400000) {
+      return res.status(400).json({ error: 'periodo_relatorio_invalido', message: 'Escolha um período de até 31 dias, com início anterior ao fim.' });
+    }
+    const key = phone + ':' + sinceMs + ':' + untilMs;
+    const cached = companyReportCache.get(key);
+    res.set('Cache-Control', 'no-store');
+    if (cached && cached.expiresAt > Date.now()) return res.json(cached.payload);
+    let snapshot, indexed = true;
+    try {
+      snapshot = await db.collection('entregas').where('telefoneEmpresa', '==', phone)
+        .where('criadaEm', '>=', admin.firestore.Timestamp.fromMillis(sinceMs))
+        .where('criadaEm', '<=', admin.firestore.Timestamp.fromMillis(untilMs))
+        .orderBy('criadaEm', 'desc').limit(501).get();
+    } catch (error) {
+      if (error.code !== 9 && error.code !== 'failed-precondition') throw error;
+      // Keep existing accounts usable while a new Firestore index is building.
+      indexed = false;
+      snapshot = await db.collection('entregas').where('telefoneEmpresa', '==', phone).limit(501).get();
+    }
+    const deliveries = snapshot.docs.slice(0, 500).map(doc => ({ ...doc.data(), id: doc.id }))
+      .filter(item => timestampMs(item.criadaEm) >= sinceMs && timestampMs(item.criadaEm) <= untilMs);
+    const firstDay = dateKeySaoPaulo(new Date(sinceMs));
+    const lastDay = dateKeySaoPaulo(new Date(untilMs));
+    const plansSnap = await db.collection('empresas').doc(phone).collection('planosDiarios')
+      .where('dia', '>=', firstDay).where('dia', '<=', lastDay).limit(32).get();
+    const incomplete = snapshot.docs.length > 500;
+    const payload = buildCompanyDeliveryReport(deliveries, plansSnap.docs.map(doc => ({ ...doc.data(), dia: doc.id })),
+      { timestampMs, money, deliverySplit, bairroFromAddress }, {
+        sinceMs, untilMs, empresa: req.company.empresa || 'Empresa', parcial: incomplete,
+        aviso: incomplete ? (indexed ? 'Mais de 500 chamadas neste período. Escolha um período menor para baixar o fechamento completo.' : 'O índice do histórico está sendo preparado. Este relatório é parcial e os downloads ficam bloqueados para evitar um fechamento incompleto.') : ''
+      });
+    for (const [cacheKey, value] of companyReportCache) if (value.expiresAt <= Date.now()) companyReportCache.delete(cacheKey);
+    if (companyReportCache.size >= 10) companyReportCache.delete(companyReportCache.keys().next().value);
+    companyReportCache.set(key, { payload, expiresAt: Date.now() + 60000 });
+    return res.json(payload);
+  } catch (error) { next(error); }
 });
 
 app.post('/api/companies/deposit-request', assertCompany, assertCompanyApproved, createRideLimiter, async (req, res, next) => {
@@ -10318,7 +10332,7 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
       }
       const nextSaldo = money(balance.saldo - valor);
       const nextReserved = money(Math.max(0, balance.reservado - valor));
-      const earningEvent = driverEarningEvent('entrega', deliveryRef.id, { ...delivery, valor, ganhoMotoboy: split.driverAmount });
+      const earningEvent = driverEarningEvent('entrega', deliveryRef.id, { ...delivery, valor, ganhoMotoboy: split.driverAmount, quantidadeEntregasExclusivo: quantidadeExclusivo });
       await recordDriverEarning(tx, driverCpf, earningEvent);
 
       tx.set(companyRef, {
