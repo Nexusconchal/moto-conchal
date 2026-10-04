@@ -44,6 +44,29 @@ test('numeric street names, abbreviations and house suffixes remain intact', () 
 });
 
 const backend = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+const importedAddress = 'Rua Vereador Abílio Pinto , 88 — Casa — Jd São Paulo - Conchal — Ref: Zé Adão lanches';
+const importedCorrect = { ...correct, street: 'Rua Vereador Abilio Pinto', housenumber: '88', formatted: 'Rua Vereador Abilio Pinto 88, Conchal - SP, Brasil' };
+
+test('imported order complements and dash separators do not replace house 88 with house 3', () => {
+  for (const text of [importedAddress, importedAddress.replaceAll('—', '–'), importedAddress.replaceAll('—', ' - '), 'Rua Vereador Abílio Pinto 88 Casa, Conchal']) {
+    const query = 'Rua Vereador Abílio Pinto, 88, Conchal, SP, Brasil';
+    assert.equal(addressSearchVariants(text)[0], query);
+    assert.equal(ctx.tentativasGeocode(text)[0].texto, query);
+    for (const number of ['3', '19', '96', '88']) {
+      const props = { ...importedCorrect, housenumber: number };
+      assert.equal(addressFeatureMatches(text, props), number === '88');
+      assert.equal(ctx.resultadoEnderecoConfiavel(text, props, props.formatted), number === '88');
+    }
+  }
+});
+
+test('server selects the correct imported order house even when provider lists house 3 first', async () => {
+  const h = backendHarness([[{ ...importedCorrect, housenumber: '3' }, importedCorrect]]);
+  const result = await h.context.geocodeCapturedAddress(importedAddress);
+  assert.equal(result.text, importedCorrect.formatted);
+  assert.deepEqual(h.requests, ['Rua Vereador Abílio Pinto, 88, conchal, SP, Brasil']);
+});
+
 function backendHarness(responses) {
   const requests = [];
   const context = vm.createContext({ GEOAPIFY_API_KEY: 'test-only', URLSearchParams, addressSearchVariants, addressFeatureMatches,

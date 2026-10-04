@@ -2686,7 +2686,7 @@
         return texto;
       }
       function separarRuaNumeroMapa(base) {
-        const m = String(base || "").trim().match(/^(.+?)(?:,\s*|\s+)(?:n[ºo°.]*\s*)?(\d+[a-z]?)(?=\s*(?:[,;]|$|\b(?:jd\.?|jardim|bairro|vila|parque|conchal|sp)\b))/i);
+        const m = String(base || "").trim().replace(/[–—]|\s+-\s+/g, ",").match(/^(.+?)(?:,\s*|\s+)(?:n[ºo°.]*\s*)?(\d+[a-z]?)(?=\s*(?:[,;]|$|\b(?:jd\.?|jardim|bairro|vila|parque|conchal|sp|casa|apto|apartamento|bloco|fundos|ref|referencia)\b))/i);
         return m ? { rua: m[1].trim().replace(/,$/, ""), numero: m[2] } : null;
       }
       function variantesEnderecoMapa(base) {

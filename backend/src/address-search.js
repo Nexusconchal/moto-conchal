@@ -1,8 +1,8 @@
 const normalized = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\bzanochett?a\b|\bzanchett?a\b/g, 'zancheta');
 
 export function streetNumber(value) {
-  const text = String(value || '').trim();
-  const match = text.match(/^(.+?)(?:,\s*|\s+)(?:n[ºo°.]*\s*)?(\d+[a-z]?)(?=\s*(?:[,;]|$|\b(?:jd\.?|jardim|bairro|vila|parque|conchal|sp)\b))/i);
+  const text = String(value || '').trim().replace(/[–—]|\s+-\s+/g, ',');
+  const match = text.match(/^(.+?)(?:,\s*|\s+)(?:n[ºo°.]*\s*)?(\d+[a-z]?)(?=\s*(?:[,;]|$|\b(?:jd\.?|jardim|bairro|vila|parque|conchal|sp|casa|apto|apartamento|bloco|fundos|ref|referencia)\b))/i);
   return match ? { street: match[1].trim().replace(/,$/, ''), number: match[2] } : null;
 }
 
