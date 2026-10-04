@@ -1830,36 +1830,54 @@
           Editar cadastro da loja
         </button>
         <div id="cadastroLoja" class="hidden">
+          <style>
+            #salvarCadastroLoja { background: #15803d; color: #fff; border: 1px solid #22c55e; }
+            #salvarCadastroLoja:hover { background: #166534; }
+            #cancelarCadastroLoja { background: #ff8000; color: #111827; border: 1px solid #ff9f32; }
+            #cancelarCadastroLoja:hover { background: #ea7500; }
+            .cadastro-actions { margin-top: 12px; gap: 10px; }
+            #cadastroFeedback:empty { display: none; }
+          </style>
           <div class="grid2">
             <label
               >Empresa<input
                 id="empresa"
+                maxlength="120"
                 placeholder="Ex: Empresa Tal"
                 autocomplete="organization"
             /></label>
             <label
               >Responsavel<input
                 id="responsavel"
+                maxlength="120"
                 placeholder="Ex: Joao"
                 autocomplete="name"
             /></label>
           </div>
           <label
-            >WhatsApp da empresa<input
-              id="telefoneEmpresa"
+            >WhatsApp de contato da empresa<input
+              id="telefoneContato"
               inputmode="tel"
               placeholder="Ex: 19999999999"
               autocomplete="tel"
+              maxlength="11"
           /></label>
+          <input id="telefoneEmpresa" type="hidden" />
           <label
             >Endereco de retirada<input
               id="retirada"
+              maxlength="300"
               placeholder="Rua, numero, bairro"
           /></label>
           <p class="small">
-            Os dados da empresa ficam salvos neste aparelho para facilitar os
-            proximos pedidos.
+            O WhatsApp de contato será usado nas novas entregas. Seu acesso,
+            saldo e histórico continuam na mesma conta.
           </p>
+          <div class="grid2 cadastro-actions">
+            <button id="salvarCadastroLoja" type="button">Salvar alterações</button>
+            <button id="cancelarCadastroLoja" type="button">Cancelar</button>
+          </div>
+          <p id="cadastroFeedback" class="small" role="status" aria-live="polite"></p>
         </div>
         <div id="modoEntrega" class="grid2" role="group" aria-label="Modo da entrega">
           <button id="modoComEndereco" type="button" aria-pressed="true">Entrega com endereço</button>
@@ -2016,6 +2034,7 @@
     </style>
     <script src="./report-export.js?v=207"></script>
     <script src="./company-reports.js?v=207"></script>
+    <script src="./company-profile.js?v=208"></script>
     <script>
       (() => {
         const originalFetch = window.fetch.bind(window);
@@ -2361,6 +2380,7 @@
         if (typeof atualizarPediplusUI === "function") atualizarPediplusUI();
       }
       let companyReport = null;
+      let perfilCadastro = null;
       function renderRelatorioEmpresa(d = {}) { if (companyReport) companyReport.render(d); }
       async function carregarSaldo() {
         const tel = soNumeros($("telefoneEmpresa").value);
@@ -2447,6 +2467,7 @@
               empresa: $("empresa").value.trim(),
               responsavel: $("responsavel").value.trim(),
               telefoneEmpresa: $("telefoneEmpresa").value.trim(),
+              telefoneContato: $("telefoneContato").value.trim(),
               retirada: $("retirada").value.trim(),
             }),
           );
@@ -2458,6 +2479,7 @@
           if (d.empresa) $("empresa").value = d.empresa;
           if (d.responsavel) $("responsavel").value = d.responsavel;
           if (d.telefoneEmpresa) $("telefoneEmpresa").value = d.telefoneEmpresa;
+          if (d.telefoneContato) $("telefoneContato").value = d.telefoneContato;
           if (d.retirada) $("retirada").value = d.retirada;
         } catch (e) {}
       }
@@ -3113,6 +3135,8 @@
         preencherCampo("responsavel", c.responsavel);
         preencherCampo("loginResponsavel", c.responsavel);
         preencherCampo("telefoneEmpresa", c.telefoneEmpresa);
+        preencherCampo("telefoneContato", c.telefoneContato || c.telefoneEmpresa);
+        if (perfilCadastro) perfilCadastro.sync(c);
         preencherCampo("loginTelefoneEmpresa", c.telefoneEmpresa);
         preencherCampo("retirada", c.retirada);
         preencherCampo("loginRetirada", c.retirada);
@@ -3340,12 +3364,31 @@
       atualizarIntegracaoUI();
       atualizarPagamentoModoUI();
       carregarEmpresa();
+      perfilCadastro = window.MotojaCompanyProfile.create({
+        identity: () => empresaToken,
+        notice: message => mostrarStatus(message, true),
+        changed: () => {
+          entregaCalculada = null;
+          $("confirmar").style.display = "none";
+        },
+        saved: company => {
+          salvarEmpresa();
+          if ($("companyTopName")) $("companyTopName").textContent = company.empresa;
+          if (companyReport) companyReport.reset();
+        },
+        save: async draft => {
+          const response = await fetchComTempo(`${CONFIG.backend}/api/companies/me/profile`, {
+            method: "POST", headers: { "content-type": "application/json", ...authHeaders() },
+            body: JSON.stringify(draft)
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.message || data.error || "Não consegui salvar o cadastro.");
+          return data.company;
+        }
+      });
       carregarMinhaEmpresa();
       atualizarPlanoDiarioUI();
       [
-        "empresa",
-        "responsavel",
-        "retirada",
         "loginEmpresa",
         "loginResponsavel",
         "loginRetirada",
@@ -3365,14 +3408,6 @@
             }
           }),
       );
-      $("editarCadastroLoja").onclick = () => {
-        const box = $("cadastroLoja"),
-          aberto = !box.classList.contains("hidden");
-        box.classList.toggle("hidden", aberto);
-        $("editarCadastroLoja").textContent = aberto
-          ? "Editar cadastro da loja"
-          : "Ocultar cadastro da loja";
-      };
       async function definirPagamentoModo(modo) {
         if (!empresaToken) {
           mostrarStatus(
@@ -4736,6 +4771,7 @@
       $("regiaoLote").onchange = atualizarResumoLote;
       $("chamarLote").onclick = async () => {
         if (enviando || !modoChamadaSemEndereco) return;
+        if (!perfilCadastro.canRequest()) return;
         limparStatus();
         const count = Number($("quantidadeLote").value), tipo = $("tipoEntrega").value;
         if (!tipoLotePermitido(tipo) || !Number.isInteger(count) || count < 1 || count > 30) return atualizarResumoLote();
@@ -4751,6 +4787,7 @@
       };
       atualizarResumoLote();
       $("calcular").onclick = async () => {
+        if (!perfilCadastro.canRequest()) return;
         limparStatus();
         resultadoBox.className = "result";
         const pedidoPreparadoAtivo = pedidosPreparados.find(
@@ -4935,6 +4972,7 @@
       };
       $("confirmar").onclick = async () => {
         if (!entregaCalculada || enviando) return;
+        if (!perfilCadastro.canRequest()) return;
         enviando = true;
         $("confirmar").disabled = true;
         $("confirmar").textContent = "Chamando motoboy...";

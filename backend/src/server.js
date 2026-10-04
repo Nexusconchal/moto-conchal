@@ -14,6 +14,7 @@ import { createSupportAutomation, enrichSupportMessage, SUPPORT_PHONE, chooseDri
 import { addressSearchVariants, addressFeatureMatches } from './address-search.js';
 import { prepareQuickDelivery, quickDeliveryFare } from './quick-delivery.js';
 import { deliveryReportQuantity, buildCompanyDeliveryReport } from './delivery-report.js';
+import { companyProfileUpdate } from './company-profile.js';
 import { createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
 import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
 
@@ -883,6 +884,7 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
     empresa: company.empresa || 'Empresa',
     responsavel: company.responsavel || company.empresa || 'Responsavel',
     telefoneEmpresa: companyId,
+    telefoneContato: company.telefoneContato || companyId,
     tipoEntrega: config.deliveryType,
     retirada: company.retirada,
     retiradaEncontrada: pickup.text,
@@ -1466,6 +1468,7 @@ function publicPendingJob(job = {}) {
   delete copy.clienteDeviceId;
   delete copy.telefoneCliente;
   delete copy.telefoneEmpresa;
+  delete copy.telefoneContato;
   delete copy.telefoneRecebedor;
   if (Array.isArray(copy.pontosExtras)) {
     copy.pontosExtras = copy.pontosExtras.map((point) => {
@@ -1551,7 +1554,7 @@ function supportOperation(kind, id, job = {}) {
     status: cleanText(job.status, 30),
     titulo: cleanText(isDelivery ? job.empresa : isCar ? job.passageiroNome : job.nome, 100) || (isDelivery ? 'Empresa' : 'Cliente'),
     responsavel: cleanText(isDelivery ? job.responsavel : isCar ? job.passageiroNome : job.nome, 100),
-    telefonePrincipal: onlyDigits(isDelivery ? job.telefoneEmpresa : isCar ? job.passageiroTelefone : job.telefoneCliente).slice(0, 11),
+    telefonePrincipal: onlyDigits(isDelivery ? (job.telefoneContato || job.telefoneEmpresa) : isCar ? job.passageiroTelefone : job.telefoneCliente).slice(0, 11),
     recebedor: cleanText(job.recebedor, 100),
     telefoneRecebedor: receiverPhone,
     origem: cleanText(isDelivery ? job.retirada : job.origem, 180),
@@ -2111,6 +2114,7 @@ function publicCompany(data = {}, id = '') {
     responsavel: data.responsavel || '',
     email: data.email || '',
     telefoneEmpresa: data.telefoneEmpresa || id,
+    telefoneContato: data.telefoneContato || data.telefoneEmpresa || id,
     retirada: data.retirada || '',
     status,
     aprovada: status === 'aprovada',
@@ -2429,6 +2433,7 @@ function deliveryPublicData(delivery) {
     empresa: String(delivery.empresa || '').slice(0, 120).trim(),
     responsavel: String(delivery.responsavel || '').slice(0, 120).trim(),
     telefoneEmpresa: onlyDigits(delivery.telefoneEmpresa),
+    telefoneContato: onlyDigits(delivery.telefoneContato).slice(0, 11),
     tipoEntrega: String(delivery.tipoEntrega || 'Delivery / encomendas').slice(0, 80).trim(),
     retirada: String(delivery.retirada || '').slice(0, 300).trim(),
     retiradaEncontrada: String(delivery.retiradaEncontrada || delivery.retirada || '').slice(0, 300).trim(),
@@ -6444,6 +6449,21 @@ app.get('/api/companies/me', assertCompany, async (req, res) => {
   res.json({ ok: true, company: publicCompany(req.company, req.companyId) });
 });
 
+const companyProfileLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, keyGenerator: req => req.companyId,
+  message: { error: 'cadastro_limite', message: 'Aguarde um minuto antes de salvar novamente.' } });
+app.post('/api/companies/me/profile', assertCompany, assertCompanyApproved, companyProfileLimiter, async (req, res, next) => {
+  try {
+    const profile = companyProfileUpdate(req.body);
+    const changed = Object.keys(profile).some(key => profile[key] !== (req.company[key] || (key === 'telefoneContato' ? req.companyId : '')));
+    if (changed) await req.companySnap.ref.set({ ...profile, atualizadaEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    res.set('Cache-Control', 'no-store');
+    return res.json({ ok: true, changed, company: publicCompany({ ...req.company, ...profile }, req.companyId) });
+  } catch (error) {
+    if (error.code === 'cadastro_empresa_invalido') return res.status(400).json({ error: error.code, message: error.message });
+    return next(error);
+  }
+});
+
 app.get('/api/companies/me/order-integrations', assertCompany, assertCompanyApproved, async (req, res) => {
   const baseUrl = BACKEND_BASE_URL || `${req.protocol}://${req.get('host')}`;
   const integrations = {};
@@ -7529,7 +7549,7 @@ async function cardapioWebRefreshActiveCompanies() {
     const snapshot = await db.collection('empresas')
       .where('integracaoAtiva', '==', true)
       .where('integracaoTokenEncrypted', '!=', '')
-      .select('integracaoTokenEncrypted', 'integracaoCodigoLoja', 'integracaoTipoEntrega', 'empresa', 'responsavel', 'retirada', 'cidade', 'status', 'saldo', 'reservado')
+      .select('integracaoTokenEncrypted', 'integracaoCodigoLoja', 'integracaoTipoEntrega', 'empresa', 'responsavel', 'telefoneContato', 'retirada', 'cidade', 'status', 'saldo', 'reservado')
       .get();
     const found = new Set();
     snapshot.docs.forEach((doc) => {
@@ -7827,7 +7847,7 @@ async function pediplusRefreshActiveCompanies() {
     const snapshot = await db.collection('empresas')
       .where('pediplusAtivo', '==', true)
       .where('pediplusTokenEncrypted', '!=', '')
-      .select('pediplusTokenEncrypted', 'pediplusTipoEntrega', 'empresa', 'responsavel', 'retirada', 'cidade', 'status', 'saldo', 'reservado')
+      .select('pediplusTokenEncrypted', 'pediplusTipoEntrega', 'empresa', 'responsavel', 'telefoneContato', 'retirada', 'cidade', 'status', 'saldo', 'reservado')
       .get();
     const found = new Set();
     snapshot.docs.forEach((doc) => {
@@ -8932,6 +8952,7 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
   try {
     const delivery = deliveryPublicData(req.body);
     delivery.telefoneEmpresa = req.companyId;
+    delivery.telefoneContato = onlyDigits(req.company.telefoneContato || req.companyId);
     delivery.empresa = cleanText(req.company.empresa || delivery.empresa, 120);
     delivery.responsavel = cleanText(req.company.responsavel || delivery.responsavel, 120);
     if (delivery.entregaNaNota) {
@@ -9123,8 +9144,6 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
       const nextReserved = money(balance.reservado + delivery.valor);
 
       tx.set(companyRef, {
-        empresa: delivery.empresa,
-        responsavel: delivery.responsavel,
         telefoneEmpresa: req.companyId,
         saldo: balance.saldo,
         reservado: nextReserved,
@@ -9257,6 +9276,7 @@ app.post('/api/companies/exclusive-service', assertCompany, assertCompanyApprove
         responsavel,
         telefoneEmpresa: req.companyId,
         empresaId: req.companyId,
+        telefoneContato: onlyDigits(req.company.telefoneContato || req.companyId),
         tipo: 'servico_exclusivo',
         tipoEntrega: 'MotoJa Exclusivo',
         retirada: retirada || 'Loja da empresa',

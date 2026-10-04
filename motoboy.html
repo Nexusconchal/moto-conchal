@@ -1801,7 +1801,7 @@
         }
       }
       function telefoneCliente(c) {
-        return String(c.telefoneCliente || c.telefoneEmpresa || "").replace(
+        return String(c.telefoneCliente || c.telefoneContato || c.telefoneEmpresa || "").replace(
           /\D/g,
           "",
         );
