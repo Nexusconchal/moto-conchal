@@ -404,6 +404,7 @@
         deliveries.delete(deliveryId);
         refreshAgain = refreshRunning;
         render();
+        window.dispatchEvent(new Event('motoja:balance-refresh'));
         return;
       }
       const current = deliveries.get(deliveryId);
