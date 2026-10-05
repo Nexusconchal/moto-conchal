@@ -43,3 +43,36 @@ test('backend refuses geocoded destinations in another city', () => {
   assert.throws(() => ctx.ensureResolvedPlaceMatches('Cosmópolis', 'Capivari'), /nao conferiu/);
   assert.doesNotThrow(() => ctx.ensureResolvedPlaceMatches('Cosmópolis', 'Avenida Centenário, Cosmópolis'));
 });
+
+test('passenger street search isolates house and ignores unpunctuated neighborhoods and references',()=>{
+  for(const [text,first] of [
+    ['rua idalina antunes orsola 256 jd dos palmeiras','rua idalina antunes orsola, 256, Conchal, SP, Brasil'],
+    ['Rua Vereador Abílio Pinto , 88 — Casa — Jd São Paulo - Conchal — Ref: Zé Adão lanches','Rua Vereador Abílio Pinto, 88, Conchal, SP, Brasil'],
+    ['Rua 15 de Novembro 256 Jardim São Paulo','Rua 15 de Novembro, 256, Conchal, SP, Brasil']
+  ]) {
+    assert.equal(context.tentativasGeocode(text)[0].texto,first);
+    const street=text.startsWith('rua idalina')?'Rua Idalina Antunes Orsola':text.includes('Abílio')?'Rua Vereador Abilio Pinto':'Rua 15 de Novembro';
+    const number=text.includes('88')?'88':'256';
+    assert.equal(context.resultadoEnderecoConfiavel(text,{result_type:'building',street,housenumber:number}),true);
+    assert.equal(context.resultadoEnderecoConfiavel(text,{result_type:'building',street,housenumber:'739'}),false);
+    assert.equal(context.resultadoEnderecoConfiavel(text,{result_type:'building',street:'Rua das Azaleias',housenumber:number}),false);
+  }
+});
+
+function gpsHarness(fixes) {
+  const calls=[];let index=0;
+  const ctx=vm.createContext({window:{isSecureContext:true},Date,mostrarStatus(){},navigator:{geolocation:{getCurrentPosition(ok,err,options){calls.push(options);const fix=fixes[index++];if(fix.error)err(fix.error);else ok(fix);}}}});
+  vm.runInContext(source.slice(source.indexOf('      function pegarGps('),source.indexOf('      async function calcularRota(')),ctx);
+  return {ctx,calls};
+}
+const fix=(change={})=>({timestamp:Date.now(),coords:{latitude:-22.33,longitude:-47.17,accuracy:15},...change});
+test('passenger GPS rejects inaccurate or stale positions instead of silently placing the pickup elsewhere',async()=>{
+  for(const bad of [fix({coords:{latitude:-22.33,longitude:-47.17,accuracy:1500}}),fix({timestamp:Date.now()-120000}),fix({coords:{latitude:-22.33,longitude:-47.17,accuracy:null}}),fix({coords:{latitude:NaN,longitude:-47.17,accuracy:15}})]) {
+    const h=gpsHarness([bad]);await assert.rejects(h.ctx.pegarGps(),/aproximado ou desatualizado/);
+  }
+  const h=gpsHarness([fix()]);const result=await h.ctx.pegarGps();assert.equal(result.accuracy,15);assert.equal(result.lat,-22.33);
+});
+test('fallback can use a fresh accurate position but cannot reuse a two-minute-old position',async()=>{
+  const h=gpsHarness([{error:{code:3}},fix()]);assert.equal((await h.ctx.pegarGpsComFallback()).accuracy,15);assert.equal(h.calls[1].maximumAge,0);
+  const bad=gpsHarness([{error:{code:3}},fix({timestamp:Date.now()-120000})]);await assert.rejects(bad.ctx.pegarGpsComFallback(),/aproximado ou desatualizado/);
+});

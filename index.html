@@ -2881,13 +2881,14 @@
           .replace(/\bzanochett?a\b|\bzanchett?a\b/g, "zancheta");
         const texto = normalizar(entrada);
         if (["city", "county", "state", "country", "postcode", "district", "suburb"].includes(props.result_type)) return false;
-        const rua = texto.match(/(?:^|\s)(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+([^,]+)/);
+        const partes = separarRuaNumeroMapa(texto);
+        const textoRua = partes?.rua || texto;
+        const rua = textoRua.match(/(?:^|\s)(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+([^,]+)/) || (partes ? [textoRua, textoRua] : null);
+        if (partes && props.housenumber && String(props.housenumber).trim().toLowerCase() !== partes.numero) return false;
         if (!rua) return !!(props.street || props.housenumber || props.name);
         if (!props.street) return false;
-        const numero = texto.match(/,\s*(\d+)\b/)?.[1] || rua[1].match(/\s+(\d+)(?:\s|$)/)?.[1];
-        if (numero && props.housenumber && String(props.housenumber).trim() !== numero) return false;
-        const palavras = rua[1].replace(/\s+\d+.*$/, "").split(/[^a-z0-9]+/)
-          .filter((p) => p.length > 1 && !["de", "da", "do", "das", "dos", "dr", "dra", "doutor", "doutora"].includes(p));
+        const palavras = rua[1].split(/[^a-z0-9]+/)
+          .filter((p) => (p.length > 1 || /^\d+$/.test(p)) && !["de", "da", "do", "das", "dos", "dr", "dra", "doutor", "doutora"].includes(p));
         const encontrada = normalizar(props.street).split(/[^a-z0-9]+/);
         return palavras.length > 0 && palavras.every((p) => encontrada.includes(p));
       }
@@ -2914,9 +2915,11 @@
           texto = texto.replace(/arthur nogueira/gi, "Artur Nogueira");
         if (/\besp\s*2\b|espirito\s+santo\s*(ii|2)/.test(busca))
           texto = texto + ", Jardim Espirito Santo II, Conchal";
-        if (/\bpalmeiras\b/.test(busca))
-          texto = texto + ", Jardim Palmeiras, Conchal";
         return texto;
+      }
+      function separarRuaNumeroMapa(base) {
+        const m = String(base || "").trim().replace(/[–—]|\s+-\s+/g, ",").match(/^(.+?)(?:,\s*|\s+)(?:n[ºo°.]*\s*)?(\d+[a-z]?)(?=\s*(?:[,;]|$|\b(?:jd\.?|jardim|bairro|vila|parque|conchal|sp|casa|apto|apartamento|bloco|fundos|ref|referencia)\b))/i);
+        return m ? { rua: m[1].trim().replace(/,$/, ""), numero: m[2] } : null;
       }
       function variantesEnderecoMapa(base) {
         const principal = textoMapa(base),
@@ -2929,7 +2932,8 @@
               /\b(rua|r\.?|avenida|av\.?)\s+d[ao]s?\s+([a-záàâãéèêíóôõúç])/i,
               "$1 $2",
             );
-        const partes = [principal];
+        const numerado = separarRuaNumeroMapa(principal);
+        const partes = numerado ? [`${numerado.rua}, ${numerado.numero}`, principal] : [principal];
         if (limpo && limpo !== principal) partes.push(limpo);
         const trechoEndereco = principal.match(
           /((?:av(?:enida)?\.?|rua|r\.?|rodovia|estrada|travessa)\s+[^,;]+(?:,\s*\d+)?)/i,
@@ -3071,12 +3075,15 @@
             return;
           }
           navigator.geolocation.getCurrentPosition(
-            (p) =>
-              ok({
-                lat: p.coords.latitude,
-                lon: p.coords.longitude,
-                texto: "Localização atual pelo GPS",
-              }),
+            (p) => {
+              const accuracy = Number(p.coords.accuracy), age = Date.now() - Number(p.timestamp);
+              if (typeof p.coords.accuracy !== "number" || !Number.isFinite(accuracy) || accuracy < 0 || accuracy > 100 || typeof p.timestamp !== "number" || !Number.isFinite(age) || age > 30000 || age < -10000 || !Number.isFinite(p.coords.latitude) || Math.abs(p.coords.latitude) > 90 || !Number.isFinite(p.coords.longitude) || Math.abs(p.coords.longitude) > 180) {
+                const error = new Error("O GPS está muito aproximado ou desatualizado. Tente em local aberto ou digite seu endereço completo para localizar a saída correta.");
+                error.code = "gps_impreciso"; erro(error); return;
+              }
+              ok({ lat: p.coords.latitude, lon: p.coords.longitude, accuracy, timestamp: p.timestamp,
+                texto: "Localização atual pelo GPS" });
+            },
             (e) => {
               let msg = "Não consegui pegar sua localização. ";
               if (e && e.code === 1)
@@ -3108,10 +3115,10 @@
             return await pegarGps({
               enableHighAccuracy: false,
               timeout: 10000,
-              maximumAge: 120000,
+              maximumAge: 0,
             });
-          } catch {
-            return Promise.reject(e);
+          } catch (fallbackError) {
+            return Promise.reject(fallbackError.code === "gps_impreciso" ? fallbackError : e);
           }
         }
       }

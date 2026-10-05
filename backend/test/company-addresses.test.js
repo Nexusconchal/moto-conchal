@@ -101,3 +101,14 @@ test('server retains original full address as a bounded fallback and supports di
   const district = backendHarness([[{ ...correct, city: 'Mogi-Guaçu', formatted: 'Rua Idalina Antunes Orsola 256, Martinho Prado, Mogi-Guaçu' }]]);
   assert.ok(await district.context.geocodeCapturedAddress('Rua Idalina Antunes Orsola 256, Martinho Prado'));
 });
+
+test('numbered streets without the word Rua still reject a different street',()=>{
+  for(const text of ['Idalina Antunes Orsola 256 jd dos palmeiras','Vereador Abílio Pinto 88 casa jd São Paulo']) {
+    const street=text.startsWith('Idalina')?'Rua Idalina Antunes Orsola':'Rua Vereador Abilio Pinto';
+    const number=text.startsWith('Idalina')?'256':'88';
+    const expected={...correct,street,housenumber:number};
+    assert.equal(ctx.resultadoEnderecoConfiavel(text,expected,expected.formatted),true);assert.equal(addressFeatureMatches(text,expected),true);
+    const wrong={...expected,street:'Rua das Azaleias'};
+    assert.equal(ctx.resultadoEnderecoConfiavel(text,wrong,wrong.formatted),false);assert.equal(addressFeatureMatches(text,wrong),false);
+  }
+});

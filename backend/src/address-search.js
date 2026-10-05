@@ -17,7 +17,8 @@ export function addressFeatureMatches(value, props = {}) {
   const text = normalized(value);
   const parts = streetNumber(text);
   if (parts && props.housenumber && normalized(props.housenumber).trim() !== parts.number) return false;
-  const road = (parts?.street || text).match(/^(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+(.+)/);
+  const roadText = parts?.street || text;
+  const road = roadText.match(/^(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+(.+)/) || (parts ? [roadText, roadText] : null);
   if (!road) return !!(props.street || props.housenumber || props.name);
   if (!props.street) return false;
   const words = road[1].split(/[^a-z0-9]+/).filter(word => (word.length > 1 || /^\d+$/.test(word)) && !['de','da','do','das','dos','dr','dra','doutor','doutora'].includes(word));

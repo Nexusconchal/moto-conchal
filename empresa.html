@@ -1443,7 +1443,7 @@
           Deposito minimo: R$ 10,00. O saldo so entra depois que o dono conferir
           o pagamento e aprovar no painel.
         </p>
-        <div class="recarga-valores" aria-label="Valores sugeridos de recarga">
+        <div id="recargaValores" class="recarga-valores" style="display:none" aria-label="Valores sugeridos de recarga">
           <button type="button" class="secondary" data-recarga-valor="10">R$ 10</button>
           <button type="button" class="secondary" data-recarga-valor="30">R$ 30</button>
           <button type="button" class="secondary" data-recarga-valor="50">R$ 50</button>
@@ -2053,7 +2053,7 @@
     <script src="./report-export.js?v=207"></script>
     <script src="./company-reports.js?v=207"></script>
     <script src="./company-profile.js?v=208"></script>
-    <script src="./company-deposits.js?v=209"></script>
+    <script src="./company-deposits.js?v=212"></script>
     <script>
       (() => {
         const originalFetch = window.fetch.bind(window);
@@ -2461,7 +2461,7 @@
         ultimoDepositoPix = pixKey;
         pixManualVisivel = false;
         const box = $("pixManualBox");
-        if (box) box.style.display = link && pixKey ? "grid" : "none";
+        if (box) box.style.display = pagamentoModo === "pix_manual" && link && pixKey ? "grid" : "none";
         if ($("pixManualKey")) {
           $("pixManualKey").value = pixKey;
           $("pixManualKey").type = "password";
@@ -2473,7 +2473,7 @@
         if ($("pixManualFeedback")) $("pixManualFeedback").textContent = "";
         if ($("pixManualCodigo"))
           $("pixManualCodigo").textContent = depositId
-            ? `Pedido de deposito: ${depositId}. Envie o comprovante para liberar o saldo.`
+            ? `Depósito solicitado: ${moeda(dados.valor)}. Código: ${depositId}. Envie o comprovante para liberar o saldo.`
             : "";
       }
       async function copiarTextoSeguro(texto) {
@@ -2667,7 +2667,8 @@
         const texto = normalizar(entrada);
         if (["city", "county", "state", "country", "postcode", "district", "suburb"].includes(props.result_type)) return false;
         const partes = separarRuaNumeroMapa(texto);
-        const rua = (partes?.rua || texto).match(/(?:^|\s)(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+([^,]+)/);
+        const textoRua = partes?.rua || texto;
+        const rua = textoRua.match(/(?:^|\s)(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+([^,]+)/) || (partes ? [textoRua, textoRua] : null);
         if (partes && props.housenumber && String(props.housenumber).trim().toLowerCase() !== partes.numero) return false;
         if (!rua) return !!(props.street || props.housenumber || props.name);
         if (!props.street) return false;
@@ -4633,7 +4634,7 @@
           return;
         }
         const btn = $("pedirDeposito"),
-          modo = pagamentoModo;
+          modo = pagamentoModo, session = empresaToken;
         btn.disabled = true;
         btn.textContent =
           modo === "mercadopago" ? "Abrindo Mercado Pago..." : "Solicitando...";
@@ -4661,10 +4662,11 @@
             throw new Error(
               d.message || d.error || "Nao consegui solicitar deposito.",
             );
+          if (session !== empresaToken || pagamentoModo !== modo) return;
           mostrarStatus(
             `Pedido de deposito criado. Copie a chave Pix abaixo, pague e depois envie o comprovante para liberar o saldo.`,
           );
-          mostrarBotaoPix(d);
+          mostrarBotaoPix({ ...d, valor });
         } catch (e) {
           mostrarStatus(e.message || "Erro ao pedir deposito.", true);
         } finally {
