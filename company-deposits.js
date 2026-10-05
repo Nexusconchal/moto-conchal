@@ -51,7 +51,7 @@
       current = data.deposit || null;
       loadedAt = Date.now();
       if (data.balance) options.balance(data.balance);
-      if (current) remember({ ...saved(), depositId: current.id });
+      if (current) remember({ ...saved(), depositId: current.id, requested: true });
       render(); return true;
     }
     async function load(force = false) {
@@ -61,7 +61,8 @@
       if (!force && Date.now() - loadedAt < 30000) { render(); return; }
       const params = new URLSearchParams(location.search);
       const fromReturn = params.get('depositId');
-      const id = fromReturn || saved().depositId || '';
+      const previous = saved();
+      const id = fromReturn || ((previous.requested || previous.requestId) ? previous.depositId : '') || '';
       if (!id) { loadedAt = Date.now(); render(); return; }
       const ticket = ++generation;
       busy = true; operation = 'load'; render();

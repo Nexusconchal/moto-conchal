@@ -5,7 +5,7 @@ import vm from 'node:vm';
 const code=fs.readFileSync(new URL('../../company-deposits.js',import.meta.url),'utf8');
 function ui(search='') {
   const nodes=new Map();const $=id=>{if(!nodes.has(id))nodes.set(id,{textContent:'',style:{},hidden:false,disabled:false,removeAttribute(){},focus(){}});return nodes.get(id);};
-  const storage=new Map([['motojaRecarga:company',JSON.stringify({depositId:'dep'})]]), calls=[],locations=[],balances=[],listeners={};let who='company',authed=true,mode='mercadopago',api=async()=>({available:true,deposit:null});
+  const storage=new Map([['motojaRecarga:company',JSON.stringify({depositId:'dep',requested:true})]]), calls=[],locations=[],balances=[],listeners={};let who='company',authed=true,mode='mercadopago',api=async()=>({available:true,deposit:null});
   const context=vm.createContext({window:{},document:{getElementById:$,querySelectorAll:()=>[],visibilityState:'visible',addEventListener:(name,fn)=>{listeners[name]=fn;}},localStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)},
     URL,URLSearchParams,Date,Number,String,Event,crypto:{randomUUID:()=> '12345678-1234-1234-1234-123456789012'},location:{search,pathname:'/empresa.html',hash:''},history:{replaceState(){}},
   });context.window.dispatchEvent=()=>{};vm.runInContext(code,context);
@@ -61,4 +61,11 @@ test('switching to manual while automatic checkout is pending prevents stale red
   const h=ui();let resolve;h.setApi(()=>new Promise(done=>{resolve=done;}));const waiting=h.controller.start(30);
   h.setMode('pix_manual');resolve({depositId:'new30',initPoint:'https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=new30'});await waiting;
   assert.equal(h.locations.length,0);assert.equal(h.$('recargaAutomatica').style.display,'none');assert.equal(h.balances.length,0);
+});
+
+
+test('an old receipt copied from server history is not shown as a newly requested payment',async()=>{
+  const h=ui();h.storage.set('motojaRecarga:company',JSON.stringify({depositId:'old20'}));
+  await h.controller.load();assert.equal(h.calls.length,0);assert.equal(h.$('recargaAutomatica').style.display,'none');
+  h.setMode('pix_manual');h.setMode('mercadopago');await h.controller.load(true);assert.equal(h.calls.length,0);
 });
