@@ -26,7 +26,7 @@
     function render() {
       const box = $('recargaAutomatica');
       box.style.display = automatic() && current ? 'grid' : 'none';
-      $('recargaValores').style.display = automatic() ? 'grid' : 'none';
+      $('recargaValores').style.display = automatic() ? 'flex' : 'none';
       $('recargaTitulo').textContent = current ? labels[current.status] || 'Aguardando confirmação' : 'Recarga automática';
       $('recargaTexto').textContent = !current
         ? 'Escolha o valor e pague no checkout seguro. O saldo entra após a confirmação do Mercado Pago.'
