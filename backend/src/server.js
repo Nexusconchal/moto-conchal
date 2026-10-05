@@ -15,6 +15,8 @@ import { addressSearchVariants, addressFeatureMatches } from './address-search.j
 import { prepareQuickDelivery, quickDeliveryFare } from './quick-delivery.js';
 import { deliveryReportQuantity, buildCompanyDeliveryReport } from './delivery-report.js';
 import { companyProfileUpdate } from './company-profile.js';
+import { protectedDelivery, deliveryHeld, completionReason, assertCompanyDelivery } from './delivery-completion.js';
+import { safeDepositCheckout, assertDepositPayment, assertDepositCompany, depositPaymentAmounts, companyDepositView } from './company-deposit.js';
 import { createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
 import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
 
@@ -984,7 +986,7 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
       ...delivery,
       empresaId: companyId,
       bairroEntrega: bairroFromAddress(delivery.entregaEncontrada || delivery.entrega),
-      tipo: 'entrega_empresarial', status: 'pendente', pagamento: 'saldo_pre_pago_empresa',
+      tipo: 'entrega_empresarial', status: 'pendente', confirmacaoEmpresaVersao: 1, pagamento: 'saldo_pre_pago_empresa',
       saldoReservado: delivery.valor,
       pedidoProduto: capturedOrderAmounts(captured, config),
       capturaPedidoId: orderRef.id,
@@ -2995,9 +2997,9 @@ async function createCompanyDepositPreference(depositId, deposit) {
       external_reference: `deposit:${depositId}`,
       notification_url: `${BACKEND_BASE_URL}/api/mercadopago/webhook`,
       back_urls: {
-        success: appUrl('/empresa.html?deposito=ok'),
-        failure: appUrl('/empresa.html?deposito=erro'),
-        pending: appUrl('/empresa.html?deposito=pendente')
+        success: appUrl(`/empresa.html?deposito=retorno&depositId=${encodeURIComponent(depositId)}`),
+        failure: appUrl(`/empresa.html?deposito=retorno&depositId=${encodeURIComponent(depositId)}`),
+        pending: appUrl(`/empresa.html?deposito=retorno&depositId=${encodeURIComponent(depositId)}`)
       },
       auto_return: 'approved',
       items: [{
@@ -3022,6 +3024,147 @@ async function createCompanyDepositPreference(depositId, deposit) {
     sandboxInitPoint: preference.sandbox_init_point,
     total
   };
+}
+
+async function applyCompanyDepositPayment(payment, depositId, paymentSource = 'owner') {
+  assertDepositPayment(payment, depositId, paymentSource);
+  const paymentStatus = String(payment.status || '');
+      const depositRef = db.collection('depositos').doc(depositId);
+      await db.runTransaction(async (tx) => {
+        const depositSnap = await tx.get(depositRef);
+        if (!depositSnap.exists) return;
+        const deposit = depositSnap.data() || {};
+        const companyRef = companyRefFromPhone(deposit.empresaId || deposit.telefoneEmpresa);
+        if (!companyRef) return;
+        assertDepositCompany(payment, deposit, companyRef.id);
+        const usageRef = db.collection('mercadoPagoPagamentos').doc(hashSecret(String(payment.id)));
+        const [usageSnap, companySnap] = await Promise.all([tx.get(usageRef), tx.get(companyRef)]);
+        const expectedTarget = `deposit:${depositId}`;
+        if (usageSnap.exists && usageSnap.data()?.target !== expectedTarget) {
+          const error = new Error('Pagamento Mercado Pago ja vinculado a outra operacao.');
+          error.status = 409;
+          error.code = 'pagamento_mercadopago_reutilizado';
+          throw error;
+        }
+
+        const alreadyCredited = !!deposit.aprovadoEm || deposit.status === 'aprovado';
+        const wasReversed = !!deposit.creditoEstornadoEm;
+        const valor = money(deposit.valor);
+        const { totalPago, taxaMercadoPago, valorLiquido } = depositPaymentAmounts(payment);
+        const amountMatches = Math.abs(totalPago - valor) <= 0.01;
+        const reversalStatuses = new Set(['refunded', 'charged_back', 'cancelled']);
+
+        const updateDeposit = {
+          status: wasReversed
+            ? 'credito_estornado'
+            : alreadyCredited ? 'aprovado' : paymentStatus === 'approved' && amountMatches ? 'aprovado' : paymentStatus || 'aguardando_pagamento',
+          mercadoPago: {
+            ...(deposit.mercadoPago || {}),
+            paymentId: String(payment.id),
+            status: paymentStatus,
+            statusDetail: payment.status_detail || null,
+            totalPago, taxaMercadoPago, valorLiquido,
+            atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+          },
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        if (reversalStatuses.has(paymentStatus) && alreadyCredited && !wasReversed) {
+          const before = companyBalance(companySnap.exists ? companySnap.data() : {});
+          const debit = money(deposit.valorCreditado || valorLiquido || valor);
+          const afterSaldo = money(before.saldo - debit);
+          tx.set(companyRef, {
+            saldo: afterSaldo,
+            reservado: before.reservado,
+            bloqueioFinanceiro: afterSaldo < before.reservado,
+            ultimoEstornoMercadoPagoEm: admin.firestore.FieldValue.serverTimestamp(),
+            atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+          tx.set(ledgerRef(companyRef.id), {
+            tipo: 'debito',
+            origem: 'estorno_deposito_mercadopago',
+            depositoId: depositId,
+            paymentId: String(payment.id),
+            valor: debit,
+            saldoAntes: before.saldo,
+            saldoDepois: afterSaldo,
+            reservadoAntes: before.reservado,
+            reservadoDepois: before.reservado,
+            criadoEm: admin.firestore.FieldValue.serverTimestamp()
+          });
+          tx.set(usageRef, {
+            target: expectedTarget,
+            paymentId: String(payment.id),
+            status: paymentStatus,
+            atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+          tx.set(depositRef, {
+            ...updateDeposit,
+            status: 'credito_estornado',
+            creditoEstornadoEm: admin.firestore.FieldValue.serverTimestamp(),
+            valorEstornado: debit
+          }, { merge: true });
+          return;
+        }
+
+        if (alreadyCredited && !wasReversed && !reversalStatuses.has(paymentStatus) && paymentStatus !== 'approved') return;
+
+        if (paymentStatus !== 'approved' || alreadyCredited || wasReversed) {
+          tx.set(depositRef, updateDeposit, { merge: true });
+          return;
+        }
+
+        if (!amountMatches) {
+          tx.set(depositRef, {
+            ...updateDeposit,
+            status: 'pagamento_divergente',
+            divergencia: {
+              esperado: valor,
+              recebido: totalPago,
+              motivo: 'valor_pago_diferente_do_deposito'
+            }
+          }, { merge: true });
+          return;
+        }
+
+        const before = companyBalance(companySnap.exists ? companySnap.data() : {});
+        const afterSaldo = money(before.saldo + valorLiquido);
+        tx.set(companyRef, {
+          saldo: afterSaldo,
+          reservado: before.reservado,
+          pagamentoModo: 'mercadopago',
+          ultimoDepositoMercadoPagoEm: admin.firestore.FieldValue.serverTimestamp(),
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        tx.set(ledgerRef(companyRef.id), {
+          tipo: 'credito',
+          origem: 'deposito_mercadopago_aprovado',
+          depositoId: depositRef.id,
+          valor: valorLiquido,
+          valorBruto: totalPago,
+          taxaMercadoPago,
+          saldoAntes: before.saldo,
+          saldoDepois: afterSaldo,
+          reservadoAntes: before.reservado,
+          reservadoDepois: before.reservado,
+          criadoEm: admin.firestore.FieldValue.serverTimestamp()
+        });
+        tx.set(usageRef, {
+          target: expectedTarget,
+          paymentId: String(payment.id),
+          status: paymentStatus,
+          criadoEm: admin.firestore.FieldValue.serverTimestamp(),
+          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        tx.set(depositRef, {
+          ...updateDeposit,
+          aprovadoEm: admin.firestore.FieldValue.serverTimestamp(),
+          aprovadoPor: 'mercadopago_webhook',
+          valorCreditado: valorLiquido,
+          valorBruto: totalPago,
+          taxaMercadoPago
+        }, { merge: true });
+      });
 }
 
 async function getDriverWithMercadoPago(driverCpf) {
@@ -3351,7 +3494,16 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
     const snap = await tx.get(deliveryRef);
     if (!snap.exists) return;
     const delivery = snap.data();
-    if (delivery.status === 'finalizada') return;
+    if (delivery.status === 'finalizada') {
+      if (extra.resolucaoDono) { const error = new Error('Entrega já finalizada.'); error.status = 409; throw error; }
+      return;
+    }
+    if (deliveryHeld(delivery) && !extra.resolucaoDono) {
+      const error = new Error('A retirada já foi confirmada. Informe o problema ao suporte; o saldo fica reservado para conferência.'); error.status = 409; throw error;
+    }
+    if (extra.resolucaoDono && (!protectedDelivery(delivery) || !['aguardando_empresa','contestada'].includes(delivery.conclusaoStatus))) {
+      const error = new Error('Esta entrega não está em conferência.'); error.status = 409; throw error;
+    }
 
     const valor = money(delivery.saldoReservado || delivery.valor || 0);
     const companyRef = companyRefFromPhone(delivery.empresaId || delivery.telefoneEmpresa);
@@ -3387,6 +3539,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
       released = true;
     }
 
+    if (extra.resolucaoDono) tx.set(deliveryRef.collection('confirmacoes').doc('resolucao_dono'), { acao: 'recusar_conclusao', motivo: extra.resolucaoDono.motivo, criadoEm: admin.firestore.FieldValue.serverTimestamp() });
     tx.update(deliveryRef, updates);
   });
   return released;
@@ -8304,62 +8457,115 @@ app.post('/api/companies/deposit-request', assertCompany, assertCompanyApproved,
   }
 });
 
-app.post('/api/companies/deposit-preference', assertCompany, assertCompanyApproved, createRideLimiter, async (req, res, next) => {
+
+const companyDepositLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, keyGenerator: req => req.companyId,
+  standardHeaders: true, legacyHeaders: false,
+  message: { message: 'Aguarde um minuto antes de conferir a recarga novamente.' } });
+const depositVerificationCache = new Map();
+const depositVerificationsRunning = new Set();
+
+async function ownCompanyDeposit(req, explicitId = '') {
+  const id = explicitId || req.company.mercadoPagoEmpresa?.ultimoDepositoId || '';
+  if (!id) return null;
+  if (!/^[\w-]{1,100}$/.test(id)) { const error = new Error('Recarga não encontrada.'); error.status = 404; throw error; }
+  const snap = await db.collection('depositos').doc(id).get();
+  if (!snap.exists || onlyDigits(snap.data().empresaId || snap.data().telefoneEmpresa) !== req.companyId
+    || snap.data().metodo !== 'mercadopago') {
+    const error = new Error('Recarga não encontrada nesta conta.'); error.status = 404; throw error;
+  }
+  return snap;
+}
+
+app.get('/api/companies/me/deposit', assertCompany, assertCompanyApproved, companyDepositLimiter, async (req, res, next) => {
+  try {
+    const snap = await ownCompanyDeposit(req, String(req.query.id || ''));
+    res.set('Cache-Control', 'no-store');
+    return res.json({ ok: true, available: !!process.env.MP_OWNER_ACCESS_TOKEN,
+      deposit: snap ? companyDepositView(snap.id, snap.data()) : null });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/companies/me/deposit/verify', assertCompany, assertCompanyApproved, companyDepositLimiter, async (req, res, next) => {
+  let verificationKey = '', verificationAcquired = false;
+  try {
+    const snap = await ownCompanyDeposit(req, String(req.body.depositId || ''));
+    if (!snap) return res.status(404).json({ message: 'Nenhuma recarga automática encontrada.' });
+    verificationKey = snap.id;
+    const recent = depositVerificationCache.get(verificationKey) || 0;
+    const current = companyDepositView(snap.id, snap.data());
+    if (!current.creditado && current.status !== 'credito_estornado'
+      && Date.now() - recent > 30 * 1000 && !depositVerificationsRunning.has(verificationKey)) {
+      depositVerificationsRunning.add(verificationKey); verificationAcquired = true;
+      // Cooldown also applies on provider errors, avoiding expensive repeated retries.
+      if (depositVerificationCache.size >= 1000) depositVerificationCache.delete(depositVerificationCache.keys().next().value);
+      depositVerificationCache.set(verificationKey, Date.now());
+      const search = await mpFetch(`/v1/payments/search?external_reference=${encodeURIComponent(`deposit:${snap.id}`)}&sort=date_created&criteria=desc&limit=10`,
+        { token: requiredEnv('MP_OWNER_ACCESS_TOKEN') });
+      const results = (Array.isArray(search.results) ? search.results : [])
+        .filter(payment => payment.external_reference === `deposit:${snap.id}`);
+      const payment = results.find(payment => payment.status === 'approved') || results[0];
+      if (payment) {
+        // Fetch the payment itself; redirects, screenshots and client values cannot approve credit.
+        const authoritative = await mpFetch(`/v1/payments/${payment.id}`, { token: requiredEnv('MP_OWNER_ACCESS_TOKEN') });
+        if (String(authoritative.id) !== String(payment.id)) throw new Error('Pagamento retornado inválido.');
+        await applyCompanyDepositPayment(authoritative, snap.id);
+      }
+    }
+    const fresh = await snap.ref.get();
+    res.set('Cache-Control', 'no-store');
+    return res.json({ ok: true, deposit: companyDepositView(fresh.id, fresh.data()),
+      balance: companyBalance((await req.companySnap.ref.get()).data() || {}) });
+  } catch (error) { next(error); }
+  finally { if (verificationAcquired) depositVerificationsRunning.delete(verificationKey); }
+});
+
+app.post('/api/companies/deposit-preference', assertCompany, assertCompanyApproved, companyDepositLimiter, async (req, res, next) => {
+  let depositRef, claimed = false;
   try {
     const deposit = {
-      ...depositPublicData({
-        ...req.body,
-        empresa: req.company.empresa,
-        responsavel: req.company.responsavel,
-        telefoneEmpresa: req.companyId,
-        metodo: 'mercadopago'
-      }),
-      email: req.company.email || ''
+      ...depositPublicData({ ...req.body, empresa: req.company.empresa, responsavel: req.company.responsavel,
+        telefoneEmpresa: req.companyId, metodo: 'mercadopago' }), email: req.company.email || ''
     };
-
-    if (!deposit.valor || deposit.valor < 10 || deposit.valor > 5000) {
-      return res.status(400).json({ error: 'valor_deposito_invalido', message: 'Deposito deve ser entre R$ 10,00 e R$ 5.000,00.' });
+    if (!deposit.valor || deposit.valor < 10 || deposit.valor > 5000)
+      return res.status(400).json({ error: 'valor_deposito_invalido', message: 'Depósito deve ser entre R$ 10,00 e R$ 5.000,00.' });
+    requiredEnv('MP_OWNER_ACCESS_TOKEN');
+    const requestId = String(req.body.requestId || '');
+    if (requestId && !/^[a-zA-Z0-9-]{16,80}$/.test(requestId))
+      return res.status(400).json({ message: 'Identificador de recarga inválido.' });
+    depositRef = requestId ? db.collection('depositos').doc(`mp_${hashSecret(`${req.companyId}:${requestId}`)}`)
+      : db.collection('depositos').doc();
+    let existing;
+    await db.runTransaction(async tx => {
+      const snap = await tx.get(depositRef);
+      if (snap.exists) { existing = snap.data(); return; }
+      tx.create(depositRef, { ...deposit, empresaId: req.companyId, metodo: 'mercadopago', status: 'criando_pagamento',
+        criadaEm: admin.firestore.FieldValue.serverTimestamp(), atualizadaEm: admin.firestore.FieldValue.serverTimestamp() });
+      claimed = true;
+    });
+    if (existing) {
+      if (money(existing.valor) !== deposit.valor) return res.status(409).json({ message: 'Esta recarga já foi criada com outro valor. Atualize a página.' });
+      const view = companyDepositView(depositRef.id, existing);
+      if (view.checkoutUrl || view.creditado || view.status === 'credito_estornado')
+        return res.json({ ok: true, depositId: depositRef.id, status: view.status, initPoint: view.checkoutUrl, reused: true });
+      return res.status(409).json({ message: 'Esta recarga está sendo preparada ou precisa de conferência. Consulte o status antes de criar outra.', depositId: depositRef.id });
     }
-
-    const depositRef = db.collection('depositos').doc();
     const preference = await createCompanyDepositPreference(depositRef.id, deposit);
-
-    await db.runTransaction(async (tx) => {
-      tx.set(req.companySnap.ref, {
-        pagamentoModo: 'mercadopago',
-        mercadoPagoEmpresa: {
-          ultimoPreferenceId: preference.preferenceId,
-          ultimoDepositoId: depositRef.id,
-          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
-        },
-        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-
-      tx.set(depositRef, {
-        ...deposit,
-        empresaId: req.companyId,
-        metodo: 'mercadopago',
-        status: 'aguardando_pagamento',
-        mercadoPago: {
-          preferenceId: preference.preferenceId,
-          initPoint: preference.initPoint,
-          sandboxInitPoint: preference.sandboxInitPoint,
-          criadoEm: admin.firestore.FieldValue.serverTimestamp()
-        },
-        criadaEm: admin.firestore.FieldValue.serverTimestamp(),
-        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-      });
+    const initPoint = safeDepositCheckout(preference.initPoint);
+    if (!initPoint) throw new Error('O Mercado Pago não retornou um checkout válido. Tente novamente mais tarde.');
+    await db.runTransaction(async tx => {
+      const snap = await tx.get(depositRef);
+      const data = snap.data() || {};
+      tx.set(req.companySnap.ref, { pagamentoModo: 'mercadopago',
+        mercadoPagoEmpresa: { ultimoPreferenceId: preference.preferenceId, ultimoDepositoId: depositRef.id,
+          atualizadoEm: admin.firestore.FieldValue.serverTimestamp() }, atualizadaEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      tx.set(depositRef, { status: data.aprovadoEm || data.creditoEstornadoEm ? data.status : 'aguardando_pagamento',
+        mercadoPago: { ...(data.mercadoPago || {}), preferenceId: preference.preferenceId, initPoint,
+          criadoEm: admin.firestore.FieldValue.serverTimestamp() }, atualizadaEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
     });
-
-    return res.status(201).json({
-      ok: true,
-      depositId: depositRef.id,
-      status: 'aguardando_pagamento',
-      initPoint: preference.initPoint,
-      sandboxInitPoint: preference.sandboxInitPoint
-    });
+    return res.status(201).json({ ok: true, depositId: depositRef.id, status: 'aguardando_pagamento', initPoint });
   } catch (error) {
-    return next(error);
+    if (claimed && depositRef) await depositRef.set({ preparacaoFalhouEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true }).catch(() => {});
+    next(error);
   }
 });
 
@@ -8507,6 +8713,11 @@ app.post('/api/admin/deposits/:depositId/cancel-credit', assertOwner, async (req
       const deposit = depositSnap.data();
       if (deposit.status !== 'aprovado') {
         const error = new Error('So e possivel cancelar credito de deposito aprovado.');
+        error.status = 409;
+        throw error;
+      }
+      if (deposit.metodo === 'mercadopago') {
+        const error = new Error('Para uma recarga automática, faça o estorno no Mercado Pago. A confirmação atualiza o saldo automaticamente.');
         error.status = 409;
         throw error;
       }
@@ -8951,6 +9162,7 @@ app.post('/api/companies/daily-plan/activate', assertCompany, assertCompanyAppro
 app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimiter, async (req, res, next) => {
   try {
     const delivery = deliveryPublicData(req.body);
+    delivery.confirmacaoEmpresaVersao = 1;
     delivery.telefoneEmpresa = req.companyId;
     delivery.telefoneContato = onlyDigits(req.company.telefoneContato || req.companyId);
     delivery.empresa = cleanText(req.company.empresa || delivery.empresa, 120);
@@ -9751,6 +9963,9 @@ app.post('/api/deliveries/:deliveryId/pickup', async (req, res, next) => {
         error.code = 'entrega_nao_esta_aceita';
         throw error;
       }
+      if (protectedDelivery(delivery) && (!delivery.retiradaLiberadaEm || delivery.conclusaoStatus)) {
+        const error = new Error('Peça à loja para confirmar a retirada no app da empresa.'); error.status = 409; throw error;
+      }
       companyId = onlyDigits(delivery.empresaId || delivery.telefoneEmpresa);
       if (delivery.status === 'aceita') {
         tx.update(deliveryRef, {
@@ -10147,7 +10362,12 @@ app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (r
       }
 
       const valorOriginal = money(delivery.saldoReservado || delivery.valor || 0);
-      const valor = requestedValue > 0 ? requestedValue : valorOriginal;
+      if (protectedDelivery(delivery)) {
+        completionReason(reason);
+        if (!['aceita','retirada'].includes(delivery.status)) { const error = new Error('Entrega não está disponível para conclusão.'); error.status = 409; throw error; }
+        if (requestedValue > 0 && requestedValue !== valorOriginal) { const error = new Error('A conclusão protegida usa o valor reservado da chamada.'); error.status = 409; throw error; }
+      }
+      const valor = protectedDelivery(delivery) ? valorOriginal : requestedValue > 0 ? requestedValue : valorOriginal;
       const companyRef = companyRefFromPhone(delivery.empresaId || delivery.telefoneEmpresa);
       if (!companyRef || valor <= 0 || valor > 5000) {
         const error = new Error('Dados de saldo da empresa invalidos.');
@@ -10163,6 +10383,9 @@ app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (r
         throw error;
       }
 
+      if (protectedDelivery(delivery) && (balance.reservado < valor || balance.saldo < balance.reservado)) {
+        const error = new Error('Saldo ou reserva insuficiente. Regularize a conta antes de concluir.'); error.status = 409; throw error;
+      }
       const wasReserved = !delivery.saldoLiberadoEm;
       const nextSaldo = money(balance.saldo - valor);
       const nextReserved = wasReserved ? money(Math.max(0, balance.reservado - valor)) : balance.reservado;
@@ -10203,6 +10426,7 @@ app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (r
 
       tx.update(deliveryRef, {
         status: 'finalizada',
+        ...(protectedDelivery(delivery) ? { conclusaoStatus: 'resolvida_dono', conclusaoResolvidaEm: admin.firestore.FieldValue.serverTimestamp() } : {}),
         rastreamentoAtivo: false,
         motoboyLocalizacao: admin.firestore.FieldValue.delete(),
         localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
@@ -10231,6 +10455,7 @@ app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (r
       });
     });
 
+    adminStateCache = null;
     const finishedDelivery = await deliveryRef.get();
     const finishedData = finishedDelivery.data() || {};
     emitDeliveryTracking(finishedData.empresaId || finishedData.telefoneEmpresa, {
@@ -10244,14 +10469,93 @@ app.post('/api/admin/deliveries/:deliveryId/force-finish', assertOwner, async (r
   }
 });
 
-app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
-  try {
-    const driverCpf = onlyDigits(req.body.driverCpf);
-    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
-    await getDriverWithProof(driverCpf, req.body);
+const deliveryConfirmationLimiter = rateLimit({ windowMs: 60 * 1000, max: 20, keyGenerator: req => req.companyId,
+  standardHeaders: true, legacyHeaders: false, message: { message: 'Aguarde um minuto antes de tentar novamente.' } });
 
-    const deliveryRef = db.collection('entregas').doc(req.params.deliveryId);
-    await db.runTransaction(async (tx) => {
+async function emitCompletionChange(ref) {
+  const delivery = (await ref.get()).data() || {};
+  adminStateCache = null;
+  emitDeliveryTracking(delivery.empresaId || delivery.telefoneEmpresa, {
+    deliveryId: ref.id, status: delivery.status, confirmacaoEmpresaVersao: delivery.confirmacaoEmpresaVersao || 0,
+    retiradaLiberadaEm: serializeFirestore(delivery.retiradaLiberadaEm || null),
+    conclusaoStatus: delivery.conclusaoStatus || '', contestacaoMotivo: delivery.contestacaoMotivo || '', rastreamentoAtivo: delivery.rastreamentoAtivo === true
+  });
+}
+
+app.post('/api/companies/me/deliveries/:deliveryId/confirm-pickup', assertCompany, assertCompanyApproved, deliveryConfirmationLimiter, async (req, res, next) => {
+  try {
+    const ref = db.collection('entregas').doc(req.params.deliveryId);
+    await db.runTransaction(async tx => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) { const error = new Error('Entrega não encontrada.'); error.status = 404; throw error; }
+      const delivery = snap.data(); assertCompanyDelivery(delivery, req.companyId);
+      if (delivery.retiradaLiberadaEm) return;
+      if (delivery.status !== 'aceita' || !delivery.motoboyCpf) { const error = new Error('Aguarde o motoboy aceitar para confirmar a retirada.'); error.status = 409; throw error; }
+      tx.update(ref, { retiradaLiberadaEm: admin.firestore.FieldValue.serverTimestamp(), retiradaLiberadaPorEmpresa: req.companyId, atualizadaEm: admin.firestore.FieldValue.serverTimestamp() });
+      tx.set(ref.collection('confirmacoes').doc('retirada_empresa'), { acao: 'confirmar_retirada', ator: req.companyId,
+        motoboyCpf: delivery.motoboyCpf, quantidade: deliveryStopCount(delivery.paradas), criadoEm: admin.firestore.FieldValue.serverTimestamp() });
+    });
+    await emitCompletionChange(ref);
+    res.json({ ok: true, message: 'Retirada confirmada. O motoboy pode iniciar o trajeto pelo app.' });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/companies/me/deliveries/:deliveryId/approve-completion', assertCompany, assertCompanyApproved, deliveryConfirmationLimiter, async (req, res, next) => {
+  try {
+    const ref = db.collection('entregas').doc(req.params.deliveryId);
+    const snap = await ref.get();
+    if (!snap.exists) { const error = new Error('Entrega não encontrada.'); error.status = 404; throw error; }
+    assertCompanyDelivery(snap.data(), req.companyId);
+    const result = await finishCompanyDelivery(ref, onlyDigits(snap.data().motoboyCpf), {}, req.companyId);
+    await emitCompletionChange(ref);
+    res.json({ ok: true, ...result, message: 'Entregas confirmadas. Saldo descontado e ganho registrado uma única vez.' });
+  } catch (error) { next(error); }
+});
+
+async function contestCompanyDelivery(ref, reason, actor, companyId = '', driverCpf = '') {
+  await db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) { const error = new Error('Entrega não encontrada.'); error.status = 404; throw error; }
+    const delivery = snap.data();
+    if (companyId) assertCompanyDelivery(delivery, companyId);
+    else if (!protectedDelivery(delivery) || onlyDigits(delivery.motoboyCpf) !== driverCpf) { const error = new Error('Entrega não pertence ao motoboy.'); error.status = 404; throw error; }
+    if (!deliveryHeld(delivery) || !['aceita','retirada'].includes(delivery.status)) { const error = new Error('Esta entrega não pode ser contestada.'); error.status = 409; throw error; }
+    if (delivery.conclusaoStatus === 'contestada') return;
+    tx.update(ref, { conclusaoStatus: 'contestada', contestacaoMotivo: reason, contestacaoPor: actor,
+      contestadaEm: admin.firestore.FieldValue.serverTimestamp(), rastreamentoAtivo: false, atualizadaEm: admin.firestore.FieldValue.serverTimestamp() });
+    tx.set(ref.collection('confirmacoes').doc('contestacao'), { acao: 'contestar', ator: actor, motivo: reason, criadoEm: admin.firestore.FieldValue.serverTimestamp() });
+  });
+  await emitCompletionChange(ref);
+}
+
+app.post('/api/companies/me/deliveries/:deliveryId/contest-completion', assertCompany, assertCompanyApproved, deliveryConfirmationLimiter, async (req, res, next) => {
+  try {
+    await contestCompanyDelivery(db.collection('entregas').doc(req.params.deliveryId), completionReason(req.body.reason), `empresa:${req.companyId}`, req.companyId);
+    res.json({ ok: true, message: 'Problema registrado. O valor continua reservado para o dono conferir.' });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/deliveries/:deliveryId/problem', createRideLimiter, async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.body.driverCpf); await getDriverWithProof(cpf, req.body);
+    await contestCompanyDelivery(db.collection('entregas').doc(req.params.deliveryId), completionReason(req.body.reason), `motoboy:${cpf}`, '', cpf);
+    res.json({ ok: true, message: 'Problema registrado para análise do dono. O saldo permanece reservado.' });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/admin/deliveries/:deliveryId/deny-completion', assertOwner, async (req, res, next) => {
+  try {
+    const reason = completionReason(req.body.reason);
+    const ref = db.collection('entregas').doc(req.params.deliveryId);
+    await releaseDeliveryReservation(ref, 'cancelada', { conclusaoStatus: 'recusada_dono', motivoCancelamento: reason,
+      resolucaoDono: { motivo: reason }, conclusaoResolvidaEm: admin.firestore.FieldValue.serverTimestamp() });
+    await emitCompletionChange(ref);
+    res.json({ ok: true, message: 'Conclusão recusada pelo dono. Reserva liberada sem registrar ganho.' });
+  } catch (error) { next(error); }
+});
+
+async function finishCompanyDelivery(deliveryRef, driverCpf, body = {}, approvalCompanyId = '') {
+    return db.runTransaction(async (tx) => {
       const deliverySnap = await tx.get(deliveryRef);
       if (!deliverySnap.exists) {
         const error = new Error('Entrega nao encontrada.');
@@ -10260,6 +10564,19 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
       }
 
       const delivery = deliverySnap.data();
+      if (onlyDigits(delivery.motoboyCpf) !== driverCpf) { const error = new Error('Entrega nao pertence ao motoboy.'); error.status = 409; throw error; }
+      if (approvalCompanyId) {
+        assertCompanyDelivery(delivery, approvalCompanyId);
+        if (delivery.status === 'finalizada' && delivery.conclusaoStatus === 'aprovada_empresa') return { status: 'finalizada' };
+        if (delivery.conclusaoStatus !== 'aguardando_empresa' || !delivery.retiradaLiberadaEm) {
+          const error = new Error('A conclusão não está aguardando aprovação da empresa. Contestações precisam do dono.'); error.status = 409; throw error;
+        }
+      }
+      if (protectedDelivery(delivery) && !approvalCompanyId) {
+        if (!delivery.retiradaLiberadaEm) { const error = new Error('Peça à loja para confirmar a retirada no app da empresa.'); error.status = 409; throw error; }
+        if (['aguardando_empresa','contestada'].includes(delivery.conclusaoStatus)) return { status: delivery.status, pendingApproval: true, conclusaoStatus: delivery.conclusaoStatus };
+      }
+
       if (onlyDigits(delivery.motoboyCpf) !== driverCpf) {
         const error = new Error('Entrega nao pertence ao motoboy.');
         error.status = 409;
@@ -10286,7 +10603,7 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
         throw error;
       }
 
-      if (!exclusiveService) {
+      if (!exclusiveService && !approvalCompanyId) {
         const pickupMs = timestampMs(delivery.retiradaConfirmadaEm);
         if (!pickupMs || Date.now() - pickupMs < 30 * 1000) {
           const error = new Error('Aguarde alguns segundos apos confirmar a retirada antes de finalizar.');
@@ -10302,7 +10619,7 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
           error.code = 'localizacao_finalizacao_desatualizada';
           throw error;
         }
-        if (delivery.entregaNaNota && req.body.confirmarLoteEntregue !== true) {
+        if (delivery.entregaNaNota && body.confirmarLoteEntregue !== true) {
           const error = new Error('Confirme que todas as entregas do lote foram concluidas.');
           error.status = 409;
           error.code = 'confirme_lote_entregue';
@@ -10329,10 +10646,22 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
         }
       }
 
+      if (protectedDelivery(delivery) && !approvalCompanyId) {
+        tx.update(deliveryRef, {
+          conclusaoStatus: 'aguardando_empresa', conclusaoSolicitadaEm: admin.firestore.FieldValue.serverTimestamp(),
+          conclusaoSolicitadaPorCpf: driverCpf, conclusaoLocalizacao: delivery.motoboyLocalizacao || null,
+          rastreamentoAtivo: false, atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        });
+        tx.set(deliveryRef.collection('confirmacoes').doc('solicitacao_conclusao'), {
+          acao: 'solicitar_conclusao', ator: driverCpf, criadoEm: admin.firestore.FieldValue.serverTimestamp()
+        });
+        return { status: 'retirada', pendingApproval: true, conclusaoStatus: 'aguardando_empresa' };
+      }
+
       const valor = money(delivery.saldoReservado || delivery.valor || 0);
       const split = deliverySplit(delivery);
       const quantidadeExclusivo = delivery.tipo === 'servico_exclusivo'
-        ? Math.max(0, Math.min(300, Math.floor(Number(req.body.quantidadeEntregasExclusivo || 0))))
+        ? Math.max(0, Math.min(300, Math.floor(Number(body.quantidadeEntregasExclusivo || 0))))
         : 0;
       const companyRef = companyRefFromPhone(delivery.empresaId || delivery.telefoneEmpresa);
       if (!companyRef || valor <= 0) {
@@ -10344,7 +10673,7 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
 
       const companySnap = await tx.get(companyRef);
       const balance = companyBalance(companySnap.exists ? companySnap.data() : {});
-      if (balance.reservado < valor) {
+      if (balance.reservado < valor || (protectedDelivery(delivery) && balance.saldo < balance.reservado)) {
         const error = new Error('A reserva da empresa nao cobre esta entrega. Chame o suporte antes de finalizar.');
         error.status = 409;
         error.code = 'saldo_reservado_insuficiente';
@@ -10377,6 +10706,7 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
 
       tx.update(deliveryRef, {
         status: 'finalizada',
+        ...(approvalCompanyId ? { conclusaoStatus: 'aprovada_empresa', conclusaoAprovadaPorEmpresa: approvalCompanyId, conclusaoAprovadaEm: admin.firestore.FieldValue.serverTimestamp() } : {}),
         rastreamentoAtivo: false,
         motoboyLocalizacao: admin.firestore.FieldValue.delete(),
         localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
@@ -10392,19 +10722,27 @@ app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
         quantidadeEntregasExclusivo: quantidadeExclusivo || admin.firestore.FieldValue.delete(),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
+      if (approvalCompanyId) tx.set(deliveryRef.collection('confirmacoes').doc('aprovacao_empresa'), {
+        acao: 'aprovar_conclusao', ator: approvalCompanyId, valor, criadoEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+      return { status: 'finalizada' };
     });
-
-    const finishedDelivery = await deliveryRef.get();
-    const finishedData = finishedDelivery.data() || {};
-    emitDeliveryTracking(finishedData.empresaId || finishedData.telefoneEmpresa, {
-      deliveryId: deliveryRef.id,
-      status: 'finalizada',
-      rastreamentoAtivo: false
+}
+app.post('/api/deliveries/:deliveryId/finish', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+    const deliveryRef = db.collection('entregas').doc(req.params.deliveryId);
+    const result = await finishCompanyDelivery(deliveryRef, driverCpf, req.body);
+    const finished = (await deliveryRef.get()).data() || {};
+    emitDeliveryTracking(finished.empresaId || finished.telefoneEmpresa, {
+      deliveryId: deliveryRef.id, status: result.status, conclusaoStatus: result.conclusaoStatus || finished.conclusaoStatus || '',
+      confirmacaoEmpresaVersao: finished.confirmacaoEmpresaVersao || 0, rastreamentoAtivo: false
     });
-    res.json({ ok: true });
-  } catch (error) {
-    next(error);
-  }
+    adminStateCache = null;
+    res.json({ ok: true, ...result });
+  } catch (error) { next(error); }
 });
 
 app.post('/api/drivers/:cpf/mercadopago/oauth-link', authLimiter, async (req, res, next) => {
@@ -10745,6 +11083,7 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
     if (!paymentId || !String(topic).includes('payment')) {
       return res.status(200).json({ ignored: true });
     }
+    if (!/^\d{1,40}$/.test(String(paymentId))) return res.status(400).json({ error: 'mercadopago_payment_id_invalido' });
 
     const webhookDriverCpf = onlyDigits(req.query.driverCpf);
     let payment;
@@ -10782,161 +11121,7 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
     const paymentKind = String(payment.metadata?.payment_kind || '');
     if (authoritativeReference.startsWith('deposit:') || paymentKind === 'company_deposit') {
       const depositId = String(payment.metadata?.deposit_id || authoritativeReference.replace(/^deposit:/, '')).trim();
-      const paymentStatus = String(payment.status || '');
-      if (!depositId) return res.status(200).json({ ignored: true });
-      const expectedReference = `deposit:${depositId}`;
-      if (paymentSource !== 'owner'
-        || paymentKind !== 'company_deposit'
-        || externalReference !== expectedReference
-        || String(payment.metadata?.deposit_id || '') !== depositId
-        || String(payment.currency_id || '').toUpperCase() !== 'BRL') {
-        return res.status(409).json({ error: 'deposito_mercadopago_nao_autentico' });
-      }
-
-      const depositRef = db.collection('depositos').doc(depositId);
-      await db.runTransaction(async (tx) => {
-        const depositSnap = await tx.get(depositRef);
-        if (!depositSnap.exists) return;
-        const deposit = depositSnap.data() || {};
-        const companyRef = companyRefFromPhone(deposit.empresaId || deposit.telefoneEmpresa);
-        if (!companyRef) return;
-        if (onlyDigits(payment.metadata?.company_id) !== companyRef.id) {
-          const error = new Error('Pagamento nao pertence a esta empresa.');
-          error.status = 409;
-          error.code = 'deposito_empresa_divergente';
-          throw error;
-        }
-        const usageRef = db.collection('mercadoPagoPagamentos').doc(hashSecret(String(payment.id)));
-        const [usageSnap, companySnap] = await Promise.all([tx.get(usageRef), tx.get(companyRef)]);
-        const expectedTarget = `deposit:${depositId}`;
-        if (usageSnap.exists && usageSnap.data()?.target !== expectedTarget) {
-          const error = new Error('Pagamento Mercado Pago ja vinculado a outra operacao.');
-          error.status = 409;
-          error.code = 'pagamento_mercadopago_reutilizado';
-          throw error;
-        }
-
-        const alreadyCredited = !!deposit.aprovadoEm || deposit.status === 'aprovado';
-        const wasReversed = !!deposit.creditoEstornadoEm;
-        const valor = money(deposit.valor);
-        const totalPago = money(payment.transaction_amount);
-        const taxaMercadoPago = money(payment.fee_details?.reduce?.((sum, fee) => sum + Number(fee.amount || 0), 0) || payment.marketplace_fee || 0);
-        const valorLiquido = money(payment.transaction_details?.net_received_amount || Math.max(0, totalPago - taxaMercadoPago));
-        const amountMatches = Math.abs(totalPago - valor) <= 0.01;
-        const reversalStatuses = new Set(['refunded', 'charged_back', 'cancelled']);
-
-        const updateDeposit = {
-          status: wasReversed
-            ? 'credito_estornado'
-            : paymentStatus === 'approved' && amountMatches ? 'aprovado' : paymentStatus || 'aguardando_pagamento',
-          mercadoPago: {
-            ...(deposit.mercadoPago || {}),
-            paymentId: String(payment.id),
-            status: paymentStatus,
-            statusDetail: payment.status_detail || null,
-            totalPago: money(payment.transaction_amount),
-            taxaMercadoPago: money(payment.fee_details?.reduce?.((sum, fee) => sum + Number(fee.amount || 0), 0) || payment.marketplace_fee || 0),
-            valorLiquido: money(payment.transaction_details?.net_received_amount || payment.transaction_amount || 0),
-            atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
-          },
-          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-        };
-
-        if (reversalStatuses.has(paymentStatus) && alreadyCredited && !wasReversed) {
-          const before = companyBalance(companySnap.exists ? companySnap.data() : {});
-          const debit = money(deposit.valorCreditado || valorLiquido || valor);
-          const afterSaldo = money(before.saldo - debit);
-          tx.set(companyRef, {
-            saldo: afterSaldo,
-            reservado: before.reservado,
-            bloqueioFinanceiro: afterSaldo < before.reservado,
-            ultimoEstornoMercadoPagoEm: admin.firestore.FieldValue.serverTimestamp(),
-            atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-          }, { merge: true });
-          tx.set(ledgerRef(companyRef.id), {
-            tipo: 'debito',
-            origem: 'estorno_deposito_mercadopago',
-            depositoId,
-            paymentId: String(payment.id),
-            valor: debit,
-            saldoAntes: before.saldo,
-            saldoDepois: afterSaldo,
-            reservadoAntes: before.reservado,
-            reservadoDepois: before.reservado,
-            criadoEm: admin.firestore.FieldValue.serverTimestamp()
-          });
-          tx.set(usageRef, {
-            target: expectedTarget,
-            paymentId: String(payment.id),
-            status: paymentStatus,
-            atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
-          }, { merge: true });
-          tx.set(depositRef, {
-            ...updateDeposit,
-            status: 'credito_estornado',
-            creditoEstornadoEm: admin.firestore.FieldValue.serverTimestamp(),
-            valorEstornado: debit
-          }, { merge: true });
-          return;
-        }
-
-        if (paymentStatus !== 'approved' || alreadyCredited || wasReversed) {
-          tx.set(depositRef, updateDeposit, { merge: true });
-          return;
-        }
-
-        if (!amountMatches) {
-          tx.set(depositRef, {
-            ...updateDeposit,
-            status: 'pagamento_divergente',
-            divergencia: {
-              esperado: valor,
-              recebido: totalPago,
-              motivo: 'valor_pago_diferente_do_deposito'
-            }
-          }, { merge: true });
-          return;
-        }
-
-        const before = companyBalance(companySnap.exists ? companySnap.data() : {});
-        const afterSaldo = money(before.saldo + valorLiquido);
-        tx.set(companyRef, {
-          saldo: afterSaldo,
-          reservado: before.reservado,
-          pagamentoModo: 'mercadopago',
-          ultimoDepositoMercadoPagoEm: admin.firestore.FieldValue.serverTimestamp(),
-          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
-        tx.set(ledgerRef(companyRef.id), {
-          tipo: 'credito',
-          origem: 'deposito_mercadopago_aprovado',
-          depositoId: depositRef.id,
-          valor: valorLiquido,
-          valorBruto: totalPago,
-          taxaMercadoPago,
-          saldoAntes: before.saldo,
-          saldoDepois: afterSaldo,
-          reservadoAntes: before.reservado,
-          reservadoDepois: before.reservado,
-          criadoEm: admin.firestore.FieldValue.serverTimestamp()
-        });
-        tx.set(usageRef, {
-          target: expectedTarget,
-          paymentId: String(payment.id),
-          status: paymentStatus,
-          criadoEm: admin.firestore.FieldValue.serverTimestamp(),
-          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
-        tx.set(depositRef, {
-          ...updateDeposit,
-          aprovadoEm: admin.firestore.FieldValue.serverTimestamp(),
-          aprovadoPor: 'mercadopago_webhook',
-          valorCreditado: valorLiquido,
-          valorBruto: totalPago,
-          taxaMercadoPago
-        }, { merge: true });
-      });
-
+      await applyCompanyDepositPayment(payment, depositId, paymentSource);
       return res.json({ ok: true, kind: 'company_deposit' });
     }
 

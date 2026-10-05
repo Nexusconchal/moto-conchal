@@ -1443,6 +1443,23 @@
           Deposito minimo: R$ 10,00. O saldo so entra depois que o dono conferir
           o pagamento e aprovar no painel.
         </p>
+        <div class="recarga-valores" aria-label="Valores sugeridos de recarga">
+          <button type="button" class="secondary" data-recarga-valor="10">R$ 10</button>
+          <button type="button" class="secondary" data-recarga-valor="30">R$ 30</button>
+          <button type="button" class="secondary" data-recarga-valor="50">R$ 50</button>
+          <button type="button" class="secondary" data-recarga-valor="100">R$ 100</button>
+        </div>
+        <div id="recargaAutomatica" class="status show" style="display:none;gap:12px;text-align:left" aria-live="polite">
+          <strong id="recargaTitulo">Recarga automática</strong>
+          <span id="recargaTexto"></span>
+          <small id="recargaCodigo" style="overflow-wrap:anywhere"></small>
+          <div class="recarga-acoes">
+            <a id="continuarRecarga" class="recarga-link" hidden rel="noreferrer">Continuar pagamento</a>
+            <button id="conferirRecarga" class="green" type="button" hidden>Conferir pagamento</button>
+            <button id="novaRecarga" class="secondary" type="button" hidden>Nova recarga</button>
+          </div>
+          <span id="recargaFeedback"></span>
+        </div>
         <div id="pixManualBox" class="status show" style="display: none; gap: 10px; text-align: left">
           <span class="muted">Chave Pix aleatória - Bradesco</span>
           <div class="pix-key-row">
@@ -2030,11 +2047,13 @@
       </section>
     </main>
     <style>
+      .recarga-valores,.recarga-acoes{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}.recarga-valores button{width:auto;flex:1;padding:10px}.recarga-acoes button,.recarga-link{flex:1;min-width:160px}.recarga-link{display:flex;align-items:center;justify-content:center;background:#ff8000;border-radius:8px;color:#fff;padding:12px;text-decoration:none;font-weight:700}.recarga-acoes [hidden]{display:none!important}
       .report-controls{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin:14px 0}.report-controls label{display:grid;gap:7px;font-weight:600}.report-actions{display:flex;gap:10px;flex-wrap:wrap}.report-actions button{flex:1;min-width:130px}.report-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px;margin:16px 0}.report-metric{padding:14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:10px}.report-metric span{display:block;font-size:13px;color:#b9c6d3}.report-metric strong{display:block;font-size:22px;margin-top:5px}.report-table{overflow-x:auto;margin:16px 0}.report-table table{width:100%;border-collapse:collapse;min-width:860px}.report-table th,.report-table td{text-align:left;padding:12px 10px;border-bottom:1px solid rgba(255,255,255,.12);vertical-align:top}.report-table th{color:#ffac4f}.report-table small{color:#bcc7d1}#relatorioEmpresa{background:#11181e;color:#f3f6fa} @media(max-width:650px){.report-controls{grid-template-columns:1fr 1fr}.report-controls label:first-child{grid-column:1/-1}.report-actions button:first-child{flex-basis:100%}}
     </style>
     <script src="./report-export.js?v=207"></script>
     <script src="./company-reports.js?v=207"></script>
     <script src="./company-profile.js?v=208"></script>
+    <script src="./company-deposits.js?v=209"></script>
     <script>
       (() => {
         const originalFetch = window.fetch.bind(window);
@@ -2353,15 +2372,15 @@
         if (status) {
           status.className = "status show";
           status.textContent = mp
-            ? "Modo Mercado Pago ativo. O deposito abre checkout e o saldo entra automatico quando o pagamento for aprovado. Atenção: o Mercado Pago desconta taxa do pagamento. O saldo creditado sera o valor liquido que cair depois da taxa."
+            ? "Recarga automática: pague no checkout do Mercado Pago e acompanhe a confirmação aqui. No saldo entra o valor recebido após as taxas do pagamento."
             : "Modo manual ativo. A empresa paga no Pix, envia comprovante e o dono aprova o saldo no painel.";
         }
         if (ajuda) {
           ajuda.textContent = mp
-            ? "Deposito minimo: R$ 10,00. Taxas oficiais do Mercado Pago podem mudar: Pix aprox. 0,99%; cartao na hora aprox. 4,98%. Quem paga essa taxa e a empresa; no saldo entra somente o liquido recebido."
+            ? "Recarga de R$ 10,00 a R$ 5.000,00. As taxas dependem da forma de pagamento e da conta Mercado Pago. Após a confirmação, mostramos o valor pago, a taxa e o saldo creditado."
             : "Deposito minimo: R$ 10,00. O saldo so entra depois que o dono conferir o pagamento e aprovar no painel.";
         }
-        if (depositoBtn) {
+        if (depositoBtn && !depositoBtn.disabled) {
           depositoBtn.textContent = mp
             ? "Pagar deposito no Mercado Pago"
             : "Solicitar deposito";
@@ -2381,6 +2400,22 @@
       }
       let companyReport = null;
       let perfilCadastro = null;
+      const companyDeposits = window.MotojaCompanyDeposits.create({
+        account: () => soNumeros($("telefoneEmpresa").value), authenticated: () => !!empresaToken && empresaAprovada,
+        mode: () => pagamentoModo, balance: atualizarSaldoUI, navigate: url => { location.href = url; },
+        api: async (path, body) => {
+          const response = await fetchComTempo(`${CONFIG.backend}${path}`, {
+            method: body ? "POST" : "GET", cache: "no-store",
+            headers: { "content-type": "application/json", ...authHeaders() },
+            ...(body ? { body: JSON.stringify(body) } : {})
+          }, 20000);
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) { const error = new Error(data.message || "Não consegui consultar a recarga. Tente novamente."); error.depositId = data.depositId; throw error; }
+          return data;
+        }
+      });
+      window.addEventListener("motoja:balance-refresh", carregarSaldo);
+      window.addEventListener("motoja:finance-load", () => companyDeposits.load());
       function renderRelatorioEmpresa(d = {}) { if (companyReport) companyReport.render(d); }
       async function carregarSaldo() {
         const tel = soNumeros($("telefoneEmpresa").value);
@@ -3147,6 +3182,7 @@
         pagamentoModo =
           c.pagamentoModo === "mercadopago" ? "mercadopago" : "pix_manual";
         atualizarPagamentoModoUI();
+        companyDeposits.load();
         integracaoAtiva = !!c.integracaoAtiva;
         integracaoProtegida = !!c.integracaoProtegida;
         preencherCampo("integracaoNome", c.integracaoNome);
@@ -3213,6 +3249,7 @@
           if (e.status === 401 || e.status === 403) {
             empresaToken = "";
             if (companyReport) companyReport.reset();
+            companyDeposits.reset();
             empresaAprovada = false;
             localStorage.removeItem(TOKEN_EMPRESA);
             atualizarTelaEmpresa();
@@ -3315,6 +3352,7 @@
           if (cadastro) {
             empresaToken = "";
             if (companyReport) companyReport.reset();
+            companyDeposits.reset();
             empresaAprovada = false;
             localStorage.removeItem(TOKEN_EMPRESA);
             $("tituloCadastroEnviado").textContent = "Cadastro enviado";
@@ -3408,37 +3446,28 @@
             }
           }),
       );
+      let salvandoPagamentoModo = false;
       async function definirPagamentoModo(modo) {
-        if (!empresaToken) {
-          mostrarStatus(
-            "Entre na conta da empresa antes de mudar pagamento.",
-            true,
-          );
-          return;
-        }
-        pagamentoModo = modo === "mercadopago" ? "mercadopago" : "pix_manual";
-        atualizarPagamentoModoUI();
+        if (!empresaToken || !empresaAprovada) { mostrarStatus("Entre em uma conta aprovada antes de mudar o pagamento.", true); return; }
+        if (salvandoPagamentoModo) return;
+        const session = empresaToken;
+        salvandoPagamentoModo = true;
+        $("modoPixManual").disabled = $("modoMercadoPago").disabled = true;
         try {
-          const r = await fetchComTempo(
-            `${CONFIG.backend}/api/companies/me/payment-mode`,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json", ...authHeaders() },
-              body: JSON.stringify({ modo: pagamentoModo }),
-            },
-            12000,
-          );
+          const r = await fetchComTempo(`${CONFIG.backend}/api/companies/me/payment-mode`, {
+            method: "POST", headers: { "content-type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ modo })
+          }, 12000);
           const d = await r.json().catch(() => ({}));
-          if (!r.ok)
-            throw new Error(
-              d.message ||
-                d.error ||
-                "Nao consegui salvar o modo de pagamento.",
-            );
+          if (!r.ok) throw new Error(d.message || "Não consegui salvar o modo de pagamento.");
+          if (session !== empresaToken) return;
+          pagamentoModo = d.pagamentoModo === "mercadopago" ? "mercadopago" : "pix_manual";
+          atualizarPagamentoModoUI(); mostrarBotaoPix();
+          companyDeposits.refreshMode();
+          if (pagamentoModo === "mercadopago") companyDeposits.load();
           mostrarStatus(d.message || "Modo de pagamento atualizado.");
-        } catch (e) {
-          mostrarStatus(e.message || "Erro ao salvar modo de pagamento.", true);
-        }
+        } catch (e) { if (session === empresaToken) mostrarStatus(e.message, true); }
+        finally { salvandoPagamentoModo = false; $("modoPixManual").disabled = $("modoMercadoPago").disabled = false; }
       }
       $("modoPixManual").onclick = () => definirPagamentoModo("pix_manual");
       $("modoMercadoPago").onclick = () => definirPagamentoModo("mercadopago");
@@ -3585,6 +3614,7 @@
       $("sairContaEmpresa").onclick = () => {
         empresaToken = "";
             if (companyReport) companyReport.reset();
+            companyDeposits.reset();
         localStorage.removeItem(TOKEN_EMPRESA);
         atualizarTelaEmpresa();
         $("contaStatus").textContent =
@@ -4598,8 +4628,8 @@
           );
           return;
         }
-        if (valor < 10) {
-          mostrarStatus("Deposito minimo: R$ 10,00.", true);
+        if (!Number.isFinite(valor) || valor < 10 || valor > 5000) {
+          mostrarStatus("Informe entre R$ 10,00 e R$ 5.000,00.", true);
           return;
         }
         const btn = $("pedirDeposito"),
@@ -4610,34 +4640,7 @@
         try {
           salvarEmpresa();
           if (modo === "mercadopago") {
-            if (!empresaToken)
-              throw new Error(
-                "Entre na conta da empresa para pagar pelo Mercado Pago.",
-              );
-            const r = await fetchComTempo(
-              `${CONFIG.backend}/api/companies/deposit-preference`,
-              {
-                method: "POST",
-                headers: {
-                  "content-type": "application/json",
-                  ...authHeaders(),
-                },
-                body: JSON.stringify({ valor }),
-              },
-              18000,
-            );
-            const d = await r.json().catch(() => ({}));
-            if (!r.ok)
-              throw new Error(
-                d.message ||
-                  d.error ||
-                  "Nao consegui criar o pagamento Mercado Pago.",
-              );
-            mostrarStatus(
-              `Pagamento criado no Mercado Pago. Codigo: ${d.depositId}. Depois de aprovado, o saldo entra automatico.`,
-            );
-            mostrarBotaoPix();
-            location.href = d.initPoint || d.sandboxInitPoint;
+            await companyDeposits.start(valor);
             return;
           }
           const r = await fetchComTempo(
@@ -5126,7 +5129,7 @@
           }
         };
     </script>
-    <script src="./empresa-tracking.js?v=187" defer></script>
+    <script src="./empresa-tracking.js?v=210" defer></script>
     <script src="./empresa-pedidos.js?v=134" defer></script>
     <script>
       (() => {
@@ -5252,7 +5255,10 @@
           }
         }
         navButtons.forEach((button) => button.addEventListener("click", () => showView(button.dataset.companyView, button.hasAttribute("data-focus-delivery"), button)));
-        showView("operations", false, navButtons[0]);
+        window.addEventListener("motoja:finance-open", () => showView("finance"));
+        navButtons.filter(button => button.dataset.companyView === "finance").forEach(button =>
+          button.addEventListener("click", () => window.dispatchEvent(new Event("motoja:finance-load"))));
+        showView(new URLSearchParams(location.search).has("deposito") ? "finance" : "operations", false);
 
         const syncTopbar = () => {
           let saved = {};

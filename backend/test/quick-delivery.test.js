@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { prepareQuickDelivery, quickDeliveryFare } from '../src/quick-delivery.js';
+import { protectedDelivery, assertCompanyDelivery } from '../src/delivery-completion.js';
 
 const source = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
 const company = { empresa: 'Loja de teste', responsavel: 'Responsavel', retirada: 'Rua da Loja, 100, Conchal', saldo: 100, reservado: 0 };
@@ -30,11 +31,12 @@ function harness(balance = 100) {
   const snap = path => ({ exists: records.has(path), data: () => records.get(path), ref: ref(path) });
   const db = { collection: name => ({ doc: id => ref(`${name}/${id || 'generated'}`) }), runTransaction: async fn => {
     const pending = [];
-    await fn({ get: async r => { reads.push(r.path); return snap(r.path); }, set: (r, data) => pending.push([r, data]), update: (r, data) => pending.push([r, data]) });
+    const result = await fn({ get: async r => { reads.push(r.path); return snap(r.path); }, set: (r, data) => pending.push([r, data]), update: (r, data) => pending.push([r, data]) });
     for (const [r, data] of pending) { writes.push(r.path); records.set(r.path, { ...records.get(r.path), ...data }); }
+    return result;
   }};
   const money = n => Math.round(Number(n || 0) * 100) / 100;
-  const context = vm.createContext({ console, db, prepareQuickDelivery, quickDeliveryFare,
+  const context = vm.createContext({ console, db, prepareQuickDelivery, quickDeliveryFare, protectedDelivery, assertCompanyDelivery,
     cleanText: s => String(s || '').trim(), onlyDigits: s => String(s || '').replace(/\D/g, ''), normalizeText: s => String(s || '').toLowerCase(), money,
     admin: { firestore: { FieldValue: { serverTimestamp: () => Date.now(), delete: () => null } } },
     companyBalance: d => ({ saldo: d.saldo, reservado: d.reservado, disponivel: d.saldo - d.reservado }),
@@ -70,6 +72,8 @@ function harness(balance = 100) {
     return result;
   }
   const createHandler = context.handler;
+  const finishFunctionStart = source.indexOf('async function finishCompanyDelivery(');
+  vm.runInContext(source.slice(finishFunctionStart, source.indexOf("app.post('/api/deliveries/:deliveryId/finish'",finishFunctionStart)),context);
   const finishStart = source.indexOf("app.post('/api/deliveries/:deliveryId/finish'");
   vm.runInContext(source.slice(finishStart,source.indexOf("\napp.post(",finishStart+1)),context);
   const finishHandler = context.handler;
@@ -148,13 +152,13 @@ test('active daily plan does not permit insufficient balance', async () => {
   assert.equal((await h.call(dailyRaw())).status,402);
   assert.equal(h.writes.length,0); assert.equal(h.notices.length,0);
 });
-test('finalization debits standard R$ 6.50 and daily R$ 4 batches exactly once and pays the matching driver share', async () => {
+test('legacy finalization debits standard R$ 6.50 and daily R$ 4 batches exactly once and pays the matching driver share', async () => {
   for (const daily of [false,true]) {
     const h = harness();
     if (daily) h.records.set('plans/11999999999/2026-10-04', { status: 'ativo' });
     await h.call(daily ? dailyRaw() : raw());
     const d = h.records.get('entregas/quick-test');
-    Object.assign(d,{ status:'retirada', motoboyCpf:'12345678901', retiradaConfirmadaEm:Date.now()-60000, motoboyLocalizacao:{serverTimestampMs:Date.now()} });
+    Object.assign(d,{ confirmacaoEmpresaVersao:0, status:'retirada', motoboyCpf:'12345678901', retiradaConfirmadaEm:Date.now()-60000, motoboyLocalizacao:{serverTimestampMs:Date.now()} });
     await h.finish();
     assert.equal(h.records.get('empresas/company').saldo,daily ? 88 : 80.5);
     assert.equal(h.records.get('empresas/company').reservado,0);
@@ -196,10 +200,10 @@ test('company summary enables R$ 4 only for active daily plans and driver displa
 });
 
 test('batch finish needs explicit whole-lot confirmation, pickup and fresh GPS; addressed delivery still needs destination proximity', () => {
-  const start = source.indexOf('      if (!exclusiveService) {', source.indexOf("app.post('/api/deliveries/:deliveryId/finish'"));
-  const end = source.indexOf('      const valor =', start);
+  const start = source.indexOf('      if (!exclusiveService && !approvalCompanyId) {', source.indexOf('async function finishCompanyDelivery('));
+  const end = source.indexOf('      if (protectedDelivery(delivery)', start);
   const context = vm.createContext({ timestampMs: Number, coordinateDistanceKm: () => 100 });
-  vm.runInContext(`function validate(delivery, req) { const exclusiveService = false; ${source.slice(start, end)} }`, context);
+  vm.runInContext(`function validate(delivery, req) { const exclusiveService = false, approvalCompanyId = '', body = req.body; ${source.slice(start, end)} }`, context);
   const d = { entregaNaNota: true, retiradaConfirmadaEm: Date.now() - 60000, motoboyLocalizacao: { serverTimestampMs: Date.now() } };
   assert.throws(() => context.validate(d, { body: {} }), /todas as entregas/);
   assert.doesNotThrow(() => context.validate(d, { body: { confirmarLoteEntregue: true } }));
@@ -209,11 +213,11 @@ test('batch finish needs explicit whole-lot confirmation, pickup and fresh GPS; 
 });
 
 test('finish authorization still rejects another driver, a cancelled batch and repeated debit', () => {
-  const route = source.indexOf("app.post('/api/deliveries/:deliveryId/finish'");
+  const route = source.indexOf('async function finishCompanyDelivery(');
   const start = source.indexOf('      const delivery = deliverySnap.data();', route);
-  const end = source.indexOf('      if (!exclusiveService) {', start);
-  const ctx = vm.createContext({ onlyDigits: s => String(s || '').replace(/\D/g, '') });
-  vm.runInContext(`function validate(data) { const driverCpf = '12345678901', deliverySnap = {data: () => data}; ${source.slice(start,end)} }`, ctx);
+  const end = source.indexOf('      if (!exclusiveService && !approvalCompanyId) {', start);
+  const ctx = vm.createContext({ protectedDelivery, assertCompanyDelivery, onlyDigits: s => String(s || '').replace(/\D/g, '') });
+  vm.runInContext(`function validate(data) { const approvalCompanyId = '', driverCpf = '12345678901', deliverySnap = {data: () => data}; ${source.slice(start,end)} }`, ctx);
   const batch = { entregaNaNota: true, status: 'retirada', motoboyCpf: '12345678901' };
   assert.doesNotThrow(() => ctx.validate(batch));
   assert.throws(() => ctx.validate({ ...batch, motoboyCpf: '99999999999' }), /nao pertence/);

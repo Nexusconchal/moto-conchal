@@ -23,7 +23,9 @@
   const finishedEvents = new Map();
 
   function updateSignalStatus() {
-    const location = locationOf(deliveries.get(selectedId));
+    const delivery = deliveries.get(selectedId);
+    if (delivery?.conclusaoStatus) return;
+    const location = locationOf(delivery);
     if (!location || !window.MotoTracking) return;
     const age = window.MotoTracking.age(location);
     const stale = age > 30000 || !navigator.onLine;
@@ -182,6 +184,12 @@
   }
 
   function updateMap() {
+    const completion = deliveries.get(selectedId)?.conclusaoStatus;
+    if (completion) {
+      const status = document.getElementById('mapaEntregaStatus');
+      if (status) status.textContent = completion === 'contestada' ? 'Entrega em conferência pelo dono. Valor reservado.' : 'Aguardando a empresa confirmar as entregas. Valor reservado.';
+      return;
+    }
     ensureMap();
     if (!map) return;
     map.invalidateSize({ pan: false });
@@ -288,16 +296,47 @@
     if (!selectedId || !deliveries.has(selectedId)) selectedId = active[0].id;
     list.innerHTML = active.map((delivery) => {
       const location = locationOf(delivery);
-      return `<button type="button" class="tracking-delivery${delivery.id === selectedId ? ' active' : ''}" data-tracking-delivery="${escapeHtml(delivery.id)}">
+      return `<div class="company-confirmation-card"><button type="button" class="tracking-delivery${delivery.id === selectedId ? ' active' : ''}" data-tracking-delivery="${escapeHtml(delivery.id)}">
         <span><strong>${escapeHtml(delivery.recebedor || delivery.empresa || 'Entrega')}</strong><small>${escapeHtml(delivery.entrega || delivery.entregaEncontrada || '-')}</small></span>
         <span><b>${escapeHtml(delivery.motoboy || 'Aguardando motoboy')}</b><small>${escapeHtml(statusLabel(delivery.status))}${location ? ` - GPS ${relativeTime(location.serverTimestampMs || location.clientTimestamp)}` : ''}</small></span>
-      </button>`;
+      </button>${delivery.confirmacaoEmpresaVersao === 1 ? `
+        <div class="company-confirmation-actions" style="padding:12px;display:grid;gap:10px;border:1px solid #35424b;border-radius:8px">
+          <strong>${Math.max(1,Number(delivery.paradas || 1))} entrega(s) · ${Number(delivery.valor || 0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</strong>
+          ${delivery.conclusaoStatus === 'contestada' ? `<p>Problema registrado. Valor reservado para análise do dono.</p><p>${escapeHtml(delivery.contestacaoMotivo || '')}</p>`
+            : delivery.conclusaoStatus === 'aguardando_empresa' ? `<p>O motoboy informou que entregou os pedidos. Confira antes de aprovar.</p><button class="green" type="button" data-company-confirm="approve-completion" data-id="${escapeHtml(delivery.id)}">Confirmar entregas</button><button type="button" data-company-confirm="contest-completion" data-id="${escapeHtml(delivery.id)}">Informar problema</button>`
+            : delivery.status === 'aceita' && !delivery.retiradaLiberadaEm ? `<p>Confirme somente quando entregar os pedidos ao motoboy.</p><button class="green" type="button" data-company-confirm="confirm-pickup" data-id="${escapeHtml(delivery.id)}">Confirmar retirada na loja</button>`
+            : delivery.retiradaLiberadaEm ? `<p>Retirada confirmada pela loja. A conclusão precisa de sua aprovação.</p><button type="button" data-company-confirm="contest-completion" data-id="${escapeHtml(delivery.id)}">Informar problema</button>` : ''}
+        </div>` : ''}</div>`;
     }).join('');
     list.querySelectorAll('[data-tracking-delivery]').forEach((button) => {
       button.addEventListener('click', () => {
         selectedId = button.dataset.trackingDelivery;
         render();
       });
+    });
+    list.querySelectorAll('[data-company-confirm]').forEach(button => button.onclick = async () => {
+      const action = button.dataset.companyConfirm;
+      const id = button.dataset.id;
+      const sessionToken = token();
+      let body = {};
+      if (action === 'contest-completion') {
+        const reason = prompt('Descreva o problema (10 a 500 caracteres). O dono vai conferir antes de liberar o valor:');
+        if (reason === null) return;
+        if (reason.trim().length < 10 || reason.trim().length > 500) { alert('Descreva o problema em 10 a 500 caracteres.'); return; }
+        body.reason = reason.trim();
+      } else if (!confirm(action === 'confirm-pickup' ? 'Os pedidos foram entregues ao motoboy? Ao confirmar, o valor permanece reservado até a conclusão.' : 'Você conferiu todas as entregas? A confirmação desconta o saldo reservado e registra o ganho do motoboy.')) return;
+      button.disabled = true;
+      try {
+        const response = await fetch(`${BACKEND}/api/companies/me/deliveries/${encodeURIComponent(id)}/${action}`, {
+          method:'POST', headers:{'content-type':'application/json',authorization:`Bearer ${sessionToken}`}, body:JSON.stringify(body)
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.message || 'Não consegui confirmar. Tente novamente.');
+        if (sessionToken !== token()) return;
+        alert(data.message);
+        window.dispatchEvent(new Event('motoja:balance-refresh'));
+        refresh();
+      } catch (error) { if (sessionToken === token()) { alert(error.message); button.disabled = false; } }
     });
     updateMap();
   }
@@ -377,6 +416,9 @@
       deliveries.set(deliveryId, {
         ...current,
         status: event.status || current.status,
+        ...(event.conclusaoStatus !== undefined ? {conclusaoStatus:event.conclusaoStatus} : {}),
+        ...(event.contestacaoMotivo !== undefined ? {contestacaoMotivo:event.contestacaoMotivo} : {}),
+        ...(event.retiradaLiberadaEm !== undefined ? {retiradaLiberadaEm:event.retiradaLiberadaEm} : {}),
         rastreamentoAtivo: event.rastreamentoAtivo,
         motoboy: event.motoboy || current.motoboy,
         motoboyLocalizacao: event.location || current.motoboyLocalizacao,
