@@ -990,7 +990,7 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
       ...delivery,
       empresaId: companyId,
       bairroEntrega: bairroFromAddress(delivery.entregaEncontrada || delivery.entrega),
-      tipo: 'entrega_empresarial', status: 'pendente', confirmacaoEmpresaVersao: 1, pagamento: 'saldo_pre_pago_empresa',
+      tipo: 'entrega_empresarial', status: 'pendente', confirmacaoEmpresaVersao: (latestCompany.pagamentoModo === 'mercadopago') ? 1 : 0, pagamento: 'saldo_pre_pago_empresa',
       saldoReservado: delivery.valor,
       pedidoProduto: capturedOrderAmounts(captured, config),
       capturaPedidoId: orderRef.id,
@@ -9161,7 +9161,7 @@ app.post('/api/companies/daily-plan/activate', assertCompany, assertCompanyAppro
 app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimiter, async (req, res, next) => {
   try {
     const delivery = deliveryPublicData(req.body);
-    delivery.confirmacaoEmpresaVersao = 1;
+    delivery.confirmacaoEmpresaVersao = (req.company.pagamentoModo === 'mercadopago') ? 1 : 0;
     delivery.telefoneEmpresa = req.companyId;
     delivery.telefoneContato = onlyDigits(req.company.telefoneContato || req.companyId);
     delivery.empresa = cleanText(req.company.empresa || delivery.empresa, 120);

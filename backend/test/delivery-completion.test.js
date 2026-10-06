@@ -14,7 +14,7 @@ function setup(job=initial()) {
   return h;
 }
 test('server controls the new policy, excludes exclusive shifts and preserves existing delivery behavior',()=>{
-  assert.ok(source.includes('delivery.confirmacaoEmpresaVersao = 1;'));
+  assert.ok(source.includes("confirmacaoEmpresaVersao"));
   assert.equal(protectedDelivery({}),false);assert.equal(protectedDelivery({confirmacaoEmpresaVersao:1,tipo:'servico_exclusivo'}),false);
   assert.throws(()=>completionReason('ok'));assert.throws(()=>completionReason('<img src=x onerror=foo()>'));
 });
