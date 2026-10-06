@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "check": "node --check src/server.js"
+    "check": "node --check src/server.js",
+    "test": "node --test test/*.test.js",
+    "gazetteer:build": "node scripts/build-conchal-gazetteer.mjs"
   },
   "engines": {
     "node": ">=20"

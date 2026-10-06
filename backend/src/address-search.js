@@ -16,6 +16,8 @@ export function streetNumber(value) {
   const text = String(value || '').trim().replace(/[–—]|\s+-\s+/g, ',');
   const match = text.match(/^(.+?)(?:,\s*|\s+)(?:n[ºo°.]*\s*)?(\d+[a-z]?)(?=\s*(?:[,;]|$|\b(?:jd\.?|jardim|bairro|vila|parque|centro|residencial|conjunto|desmembramento|chacara|chácaras?|distrito|polo|nucleo|núcleo|terra\s+nobre|santa\s+rita|noventa|conchal|sp|casa|apto|apartamento|bloco|fundos|ref|referencia)\b))/i);
   if (!match || /^(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)$/i.test(match[1].trim())) return null;
+  // "Rua dos Colleta, Esperanca 2": o numero pertence ao bairro, nao a casa.
+  if (match[1].includes(',') && /[a-z]/i.test(match[1].split(',').pop())) return null;
   return { street: match[1].trim().replace(/,$/, ''), number: match[2] };
 }
 
@@ -41,6 +43,8 @@ export function mapSearchText(value) {
 }
 
 export function addressFeatureMatches(value, props = {}) {
+  // Endereco ja conferido no cadastro oficial de ruas de Conchal (IBGE/OSM).
+  if (props.match_confirmed === true && ['ibge-cnefe-2022', 'osm'].includes(props.match_source)) return true;
   if (['city', 'county', 'state', 'country', 'postcode', 'district', 'suburb'].includes(props.result_type)) return false;
   const text = normalized(value);
   const parts = streetNumber(text);

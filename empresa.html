@@ -2664,6 +2664,8 @@
         return textoBusca(resultado).includes(esperado);
       }
       function resultadoEnderecoConfiavel(entrada, props, formatado) {
+        // Rua conferida no cadastro oficial de Conchal (IBGE + OSM) pelo servidor.
+        if (props && props.match_confirmed === true && ["ibge-cnefe-2022", "osm"].includes(props.match_source)) return true;
         const normalizar = normalizarNomeRuaMapa;
         const texto = normalizar(entrada);
         if (["city", "county", "state", "country", "postcode", "district", "suburb"].includes(props.result_type)) return false;
@@ -2735,6 +2737,8 @@
       function separarRuaNumeroMapa(base) {
         const m = String(base || "").trim().replace(/[–—]|\s+-\s+/g, ",").match(/^(.+?)(?:,\s*|\s+)(?:n[ºo°.]*\s*)?(\d+[a-z]?)(?=\s*(?:[,;]|$|\b(?:jd\.?|jardim|bairro|vila|parque|centro|residencial|conjunto|desmembramento|chacara|chácaras?|distrito|polo|nucleo|núcleo|terra\s+nobre|santa\s+rita|noventa|conchal|sp|casa|apto|apartamento|bloco|fundos|ref|referencia)\b))/i);
         if (!m || /^(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)$/i.test(m[1].trim())) return null;
+        // "Rua dos Colleta, Esperanca 2": o numero pertence ao bairro, nao a casa.
+        if (m[1].includes(",") && /[a-z]/i.test(m[1].split(",").pop())) return null;
         return { rua: m[1].trim().replace(/,$/, ""), numero: m[2] };
       }
       function variantesEnderecoMapa(base) {
@@ -3039,10 +3043,12 @@
       }
       async function geocodificar(endereco) {
         const base = endereco.trim();
-        let ultimoErro = "";
+        let ultimoErro = "",
+          mensagemServidor = "";
         for (const tentativa of tentativasGeocode(base)) {
           const params = new URLSearchParams({
               text: tentativa.texto,
+              original: base,
               limit: "5",
               filter: tentativa.area,
               bias: "proximity:-47.172,-22.330",
@@ -3055,6 +3061,8 @@
             continue;
           }
           const d = await r.json();
+          if (d.message && !(d.features || []).some((f) => f.properties && f.properties.match_confirmed === true))
+            mensagemServidor = d.message;
           for (const feature of d.features || []) {
             const props = feature.properties || {},
               cidadeResultado = String(
@@ -3084,7 +3092,7 @@
             return { lat: +lat, lon: +lon, texto: formatado };
           }
         }
-        throw new Error(ultimoErro || `Endereco nao encontrado: ${endereco}`);
+        throw new Error(mensagemServidor || ultimoErro || `Endereco nao encontrado: ${endereco}`);
       }
       async function calcularRota(pontos) {
         const r = await fetchMapaComRetry(

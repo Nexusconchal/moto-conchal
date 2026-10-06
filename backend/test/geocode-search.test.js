@@ -35,7 +35,7 @@ test('common neighborhoods after house numbers preserve the house and bounded pr
 
 test('structured fallback preserves house and city when free text returns only the city', async () => {
   const calls = [];
-  const search = createGeocodeSearch({ fetchImpl: async url => {
+  const search = createGeocodeSearch({ gazetteer: null, fetchImpl: async url => {
     const params = new URL(url).searchParams; calls.push(params);
     return { ok: true, json: async () => ({ features: params.has('street') ? [house] : [city] }) };
   } });
@@ -47,7 +47,7 @@ test('structured fallback preserves house and city when free text returns only t
 
 test('fallback cannot admit a different house or street, and failures stay briefly cached', async () => {
   let calls = 0, time = 0;
-  const search = createGeocodeSearch({ now: () => time, fetchImpl: async () => ({ ok: true, json: async () => ({ features: ++calls % 2 ? [city] : [feature({ ...house.properties, housenumber: '739' })] }) }) });
+  const search = createGeocodeSearch({ gazetteer: null, now: () => time, fetchImpl: async () => ({ ok: true, json: async () => ({ features: ++calls % 2 ? [city] : [feature({ ...house.properties, housenumber: '739' })] }) }) });
   const args = { text: 'Rua Idalina Antunes Orsola, 256, Conchal', apiKey: 'test-only' };
   assert.equal((await search(args)).features[0].properties.result_type, 'city');
   await search(args); assert.equal(calls, 2);
@@ -56,19 +56,19 @@ test('fallback cannot admit a different house or street, and failures stay brief
 
 test('same concurrent requests share provider calls, successful lookups expire, and upstream errors are not cached', async () => {
   let calls = 0, time = 0;
-  const search = createGeocodeSearch({ now: () => time, fetchImpl: async () => { calls++; return { ok: true, json: async () => ({ features: [house] }) }; } });
+  const search = createGeocodeSearch({ gazetteer: null, now: () => time, fetchImpl: async () => { calls++; return { ok: true, json: async () => ({ features: [house] }) }; } });
   const args = { text: 'Rua Idalina Antunes Orsola, 256, Conchal', apiKey: 'test-only' };
   await Promise.all([search(args), search(args), search(args)]); assert.equal(calls, 1);
   time = 30 * 60 * 1000 + 1; await search(args); assert.equal(calls, 2);
   let failures = 0;
-  const failing = createGeocodeSearch({ fetchImpl: async () => { failures++; return { ok: false }; } });
+  const failing = createGeocodeSearch({ gazetteer: null, fetchImpl: async () => { failures++; return { ok: false }; } });
   await assert.rejects(failing(args)); await assert.rejects(failing(args)); assert.equal(failures, 2);
 });
 
 test('a matching street in another city triggers fallback and never replaces the requested city', async () => {
   let calls = 0;
   const wrongCity = feature({ ...house.properties, city: 'Limeira' });
-  const search = createGeocodeSearch({ fetchImpl: async () => ({ ok: true, json: async () => ({ features: [++calls === 1 ? wrongCity : house] }) }) });
+  const search = createGeocodeSearch({ gazetteer: null, fetchImpl: async () => ({ ok: true, json: async () => ({ features: [++calls === 1 ? wrongCity : house] }) }) });
   const result = await search({ text: 'Rua Idalina Antunes Orsola, 256, Conchal', apiKey: 'test-only' });
   assert.equal(calls, 2); assert.equal(result.features[0].properties.city, 'Conchal');
 });

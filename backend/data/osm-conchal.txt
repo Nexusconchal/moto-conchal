@@ -1,0 +1,256 @@
+ARR 020 Doutor Fábio da Silva Prado||8037,-10268
+ARR 118||2771,-9367
+ARR 122||-3204,-9806
+ARR 138 - "Durval Bonato"||-7832,-12829
+ARR 235 Giorgina Assunção Castro||2211,-11582
+ARR 281 Armando Sanfelice||-9213,-10785
+ARR 293||-10550,-13589
+ARR 314||5819,-7183
+ARR 342||-7056,-10662
+ARR 435||1941,-6312
+ARR 439||427,-13178
+ARR 443|ARR 443|-165,-5038
+ARR 444||-1025,-14442
+ARR 476||-8470,-6554
+ARR 490||-11949,-9570
+Acesso Araguaia||6313,-5867
+Avenida Arquiteto Paulo Henrique Archangelo||-444,-190
+Avenida José Ferreira de Melo||-803,-836
+Avenida João Alonso Garcia|Rua João Alonso Garcia|-1654,-1167
+Avenida João Paulo II|Avenida João Paulo Segundo|-1313,-148
+Avenida Manoel Gonçalves Neto||25,-1595
+Avenida Prefeito Anselmo Zanni||-1480,-498
+Avenida Prefeito Francisco Magnusson||-876,-692
+Avenida Prefeito Nelson Cunha||-1707,-1245
+Avenida Presidente Humberto Castelo Branco||-841,-53
+Avenida União||-319,-215
+Captação de água Mogi-Guaçu - Araras||3812,-5226
+Estrada Elihu Root||2589,-16649
+Estrada Fazenda Morro Azul||9571,-11370
+Estrada Municipal CHL-040||-3067,-2971
+Estrada Municipal Chl 040||-332,-2068
+Estrada Municipal Conchal||-283,-3244
+Estrada Municipal Joaquim Cipriano de Carvalho||4248,1940
+Estrada Municipal Luiz Segundo D'Alessandri||-477,-10043
+Estrada Municipal sem Denominação||-2907,-4923
+Estrada Municipal sem Denominção||-6496,-2817
+Estrada Municipal sem denominação||-7821,-8503
+Estrada de servidão||-10559,-11499
+Estrada municipal s/ denominação||2840,-7917
+Rodovia Professor Zeferino Vaz||-6028,-1619
+Rodovia Vicinal Vice-Governador Almino Monteiro Álvares Afonso||5084,7827
+Rodovia Wilson Finardi||-3636,-3908
+Rua Affonso Moretti||-1121,-199
+Rua Alair Grande||3255,2836
+Rua Albertino Mistura||-4742,-522
+Rua Albuquerque Lins||-23,-1577
+Rua Alvaro Ribeiro||-295,-1505
+Rua Alípio Rodrigues||3849,2675
+Rua Amadeu||-1503,-596
+Rua Angelicas|Rua das Angelicas|-725,-1408
+Rua Antônio Bueno Moraes||-1155,-918
+Rua Antônio Kammer||-695,153
+Rua Antônio Otte||-584,-446
+Rua Antônio Refundini||-1518,-532
+Rua Antônio Sabino de Souza||58,-560
+Rua Antônio Zavarize||-615,-779
+Rua Araras||-342,-1888
+Rua Ariel Alves Cavalheiro||-590,-917
+Rua Aristides Dante||-1102,-417
+Rua Armando Tognolli||-1902,-253
+Rua Augusto Paggion|Rua Augusto Faggion|-945,-1612
+Rua Augusto Puiz||-682,-1679
+Rua Aurélia Pattaro Blaske||-1552,-1073
+Rua Avelino Stivao||-44,-693
+Rua Azaleias|Rua dos Azaléias|-561,-1430
+Rua Bahia||-1398,-447
+Rua Bendito Novo|Rua Benedito Novo|-862,-1510
+Rua Benedito de Lima||3644,2807
+Rua Benedito de Oliveira Rocha||-268,-429
+Rua Camilo Chagas||-1158,-1090
+Rua Candida Battel||-1768,-878
+Rua Carlos Domingues Locatelli||-407,-440
+Rua Carlos Maiochi||-1268,-726
+Rua Carmelias||-796,-1345
+Rua Carmem Zafra Garcia de Puertas||-977,-223
+Rua Cinco|Rua 5|303,-273
+Rua Cipriano Barrinuevo||4224,2308
+Rua Clara Kammer Bonini||-992,-163
+Rua Clarice Turco||-4595,-418
+Rua Conde de Parnayba||-664,-1035
+Rua Conselheiro Rodrigues Alves||-148,-1122
+Rua Cosser||3429,-2247
+Rua Cravos|Rua dos Cravos|-1008,-1277
+Rua Cristiano Sommer||-1637,-703
+Rua Dois|Rua 2|66,-2025
+Rua Doutor Altino Arantes||-388,-1417
+Rua Duque de Caxias||-623,-968
+Rua Délia Teodoro de Freitas||4254,2758
+Rua Eleutério Lozano||-1451,-1397
+Rua Emílio Cardoso da Luz||4273,2142
+Rua Espírito Santo||-1461,-718
+Rua Fabianos|Rua dos Fabianos|266,43
+Rua Fernando Lourenço Conur||-1372,-1891
+Rua Ferreira de Melo|Rua dos Ferreira de Melo|-14,-325
+Rua Flausino Pires Moraes||-1498,-1453
+Rua Floriano Pianseck||58,-560
+Rua Florêncio C. de Almeida||3644,2807
+Rua Francisco Ferreira Alves||-136,-1307
+Rua Francisco Stocco||-1841,-1222
+Rua Gabriel||-1670,-1108
+Rua Goiás||-1568,-303
+Rua Guido Bordin||-4875,-451
+Rua Guilherme Mano|Rua Guilherme Mano Gelly|-1572,-1786
+Rua Henrique Brucieri||4315,1959
+Rua Hermenegildo Guadagnini||-295,-1009
+Rua Hermínia Casagrande||3474,2701
+Rua Hermínio Costa||4248,2687
+Rua Honório Correa||4290,2326
+Rua Ignácio Jorge Paulo||-1084,-1480
+Rua Jacinto Scaglione||-1783,-666
+Rua Jayme Sommer||-1078,-568
+Rua Joao Donizeti Orsola||503,309
+Rua Joaquim Kallmann||-713,-147
+Rua Joauquim Ferreira de Melo||-1573,-1545
+Rua Jorge Leitão||-164,-484
+Rua José Barbosa Sobrinho||-148,-826
+Rua José Barbosa da Silva||4315,1959
+Rua José Galves Gerra||-977,-223
+Rua José Galves Guerra||-1030,-21
+Rua José Metzker||-878,-127
+Rua José Nogueira||-1178,-1394
+Rua José Puertas Zafra||-938,-752
+Rua José Rocha||4174,2526
+Rua José Rodrigues||-532,-1892
+Rua José Rogrigues||-1033,-1527
+Rua João Alonso Garcia||-1264,-1057
+Rua João Batista de Oliveira Luz||-1695,-529
+Rua João Dias|Rua dos Corte|-25,146
+Rua João Fadel|Rua João Fadell|-152,-653
+Rua João Fernandes de Mello||-899,-1655
+Rua João Irineu Rodrigues||-1021,-385
+Rua João L Cezaretti||-959,208
+Rua João Megiato||-1217,-836
+Rua João Pessoa||-123,-1491
+Rua João Quinelli||4411,1802
+Rua Júlio Fernades||3801,2678
+Rua Laura Metzker||-1843,-1208
+Rua Liberato Sebastião Petermann||-912,12
+Rua Locatelli|Rua dos Locatelli|-531,-339
+Rua Los Gelly|Rua dos Gelly|-1534,-1739
+Rua Luiz Fadel|Rua Júlio Tela|-1614,-834
+Rua Luiz Leitão||-1411,-1344
+Rua Luiz Refundini||-855,-1697
+Rua Luiza Roncato Martins||-1092,-885
+Rua Luís Filipini||-1268,-726
+Rua Lázaro Teodoro de Freitas||4222,2621
+Rua Manacas|Rua dos Manacas|-855,-1420
+Rua Manuel Ozorio de Oliveira||-1650,-1551
+Rua Maochi|Rua dos Maochi|2,-273
+Rua Maria Chiavegato Corte||-1717,-927
+Rua Maria Teixeira||4371,1973
+Rua Mario Vomero||-415,-382
+Rua Mato Grosso||-1439,-224
+Rua Maurício a Vitor Heremann||-1503,-803
+Rua Mazimiliano Mazon||-844,177
+Rua Menhem Salim||3204,3062
+Rua Minas Gerais||-1601,-241
+Rua Mogi Mirim||-932,-910
+Rua Narciso Martha||-1052,-717
+Rua Nelson Megiato||-990,-1569
+Rua Nossa Senhora Aparecida||-1322,-772
+Rua Nove de Julho|Rua 9 de Julho|-295,-1505
+Rua Oito|Rua 8|242,-2032
+Rua Orlando Keferaus||-461,-991
+Rua Padre Octaviano Pavesi|Rua Padre Octaviano A Pavesi|-1537,-1502
+Rua Padre Pedro Tomazine||-588,-1766
+Rua Palmas|Rua das Palmas|-907,-1372
+Rua Paraná||-1505,-97
+Rua Paulo Gelly||-1453,-981
+Rua Pedro Corte||-1645,-1398
+Rua Pedro Torres||4290,2326
+Rua Pernambuco||-1398,-447
+Rua Piauí||-1374,-348
+Rua Presidente Doutor Tancredo de Almeida Neves|Rua Presidente Tancredo Neves|-1645,-1398
+Rua Primo Rebessi||-893,-71
+Rua Professor Maria B Fernandes||-1139,-485
+Rua Professora Adelaide Barros|Rua Professora Adelaide de Barros|-831,120
+Rua Quatro|Rua 4|201,-1858
+Rua Rio Grande do Norte||-1407,-286
+Rua Rio Miranda||3462,-2296
+Rua Rio Negro||3511,-2471
+Rua Rio Piracicaba||3491,-2415
+Rua Rio de Janeiro||-1439,-224
+Rua Rita de Campos||-1583,-954
+Rua Rosas||-737,-1156
+Rua Santa Catarina||-1538,-37
+Rua Santo Antônio||-4840,-557
+Rua Sebastião Gomes||-1424,-1604
+Rua Sebastião Lacerda||3401,3394
+Rua Serafim A. da Silva||3648,2849
+Rua Sete de Setembro|Rua 7 de Setembro|86,-1439
+Rua Sete|Rua 7|194,-1852
+Rua Severino Fadel||-1650,-1551
+Rua São Paulo||-439,-1278
+Rua Tereza Georget Torres||4436,1991
+Rua Três|Rua 3|242,-2032
+Rua Um|Rua 1|5,-2112
+Rua Vereador José Peterman||-1759,78
+Rua Vereador Lázaro Correia de Souza||-870,295
+Rua Vereador Sebastião Camargo||-959,208
+Rua Vereadora Francisca de Campos Corte||-98,-674
+Rua Veredor Abilio Pinto||-86,-792
+Rua Vicende Vigano|Rua Vicente Vigano|44,-405
+Rua Victor Fraveto||-988,79
+Rua Visconde Indatuba|Rua Visconde de Indatuba|117,-1191
+Rua XV de Novembro|Rua 15 de Novembro;Rua Quinze de Novembro|6,-1583
+Rua Zulmira de Freitas Costa||4151,2755
+Rua da Fé||-4906,-364
+Rua da Liberdade||-4945,-926
+Rua das Adalias||-642,-1297
+Rua das Azaleias||-1034,-971
+Rua das Indústrias||-4867,-686
+Rua das Palmas||-688,-1089
+Rua do Comércio||-4940,-595
+Rua do Progresso||-4940,-595
+Rua dos Anturios||-896,-1249
+Rua dos Archangelo|Rua 2;Rua Dois|196,-179
+Rua dos Baraldi||-220,271
+Rua dos Bartarim||-1137,-646
+Rua dos Batel|Rua dos Battel|48,-127
+Rua dos Blascke||-299,220
+Rua dos Bonini||-380,-152
+Rua dos Bonon|Rua Júlio Tela|-1329,-928
+Rua dos Caleffi||-1171,-525
+Rua dos Citelli||-267,178
+Rua dos Colleta||-271,251
+Rua dos Dias||-48,71
+Rua dos Fabianos||516,-44
+Rua dos Fadel||-1568,-1012
+Rua dos Foguel||-395,288
+Rua dos Gomes||-34,120
+Rua dos Guelly|Rua Manuel Ozorio de Oliveira|-1496,-1691
+Rua dos Krammer|Rua dos Martha|-302,152
+Rua dos Lirios||-997,-1155
+Rua dos Lourenço||-915,-205
+Rua dos Manacas||-402,-1834
+Rua dos Marostica||-435,-215
+Rua dos Mazzieiro||-973,-345
+Rua dos Metzker||-279,-81
+Rua dos Morette||-210,76
+Rua dos Paulos||-222,-29
+Rua dos Peres|Rua dos Peris|-281,-21
+Rua dos Petermann||-500,-280
+Rua dos Pianca|Rua 4;Rua Quatro|350,-126
+Rua dos Roncato|Rua 1;Rua Um|31,-176
+Rua dos Sommer|Rua 3;Rua Três|63,-77
+Rua dos Torres||-270,-121
+Rua dos Zancheta||18,-225
+Rua Ângelo Fadel||-428,-543
+Travessa Duque de Caxias||-359,-1182
+Travessa Moreno Peres||-695,-916
+Travessa Tirandentes||-271,-1091
+Travessa dos Correia||-419,-398
+Travessa dos Mano||-220,271
+Travessa dos Muller||-4956,-750
+Trecho de possível Estrada Municipal||5259,-5963

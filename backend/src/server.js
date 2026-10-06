@@ -3590,7 +3590,8 @@ app.get('/api/maps/geocode', mapLimiter, async (req, res, next) => {
     if (/^rect:-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(filter)) params.set('filter', filter);
     if (/^proximity:-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(bias)) params.set('bias', bias);
 
-    const data = await searchMapAddress({ text, apiKey: GEOAPIFY_API_KEY, filter: params.get('filter') || '', bias: params.get('bias') || '', city: requestedPlaceHint(text) || 'Conchal', limit: Number(params.get('limit')) });
+    const original = cleanText(req.query.original, 220);
+    const data = await searchMapAddress({ text, original, apiKey: GEOAPIFY_API_KEY, filter: params.get('filter') || '', bias: params.get('bias') || '', city: requestedPlaceHint(text) || 'Conchal', limit: Number(params.get('limit')) });
     res.json(data);
   } catch (error) {
     next(error);
