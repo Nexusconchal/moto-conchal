@@ -23,7 +23,14 @@ export function createGeocodeSearch({ fetchImpl = fetch, maxEntries = 500, now =
         return data;
       };
       let data = await request({ text: query });
-      const matches = feature => addressFeatureMatches(text, feature.properties || {});
+      const normalized = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const matches = feature => {
+        const props = feature.properties || {};
+        const location = normalized(`${props.city || ''} ${props.district || ''} ${props.suburb || ''} ${props.formatted || ''}`);
+        const coordinates = feature.geometry?.coordinates;
+        return addressFeatureMatches(text, props) && location.includes(normalized(city)) && Array.isArray(coordinates) &&
+          Number.isFinite(coordinates[0]) && Number.isFinite(coordinates[1]) && Math.abs(coordinates[0]) <= 180 && Math.abs(coordinates[1]) <= 90;
+      };
       const parts = streetNumber(query);
       const street = parts?.street || query.split(',')[0].trim();
       // Structured fallback keeps the street and house separate from the city.

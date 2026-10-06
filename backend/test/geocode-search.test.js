@@ -64,3 +64,11 @@ test('same concurrent requests share provider calls, successful lookups expire, 
   const failing = createGeocodeSearch({ fetchImpl: async () => { failures++; return { ok: false }; } });
   await assert.rejects(failing(args)); await assert.rejects(failing(args)); assert.equal(failures, 2);
 });
+
+test('a matching street in another city triggers fallback and never replaces the requested city', async () => {
+  let calls = 0;
+  const wrongCity = feature({ ...house.properties, city: 'Limeira' });
+  const search = createGeocodeSearch({ fetchImpl: async () => ({ ok: true, json: async () => ({ features: [++calls === 1 ? wrongCity : house] }) }) });
+  const result = await search({ text: 'Rua Idalina Antunes Orsola, 256, Conchal', apiKey: 'test-only' });
+  assert.equal(calls, 2); assert.equal(result.features[0].properties.city, 'Conchal');
+});
