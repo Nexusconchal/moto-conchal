@@ -69,11 +69,15 @@ test('server selects the correct imported order house even when provider lists h
 
 function backendHarness(responses) {
   const requests = [];
-  const context = vm.createContext({ GEOAPIFY_API_KEY: 'test-only', URLSearchParams, addressSearchVariants, addressFeatureMatches,
+  const context = vm.createContext({ GEOAPIFY_API_KEY: 'test-only', URLSearchParams, addressSearchVariants, addressFeatureMatches, streetNumber,
     cleanText: v => String(v || '').trim(), normalizeText: v => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(),
     validCoordinate: p => Number.isFinite(p?.lat) && Number.isFinite(p?.lon), coordinateDistanceKm: (a,b) => Math.hypot(a.lat-b.lat,a.lon-b.lon),
     fetch: async url => { requests.push(new URL(url).searchParams.get('text')); return { ok: true, json: async () => ({ features: (responses[requests.length - 1] || []).map(properties => ({ properties, geometry: { coordinates: [-47.154961, -22.329893] } })) }) }; }
   });
+  context.searchMapAddress = async ({ text }) => {
+    const response = await context.fetch('https://api.geoapify.com/v1/geocode/search?' + new URLSearchParams({ text }));
+    return response.json();
+  };
   vm.runInContext(backend.slice(backend.indexOf('function requestedPlaceHint('), backend.indexOf('function ensureDistantRouteIsPlausible(')), context);
   vm.runInContext(backend.slice(backend.indexOf('async function geocodeCapturedAddress('), backend.indexOf('async function dispatchCapturedOrder(')), context);
   return { context, requests };

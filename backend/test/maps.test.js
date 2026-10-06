@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { streetNumber } from '../src/address-search.js';
 
 const source = fs.readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
 const context = vm.createContext({});
@@ -37,18 +38,28 @@ test('wrong streets and city centroids remain rejected', () => {
 });
 test('backend refuses geocoded destinations in another city', () => {
   const backend = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
-  const ctx = vm.createContext({ normalizeText: value => String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() });
+  const ctx = vm.createContext({ streetNumber, normalizeText: value => String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() });
   vm.runInContext(backend.slice(backend.indexOf('function requestedPlaceHint('), backend.indexOf('function isGpsOrigin(')), ctx);
   assert.equal(ctx.requestedPlaceHint('Cosmópolis'), 'cosmopolis');
   assert.throws(() => ctx.ensureResolvedPlaceMatches('Cosmópolis', 'Capivari'), /nao conferiu/);
   assert.doesNotThrow(() => ctx.ensureResolvedPlaceMatches('Cosmópolis', 'Avenida Centenário, Cosmópolis'));
+  assert.equal(ctx.requestedPlaceHint('Rua Mogi Mirim 100 Centro'), '');
+  assert.equal(ctx.requestedPlaceHint('Rua Araras, Conchal'), 'conchal');
+  assert.equal(ctx.requestedPlaceHint('Rua das Indústrias, Tujuguaba, Conchal'), 'tujuguaba');
+});
+
+test('street city names do not move pickup to another city, and district remains explicit', () => {
+  assert.equal(context.dicaLocal('Rua Mogi Mirim 100 Centro'), '');
+  assert.equal(context.dicaLocal('Rua Araras, Conchal'), 'conchal');
+  assert.equal(context.dicaLocal('Rua das Indústrias, Tujuguaba, Conchal'), 'tujuguaba');
+  assert.equal(context.dicaLocal('Rua Maria 100 Residencial'), '');
 });
 
 test('passenger street search isolates house and ignores unpunctuated neighborhoods and references',()=>{
   for(const [text,first] of [
     ['rua idalina antunes orsola 256 jd dos palmeiras','rua idalina antunes orsola, 256, Conchal, SP, Brasil'],
     ['Rua Vereador Abílio Pinto , 88 — Casa — Jd São Paulo - Conchal — Ref: Zé Adão lanches','Rua Vereador Abílio Pinto, 88, Conchal, SP, Brasil'],
-    ['Rua 15 de Novembro 256 Jardim São Paulo','Rua 15 de Novembro, 256, Conchal, SP, Brasil']
+    ['Rua 15 de Novembro 256 Jardim São Paulo','Rua XV de Novembro, 256, Conchal, SP, Brasil']
   ]) {
     assert.equal(context.tentativasGeocode(text)[0].texto,first);
     const street=text.startsWith('rua idalina')?'Rua Idalina Antunes Orsola':text.includes('Abílio')?'Rua Vereador Abilio Pinto':'Rua 15 de Novembro';

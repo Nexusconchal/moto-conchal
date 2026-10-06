@@ -2614,9 +2614,11 @@
         ];
       }
       function dicaLocal(v) {
-        const t = textoBusca(v);
+        const raw = String(v || "").trim(), partes = separarRuaNumeroMapa(raw);
+        const local = partes ? raw.slice(partes.rua.length) : /^(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+/i.test(raw) ? raw.split(",").slice(1).join(",") : raw;
+        const t = textoBusca(local);
         if (t.includes("arthur nogueira")) return "artur nogueira";
-        return cidadesAtendidas().find((x) => t.includes(x)) || "";
+        return ["martinho prado", "tujuguaba", "iate", ...cidadesAtendidas()].find((x) => new RegExp(`\\b${x}\\b`).test(t)) || "";
       }
       function localEsperado(origem) {
         return dicaLocal(origem) || "";
@@ -2662,8 +2664,7 @@
         return textoBusca(resultado).includes(esperado);
       }
       function resultadoEnderecoConfiavel(entrada, props, formatado) {
-        const normalizar = (valor) => textoBusca(valor)
-          .replace(/\bzanochett?a\b|\bzanchett?a\b/g, "zancheta");
+        const normalizar = normalizarNomeRuaMapa;
         const texto = normalizar(entrada);
         if (["city", "county", "state", "country", "postcode", "district", "suburb"].includes(props.result_type)) return false;
         const partes = separarRuaNumeroMapa(texto);
@@ -2673,9 +2674,26 @@
         if (!rua) return !!(props.street || props.housenumber || props.name);
         if (!props.street) return false;
         const palavras = rua[1].split(/[^a-z0-9]+/)
-          .filter((p) => (p.length > 1 || /^\d+$/.test(p)) && !["de", "da", "do", "das", "dos", "dr", "dra", "doutor", "doutora"].includes(p));
-        const encontrada = normalizar(props.street).split(/[^a-z0-9]+/);
-        return palavras.length > 0 && palavras.every((p) => encontrada.includes(p));
+          .filter((p) => (p.length > 1 || /^\d+$/.test(p)) && !["de", "da", "do", "das", "dos", "dr", "dra", "doutor", "doutora", "vereador", "professor", "professora", "prefeito", "presbitero"].includes(p));
+        const encontrada = normalizar(props.street).replace(/^(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+/, "").split(/[^a-z0-9]+/)
+          .filter((p) => (p.length > 1 || /^\d+$/.test(p)) && !["de", "da", "do", "das", "dos", "dr", "dra", "doutor", "doutora", "vereador", "professor", "professora", "prefeito", "presbitero"].includes(p));
+        const iniciais = rua[1].split(/[^a-z0-9]+/).filter((p) => /^[a-z]$/.test(p));
+        const restantes = encontrada.filter((p) => !palavras.includes(p));
+        return palavras.length > 0 && palavras.every((p) => encontrada.includes(p)) && restantes.length <= iniciais.length && restantes.every((p) => iniciais.includes(p[0]));
+      }
+      function normalizarNomeRuaMapa(valor) {
+        return textoBusca(valor)
+          .replace(/\bzanochett?a\b|\bzanchett?a\b/g, "zancheta")
+          .replace(/\b15 de novembro\b/g, "xv de novembro")
+          .replace(/\b9 de julho\b/g, "nove de julho")
+          .replace(/\b7 de setembro\b/g, "sete de setembro")
+          .replace(/\bvisconde de indaiatuba\b/g, "visconde indatuba")
+          .replace(/\bbenedito novo\b/g, "bendito novo")
+          .replace(/\btiradentes\b/g, "tirandentes")
+          .replace(/\bmaria chiavegatto corte\b/g, "maria chiavegato corte")
+          .replace(/\bvicente vigano\b/g, "vicende vigano")
+          .replace(/\bdos battel\b/g, "dos batel")
+          .replace(/\bdos paulo\b/g, "dos paulos");
       }
       function destinoComidaEspecial(v) {
         return /martinho\s*prado|tujuguaba|iate/.test(textoBusca(v));
@@ -2702,11 +2720,22 @@
         texto = texto
           .replace(/\bzanochett?a\b/gi, "Zancheta")
           .replace(/\bzanchett?a\b/gi, "Zancheta");
-        return texto;
+        return texto
+          .replace(/\b15 de novembro\b/gi, "XV de Novembro")
+          .replace(/\b9 de julho\b/gi, "Nove de Julho")
+          .replace(/\b7 de setembro\b/gi, "Sete de Setembro")
+          .replace(/\bvisconde de indaiatuba\b/gi, "Visconde Indatuba")
+          .replace(/\bbenedito novo\b/gi, "Bendito Novo")
+          .replace(/\btiradentes\b/gi, "Tirandentes")
+          .replace(/\bMaria Chiavegatto Corte\b/gi, "Maria Chiavegato Corte")
+          .replace(/\bVicente Vigan[oó]\b/gi, "Vicende Vigano")
+          .replace(/\bdos Battel\b/gi, "dos Batel")
+          .replace(/\bdos Paulo\b/gi, "dos Paulos");
       }
       function separarRuaNumeroMapa(base) {
-        const m = String(base || "").trim().replace(/[–—]|\s+-\s+/g, ",").match(/^(.+?)(?:,\s*|\s+)(?:n[ºo°.]*\s*)?(\d+[a-z]?)(?=\s*(?:[,;]|$|\b(?:jd\.?|jardim|bairro|vila|parque|conchal|sp|casa|apto|apartamento|bloco|fundos|ref|referencia)\b))/i);
-        return m ? { rua: m[1].trim().replace(/,$/, ""), numero: m[2] } : null;
+        const m = String(base || "").trim().replace(/[–—]|\s+-\s+/g, ",").match(/^(.+?)(?:,\s*|\s+)(?:n[ºo°.]*\s*)?(\d+[a-z]?)(?=\s*(?:[,;]|$|\b(?:jd\.?|jardim|bairro|vila|parque|centro|residencial|conjunto|desmembramento|chacara|chácaras?|distrito|polo|nucleo|núcleo|terra\s+nobre|santa\s+rita|noventa|conchal|sp|casa|apto|apartamento|bloco|fundos|ref|referencia)\b))/i);
+        if (!m || /^(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)$/i.test(m[1].trim())) return null;
+        return { rua: m[1].trim().replace(/,$/, ""), numero: m[2] };
       }
       function variantesEnderecoMapa(base) {
         const principal = textoMapa(base),

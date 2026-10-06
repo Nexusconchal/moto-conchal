@@ -11,7 +11,10 @@ import { Server as SocketIOServer } from 'socket.io';
 import { validateLocation } from './tracking-policy.js';
 import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state.js';
 import { createSupportAutomation, enrichSupportMessage, SUPPORT_PHONE, chooseDriverGroup, brazilPhone } from './support-automation.js';
-import { addressSearchVariants, addressFeatureMatches } from './address-search.js';
+import { addressSearchVariants, addressFeatureMatches, streetNumber } from './address-search.js';
+import { createGeocodeSearch } from './geocode-search.js';
+
+const searchMapAddress = createGeocodeSearch();
 import { prepareQuickDelivery, quickDeliveryFare } from './quick-delivery.js';
 import { deliveryReportQuantity, buildCompanyDeliveryReport } from './delivery-report.js';
 import { companyProfileUpdate } from './company-profile.js';
@@ -235,14 +238,17 @@ function isSpecialFoodDestination(value) {
 }
 
 function requestedPlaceHint(value) {
-  const text = normalizeText(value);
+  const raw = String(value || '').trim();
+  const parts = streetNumber(raw);
+  const location = parts ? raw.slice(parts.street.length) : /^(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+/i.test(raw) ? raw.split(',').slice(1).join(',') : raw;
+  const text = normalizeText(location);
   if (text.includes('arthur nogueira')) return 'artur nogueira';
   return [
-    'conchal',
-    'aguai',
     'martinho prado',
     'tujuguaba',
     'iate',
+    'conchal',
+    'aguai',
     'engenheiro coelho',
     'artur nogueira',
     'mogi mirim',
@@ -255,7 +261,7 @@ function requestedPlaceHint(value) {
     'rio claro',
     'campinas',
     'cosmopolis'
-  ].find((hint) => text.includes(hint)) || '';
+  ].find((hint) => new RegExp(`\\b${hint}\\b`).test(text)) || '';
 }
 
 function ensureResolvedPlaceMatches(input, resolved, label = 'Endereco') {
@@ -812,10 +818,8 @@ async function geocodeCapturedAddress(value, referencePoint = null) {
     apiKey: GEOAPIFY_API_KEY
   });
   if (!placeHint) params.set('filter', 'rect:-47.45,-22.75,-46.75,-22.15');
-  const response = await fetch(`https://api.geoapify.com/v1/geocode/search?${params.toString()}`);
-  const data = await response.json().catch(() => ({}));
+  const data = await searchMapAddress({ text: query, apiKey: GEOAPIFY_API_KEY, filter: params.get('filter') || '', bias: params.get('bias'), city: placeHint || 'Conchal' });
   const features = Array.isArray(data.features) ? data.features : [];
-  if (!response.ok) throw Object.assign(new Error('Nao consegui consultar o mapa agora.'), { status: 502, code: 'geoapify_falhou' });
   if (!features.length) continue;
 
   const candidates = features.filter(feature => {
@@ -3586,12 +3590,7 @@ app.get('/api/maps/geocode', mapLimiter, async (req, res, next) => {
     if (/^rect:-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(filter)) params.set('filter', filter);
     if (/^proximity:-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(bias)) params.set('bias', bias);
 
-    const response = await fetch(`https://api.geoapify.com/v1/geocode/search?${params.toString()}`);
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      res.status(502).json({ error: 'geoapify_falhou', message: 'Nao consegui consultar o mapa agora.' });
-      return;
-    }
+    const data = await searchMapAddress({ text, apiKey: GEOAPIFY_API_KEY, filter: params.get('filter') || '', bias: params.get('bias') || '', city: requestedPlaceHint(text) || 'Conchal', limit: Number(params.get('limit')) });
     res.json(data);
   } catch (error) {
     next(error);
