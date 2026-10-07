@@ -2533,6 +2533,34 @@
           clearTimeout(timer);
         }
       }
+      function erroDeConexao(e) {
+        return (
+          e instanceof TypeError ||
+          /failed to fetch|networkerror|load failed|network connection was lost/i.test(
+            String((e && e.message) || ""),
+          )
+        );
+      }
+      // Login: em alguns iPhones a primeira conexao falha ("Load failed").
+      // Tenta de novo com conexao nova antes de mostrar erro.
+      async function fetchLoginComRetry(url, opcoes = {}, ms = 15000) {
+        const esperas = [0, 1200, 2500];
+        for (let i = 0; i < esperas.length; i++) {
+          if (esperas[i]) await new Promise((r) => setTimeout(r, esperas[i]));
+          try {
+            return await fetchComTempo(
+              i === 0 ? url : `${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`,
+              { ...opcoes, cache: "no-store" },
+              ms,
+            );
+          } catch (e) {
+            if (!erroDeConexao(e)) throw e;
+          }
+        }
+        throw new Error(
+          "Nao consegui conectar ao servidor da MotoJA por este celular. Troque entre Wi-Fi e 4G, desative VPN/bloqueador de anuncios e tente de novo.",
+        );
+      }
       function tipoPlanoDiario(tipo) {
         return tipo === PLANO_DIARIO_TIPO;
       }
@@ -3369,7 +3397,7 @@
             modo === "login"
               ? "/api/companies/login"
               : "/api/companies/register";
-          const r = await fetchComTempo(
+          const r = await (modo === "login" ? fetchLoginComRetry : fetchComTempo)(
             `${CONFIG.backend}${rota}`,
             {
               method: "POST",
