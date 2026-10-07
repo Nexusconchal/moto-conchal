@@ -298,10 +298,9 @@ function ensureResolvedAddressIsSpecific(input, resolved, label = 'Endereco') {
 
 function ensureDistantRouteIsPlausible(distanceKm, ...texts) {
   const distance = Number(distanceKm || 0);
+  // Tujuguaba e Iate ficam dentro de Conchal, a menos de 10 km do centro.
   const distantPlaces = [
     'martinho prado',
-    'tujuguaba',
-    'iate',
     'engenheiro coelho',
     'artur nogueira',
     'arthur nogueira',

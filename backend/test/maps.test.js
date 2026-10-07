@@ -36,6 +36,16 @@ test('wrong streets and city centroids remain rejected', () => {
   assert.throws(() => context.rotaDistantePlausivel(2, 'Cosmópolis'), /curta demais/);
   assert.doesNotThrow(() => context.rotaDistantePlausivel(50, 'Cosmópolis'));
 });
+test('Conchal districts Tujuguaba and Iate accept short routes', () => {
+  assert.doesNotThrow(() => context.rotaDistantePlausivel(6.8, 'Rua Albertino Mistura, 100, Tujuguaba', 'Rua Albertino Mistura, 100 - Distrito Tujuguaba, Conchal - SP, 13839-018'));
+  assert.doesNotThrow(() => context.rotaDistantePlausivel(4.2, 'Rua Rio Negro, 50, Iate Clube', 'Rua Rio Negro, 50 - Iate Clube, Conchal - SP'));
+  const backend = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  const ctx = vm.createContext({ normalizeText: value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() });
+  const start = backend.indexOf('function ensureDistantRouteIsPlausible(');
+  vm.runInContext(backend.slice(start, start + backend.slice(start).search(/\n(?:async )?function /)), ctx);
+  assert.doesNotThrow(() => ctx.ensureDistantRouteIsPlausible(6.8, 'Rua Albertino Mistura, 100 - Distrito Tujuguaba, Conchal - SP'));
+  assert.throws(() => ctx.ensureDistantRouteIsPlausible(3, 'Rua Barao de Jaguara, 100, Campinas'), /curta demais/);
+});
 test('backend refuses geocoded destinations in another city', () => {
   const backend = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
   const ctx = vm.createContext({ streetNumber, normalizeText: value => String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() });

@@ -2729,8 +2729,9 @@
         return /martinho\s*prado|tujuguaba|iate/.test(textoBusca(v));
       }
       function rotaDistantePlausivel(km, ...textos) {
+        // Tujuguaba e Iate ficam dentro de Conchal, a menos de 10 km do centro.
         const distante = textos.some((t) =>
-          /martinho\s*prado|tujuguaba|iate|engenheiro\s+coelho|artur\s+nogueira|arthur\s+nogueira|mogi\s+mirim|mogi\s+guacu|araras|americana|limeira|leme|pirassununga|rio\s+claro|campinas/.test(
+          /martinho\s*prado|engenheiro\s+coelho|artur\s+nogueira|arthur\s+nogueira|mogi\s+mirim|mogi\s+guacu|araras|americana|limeira|leme|pirassununga|rio\s+claro|campinas/.test(
             textoBusca(t),
           ),
         );

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexus-motoja-v218-entrega-avulsa';
+const CACHE_NAME = 'nexus-motoja-v219-tujuguaba-iate';
 const ARQUIVOS = ['./', './index.html', './motoboy.html', './motoboy-tracking.js?v=210', './dono.html', './owner-dashboard.css', './owner-dashboard.js', './owner-workspace.css', './owner-workspace.js', './empresa.html', './company-profile.js?v=208', './company-deposits.js?v=214', './owner-delivery-review.js?v=210', './company-reports.js?v=207', './report-export.js?v=207', './empresa-tracking.js?v=211', './empresa-pedidos.js', './privacy.html', './cliente.webmanifest', './motorista.webmanifest', './dono.webmanifest', './empresa.webmanifest', './firebase-messaging-sw.js', './nexus-motoja-logo-mark.png', './nexus-motoja-site-logo.png', './motorista-icon.svg', './nexus-motoja-icon-180.png', './nexus-motoja-icon-192.png', './nexus-motoja-icon-512.png'];
 
 self.addEventListener('install', (event) => {
