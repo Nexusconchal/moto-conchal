@@ -945,10 +945,7 @@
                 placeholder="Digite o código"
                 type="password"
             /></label>
-            <button
-              type="button"
-              onclick="document.getElementById('cpf').value=document.getElementById('loginCpf').value;document.getElementById('senha').value=document.getElementById('loginSenha').value;document.getElementById('entrar').click()"
-            >
+            <button id="entrarCpf" type="button">
               Entrar com CPF
             </button>
           </div>
@@ -2783,6 +2780,36 @@
             );
           });
       }
+      // Login so com CPF: usa o cadastro salvo no servidor, sem enviar
+      // nome/CNH/telefone que ficaram no formulario ou de outro motoboy
+      // que usou este celular (isso gerava "CPF ja cadastrado com outros dados").
+      $("entrarCpf").onclick = () => {
+        const cpf = soNumeros($("loginCpf").value);
+        if (soNumeros(lerMotoboySalvo().cpf) !== cpf) {
+          try {
+            localStorage.removeItem(MEMORIA_MOTOBOY);
+          } catch (e) {}
+          motoboyFoto = "";
+          crlvFoto = "";
+          $("fotoPreview").src = "";
+          $("fotoPreview").classList.add("hidden");
+        }
+        [
+          "nome",
+          "cnh",
+          "telefone",
+          "motoModelo",
+          "motoAno",
+          "motoPlaca",
+          "foto",
+          "crlvFoto",
+        ].forEach((id) => {
+          if ($(id)) $(id).value = "";
+        });
+        $("cpf").value = $("loginCpf").value;
+        $("senha").value = $("loginSenha").value;
+        $("entrar").click();
+      };
       $("entrar").onclick = async () => {
         const senha = $("senha").value.trim();
         try {
@@ -2802,6 +2829,8 @@
           alert(
             e.message === "senha_incorreta"
               ? "Senha incorreta. Peca a senha ao dono ou no grupo dos motoboys."
+              : e.message === "dados_invalidos"
+                ? "CPF nao encontrado ou cadastro incompleto. Se ainda nao tem cadastro, preencha o formulario acima."
               : /failed to fetch|load failed|networkerror|servidor|abort|timeout|conectar/i.test(
                     e.message || "",
                   )
