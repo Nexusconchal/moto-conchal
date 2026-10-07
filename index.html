@@ -3199,7 +3199,7 @@
             preco.periodo === "noite"
               ? "Tarifa especial de noite ativada automaticamente das 18:00 até 00:00.\n"
               : "Tarifa especial de madrugada ativada automaticamente das 00:00 até 06:00.\n";
-        txt += `\nPagamento:\nPague somente depois que um motoboy aceitar a corrida e chamar você no WhatsApp.\n\nA chamada fica disponível para os motoboys por até 5 minutos. Se nenhum motoboy aceitar nesse tempo, peça a corrida novamente ou aguarde nosso retorno aqui no WhatsApp.\n\nDepois do pagamento, envie o comprovante aqui e mostre para o motoboy o comprovante do pagamento efetuado antes de iniciar a corrida.\n`;
+        txt += `\nPagamento:\nPague somente depois que um motoboy aceitar a corrida e chamar você no WhatsApp.\n\nA chamada fica disponível para os motoboys por até 10 minutos. Se nenhum motoboy aceitar nesse tempo, peça a corrida novamente ou aguarde nosso retorno aqui no WhatsApp.\n\nDepois do pagamento, envie o comprovante aqui e mostre para o motoboy o comprovante do pagamento efetuado antes de iniciar a corrida.\n`;
         return txt + "\nPode confirmar a corrida, por favor?";
       }
       function lembrarLembretesNaSegundaAbertura() {
@@ -3665,11 +3665,11 @@
       function mostrarPedidoExpirado(pedido) {
         modal.classList.add("open");
         modal.setAttribute("aria-hidden", "false");
-        resultadoBox.innerHTML = `<div style="text-align:left"><strong style="font-size:1.15rem">Ainda não encontramos um motoboy</strong><br><span class="small">Ninguém aceitou automaticamente nesses 5 minutos, mas você ainda pode continuar o atendimento agora.</span><div style="margin:14px 0;padding:14px;border-radius:16px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18)"><strong>Quer que a gente tente resolver rápido?</strong><br><span class="small">Chame o suporte no WhatsApp ou peça novamente por mais 5 minutos.</span></div><div class="actions" style="margin-top:12px"><button id="btn-suporte-expirado" class="btn-main" type="button">Abrir WhatsApp do suporte</button><button id="btn-renovar-corrida" class="btn-secondary" type="button">Pedir novamente</button><button id="btn-cancelar-pedido" class="btn-secondary" type="button">Cancelar pedido</button></div></div>`;
+        resultadoBox.innerHTML = `<div style="text-align:left"><strong style="font-size:1.15rem">Ainda não encontramos um motoboy</strong><br><span class="small">Ninguém aceitou automaticamente nesses 10 minutos, mas você ainda pode continuar o atendimento agora.</span><div style="margin:14px 0;padding:14px;border-radius:16px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18)"><strong>Quer que a gente tente resolver rápido?</strong><br><span class="small">Chame o suporte no WhatsApp ou peça novamente por mais 10 minutos.</span></div><div class="actions" style="margin-top:12px"><button id="btn-suporte-expirado" class="btn-main" type="button">Abrir WhatsApp do suporte</button><button id="btn-renovar-corrida" class="btn-secondary" type="button">Pedir novamente</button><button id="btn-cancelar-pedido" class="btn-secondary" type="button">Cancelar pedido</button></div></div>`;
         resultadoBox.className = "result show";
         $("btn-suporte-expirado").onclick = () =>
           abrirWhatsApp(
-            "Olá, minha corrida no Nexus MotoJá ficou 5 minutos aguardando e nenhum motoboy aceitou. Pode me ajudar a encontrar um motoboy?",
+            "Olá, minha corrida no Nexus MotoJá ficou 10 minutos aguardando e nenhum motoboy aceitou. Pode me ajudar a encontrar um motoboy?",
           );
         $("btn-renovar-corrida").onclick = () => renovarPedidoAtivo(pedido);
         $("btn-cancelar-pedido").onclick = () => cancelarPedidoAtivo(pedido);
@@ -3786,7 +3786,7 @@
             return;
           }
           const base = Number(d.criadaEmMs || pedido.criadaEmMs || Date.now()),
-            restante = 5 * 60 * 1000 - (Date.now() - base);
+            restante = 10 * 60 * 1000 - (Date.now() - base);
           if (restante <= 0) {
             mostrarPedidoExpirado(pedido);
             return;
@@ -4177,7 +4177,7 @@
             rota: rota.geometry,
           };
           atualizarMapaCorrida(origem, destino, rota.geometry);
-          resultadoBox.innerHTML = `<div class="result-title">Destino encontrado</div><div class="route-summary"><div><span>Distância aprox.</span><strong>${km.toFixed(1).replace(".", ",")} km</strong></div><div><span>Valor estimado</span><strong>${formatarValor(preco.valor)}</strong></div></div><span class="route-detail">Cidade da chamada: <strong>${CIDADES_OPERACAO[cidadeOperacao].nome}</strong></span>${origemGps ? `Endereço aproximado do cliente: <strong>${enderecoGps || "Não identificado pelo mapa"}</strong><br>Mapa do cliente: <strong>${linkOrigemGps}</strong><br>` : ""}<span class="route-detail">Destino: <strong>${destinoEncontrado}</strong></span>${preco.porKm ? `Cálculo: <strong>${km.toFixed(2).replace(".", ",")} km x R$ ${formatarValorKm(preco)} por km</strong><br>` : ""}${preco.noturno ? `<strong>${preco.periodo === "noite" ? "Modo noite ativado." : "Modo madrugada ativado."}</strong><br>` : ""}<br><strong>Podemos dar andamento e chamar um motoboy agora?</strong><br>A chamada expira em 5 minutos se nenhum motoboy aceitar.`;
+          resultadoBox.innerHTML = `<div class="result-title">Destino encontrado</div><div class="route-summary"><div><span>Distância aprox.</span><strong>${km.toFixed(1).replace(".", ",")} km</strong></div><div><span>Valor estimado</span><strong>${formatarValor(preco.valor)}</strong></div></div><span class="route-detail">Cidade da chamada: <strong>${CIDADES_OPERACAO[cidadeOperacao].nome}</strong></span>${origemGps ? `Endereço aproximado do cliente: <strong>${enderecoGps || "Não identificado pelo mapa"}</strong><br>Mapa do cliente: <strong>${linkOrigemGps}</strong><br>` : ""}<span class="route-detail">Destino: <strong>${destinoEncontrado}</strong></span>${preco.porKm ? `Cálculo: <strong>${km.toFixed(2).replace(".", ",")} km x R$ ${formatarValorKm(preco)} por km</strong><br>` : ""}${preco.noturno ? `<strong>${preco.periodo === "noite" ? "Modo noite ativado." : "Modo madrugada ativado."}</strong><br>` : ""}<br><strong>Podemos dar andamento e chamar um motoboy agora?</strong><br>A chamada expira em 10 minutos se nenhum motoboy aceitar.`;
           resultadoBox.className = "result show";
           $("btn-confirmar-corrida").style.display = "flex";
           $("btn-confirmar-corrida").textContent = "Chamar motoboy";

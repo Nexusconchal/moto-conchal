@@ -4,7 +4,7 @@ Backend para rodar no Render quando o MotoJa Conchal sair do teste e precisar de
 
 ## O que ele resolve
 
-- Expira corrida pendente depois de 5 minutos, mesmo se o app estiver fechado.
+- Expira corrida pendente depois de 10 minutos, mesmo se o app estiver fechado.
 - Reabre corrida aceita quando o motoboy nao avisa o cliente em 3 minutos.
 - Guarda autorizacao Mercado Pago dos motoboys via OAuth.
 - Cria link de pagamento Mercado Pago com split: 70% motoboy e 30% app.

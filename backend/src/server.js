@@ -26,7 +26,7 @@ import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } 
 const PORT = Number(process.env.PORT || 10000);
 const DRIVER_PERCENT = Number(process.env.DRIVER_PERCENT || 0.7);
 const APP_PERCENT = Number(process.env.APP_PERCENT || 0.3);
-const RIDE_EXPIRE_MINUTES = Number(process.env.RIDE_EXPIRE_MINUTES || process.env.PENDING_EXPIRE_MINUTES || 5);
+const RIDE_EXPIRE_MINUTES = Number(process.env.RIDE_EXPIRE_MINUTES || process.env.PENDING_EXPIRE_MINUTES || 10);
 const DELIVERY_EXPIRE_MINUTES = Number(process.env.DELIVERY_EXPIRE_MINUTES || 15);
 const RIDE_EXPIRE_MS = RIDE_EXPIRE_MINUTES * 60 * 1000;
 const DELIVERY_EXPIRE_MS = DELIVERY_EXPIRE_MINUTES * 60 * 1000;
