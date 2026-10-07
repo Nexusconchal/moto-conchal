@@ -345,6 +345,12 @@
     shell.querySelectorAll("[data-owner-page]").forEach((link) => {
       const active = link.dataset.ownerPage === name;
       link.classList.toggle("active", active);
+      // No celular as abas rolam de lado: mantem a aba escolhida visivel.
+      const nav = link.parentElement;
+      if (active && nav && nav.scrollWidth > nav.clientWidth) {
+        const offset = link.getBoundingClientRect().left - nav.getBoundingClientRect().left;
+        if (offset < 0 || offset + link.offsetWidth > nav.clientWidth) nav.scrollBy({ left: offset - 8, behavior: "smooth" });
+      }
       if (active) link.setAttribute("aria-current", "page");
       else link.removeAttribute("aria-current");
     });
