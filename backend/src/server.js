@@ -1472,6 +1472,8 @@ async function collectionState(name, limit = 500, orderField = '') {
 function publicPendingJob(job = {}) {
   const copy = { ...job };
   delete copy.clienteDeviceId;
+  delete copy.codigoEntrega;
+  delete copy.tentativasCodigoEntrega;
   delete copy.telefoneCliente;
   delete copy.telefoneEmpresa;
   delete copy.telefoneContato;
@@ -1521,6 +1523,8 @@ function driverPasswordValues() {
 function privateDriverJob(job = {}) {
   const copy = { ...job };
   delete copy.clienteDeviceId;
+  delete copy.codigoEntrega;
+  delete copy.tentativasCodigoEntrega;
   // A foto do proprio motoboy ja fica salva no perfil. Repeti-la em cada
   // corrida ou entrega torna a listagem muito pesada em conexoes moveis.
   delete copy.motoboyFoto;
@@ -2360,9 +2364,33 @@ function ridePublicData(ride) {
     precoLabel: String(ride.precoLabel || ''),
     origemMapa: String(ride.origemMapa || ''),
     cidadeOperacao: canonicalRideCity(ride.cidadeOperacao, ''),
-    clienteDeviceId: validDeviceId(ride.clienteDeviceId)
+    clienteDeviceId: validDeviceId(ride.clienteDeviceId),
+    ...standaloneDeliveryData(ride)
   };
 }
+
+// Entrega avulsa: usa o mesmo fluxo e a mesma tabela da corrida, com os dados
+// de quem recebe. O codigo de entrega e gerado somente no servidor.
+function isStandaloneDelivery(ride = {}) {
+  return ride.modalidade === 'entrega_avulsa';
+}
+
+function standaloneDeliveryData(ride = {}) {
+  if (!isStandaloneDelivery(ride)) return {};
+  return {
+    modalidade: 'entrega_avulsa',
+    itemEntrega: cleanText(ride.itemEntrega, 120),
+    nomeRecebedor: cleanText(ride.nomeRecebedor, 80),
+    telefoneRecebedor: onlyDigits(ride.telefoneRecebedor).slice(0, 11),
+    observacaoEntrega: cleanText(ride.observacaoEntrega, 200)
+  };
+}
+
+function standaloneDeliveryCode() {
+  return String(crypto.randomInt(1000, 10000));
+}
+
+const STANDALONE_DELIVERY_CODE_MAX_ATTEMPTS = 5;
 
 function carRidePublicData(ride = {}) {
   const routeGeometry = Array.isArray(ride.routeGeometry)
@@ -3208,7 +3236,7 @@ async function notifyDriversAboutRide(rideId, ride) {
   const response = await admin.messaging().sendEachForMulticast({
     tokens,
     notification: {
-      title: `Nova corrida MotoJa ${rideCityLabel(city)}`,
+      title: `${isStandaloneDelivery(ride) ? 'Nova entrega avulsa' : 'Nova corrida'} MotoJa ${rideCityLabel(city)}`,
       body: `${ride.nome || 'Cliente'} - ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`
     },
     webpush: {
@@ -8824,6 +8852,16 @@ app.post('/api/rides', createRideLimiter, async (req, res, next) => {
     if (!ride.valor || ride.valor <= 0) {
       return res.status(400).json({ error: 'valor_invalido' });
     }
+    if (isStandaloneDelivery(ride)) {
+      if (!ride.itemEntrega || !ride.nomeRecebedor || ride.telefoneRecebedor.length < 10) {
+        return res.status(400).json({
+          error: 'dados_entrega_incompletos',
+          message: 'Informe o que vai ser enviado, quem recebe e o WhatsApp de quem recebe.'
+        });
+      }
+      ride.codigoEntrega = standaloneDeliveryCode();
+      ride.tentativasCodigoEntrega = 0;
+    }
     const header = String(req.header('authorization') || '');
     const customerToken = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
     const customerSession = await findCustomerSession(customerToken);
@@ -8960,6 +8998,12 @@ app.get('/api/rides/:rideId/status', async (req, res, next) => {
       km: Number(ride.km || 0),
       cidadeOperacao: ride.cidadeOperacao || '',
       clienteAvisado: !!ride.clienteAvisadoEm,
+      modalidade: ride.modalidade || 'corrida',
+      ...(isStandaloneDelivery(ride) ? {
+        itemEntrega: ride.itemEntrega || '',
+        nomeRecebedor: ride.nomeRecebedor || '',
+        codigoEntrega: ride.codigoEntrega || ''
+      } : {}),
       rastreamentoAtivo: ride.rastreamentoAtivo === true,
       motoboyLocalizacao: ride.rastreamentoAtivo === true && ride.status === 'aceita'
         ? serializeFirestore(ride.motoboyLocalizacao || null)
@@ -10140,7 +10184,18 @@ app.post('/api/rides/:rideId/notify-client', async (req, res, next) => {
     }
 
     const driverUrl = BACKEND_BASE_URL ? `${BACKEND_BASE_URL}/corrida/${req.params.rideId}` : '';
-    const message = `Ola, ${ride.nome || 'cliente'}! Seu motoboy ${ride.motoboy || 'MotoJa Conchal'} aceitou a corrida e iniciou o trajeto com GPS.\n\nValor: ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nOrigem: ${ride.origem || '-'}\nDestino: ${ride.destino || '-'}${driverUrl ? `\n\nAcompanhe a foto e a localizacao do motoboy ao vivo:\n${driverUrl}` : ''}\n\n${ridePaymentInstructions(ride)}`;
+    const standalone = isStandaloneDelivery(ride);
+    let recipientNotice = null;
+    if (standalone && !ride.clienteAvisadoEm && ride.telefoneRecebedor && ride.codigoEntrega) {
+      const recipientMessage = `Ola, ${ride.nomeRecebedor || 'tudo bem'}! ${ride.nome || 'Alguem'} enviou uma entrega para voce pela Nexus MotoJa: ${ride.itemEntrega || 'encomenda'}.\n\nO motoboy ${ride.motoboy || 'MotoJa'} ja esta a caminho.\n\nSeu codigo de entrega e ${ride.codigoEntrega}. Passe o codigo para o motoboy somente quando receber a encomenda.`;
+      recipientNotice = await sendEvolutionText(`55${ride.telefoneRecebedor}`, recipientMessage).catch((error) => {
+        console.error('standalone delivery code whatsapp failed', error);
+        return { sent: false };
+      });
+    }
+    const message = standalone
+      ? `Ola, ${ride.nome || 'cliente'}! Seu motoboy ${ride.motoboy || 'MotoJa Conchal'} aceitou a entrega e iniciou o trajeto com GPS.\n\nValor: ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nBuscar em: ${ride.origem || '-'}\nEntregar em: ${ride.destino || '-'}\nQuem recebe: ${ride.nomeRecebedor || '-'}${driverUrl ? `\n\nAcompanhe a foto e a localizacao do motoboy ao vivo:\n${driverUrl}` : ''}\n\nCodigo de entrega: ${ride.codigoEntrega || '-'}. ${recipientNotice?.sent ? 'Ele tambem foi enviado no WhatsApp de quem recebe.' : 'Envie esse codigo para quem recebe.'} O motoboy so finaliza com esse codigo.\n\n${ridePaymentInstructions(ride)}`
+      : `Ola, ${ride.nome || 'cliente'}! Seu motoboy ${ride.motoboy || 'MotoJa Conchal'} aceitou a corrida e iniciou o trajeto com GPS.\n\nValor: ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nOrigem: ${ride.origem || '-'}\nDestino: ${ride.destino || '-'}${driverUrl ? `\n\nAcompanhe a foto e a localizacao do motoboy ao vivo:\n${driverUrl}` : ''}\n\n${ridePaymentInstructions(ride)}`;
 
     await rideRef.set({
       clienteAvisadoEm: admin.firestore.FieldValue.serverTimestamp(),
@@ -10240,7 +10295,9 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
     await getDriverWithProof(driverCpf, req.body);
 
     const rideRef = db.collection('corridas').doc(req.params.rideId);
+    let wrongDeliveryCode = false;
     await db.runTransaction(async (tx) => {
+      wrongDeliveryCode = false;
       const rideSnap = await tx.get(rideRef);
       if (!rideSnap.exists) {
         const error = new Error('Corrida nao encontrada.');
@@ -10279,6 +10336,18 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
         error.code = 'corrida_cancelada';
         throw error;
       }
+      if (isStandaloneDelivery(ride)) {
+        if (Number(ride.tentativasCodigoEntrega || 0) >= STANDALONE_DELIVERY_CODE_MAX_ATTEMPTS) {
+          const error = new Error('Codigo de entrega bloqueado por tentativas erradas. Fale com o suporte MotoJa.');
+          error.status = 423;
+          error.code = 'codigo_entrega_bloqueado';
+          throw error;
+        }
+        if (!ride.codigoEntrega || onlyDigits(req.body.codigoEntrega) !== ride.codigoEntrega) {
+          wrongDeliveryCode = true;
+          return;
+        }
+      }
 
       const split = rideSplitAmounts(ride.pagamento?.total || ride.valor, ride.km);
       const event = driverEarningEvent('corrida', rideRef.id, { ...ride, ganhoMotoboy: split.driverAmount });
@@ -10299,6 +10368,17 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
     });
+
+    if (wrongDeliveryCode) {
+      await rideRef.set({
+        tentativasCodigoEntrega: admin.firestore.FieldValue.increment(1),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      return res.status(409).json({
+        error: 'codigo_entrega_invalido',
+        message: 'Codigo de entrega incorreto. Peca o codigo de 4 numeros para quem recebeu a encomenda.'
+      });
+    }
 
     res.json({ ok: true });
   } catch (error) {

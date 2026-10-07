@@ -1202,7 +1202,7 @@
           0 1px 4px rgba(0, 0, 0, 0.35) !important;
       }
       #btn-confirmar-corrida:before {
-        content: "MotoJa";
+        content: "MotoJ\00E1";
         font-size: 0.7rem;
         padding: 0.15rem 0.42rem;
         border-radius: 999px;
@@ -1331,7 +1331,7 @@
         color: #fff;
       }
       .map-brand strong:after {
-        content: "Ja";
+        content: "J\00C1";
         color: #ff6b00;
       }
       .map-city {
@@ -1486,6 +1486,53 @@
       }
       .pin-shape:after {
         display: none;
+      }
+      .cta-entrega {
+        background: linear-gradient(135deg, #ff8a00, #ff6a00) !important;
+        box-shadow: 0 10px 28px rgba(255, 122, 0, 0.34) !important;
+      }
+      .cta-entrega .cta-ico {
+        background: rgba(120, 40, 0, 0.28);
+      }
+      .box-shape {
+        position: relative;
+        width: 30px;
+        height: 26px;
+        border-radius: 5px;
+        background: #fff3e0;
+        box-shadow: inset 0 9px 0 #ffd18a;
+      }
+      .box-shape:before {
+        content: "";
+        position: absolute;
+        left: 12px;
+        top: 0;
+        width: 6px;
+        height: 26px;
+        background: #c96a12;
+        opacity: 0.55;
+      }
+      .entrega-extra {
+        display: none;
+        gap: 0.55rem;
+        grid-column: 1/-1;
+      }
+      .entrega-extra.show {
+        display: grid;
+      }
+      .entrega-duo {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.55rem;
+      }
+      .entrega-aviso {
+        font-size: 0.74rem;
+        font-weight: 800;
+        color: #ffd38a;
+        background: rgba(255, 138, 0, 0.12);
+        border: 1px solid rgba(255, 138, 0, 0.35);
+        border-radius: 12px;
+        padding: 0.55rem 0.7rem;
       }
       .cta-arrow {
         margin-left: auto;
@@ -1788,6 +1835,13 @@
             ><small>Calcule o valor e chame um motoboy</small></span
           ><span class="cta-arrow">›</span>
         </button>
+        <button id="btn-entrega" class="btn-main cta-gps cta-entrega" type="button">
+          <span class="cta-ico"><span class="box-shape"></span></span
+          ><span
+            ><strong>Enviar Entrega</strong
+            ><small>Celular, chave, documento... mesmo preço</small></span
+          ><span class="cta-arrow">›</span>
+        </button>
         <div class="home-mini-actions">
           <button id="btn-lembretes" class="mini-action" type="button">
             <span class="mini-ico">!</span
@@ -1840,7 +1894,7 @@
         <div class="panel-head">
           <div>
             <div id="modal-title" class="panel-title">Calcular corrida</div>
-            <p class="panel-sub">
+            <p id="modal-sub" class="panel-sub">
               Use sua localização atual ou digite o endereço. O Pix só vai
               depois que um motoboy aceitar a corrida.
             </p>
@@ -1871,7 +1925,7 @@
           /></label>
           <div class="origin">
             <label
-              >Onde você está<input
+              ><span id="lbl-origem">Onde você está</span><input
                 id="origem"
                 autocomplete="street-address"
                 placeholder="Rua, número, bairro"
@@ -1881,12 +1935,45 @@
             </button>
           </div>
           <label
-            >Para onde você vai<input
+            ><span id="lbl-destino">Para onde você vai</span><input
               id="destino"
               autocomplete="street-address"
               placeholder="Rua, número, bairro ou ponto conhecido"
               required
           /></label>
+          <div id="entrega-extra" class="entrega-extra">
+            <label
+              >O que vai ser enviado<input
+                id="itemEntrega"
+                maxlength="120"
+                placeholder="Ex: celular na caixa"
+            /></label>
+            <div class="entrega-duo">
+              <label
+                >Quem recebe<input
+                  id="nomeRecebedor"
+                  maxlength="80"
+                  placeholder="Ex: Maria"
+              /></label>
+              <label
+                >WhatsApp de quem recebe<input
+                  id="telefoneRecebedor"
+                  inputmode="tel"
+                  placeholder="Ex: 19999999999"
+              /></label>
+            </div>
+            <label
+              >Observação (opcional)<input
+                id="observacaoEntrega"
+                maxlength="200"
+                placeholder="Ex: portão azul, deixar com o porteiro"
+            /></label>
+            <div class="entrega-aviso">
+              Proibido enviar dinheiro, itens ilegais, animais ou volumes que
+              não cabem na mochila. Quem recebe ganha um código no WhatsApp
+              para confirmar a entrega.
+            </div>
+          </div>
           <div id="status" class="status"></div>
           <div id="resultado" class="result"></div>
           <div class="actions">
@@ -2691,6 +2778,29 @@
           window.location.href = `https://api.whatsapp.com/send?text=${encodeURIComponent(texto)}`;
         }
       }
+      let modoPedido = "corrida";
+      function aplicarModoPedido(modo) {
+        const entrega = modo === "entrega";
+        if (modoPedido !== modo) {
+          corridaCalculada = null;
+          $("btn-confirmar-corrida").style.display = "none";
+          const b = document.querySelector("#form-corrida .btn-primary");
+          if (b) b.textContent = "Calcular valor";
+          resultadoBox.className = "result";
+          resultadoBox.textContent = "";
+        }
+        modoPedido = entrega ? "entrega" : "corrida";
+        $("modal-title").textContent = entrega ? "Enviar entrega" : "Calcular corrida";
+        $("modal-sub").textContent = entrega
+          ? "Diga onde buscar e onde entregar. O preço é o mesmo da tabela e o Pix só vai depois que um motoboy aceitar."
+          : "Use sua localização atual ou digite o endereço. O Pix só vai depois que um motoboy aceitar a corrida.";
+        $("lbl-origem").textContent = entrega ? "Onde buscar" : "Onde você está";
+        $("lbl-destino").textContent = entrega ? "Onde entregar" : "Para onde você vai";
+        $("btn-localizacao").textContent = entrega
+          ? "Buscar na minha localização atual"
+          : "Usar minha localização atual";
+        $("entrega-extra").classList.toggle("show", entrega);
+      }
       function abrirModal() {
         modal.classList.add("open");
         modal.setAttribute("aria-hidden", "false");
@@ -3186,11 +3296,14 @@
         destinoEncontrado,
         km,
         preco,
+        entrega,
       }) {
         const dist = km
           ? `${km.toFixed(2).replace(".", ",")} km`
           : "Não calculada";
-        let txt = `Olá! Quero pedir uma corrida.\n\nNome: ${nome}\nWhatsApp: ${telefoneCliente || "Não informado"}\nEstou em: ${origemTexto}\nDestino digitado: ${destinoTexto}\nDestino encontrado no mapa: ${destinoEncontrado || destinoTexto}\nDistância calculada: ${dist}\n`;
+        let txt = entrega
+          ? `Olá! Quero enviar uma entrega.\n\nNome: ${nome}\nWhatsApp: ${telefoneCliente || "Não informado"}\nO que vai: ${entrega.itemEntrega}\nBuscar em: ${origemTexto}\nEntregar em: ${destinoTexto}\nEndereço encontrado no mapa: ${destinoEncontrado || destinoTexto}\nQuem recebe: ${entrega.nomeRecebedor} (${entrega.telefoneRecebedor})\n${entrega.observacaoEntrega ? `Observação: ${entrega.observacaoEntrega}\n` : ""}Distância calculada: ${dist}\n`
+          : `Olá! Quero pedir uma corrida.\n\nNome: ${nome}\nWhatsApp: ${telefoneCliente || "Não informado"}\nEstou em: ${origemTexto}\nDestino digitado: ${destinoTexto}\nDestino encontrado no mapa: ${destinoEncontrado || destinoTexto}\nDistância calculada: ${dist}\n`;
         txt += `Valor: ${formatarValor(preco.valor)} (${preco.label})\n`;
         if (preco.porKm)
           txt += `Cálculo: ${km.toFixed(2).replace(".", ",")} km x R$ ${formatarValorKm(preco)} por km.\n`;
@@ -3200,7 +3313,7 @@
               ? "Tarifa especial de noite ativada automaticamente das 18:00 até 00:00.\n"
               : "Tarifa especial de madrugada ativada automaticamente das 00:00 até 06:00.\n";
         txt += `\nPagamento:\nPague somente depois que um motoboy aceitar a corrida e chamar você no WhatsApp.\n\nA chamada fica disponível para os motoboys por até 10 minutos. Se nenhum motoboy aceitar nesse tempo, peça a corrida novamente ou aguarde nosso retorno aqui no WhatsApp.\n\nDepois do pagamento, envie o comprovante aqui e mostre para o motoboy o comprovante do pagamento efetuado antes de iniciar a corrida.\n`;
-        return txt + "\nPode confirmar a corrida, por favor?";
+        return txt + (entrega ? "\nPode confirmar a entrega, por favor?" : "\nPode confirmar a corrida, por favor?");
       }
       function lembrarLembretesNaSegundaAbertura() {
         try {
@@ -3470,12 +3583,13 @@
                 <div>
                   <div style="color:#ff9a00;font-size:11px;font-weight:900;letter-spacing:1px;text-transform:uppercase">Nexus MotoJá Conchal</div>
                   <strong style="font-size:1.15rem;color:#fff">${escHtml(dados.motoboy || "MotoJá")}</strong><br>
-                  <span class="small" style="text-align:left;color:#94a3b8">Seu motoboy aceitou a corrida</span>
+                  <span class="small" style="text-align:left;color:#94a3b8">Seu motoboy aceitou a ${dados.modalidade === "entrega_avulsa" ? "entrega" : "corrida"}</span>
                 </div>
               </div>
               <div id="driver-contact-box">${driverWaBtn}</div>
             </div>
             ${pagHtml}
+            ${dados.modalidade === "entrega_avulsa" && dados.codigoEntrega ? `<div style="margin:12px 0;padding:12px 14px;border-radius:14px;background:rgba(255,138,0,.12);border:1px solid rgba(255,138,0,.4);text-align:center"><div class="small" style="font-weight:800;color:#ffd38a">Código de entrega para ${escHtml(dados.nomeRecebedor || "quem recebe")}</div><div style="font-size:28px;font-weight:900;letter-spacing:8px;color:#fff;margin:4px 0">${escHtml(dados.codigoEntrega)}</div><div class="small" style="color:#cbd5e1">Quem recebe passa esse código para o motoboy na hora da entrega. Se a pessoa não receber pelo WhatsApp, envie para ela.</div></div>` : ""}
             <div id="gps-cliente-status" style="margin:12px 0 8px;padding:12px 14px;border-radius:14px;background:rgba(255,154,0,.12);border:1px solid rgba(255,154,0,.35);font-weight:800;display:flex;align-items:center;justify-content:space-between;gap:8px">
               <span id="gps-status-txt">Aguardando o motoboy iniciar o GPS...</span>
               <span id="gps-live-dot" style="display:none;width:8px;height:8px;border-radius:50%;background:#25d366;box-shadow:0 0 10px #25d366"></span>
@@ -4036,7 +4150,19 @@
       $("btn-indicar")?.addEventListener("click", indicarApp);
       $("btn-instalar").addEventListener("click", salvarNaTelaInicial);
       $("btn-lembretes")?.addEventListener("click", ativarLembretesCliente);
-      $("btn-pedir").addEventListener("click", abrirModal);
+      $("btn-pedir").addEventListener("click", () => {
+        aplicarModoPedido("corrida");
+        abrirModal();
+      });
+      $("btn-entrega").addEventListener("click", () => {
+        aplicarModoPedido("entrega");
+        abrirModal();
+      });
+      $("telefoneRecebedor").addEventListener("input", () => {
+        $("telefoneRecebedor").value = $("telefoneRecebedor")
+          .value.replace(/\D/g, "")
+          .slice(0, 11);
+      });
       $("btn-fechar").addEventListener("click", fecharModal);
       modal.addEventListener("click", (e) => {
         if (e.target === modal) fecharModal();
@@ -4118,6 +4244,30 @@
           mostrarStatus("Digite o WhatsApp com DDD.", true);
           return;
         }
+        const entrega =
+          modoPedido === "entrega"
+            ? {
+                itemEntrega: $("itemEntrega").value.trim(),
+                nomeRecebedor: $("nomeRecebedor").value.trim(),
+                telefoneRecebedor: $("telefoneRecebedor").value.replace(/\D/g, ""),
+                observacaoEntrega: $("observacaoEntrega").value.trim(),
+              }
+            : null;
+        if (
+          entrega &&
+          (!entrega.itemEntrega || !entrega.nomeRecebedor)
+        ) {
+          mostrarStatus("Diga o que vai ser enviado e quem vai receber.", true);
+          return;
+        }
+        if (
+          entrega &&
+          (entrega.telefoneRecebedor.length < 10 ||
+            entrega.telefoneRecebedor.length > 11)
+        ) {
+          mostrarStatus("Digite o WhatsApp de quem recebe com DDD.", true);
+          return;
+        }
         if (corridaRepetida(assinatura)) {
           mostrarStatus(
             "Essa corrida já foi enviada agora. Aguarde alguns segundos antes de pedir igual novamente.",
@@ -4175,6 +4325,7 @@
             origemTexto,
             destinoEncontrado,
             rota: rota.geometry,
+            entrega,
           };
           atualizarMapaCorrida(origem, destino, rota.geometry);
           resultadoBox.innerHTML = `<div class="result-title">Destino encontrado</div><div class="route-summary"><div><span>Distância aprox.</span><strong>${km.toFixed(1).replace(".", ",")} km</strong></div><div><span>Valor estimado</span><strong>${formatarValor(preco.valor)}</strong></div></div><span class="route-detail">Cidade da chamada: <strong>${CIDADES_OPERACAO[cidadeOperacao].nome}</strong></span>${origemGps ? `Endereço aproximado do cliente: <strong>${enderecoGps || "Não identificado pelo mapa"}</strong><br>Mapa do cliente: <strong>${linkOrigemGps}</strong><br>` : ""}<span class="route-detail">Destino: <strong>${destinoEncontrado}</strong></span>${preco.porKm ? `Cálculo: <strong>${km.toFixed(2).replace(".", ",")} km x R$ ${formatarValorKm(preco)} por km</strong><br>` : ""}${preco.noturno ? `<strong>${preco.periodo === "noite" ? "Modo noite ativado." : "Modo madrugada ativado."}</strong><br>` : ""}<br><strong>Podemos dar andamento e chamar um motoboy agora?</strong><br>A chamada expira em 10 minutos se nenhum motoboy aceitar.`;
@@ -4245,6 +4396,7 @@
             telefoneCliente: d.telefoneCliente,
             pagamento: "pix_apos_aceite",
             pix: CONFIG.pix,
+            ...(d.entrega ? { modalidade: "entrega_avulsa", ...d.entrega } : {}),
           });
           marcarCorridaEnviada(d.assinatura, corridaRef.id || clientRequestId);
           salvarPedidoAtivo(
@@ -4261,7 +4413,8 @@
               destinoEncontrado: d.destinoEncontrado,
               km: d.km,
               preco: d.preco,
-            }) + (corridaRef ? `\n\nCódigo da corrida: ${corridaRef.id}` : ""),
+              entrega: d.entrega,
+            }) + (corridaRef ? `\n\nCódigo do pedido: ${corridaRef.id}` : ""),
           );
         } catch (err) {
           enviandoCorrida = false;
