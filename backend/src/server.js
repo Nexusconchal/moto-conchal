@@ -10187,7 +10187,11 @@ app.post('/api/rides/:rideId/notify-client', async (req, res, next) => {
     let recipientNotice = null;
     if (standalone && !ride.clienteAvisadoEm && ride.telefoneRecebedor && ride.codigoEntrega) {
       const recipientMessage = `Ola, ${ride.nomeRecebedor || 'tudo bem'}! ${ride.nome || 'Alguem'} enviou uma entrega para voce pela Nexus MotoJa: ${ride.itemEntrega || 'encomenda'}.\n\nO motoboy ${ride.motoboy || 'MotoJa'} ja esta a caminho.\n\nSeu codigo de entrega e ${ride.codigoEntrega}. Passe o codigo para o motoboy somente quando receber a encomenda.`;
-      recipientNotice = await sendEvolutionText(`55${ride.telefoneRecebedor}`, recipientMessage).catch((error) => {
+      // O motoboy espera esta resposta para abrir o WhatsApp: nunca travar por mais de 8 s.
+      recipientNotice = await Promise.race([
+        sendEvolutionText(`55${ride.telefoneRecebedor}`, recipientMessage),
+        new Promise((resolve) => setTimeout(() => resolve({ sent: false, reason: 'timeout' }), 8000))
+      ]).catch((error) => {
         console.error('standalone delivery code whatsapp failed', error);
         return { sent: false };
       });
