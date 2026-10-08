@@ -8,7 +8,9 @@ export const QUICK_DELIVERY_REGIONS = Object.freeze({
 // Planos com tarifa fixa por entrega: o valor nao depende da regiao.
 const PLAN_FARES = Object.freeze({
   'plano diario motoja pro': { type: 'Plano Diario MotoJa Pro', fare: 4, appFee: 1, label: 'plano diario' },
-  'meio periodo motoja': { type: 'Meio Periodo MotoJa', fare: 5.5, appFee: 1.5, label: 'meio periodo' }
+  'plano meio periodo motoja': { type: 'Plano Meio Periodo MotoJa', fare: 5.5, appFee: 1.5, label: 'plano meio periodo' },
+  // Nome antigo, aceito enquanto algum celular ainda usa a versao anterior do app.
+  'meio periodo motoja': { type: 'Plano Meio Periodo MotoJa', fare: 5.5, appFee: 1.5, label: 'plano meio periodo' }
 });
 
 function planFare(type) {

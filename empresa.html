@@ -1509,7 +1509,7 @@
         ></div>
       </section>
       <section class="box app-area hidden">
-        <h2>Meio Período MotoJá</h2>
+        <h2>Plano Meio Período MotoJá</h2>
         <div
           class="status show"
           style="display: grid; gap: 8px; text-align: left"
@@ -1940,8 +1940,8 @@
             <option value="Plano Diario MotoJa Pro" disabled>
               Plano Diario MotoJa Pro - R$ 4,00 por entrega/ponto (ative por R$ 70,00)
             </option>
-            <option value="Meio Periodo MotoJa" disabled>
-              Meio Período MotoJá - R$ 5,50 por entrega/ponto (ative por R$ 25,00)
+            <option value="Plano Meio Periodo MotoJa" disabled>
+              Plano Meio Período MotoJá - R$ 5,50 por entrega/ponto (ative por R$ 25,00)
             </option>
             <option value="Lanche / pizza / pastel / marmita">
               Lanche / pizza / pastel / marmita - R$ 6,50 ou R$ 16,00
@@ -2151,7 +2151,7 @@
         empresaAprovada = false,
         contaTela = "login";
       const PLANO_DIARIO_TIPO = "Plano Diario MotoJa Pro";
-      const MEIO_PERIODO_TIPO = "Meio Periodo MotoJa";
+      const MEIO_PERIODO_TIPO = "Plano Meio Periodo MotoJa";
       const MEMORIA_EMPRESA = "nexusEmpresaDados",
         MEMORIA_PEDIDOS_PREPARADOS = "nexusEmpresaPedidosPreparados",
         TOKEN_EMPRESA = "nexusEmpresaToken";
@@ -2640,8 +2640,8 @@
         if (status) {
           status.className = "status show";
           status.textContent = meioPeriodoAtivo
-            ? `Meio Período MotoJá ativo até ${horaCurta(meioPeriodoExpiraEmMs)}. A opção de R$ 5,50 está liberada.`
-            : "Meio Período MotoJá bloqueado. Ative por R$ 25,00 para liberar R$ 5,50 por entrega/ponto durante 6 horas.";
+            ? `Plano Meio Período MotoJá ativo até ${horaCurta(meioPeriodoExpiraEmMs)}. A opção de R$ 5,50 está liberada.`
+            : "Plano Meio Período MotoJá bloqueado. Ative por R$ 25,00 para liberar R$ 5,50 por entrega/ponto durante 6 horas.";
         }
         if (btn) {
           btn.disabled = meioPeriodoAtivo;
@@ -2934,7 +2934,7 @@
         if (tipoPlanoDiario(tipo))
           return "Plano Diario MotoJa Pro ativo: R$ 4,00 por entrega/ponto";
         if (tipoMeioPeriodo(tipo))
-          return "Meio Periodo MotoJa ativo: R$ 5,50 por entrega/ponto";
+          return "Plano Meio Periodo MotoJa ativo: R$ 5,50 por entrega/ponto";
         if (!comidaFixa(tipo)) return "R$ 2,50 por km";
         const especiais = pontos.filter(destinoComidaEspecial).length,
           normais = Math.max(0, Math.max(1, paradas) - especiais);
@@ -3706,13 +3706,13 @@
         if (saldoEmpresa.disponivel < 25) {
           const falta = Math.max(0, 25 - saldoEmpresa.disponivel);
           mostrarMeioPeriodoAviso(
-            `Saldo insuficiente para essa opção. Disponível: ${moeda(saldoEmpresa.disponivel)}. Falta ${moeda(falta)} para ativar o Meio Período.`,
+            `Saldo insuficiente para essa opção. Disponível: ${moeda(saldoEmpresa.disponivel)}. Falta ${moeda(falta)} para ativar o Plano Meio Período.`,
           );
           return;
         }
         if (
           !confirm(
-            "Ativar Meio Período MotoJá? Vai descontar R$ 25,00 agora e liberar taxa fixa de R$ 5,50 por entrega/ponto durante 6 horas.",
+            "Ativar Plano Meio Período MotoJá? Vai descontar R$ 25,00 agora e liberar taxa fixa de R$ 5,50 por entrega/ponto durante 6 horas.",
           )
         )
           return;
@@ -3735,11 +3735,11 @@
             );
           definirMeioPeriodo(d.expiraEmMs);
           mostrarMeioPeriodoAviso(
-            `Meio Período ativo até ${horaCurta(meioPeriodoExpiraEmMs)}. A taxa fixa de R$ 5,50 está liberada.`,
+            `Plano Meio Período ativo até ${horaCurta(meioPeriodoExpiraEmMs)}. A taxa fixa de R$ 5,50 está liberada.`,
             false,
           );
           mostrarStatus(
-            `Meio Período MotoJá ativo até ${horaCurta(meioPeriodoExpiraEmMs)}. A empresa pode usar R$ 5,50 por entrega/ponto.`,
+            `Plano Meio Período MotoJá ativo até ${horaCurta(meioPeriodoExpiraEmMs)}. A empresa pode usar R$ 5,50 por entrega/ponto.`,
           );
           await carregarSaldo();
         } catch (e) {
@@ -5066,7 +5066,7 @@
         }
         if (tipoMeioPeriodo(tipoEntrega) && !meioPeriodoAtivo) {
           mostrarStatus(
-            "Meio Período MotoJá bloqueado. Ative por R$ 25,00 para usar R$ 5,50 por 6 horas.",
+            "Plano Meio Período MotoJá bloqueado. Ative por R$ 25,00 para usar R$ 5,50 por 6 horas.",
             true,
           );
           return;
@@ -5447,7 +5447,7 @@
         integrationsView.append(lead("Integracoes", "Gerencie Anota AI, BeeFood, Cardápio Web e as capturas automaticas da loja."), integrations);
 
         const financeView = makeView("finance", "finance-grid");
-        financeView.append(lead("Financeiro", "Adicione saldo, confira a forma de pagamento e gerencie o plano diario e o meio periodo."), wallet, payment, dailyPlan, ...(halfPlan ? [halfPlan] : []));
+        financeView.append(lead("Financeiro", "Adicione saldo, confira a forma de pagamento e gerencie o plano diario e o plano meio periodo."), wallet, payment, dailyPlan, ...(halfPlan ? [halfPlan] : []));
 
         const reportsView = makeView("reports");
         reportsView.append(lead("Relatorios", "Confira os valores e entregas realizadas pela empresa."), report);

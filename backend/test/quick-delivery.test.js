@@ -43,7 +43,7 @@ function harness(balance = 100) {
     ledgerRef: () => ref('ledger/event'), isPricedDeliveryType: t => !!t,
     bairroFromAddress: () => '',
     isFixedFoodDelivery: t => /lanche|farmacia|acai/i.test(t), isDailyPlanDelivery: t => String(t).toLowerCase() === 'plano diario motoja pro',
-    isHalfPlanDelivery: t => String(t).toLowerCase() === 'meio periodo motoja', halfPlanActiveUntil: (c = {}) => Number(c.meioPeriodoExpiraEmMs || 0) > Date.now() ? Number(c.meioPeriodoExpiraEmMs) : 0, halfPlanInactiveError: (m = 'Meio Periodo inativo') => Object.assign(new Error(m), { status: 403, code: 'plano_diario_inativo' }), HALF_PLAN_DELIVERY_FEE: 5.5, HALF_PLAN_APP_FEE: 1.5,
+    isHalfPlanDelivery: t => String(t).toLowerCase() .includes('meio periodo motoja'), halfPlanActiveUntil: (c = {}) => Number(c.meioPeriodoExpiraEmMs || 0) > Date.now() ? Number(c.meioPeriodoExpiraEmMs) : 0, halfPlanInactiveError: (m = 'Meio Periodo inativo') => Object.assign(new Error(m), { status: 403, code: 'plano_diario_inativo' }), HALF_PLAN_DELIVERY_FEE: 5.5, HALF_PLAN_APP_FEE: 1.5,
     todayKeySaoPaulo: () => '2026-10-04', dailyPlanRef: (phone, day) => ref(`plans/${phone}/${day}`),
     DAILY_PLAN_DELIVERY_FEE: 4, DAILY_PLAN_APP_FEE: 1,
     getDriverWithProof: async () => {}, timestampMs: Number,
@@ -173,7 +173,7 @@ test('legacy finalization debits standard R$ 6.50 and daily R$ 4 batches exactly
 test('daily batch renewals cannot use yesterday, revoked or another company plan', async () => {
   const reads = [];
   let active = true;
-  const ctx = vm.createContext({ todayKeySaoPaulo: () => '2026-10-04', isDailyPlanDelivery: t => t === 'Plano Diario MotoJa Pro', isHalfPlanDelivery: t => t === 'Meio Periodo MotoJa', halfPlanInactiveError: m => Object.assign(new Error(m), { status: 403 }), dailyPlanRef: (phone, day) => `${phone}/${day}` });
+  const ctx = vm.createContext({ todayKeySaoPaulo: () => '2026-10-04', isDailyPlanDelivery: t => t === 'Plano Diario MotoJa Pro', isHalfPlanDelivery: t => t === 'Plano Meio Periodo MotoJa', halfPlanInactiveError: m => Object.assign(new Error(m), { status: 403 }), dailyPlanRef: (phone, day) => `${phone}/${day}` });
   vm.runInContext(source.slice(source.indexOf('async function assertQuickDailyPlanRenewable('), source.indexOf('function isFixedFoodDelivery(')),ctx);
   const tx = { get: async ref => { reads.push(ref); return { exists:active, data:() => ({status:'ativo'}) }; } };
   const d = { ...dailyRaw(), planoDiarioDia:'2026-10-04' };
@@ -187,7 +187,7 @@ test('daily batch renewals cannot use yesterday, revoked or another company plan
 test('company summary enables R$ 4 only for active daily plans and driver display uses the same R$ 1 fee', () => {
   const html = fs.readFileSync(new URL('../../empresa.html',import.meta.url),'utf8');
   const fields = { quantidadeLote:{value:'3'},tipoEntrega:{value:'Plano Diario MotoJa Pro'},regiaoLote:{value:'martinho_prado'},resumoLote:{},chamarLote:{} };
-  const ctx = vm.createContext({ $:id => fields[id], tipoPlanoDiario:t => t === 'Plano Diario MotoJa Pro', tipoMeioPeriodo:t => t === 'Meio Periodo MotoJa', meioPeriodoAtivo:false, comidaFixa:t => /lanche|acai|farmacia/i.test(t), planoDiarioAtivo:false, enviando:false, moeda:n => n.toFixed(2) });
+  const ctx = vm.createContext({ $:id => fields[id], tipoPlanoDiario:t => t === 'Plano Diario MotoJa Pro', tipoMeioPeriodo:t => t === 'Plano Meio Periodo MotoJa', meioPeriodoAtivo:false, comidaFixa:t => /lanche|acai|farmacia/i.test(t), planoDiarioAtivo:false, enviando:false, moeda:n => n.toFixed(2) });
   vm.runInContext(html.slice(html.indexOf('function tipoLotePermitido('),html.indexOf('function selecionarModoEntrega(')),ctx);
   ctx.atualizarResumoLote(); assert.equal(fields.chamarLote.disabled,true);
   ctx.planoDiarioAtivo = true; ctx.atualizarResumoLote();
@@ -247,7 +247,7 @@ test('switching modes hides address and notes, preserves the regular flow, and c
   assert.equal(el('calcular').style.display,'block');
 });
 
-const halfRaw = () => ({ ...raw(), tipoEntrega: 'Meio Periodo MotoJa', valor: 0.01, meioPeriodo: true, meioPeriodoExpiraEmMs: Date.now() + 9e9 });
+const halfRaw = () => ({ ...raw(), tipoEntrega: 'Plano Meio Periodo MotoJa', valor: 0.01, meioPeriodo: true, meioPeriodoExpiraEmMs: Date.now() + 9e9 });
 test('half period plan is blocked until activated, expired activations do not count and the request cannot forge it', async () => {
   for (const expira of [undefined, Date.now() - 1000]) {
     const h = harness();
@@ -265,7 +265,7 @@ test('active half period reserves R$ 5,50 per delivery in every region and split
     const d = h.records.get('entregas/quick-test');
     assert.equal(d.valor, 16.5); assert.equal(d.meioPeriodoExpiraEmMs, until); assert.equal(d.meioPeriodoAtivacaoId, 'act-1');
     assert.equal(h.context.expectedDeliveryFare(0, 3, d.tipoEntrega, d), 16.5);
-    assert.equal(h.context.expectedDeliveryFare(2.3, 2, 'Meio Periodo MotoJa', {}), 11);
+    assert.equal(h.context.expectedDeliveryFare(2.3, 2, 'Plano Meio Periodo MotoJa', {}), 11);
     assert.equal(h.context.deliverySplit(d).appFee, 4.5);
     assert.equal(h.context.deliverySplit(d).driverAmount, 12);
     assert.equal(h.records.get('empresas/company').saldo, 100);
@@ -284,7 +284,7 @@ test('half period batch finalization debits R$ 5,50 per delivery and pays the dr
   assert.equal(h.earnings[0].ganho, 12);
 });
 test('half period batch renewals stop after the 6 hours expire', async () => {
-  const ctx = vm.createContext({ todayKeySaoPaulo: () => '2026-10-04', isDailyPlanDelivery: () => false, isHalfPlanDelivery: t => t === 'Meio Periodo MotoJa', halfPlanInactiveError: m => Object.assign(new Error(m), { status: 403 }), dailyPlanRef: () => '' });
+  const ctx = vm.createContext({ todayKeySaoPaulo: () => '2026-10-04', isDailyPlanDelivery: () => false, isHalfPlanDelivery: t => t === 'Plano Meio Periodo MotoJa', halfPlanInactiveError: m => Object.assign(new Error(m), { status: 403 }), dailyPlanRef: () => '' });
   vm.runInContext(source.slice(source.indexOf('async function assertQuickDailyPlanRenewable('), source.indexOf('function isFixedFoodDelivery(')),ctx);
   const tx = { get: async () => { throw new Error('no read expected'); } };
   await ctx.assertQuickDailyPlanRenewable(tx, { ...halfRaw(), meioPeriodoExpiraEmMs: Date.now() + 1000 }, '11999999999');
@@ -326,5 +326,11 @@ test('driver app shows R$ 1,50 app fee for half period deliveries', () => {
   const dctx = vm.createContext({ dinheiro:Number, planoDiario:c => c.tipoEntrega === 'Plano Diario MotoJa Pro', servicoExclusivo:() => false });
   vm.runInContext(driver.slice(driver.indexOf('function appValorEntrega('),driver.indexOf('function appPercent(')),dctx);
   assert.equal(dctx.appValorEntrega({ ...halfRaw(), valor: 16.5 }), 4.5);
-  assert.equal(dctx.appValorEntrega({ tipoEntrega: 'Meio Periodo MotoJa', paradas: 1, valor: 5.5 }), 1.5);
+  assert.equal(dctx.appValorEntrega({ tipoEntrega: 'Plano Meio Periodo MotoJa', paradas: 1, valor: 5.5 }), 1.5);
+});
+test('old half period name from a cached app still prices as Plano Meio Periodo', () => {
+  const d = { ...raw(), tipoEntrega: 'Meio Periodo MotoJa' };
+  prepareQuickDelivery(d, 2, company, false);
+  assert.equal(d.tipoEntrega, 'Plano Meio Periodo MotoJa'); assert.equal(d.valor, 11);
+  assert.equal(quickDeliveryFare(d, true), 3);
 });

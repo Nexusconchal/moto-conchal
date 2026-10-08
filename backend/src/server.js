@@ -196,7 +196,7 @@ const DAILY_PLAN_TYPE = 'Plano Diario MotoJa Pro';
 const DAILY_PLAN_PRICE = 70;
 const DAILY_PLAN_DELIVERY_FEE = 4;
 const DAILY_PLAN_APP_FEE = 1;
-const HALF_PLAN_TYPE = 'Meio Periodo MotoJa';
+const HALF_PLAN_TYPE = 'Plano Meio Periodo MotoJa';
 const HALF_PLAN_PRICE = 25;
 const HALF_PLAN_DELIVERY_FEE = 5.5;
 const HALF_PLAN_APP_FEE = 1.5;
@@ -214,7 +214,7 @@ function dailyPlanRef(companyId, dayKey = todayKeySaoPaulo()) {
 async function assertQuickDailyPlanRenewable(tx, delivery, companyId) {
   if (delivery.entregaNaNota && isHalfPlanDelivery(delivery.tipoEntrega)) {
     if (Number(delivery.meioPeriodoExpiraEmMs || 0) <= Date.now()) {
-      const error = halfPlanInactiveError('O Meio Periodo deste chamado venceu. Ative de novo e crie uma nova chamada.');
+      const error = halfPlanInactiveError('O Plano Meio Periodo deste chamado venceu. Ative de novo e crie uma nova chamada.');
       error.code = 'plano_diario_vencido';
       throw error;
     }
@@ -254,7 +254,7 @@ function halfPlanActiveUntil(company = {}, now = Date.now()) {
   return until > now ? until : 0;
 }
 
-function halfPlanInactiveError(message = 'O Meio Periodo MotoJa nao esta ativo agora. Ative por R$ 25,00 para liberar a taxa de R$ 5,50.') {
+function halfPlanInactiveError(message = 'O Plano Meio Periodo MotoJa nao esta ativo agora. Ative por R$ 25,00 para liberar a taxa de R$ 5,50.') {
   const error = new Error(message);
   error.status = 403;
   error.code = 'plano_diario_inativo';
@@ -1023,7 +1023,7 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
     }
     if (isHalfPlanDelivery(delivery.tipoEntrega)) {
       const until = halfPlanActiveUntil(latestCompany);
-      if (!until) throw halfPlanInactiveError('O Meio Periodo precisa estar ativo agora. O pedido ficou na fila.');
+      if (!until) throw halfPlanInactiveError('O Plano Meio Periodo precisa estar ativo agora. O pedido ficou na fila.');
       delivery.meioPeriodo = true;
       delivery.meioPeriodoAtivacaoId = latestCompany.meioPeriodoAtivacaoId || '';
       delivery.meioPeriodoExpiraEmMs = until;
@@ -9281,7 +9281,7 @@ app.post('/api/companies/half-plan/activate', assertCompany, assertCompanyApprov
         return;
       }
       if (balance.disponivel < HALF_PLAN_PRICE) {
-        const error = new Error('Saldo insuficiente para ativar o Meio Periodo MotoJa. Carregue saldo antes de aceitar.');
+        const error = new Error('Saldo insuficiente para ativar o Plano Meio Periodo MotoJa. Carregue saldo antes de aceitar.');
         error.status = 402;
         error.code = 'saldo_insuficiente';
         error.balance = balance;
@@ -9526,7 +9526,7 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
         delivery.meioPeriodoExpiraEmMs = until;
         delivery.taxaFixaEntrega = HALF_PLAN_DELIVERY_FEE;
         delivery.empresaFicaPorTaxa = HALF_PLAN_APP_FEE;
-        if (!delivery.entregaNaNota) delivery.precoLabel = `Meio Periodo MotoJa ativo: R$ ${HALF_PLAN_DELIVERY_FEE.toFixed(2).replace('.', ',')} por entrega/ponto`;
+        if (!delivery.entregaNaNota) delivery.precoLabel = `Plano Meio Periodo MotoJa ativo: R$ ${HALF_PLAN_DELIVERY_FEE.toFixed(2).replace('.', ',')} por entrega/ponto`;
       }
       if (balance.disponivel < delivery.valor) {
         const error = new Error('Saldo insuficiente. Faca um deposito e aguarde aprovacao do dono antes de chamar motoboy.');
