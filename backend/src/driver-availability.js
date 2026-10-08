@@ -1,6 +1,13 @@
 // Ephemeral presence: no Firebase writes, coordinates or personal data in public counts.
 export function createDriverAvailability({ now = Date.now, ttlMs = 90000, maxDrivers = 2000, maxSessions = 4 } = {}) {
   const drivers = new Map();
+  // Escolha Disponivel/Indisponivel por CPF. Sobrevive a expiracao da presenca
+  // (app fechado, celular reiniciado); so se perde ao reiniciar o processo ou bloquear o motoboy.
+  const preferences = new Map();
+  function rememberPreference(cpf, desired) {
+    preferences.delete(cpf); preferences.set(cpf, desired);
+    while (preferences.size > maxDrivers) preferences.delete(preferences.keys().next().value);
+  }
   const cities = ['conchal', 'aguai', 'engenheiro_coelho'];
   function prune() {
     const at = now();
@@ -24,9 +31,10 @@ export function createDriverAvailability({ now = Date.now, ttlMs = 90000, maxDri
       if (!d && drivers.size >= maxDrivers) throw new Error('presenca_lotada');
       if (d && !d.sessions.has(id) && d.sessions.size >= maxSessions) throw new Error('muitas_sessoes');
       const fresh = !d;
-      if (!d) { d = { sessions: new Map(), lastSeen: now(), desired: false, ready: false, jobs: new Set(), initialRemoved: new Set(), cities: {} }; drivers.set(cpf, d); }
+      const preferenceMissing = fresh && !preferences.has(cpf);
+      if (!d) { d = { sessions: new Map(), lastSeen: now(), desired: preferences.get(cpf) === true, ready: false, jobs: new Set(), initialRemoved: new Set(), cities: {} }; drivers.set(cpf, d); }
       d.sessions.set(id, now()); d.lastSeen = now(); d.cities = Object.fromEntries(cities.map(city => [city, enabledCities?.[city] === true]));
-      return { fresh, ...state(cpf) };
+      return { fresh, preferenceMissing, ...state(cpf) };
     },
     heartbeat(cpf, id) {
       prune(); const d = drivers.get(cpf);
@@ -35,7 +43,7 @@ export function createDriverAvailability({ now = Date.now, ttlMs = 90000, maxDri
     },
     set(cpf, id, desired) {
       if (typeof desired !== 'boolean') throw new Error('disponibilidade_invalida');
-      this.heartbeat(cpf, id); drivers.get(cpf).desired = desired; return state(cpf);
+      this.heartbeat(cpf, id); drivers.get(cpf).desired = desired; rememberPreference(cpf, desired); return state(cpf);
     },
     cities(cpf, enabledCities) { const d = drivers.get(cpf); if (d) d.cities = Object.fromEntries(cities.map(c => [c, enabledCities?.[c] === true])); },
     initializeJobs(cpf, jobs) { const d = drivers.get(cpf); if (d) { for (const key of jobs) if (!d.initialRemoved.has(key)) d.jobs.add(key); d.initialRemoved.clear(); d.ready = true; } },
@@ -46,7 +54,7 @@ export function createDriverAvailability({ now = Date.now, ttlMs = 90000, maxDri
       else if (drivers.has(cpf)) drivers.get(cpf).jobs.add(key);
     },
     disconnect(cpf, id) { const d = drivers.get(cpf); if (d) { d.sessions.delete(id); d.lastSeen = now(); } },
-    remove(cpf) { drivers.delete(cpf); },
+    remove(cpf, { forgetPreference = true } = {}) { drivers.delete(cpf); if (forgetPreference) preferences.delete(cpf); },
     state,
     publicCounts() {
       prune(); const counts = Object.fromEntries(cities.map(c => [c, 0]));

@@ -97,3 +97,28 @@ test('blocked local storage does not crash the panel and in-tab resume still rem
   const h = harness(new Map(), { unavailableStorage: true }); await available(h); h.start(); await settle();
   const s = h.sockets.at(-1); s.receive(state(false, { preferenceMissing: true })); assert.equal(s.emissions.at(-1).body.available, true);
 });
+
+test('a failed restore (slow network) never erases Disponivel and is retried on the next heartbeat', async () => {
+  const storage = new Map(), first = harness(storage); await available(first); first.events.pagehide();
+  const h = harness(storage); await settle(); const s = h.sockets[0];
+  s.receive(state(false, { preferenceMissing: true }));
+  assert.equal(s.emissions.at(-1).body.available, true);
+  s.reply(s.emissions.length - 1, null, new Error('timeout'));
+  // A broadcast and a heartbeat saying unavailable must not overwrite the saved choice.
+  s.receive(state(false));
+  h.heartbeat(); const hb = s.emissions.length - 1; assert.equal(s.emissions[hb].name, 'availability:heartbeat');
+  s.reply(hb, { ok: true, ...state(false) });
+  assert.equal(JSON.parse(storage.get(key)).desired, true);
+  assert.equal(s.emissions.at(-1).name, 'availability:set'); assert.equal(s.emissions.at(-1).body.available, true);
+  s.reply(s.emissions.length - 1, { ok: true, ...state(true) });
+  assert.equal(h.api.canReceive(), true); assert.equal(h.alerts.length, 0);
+});
+test('a deliberate click on Indisponivel is saved and not undone by the retry', async () => {
+  const storage = new Map(), first = harness(storage); await available(first); first.events.pagehide();
+  const h = harness(storage); await settle(); const s = h.sockets[0];
+  s.receive(state(false, { preferenceMissing: true })); s.reply(s.emissions.length - 1, null, new Error('timeout'));
+  h.buttons[1].onclick(); s.reply(s.emissions.length - 1, { ok: true, ...state(false) });
+  assert.equal(JSON.parse(storage.get(key)).desired, false);
+  h.heartbeat(); s.reply(s.emissions.length - 1, { ok: true, ...state(false) });
+  assert.equal(s.emissions.at(-1).name, 'availability:heartbeat');
+});

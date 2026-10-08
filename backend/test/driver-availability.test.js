@@ -77,3 +77,16 @@ test('company approval, owner rejection and support completion release exactly t
     p.job('rides', 'keep', 'cancelada'); assert.equal(p.state(cpf).busy, false);
   }
 });
+
+test('the choice survives presence expiry; blocking forgets it and a process restart starts without it', () => {
+  const { p, tick } = harness(); ready(p); p.disconnect(cpf, 'tab1'); tick(200000);
+  assert.equal(p.publicCounts().counts.conchal, 0);
+  const back = p.connect(cpf, 'tab2', cities); assert.equal(back.fresh, true); assert.equal(back.preferenceMissing, false); assert.equal(back.desired, true);
+  p.initializeJobs(cpf, []); assert.equal(p.publicCounts().counts.conchal, 1);
+  p.set(cpf, 'tab2', false); p.disconnect(cpf, 'tab2'); tick(200000);
+  assert.equal(p.connect(cpf, 'tab3', cities).desired, false);
+  p.set(cpf, 'tab3', true); p.remove(cpf);
+  const blocked = p.connect(cpf, 'tab4', cities); assert.equal(blocked.preferenceMissing, true); assert.equal(blocked.desired, false);
+  p.remove(cpf, { forgetPreference: false });
+  assert.equal(createDriverAvailability().connect(cpf, 'x', cities).preferenceMissing, true);
+});

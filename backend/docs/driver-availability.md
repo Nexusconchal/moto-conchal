@@ -13,3 +13,9 @@ Esta implementação pressupõe a instância única atual do Render. Se o backen
 Os controles novos filtram a lista de serviços pendentes no painel atualizado; Minhas corridas, Minhas entregas e ganhos permanecem acessíveis. Não há distribuição exclusiva de ofertas, recusa com prazo ou alteração do modelo de aceitação nesta entrega.
 
 Validação: testes de presença, autenticação e isolamento Socket.IO, abas simultâneas, rate limiting, concorrência com aceite/conclusão, revogação e expiração; regressão de pagamentos e conclusão; navegador real em celular e desktop.
+
+## Escolha lembrada pelo servidor
+
+O servidor guarda em memória a última escolha (Disponível/Indisponível) de cada CPF, separada da presença. Quando o motoboy fecha o app ou reinicia o celular, a presença expira em 90 segundos e ele sai da contagem, mas a escolha continua guardada: ao reconectar e verificar os trabalhos ativos, ele volta como Disponível sem precisar clicar. A escolha só é esquecida quando o dono bloqueia o motoboy (revogação) ou quando o processo do Render reinicia. Nesse caso o painel restaura a escolha salva no celular, como antes.
+
+No celular, a escolha salva só muda com um clique confirmado pelo servidor ou com a escolha que o próprio servidor ainda guarda. Se a restauração falhar (internet fraca ou servidor acordando), um heartbeat ou aviso dizendo "indisponível" não apaga mais a escolha: o painel tenta restaurar de novo no próximo heartbeat.

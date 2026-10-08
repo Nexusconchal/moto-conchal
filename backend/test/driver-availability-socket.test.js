@@ -60,11 +60,21 @@ test('fresh reconnection is announced after expiry while a retained server prefe
   await emit(b, 'availability:set', { available: false });
   const disconnected = [...h.io.of('/driver-availability').sockets.values()].map(s => once(s, 'disconnect'));
   a.disconnect(); b.disconnect(); await Promise.all(disconnected);
-  h.tick(120000); const c = h.open(); const fresh = await connected(c);
-  assert.equal(fresh.preferenceMissing, true); assert.equal(fresh.desired, false);
+  h.tick(120000); const c = h.open(); const later = await connected(c);
+  // The server remembers the last deliberate choice (Indisponivel) after the presence expired.
+  assert.equal(later.preferenceMissing, false); assert.equal(later.desired, false);
   assert.equal(h.presence.publicCounts().counts.conchal, 0); assert.equal(h.stats().loads, 2);
-  // Restoring the UI preference still uses the normal authenticated, rate-limited setter.
   assert.equal((await emit(c, 'availability:set', { available: true })).ok, true);
+  assert.equal(h.presence.publicCounts().counts.conchal, 1);
+});
+test('closing the app or restarting the phone keeps Disponivel: after expiry the server restores it by itself', async t => {
+  const h = await setup(t); const a = h.open(); await connected(a);
+  await emit(a, 'availability:set', { available: true });
+  const disconnected = once([...h.io.of('/driver-availability').sockets.values()][0], 'disconnect');
+  a.disconnect(); await disconnected;
+  assert.equal(h.presence.publicCounts().counts.conchal, 0);
+  h.tick(10 * 60000); const b = h.open(); const back = await connected(b);
+  assert.equal(back.preferenceMissing, false); assert.equal(back.desired, true); assert.equal(back.available, true);
   assert.equal(h.presence.publicCounts().counts.conchal, 1);
 });
 test('owner revocation immediately removes presence and disconnects authenticated tabs', async t => {

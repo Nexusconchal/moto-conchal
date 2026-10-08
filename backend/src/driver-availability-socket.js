@@ -16,8 +16,8 @@ export function attachDriverAvailability(io, presence, { verifyDriver, enabledCi
       const cpf = String(proof.driverCpf || '').replace(/\D/g, '');
       if (!/^\d{11}$/.test(cpf)) throw new Error('dados_motoboy_invalidos');
       const driver = await verifyDriver(cpf, proof);
-      const { fresh } = presence.connect(cpf, socket.id, enabledCities(driver));
-      socket.data.availabilityFresh = fresh;
+      const { fresh, preferenceMissing } = presence.connect(cpf, socket.id, enabledCities(driver));
+      socket.data.availabilityFresh = preferenceMissing === true;
       socket.data.availabilityCpf = cpf; socket.data.verifiedAt = now();
       // A shared initialization handles simultaneous tabs without duplicate database queries.
       if (fresh) initializations.set(cpf, Promise.resolve().then(() => loadJobs(cpf))
@@ -26,7 +26,7 @@ export function attachDriverAvailability(io, presence, { verifyDriver, enabledCi
       next();
     } catch {
       const cpf = socket.data.availabilityCpf;
-      if (cpf) { presence.disconnect(cpf, socket.id); if (!presence.state(cpf).connected) presence.remove(cpf); }
+      if (cpf) { presence.disconnect(cpf, socket.id); if (!presence.state(cpf).connected) presence.remove(cpf, { forgetPreference: false }); }
       next(new Error('disponibilidade_nao_autorizada'));
     } finally { if (socket.data.availabilityCpf) initializations.delete(socket.data.availabilityCpf); }
   });

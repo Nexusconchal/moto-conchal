@@ -3758,7 +3758,7 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'motoja-conchal-backend',
-    release: 'availability-resume-v224',
+    release: 'availability-memory-v226',
     manualDeliveryDateMigration: manualDeliveryDateMigrationStatus
   });
 });
