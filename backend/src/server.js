@@ -3690,7 +3690,7 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'motoja-conchal-backend',
-    release: 'support-console-v177',
+    release: 'availability-resume-v224',
     manualDeliveryDateMigration: manualDeliveryDateMigrationStatus
   });
 });
