@@ -1485,6 +1485,10 @@
             Ative por R$ 70,00 e use entregas com taxa fixa de R$ 4,00 por
             entrega/ponto ate virar o dia.
           </p>
+          <p>
+            <strong>Distritos com desconto:</strong> Martinho Prado, Tujuguaba e
+            Iate saem por R$ 10,00 (fora do plano: R$ 16,00).
+          </p>
           <p class="muted">
             Boa para loja que tem bastante chamada no mesmo dia. Se uma rota por
             km ficar cara ou falhar, a empresa tem essa opcao profissional
@@ -1518,6 +1522,10 @@
           <p>
             Ative por R$ 25,00 e use entregas com taxa fixa de R$ 5,50 por
             entrega/ponto durante 6 horas.
+          </p>
+          <p>
+            <strong>Distritos com desconto:</strong> Martinho Prado, Tujuguaba e
+            Iate saem por R$ 12,00 (fora do plano: R$ 16,00).
           </p>
           <p class="muted">
             Boa para quem trabalha só um turno (almoço ou noite) e não precisa
@@ -1938,10 +1946,10 @@
           <select id="tipoEntrega">
             <option value="" selected>Selecione o tipo de entrega</option>
             <option value="Plano Diario MotoJa Pro" disabled>
-              Plano Diario MotoJa Pro - R$ 4,00 por entrega/ponto (ative por R$ 70,00)
+              Plano Diario MotoJa Pro - R$ 4,00 ou R$ 10,00 nos distritos (ative por R$ 70,00)
             </option>
             <option value="Plano Meio Periodo MotoJa" disabled>
-              Plano Meio Período MotoJá - R$ 5,50 por entrega/ponto (ative por R$ 25,00)
+              Plano Meio Período MotoJá - R$ 5,50 ou R$ 12,00 nos distritos (ative por R$ 25,00)
             </option>
             <option value="Lanche / pizza / pastel / marmita">
               Lanche / pizza / pastel / marmita - R$ 6,50 ou R$ 16,00
@@ -2919,8 +2927,13 @@
       }
       function precoEntrega(km, paradas, tipo, pontos = []) {
         const qtd = Math.max(1, paradas);
-        if (tipoPlanoDiario(tipo)) return Math.round(qtd * 4 * 100) / 100;
-        if (tipoMeioPeriodo(tipo)) return Math.round(qtd * 5.5 * 100) / 100;
+        if (tipoPlanoDiario(tipo) || tipoMeioPeriodo(tipo)) {
+          const [conchal, distrito] = tarifasPlano(tipo);
+          let total = 0;
+          for (let i = 0; i < qtd; i++)
+            total += destinoComidaEspecial(pontos[i] || "") ? distrito : conchal;
+          return Math.round(total * 100) / 100;
+        }
         if (comidaFixa(tipo)) {
           let total = 0;
           for (let i = 0; i < qtd; i++) {
@@ -2930,11 +2943,16 @@
         }
         return Math.ceil(Number(km || 0)) * ENTREGA_EMPRESA_VALOR_KM;
       }
+      function tarifasPlano(tipo) {
+        return tipoMeioPeriodo(tipo) ? [5.5, 12] : [4, 10];
+      }
       function labelPreco(tipo, paradas, pontos = []) {
-        if (tipoPlanoDiario(tipo))
-          return "Plano Diario MotoJa Pro ativo: R$ 4,00 por entrega/ponto";
-        if (tipoMeioPeriodo(tipo))
-          return "Plano Meio Periodo MotoJa ativo: R$ 5,50 por entrega/ponto";
+        if (tipoPlanoDiario(tipo) || tipoMeioPeriodo(tipo)) {
+          const [conchal, distrito] = tarifasPlano(tipo),
+            especiais = pontos.filter(destinoComidaEspecial).length,
+            normais = Math.max(0, Math.max(1, paradas) - especiais);
+          return `${tipoMeioPeriodo(tipo) ? "Plano Meio Periodo MotoJa" : "Plano Diario MotoJa Pro"} ativo: ${moeda(conchal)} por entrega${especiais ? ` + ${especiais} ponto(s) em distrito a ${moeda(distrito)}` : ""} (${normais} Conchal / ${especiais} distrito)`;
+        }
         if (!comidaFixa(tipo)) return "R$ 2,50 por km";
         const especiais = pontos.filter(destinoComidaEspecial).length,
           normais = Math.max(0, Math.max(1, paradas) - especiais);
@@ -4959,8 +4977,9 @@
         return tipoPlanoDiario(tipo) ? planoDiarioAtivo : comidaFixa(tipo);
       }
       function tarifaLote(tipo, regiao) {
-        if (tipoMeioPeriodo(tipo)) return 5.5;
-        return tipoPlanoDiario(tipo) ? 4 : regiao === "conchal" ? 6.5 : 16;
+        if (tipoMeioPeriodo(tipo)) return regiao === "conchal" ? 5.5 : 12;
+        if (tipoPlanoDiario(tipo)) return regiao === "conchal" ? 4 : 10;
+        return regiao === "conchal" ? 6.5 : 16;
       }
       function atualizarResumoLote() {
         const count = Number($("quantidadeLote").value), tipo = $("tipoEntrega").value;

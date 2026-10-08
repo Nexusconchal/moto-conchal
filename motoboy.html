@@ -1430,6 +1430,8 @@
         );
       }
       function appValorEntrega(c) {
+        if (Number.isFinite(Number(c?.planoAppFee)) && c?.planoAppFee !== null && c?.planoAppFee !== undefined)
+          return Math.min(Number(c.valor || 0), Number(c.planoAppFee));
         if (/meio periodo motoja/i.test(String(c?.tipoEntrega || "")) || c?.meioPeriodo === true)
           return Math.min(
             Number(c.valor || 0),

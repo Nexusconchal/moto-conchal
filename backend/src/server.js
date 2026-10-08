@@ -15,7 +15,7 @@ import { addressSearchVariants, addressFeatureMatches, streetNumber } from './ad
 import { createGeocodeSearch } from './geocode-search.js';
 
 const searchMapAddress = createGeocodeSearch();
-import { prepareQuickDelivery, quickDeliveryFare } from './quick-delivery.js';
+import { prepareQuickDelivery, quickDeliveryFare, planFare } from './quick-delivery.js';
 import { deliveryReportQuantity, buildCompanyDeliveryReport } from './delivery-report.js';
 import { companyProfileUpdate } from './company-profile.js';
 import { protectedDelivery, deliveryHeld, completionReason, assertCompanyDelivery } from './delivery-completion.js';
@@ -356,6 +356,48 @@ function ensureDistantRouteIsPlausible(distanceKm, ...texts) {
   }
 }
 
+function deliveryDestinations(delivery = {}) {
+  return [
+    `${delivery.entrega || ''} ${delivery.entregaEncontrada || ''}`,
+    ...(Array.isArray(delivery.pontosExtras)
+      ? delivery.pontosExtras.map(point => `${point.digitado || ''} ${point.encontrado || ''}`)
+      : [])
+  ];
+}
+
+// Planos (diario e meio periodo): taxa de Conchal ou de distrito por ponto.
+function planDeliveryAmounts(delivery = {}) {
+  const plan = planFare(delivery.tipoEntrega);
+  if (!plan) return null;
+  if (delivery.entregaNaNota === true) {
+    return { fare: quickDeliveryFare(delivery), appFee: quickDeliveryFare(delivery, true) };
+  }
+  const destinations = deliveryDestinations(delivery);
+  let fare = 0;
+  let appFee = 0;
+  for (let index = 0; index < deliveryStopCount(delivery.paradas); index += 1) {
+    const district = isSpecialFoodDestination(destinations[index] || '');
+    fare += district ? plan.districtFare : plan.fare;
+    appFee += district ? plan.districtAppFee : plan.appFee;
+  }
+  return { fare: money(fare), appFee: money(appFee) };
+}
+
+function planDeliverySplit(delivery, flatAppFee) {
+  const total = money(delivery.valor);
+  // Chamadas criadas antes da tabela por distrito nao tem planoAppFee: mantem a taxa antiga.
+  const recorded = Number(delivery.planoAppFee);
+  const appFee = money(Math.min(total, Number.isFinite(recorded) && delivery.planoAppFee !== null && delivery.planoAppFee !== undefined
+    ? recorded
+    : flatAppFee * deliveryStopCount(delivery.paradas)));
+  return {
+    appFee,
+    driverAmount: money(Math.max(0, total - appFee)),
+    appPercent: total ? money(appFee / total) : 0,
+    driverPercent: total ? money((total - appFee) / total) : 0
+  };
+}
+
 function fixedFoodDeliveryFare(delivery = {}) {
   if (delivery.entregaNaNota === true) return quickDeliveryFare(delivery);
   const deliveryStops = deliveryStopCount(delivery.paradas);
@@ -400,26 +442,8 @@ function deliverySplit(delivery = {}) {
       driverPercent: total ? money(50 / total) : 0
     };
   }
-  if (isDailyPlanDelivery(delivery.tipoEntrega)) {
-    const stops = deliveryStopCount(delivery.paradas);
-    const appFee = money(Math.min(total, DAILY_PLAN_APP_FEE * stops));
-    return {
-      appFee,
-      driverAmount: money(Math.max(0, total - appFee)),
-      appPercent: total ? money(appFee / total) : 0,
-      driverPercent: total ? money((total - appFee) / total) : 0
-    };
-  }
-  if (isHalfPlanDelivery(delivery.tipoEntrega)) {
-    const stops = deliveryStopCount(delivery.paradas);
-    const appFee = money(Math.min(total, HALF_PLAN_APP_FEE * stops));
-    return {
-      appFee,
-      driverAmount: money(Math.max(0, total - appFee)),
-      appPercent: total ? money(appFee / total) : 0,
-      driverPercent: total ? money((total - appFee) / total) : 0
-    };
-  }
+  if (isDailyPlanDelivery(delivery.tipoEntrega)) return planDeliverySplit(delivery, DAILY_PLAN_APP_FEE);
+  if (isHalfPlanDelivery(delivery.tipoEntrega)) return planDeliverySplit(delivery, HALF_PLAN_APP_FEE);
   if (isFixedFoodDelivery(delivery.tipoEntrega)) {
     const appFee = fixedFoodDeliveryAppFee(delivery);
     return {
@@ -449,12 +473,8 @@ function expectedDeliveryFare(distanceKm, stops = 1, type = '', delivery = {}) {
   const deliveryStops = deliveryStopCount(stops);
   if (!Number.isFinite(distance) || distance <= 0) return 0;
 
-  if (isDailyPlanDelivery(type)) {
-    return money(DAILY_PLAN_DELIVERY_FEE * deliveryStops);
-  }
-
-  if (isHalfPlanDelivery(type)) {
-    return money(HALF_PLAN_DELIVERY_FEE * deliveryStops);
+  if (isDailyPlanDelivery(type) || isHalfPlanDelivery(type)) {
+    return planDeliveryAmounts({ ...delivery, paradas: deliveryStops, tipoEntrega: type }).fare;
   }
 
   if (isFixedFoodDelivery(type)) {
@@ -1027,6 +1047,9 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
       delivery.meioPeriodo = true;
       delivery.meioPeriodoAtivacaoId = latestCompany.meioPeriodoAtivacaoId || '';
       delivery.meioPeriodoExpiraEmMs = until;
+    }
+    if (isDailyPlanDelivery(delivery.tipoEntrega) || isHalfPlanDelivery(delivery.tipoEntrega)) {
+      delivery.planoAppFee = planDeliveryAmounts(delivery).appFee;
     }
     const nextReserved = money(balance.reservado + delivery.valor);
     tx.set(companySnap.ref, { reservado: nextReserved, atualizadaEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
@@ -9515,7 +9538,8 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
         delivery.planoDiarioDia = dia;
         delivery.taxaFixaEntrega = DAILY_PLAN_DELIVERY_FEE;
         delivery.empresaFicaPorTaxa = DAILY_PLAN_APP_FEE;
-        delivery.precoLabel = `Plano Diario MotoJa Pro ativo: R$ ${DAILY_PLAN_DELIVERY_FEE.toFixed(2).replace('.', ',')} por entrega/ponto`;
+        delivery.planoAppFee = planDeliveryAmounts(delivery).appFee;
+        if (!delivery.entregaNaNota) delivery.precoLabel = 'Plano Diario MotoJa Pro ativo: R$ 4,00 em Conchal e R$ 10,00 nos distritos por entrega/ponto';
       }
       if (isHalfPlanDelivery(delivery.tipoEntrega)) {
         const company = companySnap.exists ? companySnap.data() || {} : {};
@@ -9526,7 +9550,8 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
         delivery.meioPeriodoExpiraEmMs = until;
         delivery.taxaFixaEntrega = HALF_PLAN_DELIVERY_FEE;
         delivery.empresaFicaPorTaxa = HALF_PLAN_APP_FEE;
-        if (!delivery.entregaNaNota) delivery.precoLabel = `Plano Meio Periodo MotoJa ativo: R$ ${HALF_PLAN_DELIVERY_FEE.toFixed(2).replace('.', ',')} por entrega/ponto`;
+        delivery.planoAppFee = planDeliveryAmounts(delivery).appFee;
+        if (!delivery.entregaNaNota) delivery.precoLabel = 'Plano Meio Periodo MotoJa ativo: R$ 5,50 em Conchal e R$ 12,00 nos distritos por entrega/ponto';
       }
       if (balance.disponivel < delivery.valor) {
         const error = new Error('Saldo insuficiente. Faca um deposito e aguarde aprovacao do dono antes de chamar motoboy.');

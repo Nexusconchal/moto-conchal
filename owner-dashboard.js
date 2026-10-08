@@ -110,6 +110,7 @@
   function deliveryAppValue(item) {
     const value = Number(item.valor || 0);
     if (item.ganhoApp != null || item.valorApp != null) return Number(item.ganhoApp ?? item.valorApp);
+    if (item.planoAppFee != null && Number.isFinite(Number(item.planoAppFee))) return Math.min(value, Number(item.planoAppFee));
     if (/plano.*diario/i.test(String(item.tipoEntrega || "").normalize("NFD").replace(/[\u0300-\u036f]/g, ""))) return Math.min(value, deliveryQuantity(item));
     if (/meio periodo motoja/i.test(String(item.tipoEntrega || "").normalize("NFD").replace(/[\u0300-\u036f]/g, ""))) return Math.min(value, deliveryQuantity(item) * 1.5);
     if (item.entregaNaNota) return Math.min(value, deliveryQuantity(item) * (item.regiaoEntrega === "conchal" ? 1.5 : 2));

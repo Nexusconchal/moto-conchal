@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { prepareQuickDelivery, quickDeliveryFare } from '../src/quick-delivery.js';
+import { prepareQuickDelivery, quickDeliveryFare, planFare } from '../src/quick-delivery.js';
 import { protectedDelivery, assertCompanyDelivery } from '../src/delivery-completion.js';
 
 const source = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
@@ -36,7 +36,7 @@ function harness(balance = 100) {
     return result;
   }};
   const money = n => Math.round(Number(n || 0) * 100) / 100;
-  const context = vm.createContext({ console, db, prepareQuickDelivery, quickDeliveryFare, protectedDelivery, assertCompanyDelivery,
+  const context = vm.createContext({ console, db, prepareQuickDelivery, quickDeliveryFare, planFare, isSpecialFoodDestination: t => /martinho\s*prado|tujuguaba|iate/i.test(t), protectedDelivery, assertCompanyDelivery,
     cleanText: s => String(s || '').trim(), onlyDigits: s => String(s || '').replace(/\D/g, ''), normalizeText: s => String(s || '').toLowerCase(), money,
     admin: { firestore: { FieldValue: { serverTimestamp: () => Date.now(), delete: () => null } } },
     companyBalance: d => ({ saldo: d.saldo, reservado: d.reservado, disponivel: d.saldo - d.reservado }),
@@ -60,7 +60,7 @@ function harness(balance = 100) {
   for (const [start, end] of [['deliveryStopCount', 'validCoordinate'], ['deliveryPublicData', 'notifyTelegramAboutRide']]) {
     vm.runInContext(source.slice(source.indexOf(`function ${start}(`), source.indexOf(`${end === 'notifyTelegramAboutRide' ? 'async ' : ''}function ${end}(`)), context);
   }
-  vm.runInContext(source.slice(source.indexOf('function fixedFoodDeliveryFare('), source.indexOf('function isPricedDeliveryType(')), context);
+  vm.runInContext(source.slice(source.indexOf('function deliveryDestinations('), source.indexOf('function isPricedDeliveryType(')), context);
   vm.runInContext(source.slice(source.indexOf('function expectedDeliveryFare('), source.indexOf('function deliveryStopCount(')), context);
   const start = source.indexOf("app.post('/api/deliveries',");
   const end = source.indexOf("\napp.post(", start + 1);
@@ -130,21 +130,22 @@ test('daily plan requires an active record for this company today and cannot be 
     assert.equal(result.status,403); assert.equal(h.writes.length,0); assert.equal(h.notices.length,0);
   }
 });
-test('active daily plan reserves R$ 4 per delivery across all regions without charging the R$ 70 activation again', async () => {
+test('active daily plan reserves R$ 4 in Conchal and R$ 10 in districts without charging the R$ 70 activation again', async () => {
   for (const region of ['conchal','martinho_prado','tujuguaba','iate']) {
     const h = harness();
+    const district = region !== 'conchal', total = district ? 30 : 12, app = district ? 6 : 3;
     h.records.set('plans/11999999999/2026-10-04', { status: 'ativo' });
     assert.equal((await h.call({ ...dailyRaw(), regiaoEntrega: region })).status,201);
     const d = h.records.get('entregas/quick-test');
-    assert.equal(d.valor,12); assert.equal(d.planoDiarioDia,'2026-10-04');
-    assert.equal(h.context.expectedDeliveryFare(0,3,d.tipoEntrega,d),12);
-    assert.equal(h.context.deliverySplit(d).appFee,3);
-    assert.equal(h.context.deliverySplit(d).driverAmount,9);
+    assert.equal(d.valor,total); assert.equal(d.planoDiarioDia,'2026-10-04');
+    assert.equal(h.context.expectedDeliveryFare(0,3,d.tipoEntrega,d),total);
+    assert.equal(h.context.deliverySplit(d).appFee,app);
+    assert.equal(h.context.deliverySplit(d).driverAmount,total - app);
     assert.equal(h.records.get('empresas/company').saldo,100);
-    assert.equal(h.records.get('empresas/company').reservado,12);
+    assert.equal(h.records.get('empresas/company').reservado,total);
     assert.equal(h.reads.filter(p => p.startsWith('plans/')).length,1);
     assert.equal((await h.call({ ...dailyRaw(), regiaoEntrega: region })).data.duplicated,true);
-    assert.equal(h.records.get('empresas/company').reservado,12);
+    assert.equal(h.records.get('empresas/company').reservado,total);
   }
 });
 test('active daily plan does not permit insufficient balance', async () => {
@@ -184,14 +185,14 @@ test('daily batch renewals cannot use yesterday, revoked or another company plan
   await assert.rejects(ctx.assertQuickDailyPlanRenewable(tx,d,'11999999999'),/nao esta ativo/);
 });
 
-test('company summary enables R$ 4 only for active daily plans and driver display uses the same R$ 1 fee', () => {
+test('company summary enables the daily plan (R$ 10 in districts) only when active and driver display uses the same R$ 1 fee', () => {
   const html = fs.readFileSync(new URL('../../empresa.html',import.meta.url),'utf8');
   const fields = { quantidadeLote:{value:'3'},tipoEntrega:{value:'Plano Diario MotoJa Pro'},regiaoLote:{value:'martinho_prado'},resumoLote:{},chamarLote:{} };
   const ctx = vm.createContext({ $:id => fields[id], tipoPlanoDiario:t => t === 'Plano Diario MotoJa Pro', tipoMeioPeriodo:t => t === 'Plano Meio Periodo MotoJa', meioPeriodoAtivo:false, comidaFixa:t => /lanche|acai|farmacia/i.test(t), planoDiarioAtivo:false, enviando:false, moeda:n => n.toFixed(2) });
   vm.runInContext(html.slice(html.indexOf('function tipoLotePermitido('),html.indexOf('function selecionarModoEntrega(')),ctx);
   ctx.atualizarResumoLote(); assert.equal(fields.chamarLote.disabled,true);
   ctx.planoDiarioAtivo = true; ctx.atualizarResumoLote();
-  assert.equal(fields.chamarLote.disabled,false); assert.match(fields.resumoLote.textContent,/4\.00 = 12\.00/);
+  assert.equal(fields.chamarLote.disabled,false); assert.match(fields.resumoLote.textContent,/10\.00 = 30\.00/);
   for (const type of ['Encomendas','Roupa / tenis / acessorio','Outro']) { fields.tipoEntrega.value=type; ctx.atualizarResumoLote(); assert.equal(fields.chamarLote.disabled,true); }
   const driver = fs.readFileSync(new URL('../../motoboy.html',import.meta.url),'utf8');
   const dctx = vm.createContext({ dinheiro:Number, planoDiario:c => c.tipoEntrega === 'Plano Diario MotoJa Pro', servicoExclusivo:() => false });
@@ -256,20 +257,20 @@ test('half period plan is blocked until activated, expired activations do not co
     assert.equal(result.status, 403); assert.equal(h.writes.length, 0); assert.equal(h.notices.length, 0);
   }
 });
-test('active half period reserves R$ 5,50 per delivery in every region and splits R$ 1,50 app / R$ 4,00 driver', async () => {
+test('active half period reserves R$ 5,50 in Conchal (R$ 1,50 app / R$ 4,00 driver) and R$ 12 in districts (R$ 2 app / R$ 10 driver)', async () => {
   for (const region of ['conchal','martinho_prado','tujuguaba','iate']) {
     const h = harness();
+    const district = region !== 'conchal', total = district ? 36 : 16.5, app = district ? 6 : 4.5;
     const until = Date.now() + 3600000;
     h.records.set('empresas/company', { ...h.records.get('empresas/company'), meioPeriodoExpiraEmMs: until, meioPeriodoAtivacaoId: 'act-1' });
     assert.equal((await h.call({ ...halfRaw(), regiaoEntrega: region })).status, 201);
     const d = h.records.get('entregas/quick-test');
-    assert.equal(d.valor, 16.5); assert.equal(d.meioPeriodoExpiraEmMs, until); assert.equal(d.meioPeriodoAtivacaoId, 'act-1');
-    assert.equal(h.context.expectedDeliveryFare(0, 3, d.tipoEntrega, d), 16.5);
-    assert.equal(h.context.expectedDeliveryFare(2.3, 2, 'Plano Meio Periodo MotoJa', {}), 11);
-    assert.equal(h.context.deliverySplit(d).appFee, 4.5);
-    assert.equal(h.context.deliverySplit(d).driverAmount, 12);
+    assert.equal(d.valor, total); assert.equal(d.meioPeriodoExpiraEmMs, until); assert.equal(d.meioPeriodoAtivacaoId, 'act-1');
+    assert.equal(h.context.expectedDeliveryFare(0, 3, d.tipoEntrega, d), total);
+    assert.equal(h.context.deliverySplit(d).appFee, app);
+    assert.equal(h.context.deliverySplit(d).driverAmount, total - app);
     assert.equal(h.records.get('empresas/company').saldo, 100);
-    assert.equal(h.records.get('empresas/company').reservado, 16.5);
+    assert.equal(h.records.get('empresas/company').reservado, total);
   }
 });
 test('half period batch finalization debits R$ 5,50 per delivery and pays the driver R$ 4,00 each', async () => {
@@ -333,4 +334,39 @@ test('old half period name from a cached app still prices as Plano Meio Periodo'
   prepareQuickDelivery(d, 2, company, false);
   assert.equal(d.tipoEntrega, 'Plano Meio Periodo MotoJa'); assert.equal(d.valor, 11);
   assert.equal(quickDeliveryFare(d, true), 3);
+});
+
+test('plans with addresses charge per stop: Conchal stops at the plan rate and district stops at the district rate', () => {
+  const h = harness();
+  const route = { entrega: 'Rua A, 10, Conchal', pontosExtras: [{ digitado: 'Rua B, 5, Martinho Prado' }, { digitado: 'Rua C, 1, Tujuguaba' }] };
+  assert.equal(h.context.expectedDeliveryFare(12, 3, 'Plano Meio Periodo MotoJa', route), 29.5);
+  assert.equal(h.context.expectedDeliveryFare(12, 3, 'Plano Diario MotoJa Pro', route), 24);
+  assert.equal(h.context.planDeliveryAmounts({ ...route, paradas: 3, tipoEntrega: 'Plano Meio Periodo MotoJa' }).appFee, 5.5);
+  assert.equal(h.context.planDeliveryAmounts({ ...route, paradas: 3, tipoEntrega: 'Plano Diario MotoJa Pro' }).appFee, 5);
+  const split = h.context.deliverySplit({ tipoEntrega: 'Plano Meio Periodo MotoJa', paradas: 3, valor: 29.5, planoAppFee: 5.5 });
+  assert.equal(split.driverAmount, 24);
+});
+test('plan deliveries created before the district table keep their original split', () => {
+  const h = harness();
+  assert.equal(h.context.deliverySplit({ tipoEntrega: 'Plano Diario MotoJa Pro', paradas: 3, valor: 12, regiaoEntrega: 'iate', entregaNaNota: true }).driverAmount, 9);
+  assert.equal(h.context.deliverySplit({ tipoEntrega: 'Plano Meio Periodo MotoJa', paradas: 2, valor: 11 }).driverAmount, 8);
+});
+
+test('company app prices plan batches and routes with the district rates; driver and owner use the recorded app fee', () => {
+  const html = fs.readFileSync(new URL('../../empresa.html',import.meta.url),'utf8');
+  const ctx = vm.createContext({ tipoPlanoDiario: t => t === 'Plano Diario MotoJa Pro', tipoMeioPeriodo: t => t === 'Plano Meio Periodo MotoJa', destinoComidaEspecial: t => /martinho|tujuguaba|iate/i.test(t), comidaFixa: () => false, moeda: n => n.toFixed(2), ENTREGA_EMPRESA_VALOR_KM: 2.5 });
+  vm.runInContext(html.slice(html.indexOf('function precoEntrega('), html.indexOf('function quantidadePontos(')), ctx);
+  vm.runInContext(html.slice(html.indexOf('function tarifaLote('), html.indexOf('function atualizarResumoLote(')), ctx);
+  const pontos = ['Rua A, Conchal', 'Rua B, Martinho Prado', 'Rua C, Iate'];
+  assert.equal(ctx.precoEntrega(9, 3, 'Plano Meio Periodo MotoJa', pontos), 29.5);
+  assert.equal(ctx.precoEntrega(9, 3, 'Plano Diario MotoJa Pro', pontos), 24);
+  assert.match(ctx.labelPreco('Plano Meio Periodo MotoJa', 3, pontos), /2 ponto\(s\) em distrito a 12\.00/);
+  assert.equal(ctx.tarifaLote('Plano Meio Periodo MotoJa', 'tujuguaba'), 12);
+  assert.equal(ctx.tarifaLote('Plano Diario MotoJa Pro', 'iate'), 10);
+  assert.equal(ctx.tarifaLote('Plano Diario MotoJa Pro', 'conchal'), 4);
+  const driver = fs.readFileSync(new URL('../../motoboy.html',import.meta.url),'utf8');
+  const dctx = vm.createContext({ dinheiro:Number, planoDiario:c => c.tipoEntrega === 'Plano Diario MotoJa Pro', servicoExclusivo:() => false });
+  vm.runInContext(driver.slice(driver.indexOf('function appValorEntrega('),driver.indexOf('function appPercent(')),dctx);
+  assert.equal(dctx.appValorEntrega({ tipoEntrega: 'Plano Meio Periodo MotoJa', paradas: 3, valor: 36, planoAppFee: 6 }), 6);
+  assert.equal(dctx.appValorEntrega({ tipoEntrega: 'Plano Diario MotoJa Pro', paradas: 2, valor: 20, planoAppFee: 4 }), 4);
 });
