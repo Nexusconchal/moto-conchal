@@ -1637,6 +1637,7 @@
       }
     </style>
     <script src="./tracking-map.js?v=187" defer></script>
+    <link rel="stylesheet" href="./availability.css?v=222" />
   </head>
   <body>
     <section id="customer-auth" class="customer-auth" data-required="false" aria-hidden="true">
@@ -1760,6 +1761,9 @@
           <img src="./nexus-motoja-site-logo.png?v=132" alt="Nexus MotoJÁ" />
         </div>
         <div class="trust">Corridas acompanhadas em tempo real</div>
+        <div id="motoboys-available" class="availability-public" data-state="unknown" data-backend="https://motoboy-conchal.onrender.com" role="status" aria-live="polite">
+          <span class="availability-dot" aria-hidden="true"></span><div><strong>Consultando motoboys disponíveis…</strong><small>Disponibilidade para atender Conchal</small></div>
+        </div>
       </header>
       <section id="perfil-cliente" class="profile-box hidden">
         <div class="profile-row">
@@ -4615,5 +4619,6 @@
         );
       })();
     </script>
+    <script src="./customer-availability.js?v=222" defer></script>
   </body>
 </html>

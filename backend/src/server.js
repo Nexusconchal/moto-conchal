@@ -8,6 +8,8 @@ import rateLimit from 'express-rate-limit';
 import crypto from 'crypto';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
+import { createDriverAvailability, observeAvailabilityJob } from './driver-availability.js';
+import { attachDriverAvailability } from './driver-availability-socket.js';
 import { validateLocation } from './tracking-policy.js';
 import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state.js';
 import { createSupportAutomation, enrichSupportMessage, SUPPORT_PHONE, chooseDriverGroup, brazilPhone } from './support-automation.js';
@@ -2295,6 +2297,7 @@ async function assertCompany(req, res, next) {
 }
 
 function emitDeliveryTracking(companyId, event) {
+  if (event?.deliveryId && event.status) { driverAvailability.job('deliveries', event.deliveryId, event.status); driverAvailabilitySocket.publishAll(); }
   const id = onlyDigits(companyId);
   if (!id) return;
   io.to(`company:${id}`).emit('delivery:tracking', serializeFirestore(event));
@@ -2700,6 +2703,7 @@ admin.initializeApp({
 });
 
 const db = admin.firestore();
+const driverAvailability = createDriverAvailability();
 const app = express();
 const httpServer = createServer(app);
 app.set('trust proxy', 1);
@@ -2756,6 +2760,20 @@ io.on('connection', (socket) => {
   else socket.join(`company:${socket.data.companyId}`);
 });
 
+const driverAvailabilitySocket = attachDriverAvailability(io, driverAvailability, {
+  verifyDriver: getDriverWithProof,
+  enabledCities: driverRideCities,
+  async loadJobs(cpf) {
+    const groups = await Promise.all([
+      ['corridas', 'rides', 'aceita'], ['entregas', 'deliveries', 'aceita'], ['entregas', 'deliveries', 'retirada']
+    ].map(async ([collection, kind, status]) => {
+      const snapshot = await db.collection(collection).where('motoboyCpf', '==', cpf).where('status', '==', status).limit(15).get();
+      return snapshot.docs.map(doc => `${kind}:${doc.id}`);
+    }));
+    return groups.flat();
+  }
+});
+
 app.use(cors({
   origin(origin, callback) {
     if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
@@ -2781,6 +2799,13 @@ app.use('/api/admin', (req, res, next) => {
   next();
 });
 app.use('/api', (req, res, next) => {
+  if (req.method === 'POST') {
+    const originalJson = res.json;
+    res.json = function (body) {
+      if (observeAvailabilityJob(driverAvailability, req.originalUrl, res.statusCode, body, onlyDigits(req.body?.driverCpf))) driverAvailabilitySocket.publishAll();
+      return originalJson.call(this, body);
+    };
+  }
   const operationalPath = /^\/(rides|deliveries)(?:\/[^/]+\/(?:renew|accept|pickup|cancel|client-cancel|finish))?$/;
   const ownerOperationalPath = /^\/admin\/(rides|deliveries)\/[^/]+\/(?:renew|cancel|force-finish)$/;
   const companyOperationalPath = /^\/companies\/exclusive-service$/;
@@ -2826,6 +2851,13 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: true,
   message: { error: 'muitas_tentativas_login', message: 'Muitas tentativas. Aguarde 15 minutos antes de tentar novamente.' }
+});
+
+// Public aggregate only: served entirely from process memory, never from Firestore.
+const availabilityLimiter = rateLimit({ windowMs: 60000, limit: 30, standardHeaders: true, legacyHeaders: false });
+app.get('/api/drivers/availability', availabilityLimiter, (_req, res) => {
+  res.set('cache-control', 'no-store');
+  res.json(driverAvailability.publicCounts());
 });
 
 const customerOtpLimiter = rateLimit({
@@ -3461,6 +3493,7 @@ async function cleanupRides() {
   const batch = db.batch();
   let updated = 0;
   let batchUpdated = 0;
+  const releasedAvailabilityRides = [];
 
   const pending = await db.collection('corridas').where('status', '==', 'pendente').get();
   pending.forEach((doc) => {
@@ -3492,6 +3525,7 @@ async function cleanupRides() {
         finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
+      releasedAvailabilityRides.push(doc.id);
       updated += 1;
       batchUpdated += 1;
       return;
@@ -3508,6 +3542,7 @@ async function cleanupRides() {
         motivoReabertura: 'Backend reabriu: motoboy aceitou e nao avisou o cliente em 3 minutos',
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
+      releasedAvailabilityRides.push(doc.id);
       updated += 1;
       batchUpdated += 1;
     }
@@ -3541,6 +3576,8 @@ async function cleanupRides() {
   }
 
   if (batchUpdated > 0) await batch.commit();
+  for (const id of releasedAvailabilityRides) driverAvailability.job('rides', id, 'pendente');
+  if (releasedAvailabilityRides.length) driverAvailabilitySocket.publishAll();
   return { updated };
 }
 
@@ -4761,6 +4798,7 @@ app.post('/api/admin/drivers/:cpf/block', assertOwner, async (req, res, next) =>
       atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
     driverProofCache.clear();
+    driverAvailabilitySocket.revoke(cpf);
     return res.json({ ok: true });
   } catch (error) {
     return next(error);
@@ -5123,6 +5161,7 @@ app.post('/api/drivers/:cpf/cities', async (req, res, next) => {
       atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
     driverProofCache.clear();
+    driverAvailability.cities(driverCpf, cidadesAtivas);
     return res.json({ ok: true, cidadesAtivas });
   } catch (error) {
     return next(error);
@@ -10010,6 +10049,8 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
       });
     }
 
+    driverAvailability.job('rides', req.params.rideId, 'aceita', driverCpf);
+    driverAvailabilitySocket.publish(driverCpf);
     let payment = null;
     try {
       payment = await createPaymentPreference(req.params.rideId, acceptedRide, driverCpf);
@@ -10067,6 +10108,8 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
           atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
         ownerPaymentError.status = ownerPaymentError.status || 503;
+        driverAvailability.job('rides', req.params.rideId, 'pendente');
+        driverAvailabilitySocket.publish(driverCpf);
         ownerPaymentError.code = ownerPaymentError.code || 'mercadopago_indisponivel';
         throw ownerPaymentError;
       }
