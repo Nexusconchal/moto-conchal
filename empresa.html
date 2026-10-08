@@ -1508,6 +1508,39 @@
           aria-live="polite"
         ></div>
       </section>
+      <section class="box app-area hidden">
+        <h2>Meio Período MotoJá</h2>
+        <div
+          class="status show"
+          style="display: grid; gap: 8px; text-align: left"
+        >
+          <p><strong>Taxa fixa por 6 horas</strong></p>
+          <p>
+            Ative por R$ 25,00 e use entregas com taxa fixa de R$ 5,50 por
+            entrega/ponto durante 6 horas.
+          </p>
+          <p class="muted">
+            Boa para quem trabalha só um turno (almoço ou noite) e não precisa
+            do plano do dia todo.
+          </p>
+          <p class="muted">
+            <strong>Segurança:</strong> o sistema só libera depois de descontar
+            os R$ 25,00 do saldo. Depois de 6 horas, bloqueia de novo
+            automaticamente.
+          </p>
+        </div>
+        <div id="meioPeriodoStatus" class="status show">
+          Carregando meio período...
+        </div>
+        <button id="ativarMeioPeriodo" type="button" class="green">
+          Ativar por R$ 25,00 e liberar taxa de R$ 5,50 por 6 horas
+        </button>
+        <div
+          id="meioPeriodoAviso"
+          class="status error"
+          aria-live="polite"
+        ></div>
+      </section>
       <section class="box app-area hidden" id="integracoesPedidosSection">
         <h2>Captura automatica de pedidos</h2>
         <p class="muted">
@@ -1907,6 +1940,9 @@
             <option value="Plano Diario MotoJa Pro" disabled>
               Plano Diario MotoJa Pro - R$ 4,00 por entrega/ponto
             </option>
+            <option value="Meio Periodo MotoJa" disabled>
+              Meio Período MotoJá - R$ 5,50 por entrega/ponto (ative por R$ 25,00)
+            </option>
             <option value="Lanche / pizza / pastel / marmita">
               Lanche / pizza / pastel / marmita - R$ 6,50 ou R$ 16,00
             </option>
@@ -2108,10 +2144,14 @@
         pediplusProtegido = false,
         pagamentoModo = "pix_manual",
         planoDiarioAtivo = false,
+        meioPeriodoAtivo = false,
+        meioPeriodoExpiraEmMs = 0,
+        meioPeriodoTimer = 0,
         empresaStatus = "aprovada",
         empresaAprovada = false,
         contaTela = "login";
       const PLANO_DIARIO_TIPO = "Plano Diario MotoJa Pro";
+      const MEIO_PERIODO_TIPO = "Meio Periodo MotoJa";
       const MEMORIA_EMPRESA = "nexusEmpresaDados",
         MEMORIA_PEDIDOS_PREPARADOS = "nexusEmpresaPedidosPreparados",
         TOKEN_EMPRESA = "nexusEmpresaToken";
@@ -2345,6 +2385,12 @@
         box.textContent = t;
         box.className = `status show${e ? " error" : ""}`;
       }
+      function mostrarMeioPeriodoAviso(t, e = true) {
+        const box = $("meioPeriodoAviso");
+        if (!box) return;
+        box.textContent = t || "";
+        box.className = t ? `status show${e ? " error" : ""}` : "status error";
+      }
       function mostrarTipoEntregaAviso(t) {
         const box = $("tipoEntregaAviso");
         if (!box) return;
@@ -2564,6 +2610,50 @@
       function tipoPlanoDiario(tipo) {
         return tipo === PLANO_DIARIO_TIPO;
       }
+      function tipoMeioPeriodo(tipo) {
+        return tipo === MEIO_PERIODO_TIPO;
+      }
+      function horaCurta(ms) {
+        return new Date(ms).toLocaleTimeString("pt-BR", {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
+      function definirMeioPeriodo(expiraEmMs) {
+        meioPeriodoExpiraEmMs = Number(expiraEmMs || 0);
+        meioPeriodoAtivo = meioPeriodoExpiraEmMs > Date.now();
+        clearTimeout(meioPeriodoTimer);
+        if (meioPeriodoAtivo)
+          meioPeriodoTimer = setTimeout(
+            () => definirMeioPeriodo(0),
+            Math.min(meioPeriodoExpiraEmMs - Date.now() + 1000, 2147483000),
+          );
+        atualizarMeioPeriodoUI();
+      }
+      function atualizarMeioPeriodoUI() {
+        const opt = Array.from($("tipoEntrega").options).find(
+            (o) => o.value === MEIO_PERIODO_TIPO,
+          ),
+          status = $("meioPeriodoStatus"),
+          btn = $("ativarMeioPeriodo");
+        if (opt) opt.disabled = !meioPeriodoAtivo;
+        if (status) {
+          status.className = "status show";
+          status.textContent = meioPeriodoAtivo
+            ? `Meio Período MotoJá ativo até ${horaCurta(meioPeriodoExpiraEmMs)}. A opção de R$ 5,50 está liberada.`
+            : "Meio Período MotoJá bloqueado. Ative por R$ 25,00 para liberar R$ 5,50 por entrega/ponto durante 6 horas.";
+        }
+        if (btn) {
+          btn.disabled = meioPeriodoAtivo;
+          btn.textContent = meioPeriodoAtivo
+            ? `Meio período ativo até ${horaCurta(meioPeriodoExpiraEmMs)}`
+            : "Ativar por R$ 25,00 e liberar taxa de R$ 5,50 por 6 horas";
+        }
+        if (meioPeriodoAtivo) mostrarMeioPeriodoAviso("");
+        if (!meioPeriodoAtivo && $("tipoEntrega").value === MEIO_PERIODO_TIPO)
+          $("tipoEntrega").value = "";
+        atualizarResumoLote();
+      }
       function atualizarPlanoDiarioUI() {
         const opt = Array.from($("tipoEntrega").options).find(
             (o) => o.value === PLANO_DIARIO_TIPO,
@@ -2591,6 +2681,7 @@
       async function carregarPlanoDiario() {
         if (!empresaToken) {
           planoDiarioAtivo = false;
+          definirMeioPeriodo(0);
           atualizarPlanoDiarioUI();
           return;
         }
@@ -2602,8 +2693,10 @@
           );
           const d = await r.json().catch(() => ({}));
           planoDiarioAtivo = !!(r.ok && d.active);
+          definirMeioPeriodo(r.ok && d.meioPeriodo?.active ? d.meioPeriodo.expiraEmMs : 0);
         } catch {
           planoDiarioAtivo = false;
+          definirMeioPeriodo(0);
         }
         atualizarPlanoDiarioUI();
       }
@@ -2827,6 +2920,7 @@
       function precoEntrega(km, paradas, tipo, pontos = []) {
         const qtd = Math.max(1, paradas);
         if (tipoPlanoDiario(tipo)) return Math.round(qtd * 4 * 100) / 100;
+        if (tipoMeioPeriodo(tipo)) return Math.round(qtd * 5.5 * 100) / 100;
         if (comidaFixa(tipo)) {
           let total = 0;
           for (let i = 0; i < qtd; i++) {
@@ -2839,6 +2933,8 @@
       function labelPreco(tipo, paradas, pontos = []) {
         if (tipoPlanoDiario(tipo))
           return "Plano Diario MotoJa Pro ativo: R$ 4,00 por entrega/ponto";
+        if (tipoMeioPeriodo(tipo))
+          return "Meio Periodo MotoJa ativo: R$ 5,50 por entrega/ponto";
         if (!comidaFixa(tipo)) return "R$ 2,50 por km";
         const especiais = pontos.filter(destinoComidaEspecial).length,
           normais = Math.max(0, Math.max(1, paradas) - especiais);
@@ -3493,6 +3589,7 @@
       });
       carregarMinhaEmpresa();
       atualizarPlanoDiarioUI();
+      atualizarMeioPeriodoUI();
       [
         "loginEmpresa",
         "loginResponsavel",
@@ -3598,6 +3695,60 @@
           await carregarPlanoDiario();
         } finally {
           atualizarPlanoDiarioUI();
+        }
+      };
+      $("ativarMeioPeriodo").onclick = async () => {
+        mostrarMeioPeriodoAviso("");
+        if (!empresaToken) {
+          mostrarMeioPeriodoAviso("Entre na conta da empresa antes de ativar essa opção.");
+          return;
+        }
+        if (saldoEmpresa.disponivel < 25) {
+          const falta = Math.max(0, 25 - saldoEmpresa.disponivel);
+          mostrarMeioPeriodoAviso(
+            `Saldo insuficiente para essa opção. Disponível: ${moeda(saldoEmpresa.disponivel)}. Falta ${moeda(falta)} para ativar o Meio Período.`,
+          );
+          return;
+        }
+        if (
+          !confirm(
+            "Ativar Meio Período MotoJá? Vai descontar R$ 25,00 agora e liberar taxa fixa de R$ 5,50 por entrega/ponto durante 6 horas.",
+          )
+        )
+          return;
+        const btn = $("ativarMeioPeriodo");
+        btn.disabled = true;
+        btn.textContent = "Ativando meio período...";
+        try {
+          const r = await fetchComTempo(
+            `${CONFIG.backend}/api/companies/half-plan/activate`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json", ...authHeaders() },
+            },
+            18000,
+          );
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok)
+            throw new Error(
+              d.message || d.error || "Não consegui ativar o meio período.",
+            );
+          definirMeioPeriodo(d.expiraEmMs);
+          mostrarMeioPeriodoAviso(
+            `Meio Período ativo até ${horaCurta(meioPeriodoExpiraEmMs)}. A taxa fixa de R$ 5,50 está liberada.`,
+            false,
+          );
+          mostrarStatus(
+            `Meio Período MotoJá ativo até ${horaCurta(meioPeriodoExpiraEmMs)}. A empresa pode usar R$ 5,50 por entrega/ponto.`,
+          );
+          await carregarSaldo();
+        } catch (e) {
+          if (String(e.message || "").includes("Saldo insuficiente"))
+            carregarSaldo();
+          mostrarMeioPeriodoAviso(e.message || "Erro ao ativar meio período.");
+          await carregarPlanoDiario();
+        } finally {
+          atualizarMeioPeriodoUI();
         }
       };
       companyReport = window.MotojaCompanyReports.create({
@@ -4804,16 +4955,18 @@
         }),
       );
       function tipoLotePermitido(tipo) {
+        if (tipoMeioPeriodo(tipo)) return meioPeriodoAtivo;
         return tipoPlanoDiario(tipo) ? planoDiarioAtivo : comidaFixa(tipo);
       }
       function tarifaLote(tipo, regiao) {
+        if (tipoMeioPeriodo(tipo)) return 5.5;
         return tipoPlanoDiario(tipo) ? 4 : regiao === "conchal" ? 6.5 : 16;
       }
       function atualizarResumoLote() {
         const count = Number($("quantidadeLote").value), tipo = $("tipoEntrega").value;
         const valido = Number.isInteger(count) && count >= 1 && count <= 30 && tipoLotePermitido(tipo);
         const tarifa = tarifaLote(tipo, $("regiaoLote").value);
-        $("resumoLote").textContent = valido ? `${count} entrega(s) × ${moeda(tarifa)} = ${moeda(count * tarifa)}. Um motoboy para o lote.${tipoPlanoDiario(tipo) ? ' Plano diário ativo hoje.' : ''}` : "Selecione um tipo com tarifa fixa e uma quantidade de 1 a 30 entregas. O plano diário exige ativação de R$ 70,00 hoje. Para cobrança por km, use Entrega com endereço.";
+        $("resumoLote").textContent = valido ? `${count} entrega(s) × ${moeda(tarifa)} = ${moeda(count * tarifa)}. Um motoboy para o lote.${tipoPlanoDiario(tipo) ? ' Plano diário ativo hoje.' : tipoMeioPeriodo(tipo) ? ' Meio período ativo.' : ''}` : "Selecione um tipo com tarifa fixa e uma quantidade de 1 a 30 entregas. O plano diário exige ativação de R$ 70,00 hoje e o meio período, de R$ 25,00 por 6 horas. Para cobrança por km, use Entrega com endereço.";
         $("chamarLote").disabled = !valido || enviando;
       }
       function selecionarModoEntrega(semEndereco) {
@@ -4907,6 +5060,13 @@
         if (tipoPlanoDiario(tipoEntrega) && !planoDiarioAtivo) {
           mostrarStatus(
             "Plano Diario MotoJa Pro bloqueado. Ative por R$ 70,00 para usar R$ 4,00 hoje.",
+            true,
+          );
+          return;
+        }
+        if (tipoMeioPeriodo(tipoEntrega) && !meioPeriodoAtivo) {
+          mostrarStatus(
+            "Meio Período MotoJá bloqueado. Ative por R$ 25,00 para usar R$ 5,50 por 6 horas.",
             true,
           );
           return;
@@ -5212,6 +5372,7 @@
         const payment = document.getElementById("modoPixManual")?.closest("section");
         const wallet = document.querySelector("section.wallet");
         const dailyPlan = document.getElementById("ativarPlanoDiario")?.closest("section");
+        const halfPlan = document.getElementById("ativarMeioPeriodo")?.closest("section");
         const integrations = document.getElementById("integracoesPedidosSection");
         const captured = document.getElementById("pedidosCapturadosLista")?.closest("section");
         const delivery = document.getElementById("calcular")?.closest("section");
@@ -5286,7 +5447,7 @@
         integrationsView.append(lead("Integracoes", "Gerencie Anota AI, BeeFood, Cardápio Web e as capturas automaticas da loja."), integrations);
 
         const financeView = makeView("finance", "finance-grid");
-        financeView.append(lead("Financeiro", "Adicione saldo, confira a forma de pagamento e gerencie o plano diario."), wallet, payment, dailyPlan);
+        financeView.append(lead("Financeiro", "Adicione saldo, confira a forma de pagamento e gerencie o plano diario e o meio periodo."), wallet, payment, dailyPlan, ...(halfPlan ? [halfPlan] : []));
 
         const reportsView = makeView("reports");
         reportsView.append(lead("Relatorios", "Confira os valores e entregas realizadas pela empresa."), report);

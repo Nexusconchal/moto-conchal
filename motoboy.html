@@ -1430,6 +1430,11 @@
         );
       }
       function appValorEntrega(c) {
+        if (/meio periodo motoja/i.test(String(c?.tipoEntrega || "")) || c?.meioPeriodo === true)
+          return Math.min(
+            Number(c.valor || 0),
+            1.5 * Math.max(1, Number(c.paradas || 1)),
+          );
         if (c?.entregaNaNota === true && !planoDiario(c)) return dinheiro(Math.max(1, Number(c.paradas || 1)) * (c.regiaoEntrega === "conchal" ? 1.5 : 2));
         if (servicoExclusivo(c))
           return Number(c.ganhoApp || c.valorApp || c.ganhoAppPrevisto || 20);

@@ -196,6 +196,11 @@ const DAILY_PLAN_TYPE = 'Plano Diario MotoJa Pro';
 const DAILY_PLAN_PRICE = 70;
 const DAILY_PLAN_DELIVERY_FEE = 4;
 const DAILY_PLAN_APP_FEE = 1;
+const HALF_PLAN_TYPE = 'Meio Periodo MotoJa';
+const HALF_PLAN_PRICE = 25;
+const HALF_PLAN_DELIVERY_FEE = 5.5;
+const HALF_PLAN_APP_FEE = 1.5;
+const HALF_PLAN_DURATION_MS = 6 * 60 * 60 * 1000;
 const COMPANY_DELIVERY_RATE_PER_KM = 2.5;
 
 function todayKeySaoPaulo(date = new Date()) {
@@ -207,6 +212,14 @@ function dailyPlanRef(companyId, dayKey = todayKeySaoPaulo()) {
 }
 
 async function assertQuickDailyPlanRenewable(tx, delivery, companyId) {
+  if (delivery.entregaNaNota && isHalfPlanDelivery(delivery.tipoEntrega)) {
+    if (Number(delivery.meioPeriodoExpiraEmMs || 0) <= Date.now()) {
+      const error = halfPlanInactiveError('O Meio Periodo deste chamado venceu. Ative de novo e crie uma nova chamada.');
+      error.code = 'plano_diario_vencido';
+      throw error;
+    }
+    return;
+  }
   if (!delivery.entregaNaNota || !isDailyPlanDelivery(delivery.tipoEntrega)) return;
   const day = todayKeySaoPaulo();
   if (delivery.planoDiarioDia !== day) {
@@ -230,6 +243,22 @@ function isFixedFoodDelivery(type) {
 
 function isDailyPlanDelivery(type) {
   return normalizeText(type).includes('plano diario motoja pro');
+}
+
+function isHalfPlanDelivery(type) {
+  return normalizeText(type).includes('meio periodo motoja');
+}
+
+function halfPlanActiveUntil(company = {}, now = Date.now()) {
+  const until = Number(company.meioPeriodoExpiraEmMs || 0);
+  return until > now ? until : 0;
+}
+
+function halfPlanInactiveError(message = 'O Meio Periodo MotoJa nao esta ativo agora. Ative por R$ 25,00 para liberar a taxa de R$ 5,50.') {
+  const error = new Error(message);
+  error.status = 403;
+  error.code = 'plano_diario_inativo';
+  return error;
 }
 
 function isSpecialFoodDestination(value) {
@@ -381,6 +410,16 @@ function deliverySplit(delivery = {}) {
       driverPercent: total ? money((total - appFee) / total) : 0
     };
   }
+  if (isHalfPlanDelivery(delivery.tipoEntrega)) {
+    const stops = deliveryStopCount(delivery.paradas);
+    const appFee = money(Math.min(total, HALF_PLAN_APP_FEE * stops));
+    return {
+      appFee,
+      driverAmount: money(Math.max(0, total - appFee)),
+      appPercent: total ? money(appFee / total) : 0,
+      driverPercent: total ? money((total - appFee) / total) : 0
+    };
+  }
   if (isFixedFoodDelivery(delivery.tipoEntrega)) {
     const appFee = fixedFoodDeliveryAppFee(delivery);
     return {
@@ -405,13 +444,17 @@ function isPricedDeliveryType(type) {
 }
 
 function expectedDeliveryFare(distanceKm, stops = 1, type = '', delivery = {}) {
-  if (delivery.entregaNaNota === true && (isFixedFoodDelivery(type) || isDailyPlanDelivery(type))) return quickDeliveryFare(delivery);
+  if (delivery.entregaNaNota === true && (isFixedFoodDelivery(type) || isDailyPlanDelivery(type) || isHalfPlanDelivery(type))) return quickDeliveryFare(delivery);
   const distance = Number(distanceKm || 0);
   const deliveryStops = deliveryStopCount(stops);
   if (!Number.isFinite(distance) || distance <= 0) return 0;
 
   if (isDailyPlanDelivery(type)) {
     return money(DAILY_PLAN_DELIVERY_FEE * deliveryStops);
+  }
+
+  if (isHalfPlanDelivery(type)) {
+    return money(HALF_PLAN_DELIVERY_FEE * deliveryStops);
   }
 
   if (isFixedFoodDelivery(type)) {
@@ -977,6 +1020,13 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
         error.code = 'plano_diario_inativo';
         throw error;
       }
+    }
+    if (isHalfPlanDelivery(delivery.tipoEntrega)) {
+      const until = halfPlanActiveUntil(latestCompany);
+      if (!until) throw halfPlanInactiveError('O Meio Periodo precisa estar ativo agora. O pedido ficou na fila.');
+      delivery.meioPeriodo = true;
+      delivery.meioPeriodoAtivacaoId = latestCompany.meioPeriodoAtivacaoId || '';
+      delivery.meioPeriodoExpiraEmMs = until;
     }
     const nextReserved = money(balance.reservado + delivery.valor);
     tx.set(companySnap.ref, { reservado: nextReserved, atualizadaEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
@@ -8420,9 +8470,9 @@ app.get('/api/companies/:phone/delivery-report', assertCompany, companyReportLim
     const firstDay = dateKeySaoPaulo(new Date(sinceMs));
     const lastDay = dateKeySaoPaulo(new Date(untilMs));
     const plansSnap = await db.collection('empresas').doc(phone).collection('planosDiarios')
-      .where('dia', '>=', firstDay).where('dia', '<=', lastDay).limit(32).get();
+      .where('dia', '>=', firstDay).where('dia', '<=', lastDay).limit(200).get();
     const incomplete = snapshot.docs.length > 500;
-    const payload = buildCompanyDeliveryReport(deliveries, plansSnap.docs.map(doc => ({ ...doc.data(), dia: doc.id })),
+    const payload = buildCompanyDeliveryReport(deliveries, plansSnap.docs.map(doc => ({ ...doc.data(), dia: doc.data().dia || doc.id })),
       { timestampMs, money, deliverySplit, bairroFromAddress }, {
         sinceMs, untilMs, empresa: req.company.empresa || 'Empresa', parcial: incomplete,
         aviso: incomplete ? (indexed ? 'Mais de 500 chamadas neste período. Escolha um período menor para baixar o fechamento completo.' : 'O índice do histórico está sendo preparado. Este relatório é parcial e os downloads ficam bloqueados para evitar um fechamento incompleto.') : ''
@@ -9131,7 +9181,14 @@ app.get('/api/companies/daily-plan/status', assertCompany, async (req, res, next
       tipoEntrega: DAILY_PLAN_TYPE,
       diaria: DAILY_PLAN_PRICE,
       taxaEntrega: DAILY_PLAN_DELIVERY_FEE,
-      appFee: DAILY_PLAN_APP_FEE
+      appFee: DAILY_PLAN_APP_FEE,
+      meioPeriodo: {
+        active: !!halfPlanActiveUntil(req.company),
+        expiraEmMs: halfPlanActiveUntil(req.company),
+        tipoEntrega: HALF_PLAN_TYPE,
+        valor: HALF_PLAN_PRICE,
+        taxaEntrega: HALF_PLAN_DELIVERY_FEE
+      }
     });
   } catch (error) {
     next(error);
@@ -9194,6 +9251,77 @@ app.post('/api/companies/daily-plan/activate', assertCompany, assertCompanyAppro
     });
 
     res.json({ ok: true, active: true, alreadyActive, dia, balance: balanceAfter, tipoEntrega: DAILY_PLAN_TYPE, diaria: DAILY_PLAN_PRICE, taxaEntrega: DAILY_PLAN_DELIVERY_FEE });
+  } catch (error) {
+    if (error.code === 'saldo_insuficiente') {
+      return res.status(error.status || 402).json({ error: 'saldo_insuficiente', message: error.message, balance: error.balance || null });
+    }
+    next(error);
+  }
+});
+
+app.post('/api/companies/half-plan/activate', assertCompany, assertCompanyApproved, createRideLimiter, async (req, res, next) => {
+  try {
+    const companyRef = req.companySnap.ref;
+    const now = Date.now();
+    const dia = todayKeySaoPaulo(new Date(now));
+    const planRef = companyRef.collection('planosDiarios').doc(`${dia}-meio-${now}`);
+    let balanceAfter = null;
+    let alreadyActive = false;
+    let expiraEmMs = 0;
+
+    await db.runTransaction(async (tx) => {
+      const companySnap = await tx.get(companyRef);
+      const company = companySnap.exists ? companySnap.data() || {} : {};
+      const balance = companyBalance(company);
+      const activeUntil = halfPlanActiveUntil(company, now);
+      if (activeUntil) {
+        alreadyActive = true;
+        expiraEmMs = activeUntil;
+        balanceAfter = balance;
+        return;
+      }
+      if (balance.disponivel < HALF_PLAN_PRICE) {
+        const error = new Error('Saldo insuficiente para ativar o Meio Periodo MotoJa. Carregue saldo antes de aceitar.');
+        error.status = 402;
+        error.code = 'saldo_insuficiente';
+        error.balance = balance;
+        throw error;
+      }
+      const nextSaldo = money(balance.saldo - HALF_PLAN_PRICE);
+      expiraEmMs = now + HALF_PLAN_DURATION_MS;
+      tx.set(companyRef, {
+        saldo: nextSaldo,
+        reservado: balance.reservado,
+        meioPeriodoExpiraEmMs: expiraEmMs,
+        meioPeriodoAtivacaoId: planRef.id,
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      tx.set(planRef, {
+        status: 'ativo',
+        tipo: 'meio_periodo',
+        dia,
+        valor: HALF_PLAN_PRICE,
+        taxaEntrega: HALF_PLAN_DELIVERY_FEE,
+        appFee: HALF_PLAN_APP_FEE,
+        tipoEntrega: HALF_PLAN_TYPE,
+        ativadoEmMs: now,
+        expiraEmMs,
+        ativadoEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+      tx.set(ledgerRef(req.companyId), {
+        tipo: 'debito',
+        origem: 'meio_periodo_motoja_ativado',
+        valor: HALF_PLAN_PRICE,
+        saldoAntes: balance.saldo,
+        saldoDepois: nextSaldo,
+        reservadoAntes: balance.reservado,
+        reservadoDepois: balance.reservado,
+        criadoEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+      balanceAfter = companyBalance({ saldo: nextSaldo, reservado: balance.reservado });
+    });
+
+    res.json({ ok: true, active: true, alreadyActive, expiraEmMs, balance: balanceAfter, tipoEntrega: HALF_PLAN_TYPE, valor: HALF_PLAN_PRICE, taxaEntrega: HALF_PLAN_DELIVERY_FEE });
   } catch (error) {
     if (error.code === 'saldo_insuficiente') {
       return res.status(error.status || 402).json({ error: 'saldo_insuficiente', message: error.message, balance: error.balance || null });
@@ -9388,6 +9516,17 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
         delivery.taxaFixaEntrega = DAILY_PLAN_DELIVERY_FEE;
         delivery.empresaFicaPorTaxa = DAILY_PLAN_APP_FEE;
         delivery.precoLabel = `Plano Diario MotoJa Pro ativo: R$ ${DAILY_PLAN_DELIVERY_FEE.toFixed(2).replace('.', ',')} por entrega/ponto`;
+      }
+      if (isHalfPlanDelivery(delivery.tipoEntrega)) {
+        const company = companySnap.exists ? companySnap.data() || {} : {};
+        const until = halfPlanActiveUntil(company);
+        if (!until) throw halfPlanInactiveError();
+        delivery.meioPeriodo = true;
+        delivery.meioPeriodoAtivacaoId = company.meioPeriodoAtivacaoId || '';
+        delivery.meioPeriodoExpiraEmMs = until;
+        delivery.taxaFixaEntrega = HALF_PLAN_DELIVERY_FEE;
+        delivery.empresaFicaPorTaxa = HALF_PLAN_APP_FEE;
+        if (!delivery.entregaNaNota) delivery.precoLabel = `Meio Periodo MotoJa ativo: R$ ${HALF_PLAN_DELIVERY_FEE.toFixed(2).replace('.', ',')} por entrega/ponto`;
       }
       if (balance.disponivel < delivery.valor) {
         const error = new Error('Saldo insuficiente. Faca um deposito e aguarde aprovacao do dono antes de chamar motoboy.');

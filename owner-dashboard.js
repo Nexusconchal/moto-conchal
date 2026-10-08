@@ -111,6 +111,7 @@
     const value = Number(item.valor || 0);
     if (item.ganhoApp != null || item.valorApp != null) return Number(item.ganhoApp ?? item.valorApp);
     if (/plano.*diario/i.test(String(item.tipoEntrega || "").normalize("NFD").replace(/[\u0300-\u036f]/g, ""))) return Math.min(value, deliveryQuantity(item));
+    if (/meio periodo motoja/i.test(String(item.tipoEntrega || "").normalize("NFD").replace(/[\u0300-\u036f]/g, ""))) return Math.min(value, deliveryQuantity(item) * 1.5);
     if (item.entregaNaNota) return Math.min(value, deliveryQuantity(item) * (item.regiaoEntrega === "conchal" ? 1.5 : 2));
     if (item.tipo === "servico_exclusivo" || /exclusivo/i.test(String(item.tipoEntrega || ""))) {
       return Number(item.ganhoApp || item.valorApp || item.ganhoAppPrevisto || 20);

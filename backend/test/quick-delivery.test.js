@@ -43,6 +43,7 @@ function harness(balance = 100) {
     ledgerRef: () => ref('ledger/event'), isPricedDeliveryType: t => !!t,
     bairroFromAddress: () => '',
     isFixedFoodDelivery: t => /lanche|farmacia|acai/i.test(t), isDailyPlanDelivery: t => String(t).toLowerCase() === 'plano diario motoja pro',
+    isHalfPlanDelivery: t => String(t).toLowerCase() === 'meio periodo motoja', halfPlanActiveUntil: (c = {}) => Number(c.meioPeriodoExpiraEmMs || 0) > Date.now() ? Number(c.meioPeriodoExpiraEmMs) : 0, halfPlanInactiveError: (m = 'Meio Periodo inativo') => Object.assign(new Error(m), { status: 403, code: 'plano_diario_inativo' }), HALF_PLAN_DELIVERY_FEE: 5.5, HALF_PLAN_APP_FEE: 1.5,
     todayKeySaoPaulo: () => '2026-10-04', dailyPlanRef: (phone, day) => ref(`plans/${phone}/${day}`),
     DAILY_PLAN_DELIVERY_FEE: 4, DAILY_PLAN_APP_FEE: 1,
     getDriverWithProof: async () => {}, timestampMs: Number,
@@ -172,7 +173,7 @@ test('legacy finalization debits standard R$ 6.50 and daily R$ 4 batches exactly
 test('daily batch renewals cannot use yesterday, revoked or another company plan', async () => {
   const reads = [];
   let active = true;
-  const ctx = vm.createContext({ todayKeySaoPaulo: () => '2026-10-04', isDailyPlanDelivery: t => t === 'Plano Diario MotoJa Pro', dailyPlanRef: (phone, day) => `${phone}/${day}` });
+  const ctx = vm.createContext({ todayKeySaoPaulo: () => '2026-10-04', isDailyPlanDelivery: t => t === 'Plano Diario MotoJa Pro', isHalfPlanDelivery: t => t === 'Meio Periodo MotoJa', halfPlanInactiveError: m => Object.assign(new Error(m), { status: 403 }), dailyPlanRef: (phone, day) => `${phone}/${day}` });
   vm.runInContext(source.slice(source.indexOf('async function assertQuickDailyPlanRenewable('), source.indexOf('function isFixedFoodDelivery(')),ctx);
   const tx = { get: async ref => { reads.push(ref); return { exists:active, data:() => ({status:'ativo'}) }; } };
   const d = { ...dailyRaw(), planoDiarioDia:'2026-10-04' };
@@ -186,7 +187,7 @@ test('daily batch renewals cannot use yesterday, revoked or another company plan
 test('company summary enables R$ 4 only for active daily plans and driver display uses the same R$ 1 fee', () => {
   const html = fs.readFileSync(new URL('../../empresa.html',import.meta.url),'utf8');
   const fields = { quantidadeLote:{value:'3'},tipoEntrega:{value:'Plano Diario MotoJa Pro'},regiaoLote:{value:'martinho_prado'},resumoLote:{},chamarLote:{} };
-  const ctx = vm.createContext({ $:id => fields[id], tipoPlanoDiario:t => t === 'Plano Diario MotoJa Pro', comidaFixa:t => /lanche|acai|farmacia/i.test(t), planoDiarioAtivo:false, enviando:false, moeda:n => n.toFixed(2) });
+  const ctx = vm.createContext({ $:id => fields[id], tipoPlanoDiario:t => t === 'Plano Diario MotoJa Pro', tipoMeioPeriodo:t => t === 'Meio Periodo MotoJa', meioPeriodoAtivo:false, comidaFixa:t => /lanche|acai|farmacia/i.test(t), planoDiarioAtivo:false, enviando:false, moeda:n => n.toFixed(2) });
   vm.runInContext(html.slice(html.indexOf('function tipoLotePermitido('),html.indexOf('function selecionarModoEntrega(')),ctx);
   ctx.atualizarResumoLote(); assert.equal(fields.chamarLote.disabled,true);
   ctx.planoDiarioAtivo = true; ctx.atualizarResumoLote();
@@ -244,4 +245,86 @@ test('switching modes hides address and notes, preserves the regular flow, and c
   assert.equal(el('campoEntregaPrincipal').style.display,'grid');
   assert.equal(el('chamadaSemEndereco').style.display,'none');
   assert.equal(el('calcular').style.display,'block');
+});
+
+const halfRaw = () => ({ ...raw(), tipoEntrega: 'Meio Periodo MotoJa', valor: 0.01, meioPeriodo: true, meioPeriodoExpiraEmMs: Date.now() + 9e9 });
+test('half period plan is blocked until activated, expired activations do not count and the request cannot forge it', async () => {
+  for (const expira of [undefined, Date.now() - 1000]) {
+    const h = harness();
+    if (expira) h.records.set('empresas/company', { ...h.records.get('empresas/company'), meioPeriodoExpiraEmMs: expira });
+    const result = await h.call(halfRaw());
+    assert.equal(result.status, 403); assert.equal(h.writes.length, 0); assert.equal(h.notices.length, 0);
+  }
+});
+test('active half period reserves R$ 5,50 per delivery in every region and splits R$ 1,50 app / R$ 4,00 driver', async () => {
+  for (const region of ['conchal','martinho_prado','tujuguaba','iate']) {
+    const h = harness();
+    const until = Date.now() + 3600000;
+    h.records.set('empresas/company', { ...h.records.get('empresas/company'), meioPeriodoExpiraEmMs: until, meioPeriodoAtivacaoId: 'act-1' });
+    assert.equal((await h.call({ ...halfRaw(), regiaoEntrega: region })).status, 201);
+    const d = h.records.get('entregas/quick-test');
+    assert.equal(d.valor, 16.5); assert.equal(d.meioPeriodoExpiraEmMs, until); assert.equal(d.meioPeriodoAtivacaoId, 'act-1');
+    assert.equal(h.context.expectedDeliveryFare(0, 3, d.tipoEntrega, d), 16.5);
+    assert.equal(h.context.expectedDeliveryFare(2.3, 2, 'Meio Periodo MotoJa', {}), 11);
+    assert.equal(h.context.deliverySplit(d).appFee, 4.5);
+    assert.equal(h.context.deliverySplit(d).driverAmount, 12);
+    assert.equal(h.records.get('empresas/company').saldo, 100);
+    assert.equal(h.records.get('empresas/company').reservado, 16.5);
+  }
+});
+test('half period batch finalization debits R$ 5,50 per delivery and pays the driver R$ 4,00 each', async () => {
+  const h = harness();
+  h.records.set('empresas/company', { ...h.records.get('empresas/company'), meioPeriodoExpiraEmMs: Date.now() + 3600000 });
+  await h.call(halfRaw());
+  const d = h.records.get('entregas/quick-test');
+  Object.assign(d,{ confirmacaoEmpresaVersao:0, status:'retirada', motoboyCpf:'12345678901', retiradaConfirmadaEm:Date.now()-60000, motoboyLocalizacao:{serverTimestampMs:Date.now()} });
+  await h.finish();
+  assert.equal(h.records.get('empresas/company').saldo, 83.5);
+  assert.equal(h.records.get('empresas/company').reservado, 0);
+  assert.equal(h.earnings[0].ganho, 12);
+});
+test('half period batch renewals stop after the 6 hours expire', async () => {
+  const ctx = vm.createContext({ todayKeySaoPaulo: () => '2026-10-04', isDailyPlanDelivery: () => false, isHalfPlanDelivery: t => t === 'Meio Periodo MotoJa', halfPlanInactiveError: m => Object.assign(new Error(m), { status: 403 }), dailyPlanRef: () => '' });
+  vm.runInContext(source.slice(source.indexOf('async function assertQuickDailyPlanRenewable('), source.indexOf('function isFixedFoodDelivery(')),ctx);
+  const tx = { get: async () => { throw new Error('no read expected'); } };
+  await ctx.assertQuickDailyPlanRenewable(tx, { ...halfRaw(), meioPeriodoExpiraEmMs: Date.now() + 1000 }, '11999999999');
+  await assert.rejects(ctx.assertQuickDailyPlanRenewable(tx, { ...halfRaw(), meioPeriodoExpiraEmMs: Date.now() - 1 }, '11999999999'), /venceu/);
+});
+test('half period activation debits R$ 25 once, lasts 6 hours and refuses insufficient balance', async () => {
+  const docs = new Map();
+  const ref = path => ({ path, id: path.split('/').at(-1), collection: name => ({ doc: id => ref(`${path}/${name}/${id}`) }) });
+  const ctx = vm.createContext({ Date, money: n => Math.round(Number(n || 0) * 100) / 100,
+    todayKeySaoPaulo: () => '2026-10-04', companyBalance: d => ({ saldo: d.saldo || 0, reservado: d.reservado || 0, disponivel: (d.saldo || 0) - (d.reservado || 0) }),
+    ledgerRef: () => ref(`ledger/${docs.size}`), admin: { firestore: { FieldValue: { serverTimestamp: () => 'TIME' } } },
+    db: { runTransaction: async fn => { const pending = []; await fn({ get: async r => ({ exists: docs.has(r.path), data: () => docs.get(r.path) }), set: (r, data, opt) => pending.push([r, data, opt]) }); for (const [r, data, opt] of pending) docs.set(r.path, opt?.merge ? { ...docs.get(r.path), ...data } : data); } },
+    assertCompany: 0, assertCompanyApproved: 0, createRideLimiter: 0, app: { post: (_p, ...h) => { ctx.handler = h.at(-1); } } });
+  for (const name of ['HALF_PLAN_TYPE', 'HALF_PLAN_PRICE', 'HALF_PLAN_DELIVERY_FEE', 'HALF_PLAN_APP_FEE', 'HALF_PLAN_DURATION_MS']) {
+    const line = source.split('\n').find(l => l.startsWith(`const ${name} =`)); vm.runInContext(line.replace('const ', 'var '), ctx);
+  }
+  vm.runInContext(source.slice(source.indexOf('function halfPlanActiveUntil('), source.indexOf('function halfPlanInactiveError(')), ctx);
+  const start = source.indexOf("app.post('/api/companies/half-plan/activate'");
+  vm.runInContext(source.slice(start, source.indexOf('\napp.post(', start + 1)), ctx);
+  const call = async () => { const out = {}; const res = { status: c => { out.status = c; return res; }, json: d => { out.data = d; return res; } };
+    let failure; await ctx.handler({ companyId: 'c1', companySnap: { ref: ref('empresas/c1') } }, res, e => { failure = e; }); if (failure) throw failure; return out; };
+  docs.set('empresas/c1', { saldo: 20, reservado: 0 });
+  assert.equal((await call()).status, 402);
+  assert.equal(docs.get('empresas/c1').saldo, 20);
+  docs.set('empresas/c1', { saldo: 100, reservado: 10 });
+  const before = Date.now();
+  const first = await call();
+  assert.equal(first.data.active, true); assert.equal(docs.get('empresas/c1').saldo, 75);
+  assert.ok(first.data.expiraEmMs >= before + 6 * 3600000 && first.data.expiraEmMs <= Date.now() + 6 * 3600000);
+  const second = await call();
+  assert.equal(second.data.alreadyActive, true); assert.equal(docs.get('empresas/c1').saldo, 75);
+  docs.set('empresas/c1', { ...docs.get('empresas/c1'), meioPeriodoExpiraEmMs: Date.now() - 1 });
+  await call();
+  assert.equal(docs.get('empresas/c1').saldo, 50);
+  assert.equal([...docs.values()].filter(d => d.origem === 'meio_periodo_motoja_ativado').length, 2);
+});
+test('driver app shows R$ 1,50 app fee for half period deliveries', () => {
+  const driver = fs.readFileSync(new URL('../../motoboy.html',import.meta.url),'utf8');
+  const dctx = vm.createContext({ dinheiro:Number, planoDiario:c => c.tipoEntrega === 'Plano Diario MotoJa Pro', servicoExclusivo:() => false });
+  vm.runInContext(driver.slice(driver.indexOf('function appValorEntrega('),driver.indexOf('function appPercent(')),dctx);
+  assert.equal(dctx.appValorEntrega({ ...halfRaw(), valor: 16.5 }), 4.5);
+  assert.equal(dctx.appValorEntrega({ tipoEntrega: 'Meio Periodo MotoJa', paradas: 1, valor: 5.5 }), 1.5);
 });
