@@ -7,8 +7,8 @@
   let inFlight = false, refreshedAt = -Infinity;
   const now = () => performance.now();
   function unknown() {
-    root.dataset.state = 'unknown'; title.textContent = 'Disponibilidade não confirmada agora';
-    detail.textContent = 'Você pode solicitar uma corrida e aguardar a confirmação de um motoboy.';
+    root.dataset.state = 'unknown'; title.textContent = 'Disponibilidade não confirmada';
+    detail.textContent = 'A disponibilidade será confirmada no aceite.';
   }
   async function refresh() {
     if (inFlight || document.visibilityState === 'hidden' || now() - refreshedAt < 15000) return;
@@ -20,8 +20,8 @@
       const count = data.counts?.conchal;
       if (!response.ok || data.ok !== true || !Number.isInteger(count) || count < 0 || count > 2000 || !Number.isFinite(data.updatedAt)) throw new Error('contagem_nao_confirmada');
       root.dataset.state = count ? 'available' : 'empty';
-      title.textContent = count ? `${count} ${count === 1 ? 'motoboy online e disponível' : 'motoboys online e disponíveis'}` : 'Nenhum motoboy disponível online agora';
-      detail.textContent = count ? 'Para atender Conchal · a corrida depende do aceite de um motoboy.' : 'Em Conchal · você pode solicitar e aguardar um motoboy aceitar.';
+      title.textContent = count ? `${count} ${count === 1 ? 'motoboy online' : 'motoboys online'}` : 'Nenhum motoboy online';
+      detail.textContent = count ? 'Confirmação após o aceite do motoboy.' : 'Seu pedido aguarda o aceite de um motoboy.';
       refreshedAt = now();
     } catch { unknown(); refreshedAt = -Infinity; }
     finally { clearTimeout(timeout); inFlight = false; }
@@ -32,4 +32,3 @@
   setInterval(() => { if (now() - refreshedAt > 45000) unknown(); refresh(); }, 20000);
   refresh();
 })();
-

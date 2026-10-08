@@ -17,6 +17,7 @@ export function attachDriverAvailability(io, presence, { verifyDriver, enabledCi
       if (!/^\d{11}$/.test(cpf)) throw new Error('dados_motoboy_invalidos');
       const driver = await verifyDriver(cpf, proof);
       const { fresh } = presence.connect(cpf, socket.id, enabledCities(driver));
+      socket.data.availabilityFresh = fresh;
       socket.data.availabilityCpf = cpf; socket.data.verifiedAt = now();
       // A shared initialization handles simultaneous tabs without duplicate database queries.
       if (fresh) initializations.set(cpf, Promise.resolve().then(() => loadJobs(cpf))
@@ -32,7 +33,7 @@ export function attachDriverAvailability(io, presence, { verifyDriver, enabledCi
   namespace.on('connection', socket => {
     const cpf = socket.data.availabilityCpf;
     socket.join(room(cpf));
-    socket.emit('availability:state', presence.state(cpf));
+    socket.emit('availability:state', { ...presence.state(cpf), preferenceMissing: socket.data.availabilityFresh === true });
     let eventsAt = now(), events = 0;
     let queue = Promise.resolve();
     function handle(action) {

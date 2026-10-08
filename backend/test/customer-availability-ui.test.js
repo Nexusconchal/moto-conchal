@@ -16,7 +16,7 @@ function harness({ count=1, status=200, timestamp=-99999999 }={}) {
 }
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 test('fresh responses are accepted despite a different server clock; requests bypass cached URLs',async()=>{
-  const h=harness();await settle();assert.match(h.title.textContent,/1 motoboy online/);assert.match(h.urls[0],/\?t=/);
+  const h=harness();await settle();assert.match(h.title.textContent,/1 motoboy online/);assert.equal(h.root.dataset.state,'available');assert.match(h.urls[0],/\?t=/);
   h.tick(20000);h.clock(-500000);h.run();await settle();assert.equal(h.calls(),2);assert.match(h.title.textContent,/1 motoboy online/);
 });
 test('a hidden page does not poll and stale counts are hidden before returning to the app',async()=>{
@@ -24,10 +24,9 @@ test('a hidden page does not poll and stale counts are hidden before returning t
   assert.equal(h.root.dataset.state,'unknown');h.document.visibilityState='visible';h.events.visibilitychange();await settle();assert.equal(h.calls(),2);
 });
 test('request failures show unknown availability, while a confirmed zero remains distinct',async()=>{
-  const zero=harness({count:0});await settle();assert.match(zero.title.textContent,/Nenhum motoboy/);
-  const error=harness({status:503});await settle();assert.match(error.title.textContent,/não confirmada/);
+  const zero=harness({count:0});await settle();assert.equal(zero.root.dataset.state,'empty');assert.equal(zero.title.textContent,'Nenhum motoboy online');
+  const error=harness({status:503});await settle();assert.equal(error.root.dataset.state,'unknown');assert.match(error.title.textContent,/não confirmada/);
 });
 test('negative, fractional or excessive counts are rejected without displaying them',async()=>{
   for(const count of [-1,1.5,2001]){const h=harness({count});await settle();assert.equal(h.root.dataset.state,'unknown');}
 });
-

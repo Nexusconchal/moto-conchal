@@ -29,6 +29,7 @@ function emit(s, name, body) { return new Promise((resolve, reject) => s.timeout
 test('namespace verifies proof, does not bypass private root rooms, and counts only after deliberate availability', async t => {
   const h = await setup(t); const s = h.open(); const initial = await connected(s);
   assert.equal(initial.desired, false); assert.equal(h.io.sockets.sockets.size, 0);
+  assert.equal(initial.preferenceMissing, true);
   assert.equal(h.presence.publicCounts().counts.conchal, 0);
   assert.equal((await emit(s, 'availability:set', { available: true, driverCpf: '99999999999', cities: { aguai: true } })).ok, true);
   assert.deepEqual(h.presence.publicCounts().counts, { conchal: 1, aguai: 0, engenheiro_coelho: 0 });
@@ -50,6 +51,21 @@ test('heartbeats have no additional job reads and revalidate credentials only ev
   h.tick(30000); await emit(s, 'availability:heartbeat', {}); assert.deepEqual(h.stats(), { verifies: 1, loads: 1 });
   for (let i = 0; i < 10; i++) { h.tick(30000); await emit(s, 'availability:heartbeat', {}); }
   assert.deepEqual(h.stats(), { verifies: 2, loads: 1 });
+});
+test('fresh reconnection is announced after expiry while a retained server preference stays authoritative', async t => {
+  const h = await setup(t); const a = h.open(); await connected(a);
+  await emit(a, 'availability:set', { available: true });
+  const b = h.open(); const retained = await connected(b);
+  assert.equal(retained.preferenceMissing, false); assert.equal(retained.desired, true);
+  await emit(b, 'availability:set', { available: false });
+  const disconnected = [...h.io.of('/driver-availability').sockets.values()].map(s => once(s, 'disconnect'));
+  a.disconnect(); b.disconnect(); await Promise.all(disconnected);
+  h.tick(120000); const c = h.open(); const fresh = await connected(c);
+  assert.equal(fresh.preferenceMissing, true); assert.equal(fresh.desired, false);
+  assert.equal(h.presence.publicCounts().counts.conchal, 0); assert.equal(h.stats().loads, 2);
+  // Restoring the UI preference still uses the normal authenticated, rate-limited setter.
+  assert.equal((await emit(c, 'availability:set', { available: true })).ok, true);
+  assert.equal(h.presence.publicCounts().counts.conchal, 1);
 });
 test('owner revocation immediately removes presence and disconnects authenticated tabs', async t => {
   const h = await setup(t); const s = h.open(); await connected(s); await emit(s, 'availability:set', { available: true });
