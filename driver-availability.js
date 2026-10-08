@@ -2,16 +2,16 @@
   'use strict';
   let socket, options, timer, stopped = true, state = { connected: false, desired: false, busy: false }, changing = false;
   let generation = 0, preferenceKey = '';
-  const remembered = new Map(), preferenceTtl = 24 * 60 * 60 * 1000;
+  const remembered = new Map();
   function preference() {
     let value;
     try { value = JSON.parse(localStorage.getItem(preferenceKey) || 'null') || remembered.get(preferenceKey); }
     catch { value = remembered.get(preferenceKey); }
-    if (typeof value?.desired === 'boolean' && Number.isFinite(value.at) && Date.now() >= value.at && Date.now() - value.at < preferenceTtl) return value;
+    if (typeof value?.desired === 'boolean') return value;
   }
   function remember(desired) {
     if (!preferenceKey) return;
-    const value = { desired, at: Date.now() }; remembered.set(preferenceKey, value);
+    const value = { desired }; remembered.set(preferenceKey, value);
     try { localStorage.setItem(preferenceKey, JSON.stringify(value)); } catch {}
   }
   function forget() {
@@ -28,7 +28,7 @@
       button.disabled = !state.connected || changing;
     });
     const status = root.querySelector('[data-availability-status]');
-    status.textContent = !state.connected ? 'Conectando disponibilidade…' : state.busy ? 'Em atendimento · fora da contagem de disponíveis' : state.desired ? 'Disponível para novos serviços' : 'Indisponível para novos serviços';
+    status.textContent = !state.connected ? state.desired ? 'Disponível selecionado · reconectando…' : 'Reconectando disponibilidade…' : state.busy ? 'Em atendimento · fora da contagem de disponíveis' : state.desired ? 'Disponível para novos serviços' : 'Indisponível para novos serviços';
   }
   function apply(next) {
     const previous = `${state.connected}:${state.desired}`; state = next;
@@ -108,7 +108,7 @@
       });
       connect(); timer = setInterval(heartbeat, 30000);
     },
-    stop({ forgetPreference = true } = {}) { stopped = true; generation++; if (forgetPreference) forget(); clearInterval(timer); socket?.disconnect(); socket = null; changing = false; state = { connected: false, desired: false, busy: false }; render(); },
+    stop({ forgetPreference = false } = {}) { stopped = true; generation++; if (forgetPreference) forget(); clearInterval(timer); socket?.disconnect(); socket = null; changing = false; state = { connected: false, desired: false, busy: false }; render(); },
     canReceive() { return stopped ? null : state.connected && state.desired; }
   };
   document.addEventListener('visibilitychange', () => {

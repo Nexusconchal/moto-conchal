@@ -68,15 +68,29 @@ test('resume after expired presence restores the choice without keeping a discon
   assert.equal(s.emissions.at(-1).body.available, true); s.reply(s.emissions.length - 1, { ok: true, ...state(true) });
   assert.equal(h.api.canReceive(), true);
 });
-test('expired, invalid and other driver preferences cannot silently enable a new driver', async () => {
-  for (const stored of [{ desired: true, at: -90000000 }, { desired: 'true', at: 100000 }, { desired: true, at: 200000 }]) {
+test('closing the app for several days does not expire the choice, including the old timestamp format', async () => {
+  const storage = new Map(), first = harness(storage); await available(first); first.events.pagehide();
+  const h = harness(storage, { now: 30 * 24 * 60 * 60 * 1000 }); await settle(); const s = h.sockets[0]; s.receive(state(false, { preferenceMissing: true }));
+  assert.equal(s.emissions.at(-1).body.available, true); assert.equal(h.buttons[0].attributes['aria-pressed'], 'true');
+  const legacy = harness(new Map([[key, JSON.stringify({ desired: true, at: -90000000 })]])); await settle(); legacy.sockets[0].receive(state(false, { preferenceMissing: true }));
+  assert.equal(legacy.sockets[0].emissions.at(-1).body.available, true);
+});
+test('invalid and other driver preferences cannot silently enable a new driver', async () => {
+  for (const stored of [{ desired: 'true' }, { desired: 1 }, { available: true }]) {
     const h = harness(new Map([[key, JSON.stringify(stored)]])); await settle(); const s = h.sockets[0]; s.receive(state(false, { preferenceMissing: true })); assert.equal(s.emissions.length, 0);
   }
   const h = harness(new Map([[key, JSON.stringify({ desired: true, at: 100000 })]]), { driverCpf: '10987654321' }); await settle(); h.sockets[0].receive(state(false, { preferenceMissing: true })); assert.equal(h.sockets[0].emissions.length, 0);
 });
-test('explicit logout forgets availability and late acknowledgements cannot restore the old account', async () => {
+test('leaving the panel or editing the profile preserves the choice, and manual unavailable remains saved', async () => {
+  const h = harness(); await available(h); h.api.stop(); assert.equal(JSON.parse(h.storage.get(key)).desired, true);
+  h.start(); await settle(); const s = h.sockets.at(-1); s.receive(state(true, { preferenceMissing: false }));
+  h.buttons[1].onclick(); s.reply(s.emissions.length - 1, { ok: true, ...state(false) });
+  h.events.pagehide(); const reopened = harness(h.storage); await settle(); const next = reopened.sockets[0]; next.receive(state(false, { preferenceMissing: true }));
+  assert.equal(next.emissions.length, 0); assert.equal(reopened.buttons[1].attributes['aria-pressed'], 'true');
+});
+test('explicit preference reset forgets availability and late acknowledgements cannot restore the old account', async () => {
   const h = harness(); const s = await available(h); h.buttons[1].onclick(); const pending = s.emissions.length - 1;
-  h.api.stop(); assert.equal(h.storage.has(key), false); s.reply(pending, { ok: true, ...state(true) });
+  h.api.stop({ forgetPreference: true }); assert.equal(h.storage.has(key), false); s.reply(pending, { ok: true, ...state(true) });
   assert.equal(h.root.hidden, true); assert.equal(h.storage.has(key), false); assert.equal(h.api.canReceive(), null);
 });
 test('blocked local storage does not crash the panel and in-tab resume still remembers the confirmed choice', async () => {
