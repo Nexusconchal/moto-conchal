@@ -30,7 +30,7 @@ function harness(record, balance = 20, linked = null) {
     geocodeCapturedAddress: async () => ({ lat: -22, lon: -47, text: 'Rua teste' }),
     calculateRouteDistanceKm: async () => 1.5, ensureDistantRouteIsPlausible: () => {},
     deliveryPublicData: (d) => d, expectedDeliveryFare: () => 6.5, isFixedFoodDelivery: () => true,
-    companyBalance: (c) => ({ ...c, disponivel: c.saldo - c.reservado }), isDailyPlanDelivery: () => false, isHalfPlanDelivery: () => false,
+    companyBalance: (c) => ({ ...c, disponivel: c.saldo - c.reservado }), isDailyPlanDelivery: () => false, isHalfPlanDelivery: () => false, consumeTaxaAvulsa: () => null,
     money: (v) => v, ledgerRef: () => ref('ledger/reservation'), bairroFromAddress: () => 'Centro', capturedOrderAmounts: () => ({}),
     emitSupportOperationsRefresh: () => {}, notifyTelegramAboutDelivery: async (id) => { assert.ok(docs.has(`entregas/${id}`)); notices.push(id); }, notifyDriversAboutDelivery: async () => {},
     admin: { firestore: { FieldValue: { serverTimestamp: () => 'TIME' } } },

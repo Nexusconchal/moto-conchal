@@ -278,6 +278,29 @@
         border: 1px solid rgba(79, 195, 247, 0.25);
         color: #d8f4ff;
       }
+      .taxa-avulsa-card {
+        display: none;
+        margin: 12px 0;
+        padding: 18px 16px;
+        border-radius: 18px;
+        background: linear-gradient(135deg, rgba(255, 128, 0, 0.22), rgba(255, 172, 79, 0.08));
+        border: 1px solid rgba(255, 128, 0, 0.55);
+        color: #fff4e6;
+        line-height: 1.45;
+      }
+      .taxa-avulsa-card.show { display: block; }
+      .taxa-avulsa-card h3 { margin: 0 0 6px; font-size: 1.12rem; color: #ffac4f; }
+      .taxa-avulsa-card p { margin: 0 0 10px; }
+      .taxa-avulsa-card .taxa-avulsa-acoes { display: grid; gap: 8px; margin-top: 12px; }
+      .taxa-avulsa-card .taxa-avulsa-acoes button { width: 100%; }
+      .taxa-avulsa-card small { display: block; margin-top: 8px; color: #ffd9b0; }
+      .taxa-avulsa-dica {
+        display: none;
+        margin: 10px 0;
+        font-size: 0.86rem;
+        color: #ffd9b0;
+      }
+      .taxa-avulsa-dica.show { display: block; }
       .status.error {
         background: rgba(255, 82, 82, 0.1);
         border-color: rgba(255, 82, 82, 0.28);
@@ -1937,6 +1960,33 @@
           </div>
           <p id="cadastroFeedback" class="small" role="status" aria-live="polite"></p>
         </div>
+        <div id="taxaAvulsaBloqueio" class="taxa-avulsa-card" role="alert" aria-live="polite">
+          <h3>🚀 Sua loja está a todo vapor!</h3>
+          <p>
+            Você já usou as <strong>5 entregas na taxa avulsa</strong>
+            (R$ 6,50 / R$ 16,00). Para continuar chamando motoboy, ative um dos
+            planos da MotoJá e pague menos por entrega:
+          </p>
+          <p>
+            ⏱️ <strong>Plano Meio Período</strong> — R$ 25,00 por 6 horas:
+            R$ 5,50 em Conchal e R$ 12,00 nos distritos.<br />
+            📅 <strong>Plano Diário Pro</strong> — R$ 70,00 até a meia-noite:
+            R$ 4,00 em Conchal e R$ 10,00 nos distritos.
+          </p>
+          <div class="taxa-avulsa-acoes">
+            <button id="taxaAvulsaMeioPeriodo" type="button" class="green">
+              Ativar Plano Meio Período — R$ 25,00
+            </button>
+            <button id="taxaAvulsaDiario" type="button">
+              Ativar Plano Diário Pro — R$ 70,00
+            </button>
+          </div>
+          <small id="taxaAvulsaFeedback"></small>
+          <small>
+            Depois do plano, você ganha mais 5 entregas na taxa avulsa.
+          </small>
+        </div>
+        <p id="taxaAvulsaDica" class="taxa-avulsa-dica"></p>
         <div id="modoEntrega" class="grid2" role="group" aria-label="Modo da entrega">
           <button id="modoComEndereco" type="button" aria-pressed="true">Entrega com endereço</button>
           <button id="modoSemEndereco" type="button" class="secondary" aria-pressed="false">Só chamar motoboy<br><small>Endereços nas notas</small></button>
@@ -2155,6 +2205,7 @@
         meioPeriodoAtivo = false,
         meioPeriodoExpiraEmMs = 0,
         meioPeriodoTimer = 0,
+        taxaAvulsa = { usadas: 0, limite: 5, restantes: 5 },
         empresaStatus = "aprovada",
         empresaAprovada = false,
         contaTela = "login";
@@ -2621,6 +2672,50 @@
       function tipoMeioPeriodo(tipo) {
         return tipo === MEIO_PERIODO_TIPO;
       }
+      function planoAtivoAgora() {
+        return planoDiarioAtivo || meioPeriodoAtivo;
+      }
+      function usaTaxaAvulsa(tipo) {
+        return comidaFixa(tipo) && !tipoPlanoDiario(tipo) && !tipoMeioPeriodo(tipo);
+      }
+      // Taxa avulsa: 5 entregas; depois so com plano ativo (o servidor confere de novo).
+      function taxaAvulsaLiberada(tipo, paradas = 1) {
+        if (!usaTaxaAvulsa(tipo) || planoAtivoAgora()) return true;
+        return Math.max(1, Number(paradas) || 1) <= taxaAvulsa.restantes;
+      }
+      function mensagemTaxaAvulsa(paradas = 1) {
+        return taxaAvulsa.restantes > 0
+          ? `Restam ${taxaAvulsa.restantes} entrega(s) na taxa avulsa e esta chamada tem ${paradas}. Diminua os pontos ou ative o Plano Meio Período ou o Plano Diário Pro.`
+          : "Você já usou as 5 entregas na taxa avulsa. Para continuar, ative o Plano Meio Período (R$ 25,00) ou o Plano Diário Pro (R$ 70,00).";
+      }
+      function definirTaxaAvulsa(dados) {
+        if (!dados) return;
+        const limite = Number(dados.limite || 5),
+          usadas = Math.max(0, Number(dados.usadas || 0));
+        taxaAvulsa = { usadas, limite, restantes: Math.max(0, limite - usadas) };
+        atualizarTaxaAvulsaUI();
+      }
+      function atualizarTaxaAvulsaUI() {
+        const select = $("tipoEntrega"),
+          bloqueado = !!empresaToken && !planoAtivoAgora() && taxaAvulsa.restantes <= 0;
+        if (select) {
+          Array.from(select.options).forEach((o) => {
+            if (usaTaxaAvulsa(o.value)) o.disabled = bloqueado;
+          });
+          if (bloqueado && usaTaxaAvulsa(select.value)) select.value = "";
+        }
+        const card = $("taxaAvulsaBloqueio"),
+          dica = $("taxaAvulsaDica");
+        if (card) card.classList.toggle("show", bloqueado);
+        if (dica) {
+          const mostrar = !!empresaToken && !bloqueado && !planoAtivoAgora() && taxaAvulsa.usadas > 0;
+          dica.classList.toggle("show", mostrar);
+          dica.textContent = mostrar
+            ? `Você usou ${taxaAvulsa.usadas} de ${taxaAvulsa.limite} entregas na taxa avulsa (R$ 6,50 / R$ 16,00). Depois disso, a taxa avulsa só libera com o Plano Meio Período ou o Plano Diário Pro.`
+            : "";
+        }
+        if (typeof atualizarResumoLote === "function") atualizarResumoLote();
+      }
       function horaCurta(ms) {
         return new Date(ms).toLocaleTimeString("pt-BR", {
           hour: "2-digit",
@@ -2660,7 +2755,7 @@
         if (meioPeriodoAtivo) mostrarMeioPeriodoAviso("");
         if (!meioPeriodoAtivo && $("tipoEntrega").value === MEIO_PERIODO_TIPO)
           $("tipoEntrega").value = "";
-        atualizarResumoLote();
+        atualizarTaxaAvulsaUI();
       }
       function atualizarPlanoDiarioUI() {
         const opt = Array.from($("tipoEntrega").options).find(
@@ -2684,7 +2779,7 @@
         if (planoDiarioAtivo) mostrarPlanoDiarioAviso("");
         if (!planoDiarioAtivo && $("tipoEntrega").value === PLANO_DIARIO_TIPO)
           $("tipoEntrega").value = "";
-        atualizarResumoLote();
+        atualizarTaxaAvulsaUI();
       }
       async function carregarPlanoDiario() {
         if (!empresaToken) {
@@ -2702,6 +2797,7 @@
           const d = await r.json().catch(() => ({}));
           planoDiarioAtivo = !!(r.ok && d.active);
           definirMeioPeriodo(r.ok && d.meioPeriodo?.active ? d.meioPeriodo.expiraEmMs : 0);
+          if (r.ok) definirTaxaAvulsa(d.taxaAvulsa);
         } catch {
           planoDiarioAtivo = false;
           definirMeioPeriodo(0);
@@ -3694,6 +3790,7 @@
               d.message || d.error || "Nao consegui ativar o plano diario.",
             );
           planoDiarioAtivo = true;
+          definirTaxaAvulsa({ usadas: 0, limite: taxaAvulsa.limite });
           atualizarPlanoDiarioUI();
           mostrarPlanoDiarioAviso(
             "Plano Diario ativo hoje. A taxa fixa de R$ 4,00 esta liberada.",
@@ -3752,6 +3849,7 @@
               d.message || d.error || "Não consegui ativar o meio período.",
             );
           definirMeioPeriodo(d.expiraEmMs);
+          definirTaxaAvulsa({ usadas: 0, limite: taxaAvulsa.limite });
           mostrarMeioPeriodoAviso(
             `Plano Meio Período ativo até ${horaCurta(meioPeriodoExpiraEmMs)}. A taxa fixa de R$ 5,50 está liberada.`,
             false,
@@ -3769,6 +3867,17 @@
           atualizarMeioPeriodoUI();
         }
       };
+      async function ativarPlanoPeloAviso(botao, aviso) {
+        $("taxaAvulsaFeedback").textContent = "";
+        await $(botao).onclick();
+        const texto = $(aviso)?.textContent || "";
+        if (!planoAtivoAgora() && texto) $("taxaAvulsaFeedback").textContent = texto;
+      }
+      $("taxaAvulsaMeioPeriodo").onclick = () =>
+        ativarPlanoPeloAviso("ativarMeioPeriodo", "meioPeriodoAviso");
+      $("taxaAvulsaDiario").onclick = () =>
+        ativarPlanoPeloAviso("ativarPlanoDiario", "planoDiarioAviso");
+      window.addEventListener("delivery:created", () => carregarPlanoDiario());
       companyReport = window.MotojaCompanyReports.create({
         identity: () => empresaToken ? empresaToken + ':' + soNumeros($("telefoneEmpresa").value) : '',
         escapeHtml: esc, money: moeda,
@@ -4096,6 +4205,7 @@
           20000,
         );
         const data = await r.json().catch(() => ({}));
+        if (data.error === "taxa_avulsa_bloqueada") carregarPlanoDiario();
         if (!r.ok)
           throw new Error(
             data.message || data.error || "Nao consegui chamar motoboy.",
@@ -4983,9 +5093,11 @@
       }
       function atualizarResumoLote() {
         const count = Number($("quantidadeLote").value), tipo = $("tipoEntrega").value;
-        const valido = Number.isInteger(count) && count >= 1 && count <= 30 && tipoLotePermitido(tipo);
+        const taxaOk = taxaAvulsaLiberada(tipo, count);
+        const valido = Number.isInteger(count) && count >= 1 && count <= 30 && tipoLotePermitido(tipo) && taxaOk;
         const tarifa = tarifaLote(tipo, $("regiaoLote").value);
         $("resumoLote").textContent = valido ? `${count} entrega(s) × ${moeda(tarifa)} = ${moeda(count * tarifa)}. Um motoboy para o lote.${tipoPlanoDiario(tipo) ? ' Plano diário ativo hoje.' : tipoMeioPeriodo(tipo) ? ' Meio período ativo.' : ''}` : "Selecione um tipo com tarifa fixa e uma quantidade de 1 a 30 entregas. O plano diário exige ativação de R$ 70,00 hoje e o meio período, de R$ 25,00 por 6 horas. Para cobrança por km, use Entrega com endereço.";
+        if (!taxaOk) $("resumoLote").textContent = mensagemTaxaAvulsa(count);
         $("chamarLote").disabled = !valido || enviando;
       }
       function selecionarModoEntrega(semEndereco) {
@@ -5088,6 +5200,11 @@
             "Plano Meio Período MotoJá bloqueado. Ative por R$ 25,00 para usar R$ 5,50 por 6 horas.",
             true,
           );
+          return;
+        }
+        if (!taxaAvulsaLiberada(tipoEntrega, paradas)) {
+          mostrarStatus(mensagemTaxaAvulsa(paradas), true);
+          atualizarTaxaAvulsaUI();
           return;
         }
         if (!tipoPrecificado(tipoEntrega)) {
@@ -5223,6 +5340,11 @@
       $("confirmar").onclick = async () => {
         if (!entregaCalculada || enviando) return;
         if (!perfilCadastro.canRequest()) return;
+        if (!taxaAvulsaLiberada(entregaCalculada.tipoEntrega, entregaCalculada.paradas)) {
+          mostrarStatus(mensagemTaxaAvulsa(entregaCalculada.paradas), true);
+          atualizarTaxaAvulsaUI();
+          return;
+        }
         enviando = true;
         $("confirmar").disabled = true;
         $("confirmar").textContent = "Chamando motoboy...";
@@ -5283,6 +5405,7 @@
               }),
             });
           const data = await r.json().catch(() => ({}));
+          if (data.error === "taxa_avulsa_bloqueada") carregarPlanoDiario();
           if (!r.ok)
             throw new Error(
               data.message || data.error || "Nao consegui chamar motoboy.",

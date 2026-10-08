@@ -256,6 +256,52 @@ function halfPlanActiveUntil(company = {}, now = Date.now()) {
   return until > now ? until : 0;
 }
 
+// Taxa avulsa (R$ 6,50 / R$ 16,00): a empresa pode usar 5 entregas. Depois
+// disso so libera de novo ativando um plano, nao importa quantos dias passem.
+// Cada ativacao de plano zera o contador e abre um novo ciclo de 5 entregas.
+const TAXA_AVULSA_LIMITE = 5;
+
+function companyPlanActive(company = {}, now = Date.now()) {
+  return company.planoDiarioAtivoDia === todayKeySaoPaulo(new Date(now)) || !!halfPlanActiveUntil(company, now);
+}
+
+function taxaAvulsaStatus(company = {}, now = Date.now()) {
+  const usadas = Math.max(0, Math.floor(Number(company.taxaAvulsaUsadas || 0)));
+  const planoAtivo = companyPlanActive(company, now);
+  return {
+    usadas,
+    limite: TAXA_AVULSA_LIMITE,
+    restantes: Math.max(0, TAXA_AVULSA_LIMITE - usadas),
+    planoAtivo,
+    bloqueado: !planoAtivo && usadas >= TAXA_AVULSA_LIMITE
+  };
+}
+
+function usesTaxaAvulsa(delivery = {}) {
+  const type = delivery.tipoEntrega;
+  return isFixedFoodDelivery(type) && !isDailyPlanDelivery(type) && !isHalfPlanDelivery(type);
+}
+
+function consumeTaxaAvulsa(company, delivery) {
+  if (!usesTaxaAvulsa(delivery)) return null;
+  const status = taxaAvulsaStatus(company);
+  if (status.planoAtivo) return null;
+  const stops = deliveryStopCount(delivery.paradas);
+  if (stops > status.restantes) {
+    const error = new Error(status.restantes === 0
+      ? 'Voce ja usou as 5 entregas na taxa avulsa. Para continuar chamando motoboy, ative o Plano Meio Periodo (R$ 25,00) ou o Plano Diario Pro (R$ 70,00).'
+      : `Restam ${status.restantes} entrega(s) na taxa avulsa e esta chamada tem ${stops}. Diminua os pontos ou ative o Plano Meio Periodo ou o Plano Diario Pro.`);
+    error.status = 403;
+    error.code = 'taxa_avulsa_bloqueada';
+    throw error;
+  }
+  return { usadas: status.usadas + stops, contadas: stops, ciclo: Number(company.taxaAvulsaCiclo || 0) };
+}
+
+function taxaAvulsaResetFields(company = {}) {
+  return { taxaAvulsaUsadas: 0, taxaAvulsaCiclo: Number(company.taxaAvulsaCiclo || 0) + 1 };
+}
+
 function halfPlanInactiveError(message = 'O Plano Meio Periodo MotoJa nao esta ativo agora. Ative por R$ 25,00 para liberar a taxa de R$ 5,50.') {
   const error = new Error(message);
   error.status = 403;
@@ -1053,8 +1099,13 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
     if (isDailyPlanDelivery(delivery.tipoEntrega) || isHalfPlanDelivery(delivery.tipoEntrega)) {
       delivery.planoAppFee = planDeliveryAmounts(delivery).appFee;
     }
+    const taxaAvulsa = consumeTaxaAvulsa(latestCompany, delivery);
+    if (taxaAvulsa) {
+      delivery.taxaAvulsaContada = taxaAvulsa.contadas;
+      delivery.taxaAvulsaCiclo = taxaAvulsa.ciclo;
+    }
     const nextReserved = money(balance.reservado + delivery.valor);
-    tx.set(companySnap.ref, { reservado: nextReserved, atualizadaEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    tx.set(companySnap.ref, { reservado: nextReserved, ...(taxaAvulsa ? { taxaAvulsaUsadas: taxaAvulsa.usadas } : {}), atualizadaEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
     tx.set(ledgerRef(companyId), {
       tipo: 'reserva', origem: 'pedido_capturado', entregaId: deliveryRef.id, valor: delivery.valor,
       saldoAntes: balance.saldo, saldoDepois: balance.saldo, reservadoAntes: balance.reservado,
@@ -3657,12 +3708,29 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     };
 
-    if (valor > 0 && !delivery.saldoLiberadoEm && !delivery.saldoDebitadoEm && companyRef) {
-      const companySnap = await tx.get(companyRef);
-      const balance = companyBalance(companySnap.exists ? companySnap.data() : {});
+    const releaseBalance = valor > 0 && !delivery.saldoLiberadoEm && !delivery.saldoDebitadoEm && companyRef;
+    // Chamada cancelada devolve as entregas da taxa avulsa, se ainda for o mesmo ciclo.
+    const refundTaxa = status === 'cancelada' && Number(delivery.taxaAvulsaContada || 0) > 0 && !delivery.taxaAvulsaDevolvidaEm && companyRef;
+    const companySnap = releaseBalance || refundTaxa ? await tx.get(companyRef) : null;
+    const companyData = companySnap?.exists ? companySnap.data() || {} : {};
+    const taxaRefund = {};
+    if (refundTaxa) {
+      if (Number(companyData.taxaAvulsaCiclo || 0) === Number(delivery.taxaAvulsaCiclo || 0)) {
+        taxaRefund.taxaAvulsaUsadas = Math.max(0, Math.floor(Number(companyData.taxaAvulsaUsadas || 0)) - Number(delivery.taxaAvulsaContada));
+      }
+      updates.taxaAvulsaDevolvidaEm = admin.firestore.FieldValue.serverTimestamp();
+    }
+
+    if (!releaseBalance && Object.keys(taxaRefund).length) {
+      tx.set(companyRef, { ...taxaRefund, atualizadaEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    }
+
+    if (releaseBalance) {
+      const balance = companyBalance(companyData);
       const nextReserved = money(Math.max(0, balance.reservado - valor));
       tx.set(companyRef, {
         reservado: nextReserved,
+        ...taxaRefund,
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
       tx.set(ledgerRef(companyRef.id), {
@@ -9244,6 +9312,7 @@ app.get('/api/companies/daily-plan/status', assertCompany, async (req, res, next
       diaria: DAILY_PLAN_PRICE,
       taxaEntrega: DAILY_PLAN_DELIVERY_FEE,
       appFee: DAILY_PLAN_APP_FEE,
+      taxaAvulsa: taxaAvulsaStatus(req.company),
       meioPeriodo: {
         active: !!halfPlanActiveUntil(req.company),
         expiraEmMs: halfPlanActiveUntil(req.company),
@@ -9288,6 +9357,7 @@ app.post('/api/companies/daily-plan/activate', assertCompany, assertCompanyAppro
         reservado: balance.reservado,
         planoDiarioAtivoDia: dia,
         planoDiarioTaxa: DAILY_PLAN_DELIVERY_FEE,
+        ...taxaAvulsaResetFields(companySnap.exists ? companySnap.data() || {} : {}),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
       tx.set(planRef, {
@@ -9356,6 +9426,7 @@ app.post('/api/companies/half-plan/activate', assertCompany, assertCompanyApprov
         reservado: balance.reservado,
         meioPeriodoExpiraEmMs: expiraEmMs,
         meioPeriodoAtivacaoId: planRef.id,
+        ...taxaAvulsaResetFields(company),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
       tx.set(planRef, {
@@ -9592,6 +9663,11 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
         delivery.planoAppFee = planDeliveryAmounts(delivery).appFee;
         if (!delivery.entregaNaNota) delivery.precoLabel = 'Plano Meio Periodo MotoJa ativo: R$ 5,50 em Conchal e R$ 12,00 nos distritos por entrega/ponto';
       }
+      const taxaAvulsa = consumeTaxaAvulsa(companySnap.exists ? companySnap.data() || {} : {}, delivery);
+      if (taxaAvulsa) {
+        delivery.taxaAvulsaContada = taxaAvulsa.contadas;
+        delivery.taxaAvulsaCiclo = taxaAvulsa.ciclo;
+      }
       if (balance.disponivel < delivery.valor) {
         const error = new Error('Saldo insuficiente. Faca um deposito e aguarde aprovacao do dono antes de chamar motoboy.');
         error.status = 402;
@@ -9605,6 +9681,7 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
         telefoneEmpresa: req.companyId,
         saldo: balance.saldo,
         reservado: nextReserved,
+        ...(taxaAvulsa ? { taxaAvulsaUsadas: taxaAvulsa.usadas } : {}),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
 
@@ -9674,8 +9751,8 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
         balance: error.balance || null
       });
     }
-    if (error.code === 'plano_diario_inativo') {
-      return res.status(error.status || 403).json({ error: 'plano_diario_inativo', message: error.message });
+    if (error.code === 'plano_diario_inativo' || error.code === 'taxa_avulsa_bloqueada') {
+      return res.status(error.status || 403).json({ error: error.code, message: error.message });
     }
     next(error);
   }
