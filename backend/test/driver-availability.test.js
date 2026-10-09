@@ -16,10 +16,11 @@ test('two tabs count once, share preference, and disconnecting one does not remo
   assert.equal(p.publicCounts().counts.conchal, 1); p.set(cpf, 'tab2', false);
   assert.equal(p.state(cpf).desired, false); assert.equal(p.publicCounts().counts.conchal, 0);
 });
-test('closed last tab disappears immediately and a lost heartbeat expires after 90 seconds', () => {
-  const { p, tick } = harness(); ready(p); p.disconnect(cpf, 'tab1'); assert.equal(p.publicCounts().counts.conchal, 0);
+test('closing the app keeps Disponivel counted; only the panel session expires after 90 seconds', () => {
+  const { p, tick } = harness(); ready(p); p.disconnect(cpf, 'tab1'); assert.equal(p.publicCounts().counts.conchal, 1);
   p.connect(cpf, 'tab2', cities); assert.equal(p.publicCounts().counts.conchal, 1);
-  tick(90000); assert.equal(p.publicCounts().counts.conchal, 0); assert.throws(() => p.heartbeat(cpf, 'tab2'));
+  tick(90000); assert.equal(p.publicCounts().counts.conchal, 1); assert.throws(() => p.heartbeat(cpf, 'tab2'));
+  assert.equal(p.state(cpf).connected, false); assert.equal(p.state(cpf).available, true);
 });
 test('only server supplied service cities are counted, and city changes update counts', () => {
   const { p } = harness(); ready(p); ready(p, other, 'other', { conchal: true, aguai: true });
@@ -78,15 +79,20 @@ test('company approval, owner rejection and support completion release exactly t
   }
 });
 
-test('the choice survives presence expiry; blocking forgets it and a process restart starts without it', () => {
-  const { p, tick } = harness(); ready(p); p.disconnect(cpf, 'tab1'); tick(200000);
-  assert.equal(p.publicCounts().counts.conchal, 0);
-  const back = p.connect(cpf, 'tab2', cities); assert.equal(back.fresh, true); assert.equal(back.preferenceMissing, false); assert.equal(back.desired, true);
-  p.initializeJobs(cpf, []); assert.equal(p.publicCounts().counts.conchal, 1);
-  p.set(cpf, 'tab2', false); p.disconnect(cpf, 'tab2'); tick(200000);
-  assert.equal(p.connect(cpf, 'tab3', cities).desired, false);
-  p.set(cpf, 'tab3', true); p.remove(cpf);
-  const blocked = p.connect(cpf, 'tab4', cities); assert.equal(blocked.preferenceMissing, true); assert.equal(blocked.desired, false);
-  p.remove(cpf, { forgetPreference: false });
+test('only Indisponivel, an active job or a block remove the driver; the choice is saved and restored after a restart', () => {
+  const saved = [];
+  const { p, tick } = harness({ onPreference: (id, desired) => saved.push([id, desired]) }); ready(p); p.disconnect(cpf, 'tab1'); tick(7 * 86400000);
+  assert.equal(p.publicCounts().counts.conchal, 1);
+  p.job('deliveries', 'd1', 'aceita', cpf); assert.equal(p.publicCounts().counts.conchal, 0);
+  p.job('deliveries', 'd1', 'finalizada'); assert.equal(p.publicCounts().counts.conchal, 1);
+  const back = p.connect(cpf, 'tab2', cities); assert.equal(back.preferenceMissing, false); assert.equal(back.desired, true); assert.equal(back.fresh, false);
+  p.set(cpf, 'tab2', false); assert.equal(p.publicCounts().counts.conchal, 0);
+  p.set(cpf, 'tab2', true); p.remove(cpf); assert.equal(p.publicCounts().counts.conchal, 0);
+  assert.deepEqual(saved, [[cpf, true], [cpf, false], [cpf, true], [cpf, false]]);
+  // Process restart: the saved choice is loaded and counted once active jobs are read.
+  const restarted = createDriverAvailability(); restarted.restore(cpf, true, cities);
+  assert.equal(restarted.publicCounts().counts.conchal, 0); restarted.initializeJobs(cpf, []);
+  assert.equal(restarted.publicCounts().counts.conchal, 1);
+  assert.equal(restarted.connect(cpf, 'x', cities).preferenceMissing, false);
   assert.equal(createDriverAvailability().connect(cpf, 'x', cities).preferenceMissing, true);
 });

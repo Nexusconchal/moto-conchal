@@ -14,8 +14,14 @@ Os controles novos filtram a lista de serviços pendentes no painel atualizado; 
 
 Validação: testes de presença, autenticação e isolamento Socket.IO, abas simultâneas, rate limiting, concorrência com aceite/conclusão, revogação e expiração; regressão de pagamentos e conclusão; navegador real em celular e desktop.
 
-## Escolha lembrada pelo servidor
+## Regra atual: a escolha manda (substitui as regras de conexão acima)
 
-O servidor guarda em memória a última escolha (Disponível/Indisponível) de cada CPF, separada da presença. Quando o motoboy fecha o app ou reinicia o celular, a presença expira em 90 segundos e ele sai da contagem, mas a escolha continua guardada: ao reconectar e verificar os trabalhos ativos, ele volta como Disponível sem precisar clicar. A escolha só é esquecida quando o dono bloqueia o motoboy (revogação) ou quando o processo do Render reinicia. Nesse caso o painel restaura a escolha salva no celular, como antes.
+O motoboy aparece como disponível para o cliente enquanto a escolha dele for **Disponível**, mesmo com o app fechado, o celular reiniciado ou perdido. Ele só sai da contagem quando:
 
-No celular, a escolha salva só muda com um clique confirmado pelo servidor ou com a escolha que o próprio servidor ainda guarda. Se a restauração falhar (internet fraca ou servidor acordando), um heartbeat ou aviso dizendo "indisponível" não apaga mais a escolha: o painel tenta restaurar de novo no próximo heartbeat.
+1. marca **Indisponível** no app do motoboy;
+2. está em serviço (corrida ou entrega aceita/retirada) — volta sozinho ao terminar;
+3. é bloqueado pelo dono (a escolha passa para Indisponível).
+
+A escolha fica salva no cadastro do motoboy (`motoboys/{cpf}.disponivelApp`), uma gravação só quando ele troca. Quando o Render reinicia, o servidor lê quem está com `disponivelApp == true` (ignorando bloqueados), confere os serviços ativos de cada um e volta a contá-los. Sessões e heartbeats continuam existindo apenas para o painel do motoboy conversar com o servidor; não afetam mais a contagem pública.
+
+Para aceitar um serviço no painel, o motoboy ainda precisa estar com o app aberto e conectado.

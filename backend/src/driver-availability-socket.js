@@ -26,7 +26,7 @@ export function attachDriverAvailability(io, presence, { verifyDriver, enabledCi
       next();
     } catch {
       const cpf = socket.data.availabilityCpf;
-      if (cpf) { presence.disconnect(cpf, socket.id); if (!presence.state(cpf).connected) presence.remove(cpf, { forgetPreference: false }); }
+      if (cpf) { presence.disconnect(cpf, socket.id); presence.drop(cpf); }
       next(new Error('disponibilidade_nao_autorizada'));
     } finally { if (socket.data.availabilityCpf) initializations.delete(socket.data.availabilityCpf); }
   });

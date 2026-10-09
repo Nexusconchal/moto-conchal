@@ -52,7 +52,7 @@ test('heartbeats have no additional job reads and revalidate credentials only ev
   for (let i = 0; i < 10; i++) { h.tick(30000); await emit(s, 'availability:heartbeat', {}); }
   assert.deepEqual(h.stats(), { verifies: 2, loads: 1 });
 });
-test('fresh reconnection is announced after expiry while a retained server preference stays authoritative', async t => {
+test('a deliberate Indisponivel stays out of the count after the app is closed and reopened', async t => {
   const h = await setup(t); const a = h.open(); await connected(a);
   await emit(a, 'availability:set', { available: true });
   const b = h.open(); const retained = await connected(b);
@@ -61,19 +61,22 @@ test('fresh reconnection is announced after expiry while a retained server prefe
   const disconnected = [...h.io.of('/driver-availability').sockets.values()].map(s => once(s, 'disconnect'));
   a.disconnect(); b.disconnect(); await Promise.all(disconnected);
   h.tick(120000); const c = h.open(); const later = await connected(c);
-  // The server remembers the last deliberate choice (Indisponivel) after the presence expired.
-  assert.equal(later.preferenceMissing, false); assert.equal(later.desired, false);
+  assert.equal(later.desired, false);
   assert.equal(h.presence.publicCounts().counts.conchal, 0); assert.equal(h.stats().loads, 2);
   assert.equal((await emit(c, 'availability:set', { available: true })).ok, true);
   assert.equal(h.presence.publicCounts().counts.conchal, 1);
 });
-test('closing the app or restarting the phone keeps Disponivel: after expiry the server restores it by itself', async t => {
-  const h = await setup(t); const a = h.open(); await connected(a);
+test('closing the app, restarting or losing the phone keeps Disponivel in the public count', async t => {
+  const saved = [];
+  const h = await setup(t, { onPreference: (id, desired) => saved.push([id, desired]) }); const a = h.open(); await connected(a);
   await emit(a, 'availability:set', { available: true });
+  assert.deepEqual(saved, [[cpf, true]]);
   const disconnected = once([...h.io.of('/driver-availability').sockets.values()][0], 'disconnect');
   a.disconnect(); await disconnected;
-  assert.equal(h.presence.publicCounts().counts.conchal, 0);
-  h.tick(10 * 60000); const b = h.open(); const back = await connected(b);
+  assert.equal(h.presence.publicCounts().counts.conchal, 1);
+  h.tick(24 * 60 * 60000);
+  assert.equal(h.presence.publicCounts().counts.conchal, 1);
+  const b = h.open(); const back = await connected(b);
   assert.equal(back.preferenceMissing, false); assert.equal(back.desired, true); assert.equal(back.available, true);
   assert.equal(h.presence.publicCounts().counts.conchal, 1);
 });

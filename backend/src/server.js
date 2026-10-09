@@ -2754,7 +2754,16 @@ admin.initializeApp({
 });
 
 const db = admin.firestore();
-const driverAvailability = createDriverAvailability();
+// A escolha Disponivel/Indisponivel fica salva no cadastro do motoboy, para
+// sobreviver a reinicios do servidor. So muda quando o motoboy troca ou e bloqueado.
+const driverAvailability = createDriverAvailability({
+  onPreference(cpf, desired) {
+    db.collection('motoboys').doc(cpf).set({
+      disponivelApp: desired,
+      disponivelAppAtualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true }).catch((error) => console.error('driver availability save failed', error));
+  }
+});
 const app = express();
 const httpServer = createServer(app);
 app.set('trust proxy', 1);
@@ -2811,19 +2820,40 @@ io.on('connection', (socket) => {
   else socket.join(`company:${socket.data.companyId}`);
 });
 
+async function loadDriverActiveJobs(cpf) {
+  const groups = await Promise.all([
+    ['corridas', 'rides', 'aceita'], ['entregas', 'deliveries', 'aceita'], ['entregas', 'deliveries', 'retirada']
+  ].map(async ([collection, kind, status]) => {
+    const snapshot = await db.collection(collection).where('motoboyCpf', '==', cpf).where('status', '==', status).limit(15).get();
+    return snapshot.docs.map(doc => `${kind}:${doc.id}`);
+  }));
+  return groups.flat();
+}
+
 const driverAvailabilitySocket = attachDriverAvailability(io, driverAvailability, {
   verifyDriver: getDriverWithProof,
   enabledCities: driverRideCities,
-  async loadJobs(cpf) {
-    const groups = await Promise.all([
-      ['corridas', 'rides', 'aceita'], ['entregas', 'deliveries', 'aceita'], ['entregas', 'deliveries', 'retirada']
-    ].map(async ([collection, kind, status]) => {
-      const snapshot = await db.collection(collection).where('motoboyCpf', '==', cpf).where('status', '==', status).limit(15).get();
-      return snapshot.docs.map(doc => `${kind}:${doc.id}`);
-    }));
-    return groups.flat();
-  }
+  loadJobs: loadDriverActiveJobs
 });
+
+// Ao iniciar, volta a contar quem deixou Disponivel marcado (mesmo com o app fechado).
+async function restoreDriverAvailability() {
+  const snapshot = await db.collection('motoboys').where('disponivelApp', '==', true).limit(2000).get();
+  let restored = 0;
+  for (const doc of snapshot.docs) {
+    const driver = doc.data() || {};
+    if (driver.status === 'bloqueado' || !/^\d{11}$/.test(doc.id)) continue;
+    driverAvailability.restore(doc.id, true, driverRideCities(driver));
+    try {
+      driverAvailability.initializeJobs(doc.id, await loadDriverActiveJobs(doc.id));
+      restored += 1;
+    } catch (error) {
+      console.error('driver availability jobs restore failed', doc.id, error);
+    }
+  }
+  driverAvailabilitySocket.publishAll();
+  return restored;
+}
 
 app.use(cors({
   origin(origin, callback) {
@@ -3758,7 +3788,7 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'motoja-conchal-backend',
-    release: 'availability-memory-v226',
+    release: 'availability-persistent-v227',
     manualDeliveryDateMigration: manualDeliveryDateMigrationStatus
   });
 });
@@ -11830,6 +11860,9 @@ app.use((error, _req, res, _next) => {
 
 httpServer.listen(PORT, () => {
   console.log(`MotoJa Conchal backend listening on ${PORT}`);
+  restoreDriverAvailability()
+    .then((count) => console.log('driver availability restored', count))
+    .catch((error) => console.error('driver availability restore failed', error));
   manualDeliveryDateMigrationStatus = { status: 'running' };
   migrateManualDeliveryEarningDates()
     .then((result) => {
