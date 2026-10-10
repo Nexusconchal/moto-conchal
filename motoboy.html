@@ -2039,38 +2039,20 @@
           (btn) =>
             (btn.onclick = async () => {
               btn.disabled = true;
-              btn.textContent = "Ativando GPS...";
+              const textoBotao = btn.textContent;
+              // Avisa o cliente primeiro: isso segura a corrida com o motoboy (o servidor
+              // devolve para pendentes se o cliente nao for avisado em 3 minutos).
+              // O GPS e ligado em seguida e o acompanhamento continua tentando sozinho.
+              const lerGps = (opcoes) =>
+                new Promise((resolve, reject) => {
+                  if (!navigator.geolocation) return reject({ code: 0 });
+                  navigator.geolocation.getCurrentPosition(resolve, reject, opcoes);
+                });
+              const gpsInicial = lerGps({ enableHighAccuracy: true, maximumAge: 15000, timeout: 12000 })
+                .catch((erro) => (erro && erro.code === 1 ? Promise.reject(erro)
+                  : lerGps({ enableHighAccuracy: false, maximumAge: 120000, timeout: 8000 })));
+              gpsInicial.catch(() => null);
               try {
-                if (!navigator.geolocation)
-                  throw new Error("Este aparelho nao disponibilizou o GPS.");
-                const lerGps = (opcoes) =>
-                  new Promise((resolve, reject) =>
-                    navigator.geolocation.getCurrentPosition(resolve, reject, opcoes),
-                  );
-                let position;
-                try {
-                  position = await lerGps({
-                    enableHighAccuracy: true,
-                    maximumAge: 5000,
-                    timeout: 20000,
-                  });
-                } catch (gpsError) {
-                  if (gpsError && gpsError.code === 1)
-                    throw new Error(
-                      "A localizacao esta bloqueada. Libere a Localizacao para o app nas configuracoes do celular e tente de novo.",
-                    );
-                  // Sem sinal preciso (dentro de casa, por exemplo): usa a ultima posicao conhecida.
-                  btn.textContent = "Buscando sinal do GPS...";
-                  position = await lerGps({
-                    enableHighAccuracy: false,
-                    maximumAge: 60000,
-                    timeout: 15000,
-                  }).catch(() => {
-                    throw new Error(
-                      "O GPS nao respondeu. Ligue a Localizacao do celular, va para um lugar aberto e tente de novo.",
-                    );
-                  });
-                }
                 btn.textContent = "Avisando cliente...";
                 const r = await fetch(
                   `${CONFIG.backend}/api/rides/${btn.dataset.avisar}/notify-client`,
@@ -2081,39 +2063,57 @@
                   },
                 );
                 const d = await r.json().catch(() => ({}));
-                if (!r.ok)
+                if (!r.ok) {
+                  if (d.error === "corrida_nao_pertence_ao_motoboy") {
+                    limparCache();
+                    ouvir(true);
+                    throw new Error(
+                      "Esta corrida nao esta mais com voce: o tempo para avisar o cliente acabou ou ela foi cancelada. Confira em Pendentes se ela ainda esta disponivel.",
+                    );
+                  }
                   throw new Error(
-                    d.message || d.error || "Nao consegui avisar o cliente.",
+                    d.message || d.error || "Nao consegui avisar o cliente. Confira a internet e tente de novo.",
                   );
-                const posicao = {
-                  latitude: position.coords.latitude,
-                  longitude: position.coords.longitude,
-                  accuracy: position.coords.accuracy,
-                  heading: position.coords.heading,
-                  speed: position.coords.speed,
-                  timestamp: position.timestamp || Date.now(),
-                };
-                await fetch(
-                  `${CONFIG.backend}/api/rides/${btn.dataset.avisar}/location`,
-                  {
-                    method: "POST",
-                    headers: { "content-type": "application/json" },
-                    body: JSON.stringify({ ...driverProof(), ...posicao }),
-                  },
-                ).catch(() => null);
+                }
+                btn.textContent = "Ligando GPS...";
                 window.dispatchEvent(new CustomEvent("motoja:ride-gps-start", { detail: { rideId: btn.dataset.avisar } }));
+                let avisoGps = "";
+                try {
+                  const position = await gpsInicial;
+                  await fetch(
+                    `${CONFIG.backend}/api/rides/${btn.dataset.avisar}/location`,
+                    {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({
+                        ...driverProof(),
+                        latitude: position.coords.latitude,
+                        longitude: position.coords.longitude,
+                        accuracy: position.coords.accuracy,
+                        heading: position.coords.heading,
+                        speed: position.coords.speed,
+                        timestamp: position.timestamp || Date.now(),
+                      }),
+                    },
+                  ).catch(() => null);
+                } catch (gpsError) {
+                  avisoGps = gpsError && gpsError.code === 1
+                    ? "Cliente avisado, mas a localizacao esta bloqueada. Libere a Localizacao para o app nas configuracoes do celular para o cliente acompanhar sua chegada."
+                    : "Cliente avisado. O GPS ainda nao respondeu; o app continua tentando sozinho. Ligue a Localizacao e mantenha o app aberto.";
+                }
                 btn.textContent = "Cliente avisado - GPS ativo";
                 limparCache();
                 ouvir(true);
+                if (avisoGps) alert(avisoGps);
                 if (d.whatsapp) window.location.href = d.whatsapp;
-                else
+                else if (!avisoGps)
                   alert(
                     "Cliente avisado e GPS ativo. Nao encontrei o WhatsApp do cliente para abrir a conversa.",
                   );
               } catch (e) {
                 alert(e.message);
                 btn.disabled = false;
-                btn.textContent = "Avisar cliente e iniciar corrida com GPS";
+                btn.textContent = textoBotao;
               }
             }),
         );

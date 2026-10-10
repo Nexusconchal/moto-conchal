@@ -3621,9 +3621,12 @@ async function cleanupRides() {
         motoboyCpf: '',
         motoboyCnh: '',
         motoboyTelefone: '',
+        motoboyFoto: admin.firestore.FieldValue.delete(),
+        // O link de pagamento era do motoboy anterior e o cliente ainda nao o recebeu.
+        ...(data.pagamento?.status === 'approved' ? {} : { pagamento: admin.firestore.FieldValue.delete() }),
         aceitaEm: null,
         reabertaEm: admin.firestore.FieldValue.serverTimestamp(),
-        motivoReabertura: 'Backend reabriu: motoboy aceitou e nao avisou o cliente em 3 minutos',
+        motivoReabertura: `Backend reabriu: motoboy ${cleanText(data.motoboy || '', 80) || 'sem nome'} aceitou e nao avisou o cliente em ${Math.round(ACCEPTED_NOTICE_MS / 60000)} minutos`,
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
       releasedAvailabilityRides.push(doc.id);
