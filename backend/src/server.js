@@ -256,10 +256,12 @@ function halfPlanActiveUntil(company = {}, now = Date.now()) {
   return until > now ? until : 0;
 }
 
-// Taxa avulsa (R$ 6,50 / R$ 16,00): a empresa pode usar 5 entregas. Depois
-// disso so libera de novo ativando um plano, nao importa quantos dias passem.
-// Cada ativacao de plano zera o contador e abre um novo ciclo de 5 entregas.
+// Taxa avulsa (R$ 6,50 / R$ 16,00). Os planos sao opcionais: o limite de 5
+// entregas (depois so com plano) fica DESLIGADO por padrao. Para religar,
+// defina TAXA_AVULSA_LIMITE=on no Render. Ligado: cada ativacao de plano zera
+// o contador e abre um novo ciclo de 5 entregas.
 const TAXA_AVULSA_LIMITE = 5;
+const TAXA_AVULSA_ATIVA = typeof process !== 'undefined' && process.env?.TAXA_AVULSA_LIMITE === 'on';
 
 function companyPlanActive(company = {}, now = Date.now()) {
   return company.planoDiarioAtivoDia === todayKeySaoPaulo(new Date(now)) || !!halfPlanActiveUntil(company, now);
@@ -268,7 +270,9 @@ function companyPlanActive(company = {}, now = Date.now()) {
 function taxaAvulsaStatus(company = {}, now = Date.now()) {
   const usadas = Math.max(0, Math.floor(Number(company.taxaAvulsaUsadas || 0)));
   const planoAtivo = companyPlanActive(company, now);
+  if (!TAXA_AVULSA_ATIVA) return { ativo: false, usadas, limite: TAXA_AVULSA_LIMITE, restantes: null, planoAtivo, bloqueado: false };
   return {
+    ativo: true,
     usadas,
     limite: TAXA_AVULSA_LIMITE,
     restantes: Math.max(0, TAXA_AVULSA_LIMITE - usadas),
@@ -283,7 +287,7 @@ function usesTaxaAvulsa(delivery = {}) {
 }
 
 function consumeTaxaAvulsa(company, delivery) {
-  if (!usesTaxaAvulsa(delivery)) return null;
+  if (!TAXA_AVULSA_ATIVA || !usesTaxaAvulsa(delivery)) return null;
   const status = taxaAvulsaStatus(company);
   if (status.planoAtivo) return null;
   const stops = deliveryStopCount(delivery.paradas);

@@ -24,7 +24,7 @@ test('invalid quantities, regions, distance fares, forged daily types and integr
   for (const d of [{ ...raw(), regiaoEntrega: 'other' }, { ...raw(), regiaoEntrega: 'constructor' }, { ...raw(), regiaoEntrega: '__proto__' }, { ...raw(), tipoEntrega: 'Encomendas' }, { ...raw(), tipoEntrega: 'Plano Diario MotoJa Pro lanche' }, { ...raw(), integracaoPedidoId: '123' }]) assert.throws(() => prepareQuickDelivery(d, 3, company, true));
 });
 
-function harness(balance = 100) {
+function harness(balance = 100, { taxaAvulsa = false } = {}) {
   const records = new Map([['empresas/company', { ...company, saldo: balance }]]);
   const geocodes = [], notices = [], writes = [], reads = [], earnings = [];
   const ref = path => ({ path, id: path.split('/').at(-1), get: async () => snap(path) });
@@ -36,7 +36,7 @@ function harness(balance = 100) {
     return result;
   }};
   const money = n => Math.round(Number(n || 0) * 100) / 100;
-  const context = vm.createContext({ console, db, prepareQuickDelivery, quickDeliveryFare, planFare, isSpecialFoodDestination: t => /martinho\s*prado|tujuguaba|iate/i.test(t), protectedDelivery, assertCompanyDelivery,
+  const context = vm.createContext({ process: { env: { TAXA_AVULSA_LIMITE: taxaAvulsa ? 'on' : '' } }, console, db, prepareQuickDelivery, quickDeliveryFare, planFare, isSpecialFoodDestination: t => /martinho\s*prado|tujuguaba|iate/i.test(t), protectedDelivery, assertCompanyDelivery,
     cleanText: s => String(s || '').trim(), onlyDigits: s => String(s || '').replace(/\D/g, ''), normalizeText: s => String(s || '').toLowerCase(), money,
     admin: { firestore: { FieldValue: { serverTimestamp: () => Date.now(), delete: () => null } } },
     companyBalance: d => ({ saldo: d.saldo, reservado: d.reservado, disponivel: d.saldo - d.reservado }),
@@ -372,8 +372,15 @@ test('company app prices plan batches and routes with the district rates; driver
   assert.equal(dctx.appValorEntrega({ tipoEntrega: 'Plano Diario MotoJa Pro', paradas: 2, valor: 20, planoAppFee: 4 }), 4);
 });
 
-test('taxa avulsa: 5 deliveries are allowed, then R$ 6,50/R$ 16 stay blocked until a plan is activated, no matter the date', async () => {
+test('plans are optional by default: R$ 6,50/R$ 16 are never blocked and nothing is counted', async () => {
   const h = harness();
+  for (let i = 0; i < 4; i++) assert.equal((await h.call({ ...raw(), clientRequestId: `free-${i}`, paradas: 3 })).status, 201);
+  assert.equal(h.records.get('empresas/company').taxaAvulsaUsadas, undefined);
+  assert.equal(h.records.get('entregas/free-0').taxaAvulsaContada, undefined);
+  assert.equal(h.context.taxaAvulsaStatus({ taxaAvulsaUsadas: 50 }).bloqueado, false);
+});
+test('with TAXA_AVULSA_LIMITE=on: 5 deliveries are allowed, then R$ 6,50/R$ 16 stay blocked until a plan is activated, no matter the date', async () => {
+  const h = harness(100, { taxaAvulsa: true });
   assert.equal((await h.call({ ...raw(), clientRequestId: 'a1', paradas: 3 })).status, 201);
   assert.equal(h.records.get('empresas/company').taxaAvulsaUsadas, 3);
   const partial = await h.call({ ...raw(), clientRequestId: 'a2', paradas: 3 });
@@ -392,7 +399,7 @@ test('taxa avulsa: 5 deliveries are allowed, then R$ 6,50/R$ 16 stay blocked unt
 });
 test('taxa avulsa: with a plan active, fixed fares are allowed and do not consume the 5; plan deliveries never count', async () => {
   for (const plan of [{ planoDiarioAtivoDia: '2026-10-04' }, { meioPeriodoExpiraEmMs: Date.now() + 3600000 }]) {
-    const h = harness();
+    const h = harness(100, { taxaAvulsa: true });
     h.records.set('empresas/company', { ...h.records.get('empresas/company'), taxaAvulsaUsadas: 5, ...plan });
     if (plan.planoDiarioAtivoDia) h.records.set('plans/11999999999/2026-10-04', { status: 'ativo' });
     assert.equal((await h.call({ ...raw(), clientRequestId: 'p1', paradas: 3 })).status, 201);

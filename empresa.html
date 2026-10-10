@@ -2267,7 +2267,7 @@
         meioPeriodoAtivo = false,
         meioPeriodoExpiraEmMs = 0,
         meioPeriodoTimer = 0,
-        taxaAvulsa = { usadas: 0, limite: 5, restantes: 5 },
+        taxaAvulsa = { usadas: 0, limite: 5, restantes: Infinity },
         empresaStatus = "aprovada",
         empresaAprovada = false,
         contaTela = "login";
@@ -2754,7 +2754,10 @@
         if (!dados) return;
         const limite = Number(dados.limite || 5),
           usadas = Math.max(0, Number(dados.usadas || 0));
-        taxaAvulsa = { usadas, limite, restantes: Math.max(0, limite - usadas) };
+        // Limite desligado no servidor (padrao): taxa avulsa sempre liberada.
+        taxaAvulsa = dados.ativo === true
+          ? { ativo: true, usadas, limite, restantes: Math.max(0, limite - usadas) }
+          : { ativo: false, usadas: 0, limite, restantes: Infinity };
         atualizarTaxaAvulsaUI();
       }
       function atualizarTaxaAvulsaUI() {
@@ -3852,7 +3855,7 @@
               d.message || d.error || "Nao consegui ativar o plano diario.",
             );
           planoDiarioAtivo = true;
-          definirTaxaAvulsa({ usadas: 0, limite: taxaAvulsa.limite });
+          definirTaxaAvulsa({ ativo: taxaAvulsa.ativo, usadas: 0, limite: taxaAvulsa.limite });
           atualizarPlanoDiarioUI();
           mostrarPlanoDiarioAviso(
             "Plano Diario ativo hoje. A taxa fixa de R$ 4,00 esta liberada.",
@@ -3911,7 +3914,7 @@
               d.message || d.error || "Não consegui ativar o meio período.",
             );
           definirMeioPeriodo(d.expiraEmMs);
-          definirTaxaAvulsa({ usadas: 0, limite: taxaAvulsa.limite });
+          definirTaxaAvulsa({ ativo: taxaAvulsa.ativo, usadas: 0, limite: taxaAvulsa.limite });
           mostrarMeioPeriodoAviso(
             `Plano Meio Período ativo até ${horaCurta(meioPeriodoExpiraEmMs)}. A taxa fixa de R$ 5,50 está liberada.`,
             false,
