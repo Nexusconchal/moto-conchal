@@ -180,11 +180,28 @@
     return `<div class="owner-metric ${tone}"><span>${label}</span><strong>${value}</strong><small>${detail}</small></div>`;
   }
 
-  // Total geral de contas do app do cliente (mototaxi), nao depende do periodo selecionado.
+  // Contas do app do cliente (mototaxi). Filtro proprio: Hoje, 7 dias, 30 dias ou Total.
+  const CUSTOMER_RANGES = [
+    ["hoje", "Hoje", "cadastros hoje"],
+    ["ultimos7", "7 dias", "cadastros nos últimos 7 dias"],
+    ["ultimos30", "30 dias", "cadastros nos últimos 30 dias"],
+    ["total", "Total", "contas criadas desde o início"],
+  ];
+  let customerRange = "total";
   function customerMetric(counts) {
     if (!counts || !Number.isFinite(Number(counts.total))) return metric("Clientes cadastrados", "—", "Contagem indisponível agora", "info");
-    return metric("Clientes cadastrados", number(counts.total), `+${number(counts.hoje)} hoje · +${number(counts.ultimos7)} em 7 dias · +${number(counts.ultimos30)} em 30 dias`, "info customers");
+    const [, , detail] = CUSTOMER_RANGES.find(([key]) => key === customerRange) || CUSTOMER_RANGES[3];
+    const buttons = CUSTOMER_RANGES.map(([key, label]) =>
+      `<button type="button" data-customer-range="${key}" aria-pressed="${key === customerRange}">${label}</button>`).join("");
+    return `<div class="owner-metric info customers"><div class="owner-customer-head"><span>Clientes cadastrados</span><div class="owner-customer-filter" role="group" aria-label="Período dos cadastros">${buttons}</div></div><strong>${number(counts[customerRange])}</strong><small>${detail} · total ${number(counts.total)}</small></div>`;
   }
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest?.("[data-customer-range]");
+    if (!button) return;
+    customerRange = button.dataset.customerRange;
+    const card = button.closest(".owner-metric.customers");
+    if (card && adminState) card.outerHTML = customerMetric(adminState.clientesCadastrados);
+  });
 
   function alertItem(label, detail, count, href, severity = "warn") {
     return `<a class="owner-alert ${severity}" href="${href}"><span class="owner-alert-count">${count}</span><span><strong>${label}</strong><small>${detail}</small></span><b>Ver</b></a>`;
