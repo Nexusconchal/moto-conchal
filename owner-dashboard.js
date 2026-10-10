@@ -180,6 +180,12 @@
     return `<div class="owner-metric ${tone}"><span>${label}</span><strong>${value}</strong><small>${detail}</small></div>`;
   }
 
+  // Total geral de contas do app do cliente (mototaxi), nao depende do periodo selecionado.
+  function customerMetric(counts) {
+    if (!counts || !Number.isFinite(Number(counts.total))) return metric("Clientes cadastrados", "—", "Contagem indisponível agora", "info");
+    return metric("Clientes cadastrados", number(counts.total), `+${number(counts.hoje)} hoje · +${number(counts.ultimos7)} em 7 dias · +${number(counts.ultimos30)} em 30 dias`, "info customers");
+  }
+
   function alertItem(label, detail, count, href, severity = "warn") {
     return `<a class="owner-alert ${severity}" href="${href}"><span class="owner-alert-count">${count}</span><span><strong>${label}</strong><small>${detail}</small></span><b>Ver</b></a>`;
   }
@@ -341,6 +347,7 @@
       metric("Pendentes", summary.jobs.filter((item) => item.status === "pendente").length, "Aguardando motoboy", "attention"),
       metric("Receita MotoJÁ", money(summary.app), `Bruto finalizado: ${money(summary.gross)}`, "money"),
       metric("Cancelamentos", `${number(summary.cancellationRate)}%`, `${summary.jobs.filter((item) => item.status === "cancelada").length} cancelados`, "danger"),
+      customerMetric(adminState.clientesCadastrados),
     ].join("");
     renderAlerts(adminState, summary);
     renderStatusBars(summary);

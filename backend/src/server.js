@@ -4613,6 +4613,20 @@ app.post('/api/analytics/event', async (req, res, next) => {
   }
 });
 
+// Contas de cliente do mototaxi: cada CPF cadastrado tem um documento em customerCpf.
+// Usa contagem agregada do Firestore (1 leitura a cada 1000 documentos).
+async function customerSignupCounts(now = Date.now()) {
+  const todayStart = Date.parse(`${dateKeySaoPaulo(new Date(now))}T00:00:00-03:00`);
+  const since = (ms) => db.collection('clientes').where('cadastradaEm', '>=', admin.firestore.Timestamp.fromMillis(ms)).count().get();
+  const [total, hoje, semana, mes] = await Promise.all([
+    db.collection('customerCpf').count().get(),
+    since(todayStart),
+    since(todayStart - 6 * 86400000),
+    since(todayStart - 29 * 86400000)
+  ]);
+  return { total: total.data().count, hoje: hoje.data().count, ultimos7: semana.data().count, ultimos30: mes.data().count };
+}
+
 app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
   try {
     if (adminStateCache && adminStateCache.expiresAt > Date.now()) {
@@ -4630,11 +4644,15 @@ app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
       collectionState('eventosFunil', 2000),
       db.collection('contasSuporte').limit(100).get().catch(() => ({ docs: [] }))
     ]);
+    const clientesCadastrados = await customerSignupCounts().catch((error) => {
+      console.error('customer signup counts failed', error);
+      return null;
+    });
     const empresas = empresasRaw.map((empresa) => publicCompany(empresa, empresa.id));
     const contasSuporte = (contasSuporteSnap.docs || [])
       .map((doc) => publicSupportAccount(doc.data() || {}, doc.id, true))
       .sort((a, b) => timestampMs(b.cadastradaEm) - timestampMs(a.cadastradaEm));
-    const payload = { ok: true, corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil, contasSuporte };
+    const payload = { ok: true, corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil, contasSuporte, clientesCadastrados };
     adminStateCache = { payload, expiresAt: Date.now() + ADMIN_STATE_CACHE_MS };
     return res.json(payload);
   } catch (error) {
