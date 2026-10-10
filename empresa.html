@@ -1734,6 +1734,68 @@
               </div>
             </div>
           </article>
+          <article class="integration-card" data-platform="seucomercio">
+            <button
+              class="integration-head"
+              type="button"
+              data-expand="seucomercio"
+            >
+              <span class="integration-icon">S</span
+              ><strong class="integration-title">SeuComércioAqui</strong
+              ><span class="integration-badge" data-badge="seucomercio"
+                >Inativo</span
+              ><span class="integration-arrow">⌄</span>
+            </button>
+            <div class="integration-body">
+              <p class="muted">
+                Os pedidos de entrega do seu cardápio SeuComércioAqui chegam aqui
+                sozinhos. Com o envio automático ligado, o motoboy é chamado e o
+                valor sai do seu saldo.
+              </p>
+              <label class="switch-row"
+                ><input
+                  type="checkbox"
+                  data-field="active"
+                  data-platform="seucomercio"
+                />
+                Receber pedidos do SeuComércioAqui</label
+              >
+              <label class="switch-row"
+                ><input
+                  type="checkbox"
+                  data-field="autoDispatch"
+                  data-platform="seucomercio"
+                />
+                Chamar motoboy automaticamente quando estiver tudo certo</label
+              >
+              <label
+                >Tipo da entrega<select
+                  data-field="deliveryType"
+                  data-platform="seucomercio"
+                >
+                  <option>Lanche / pizza / pastel / marmita</option>
+                  <option>Acai / pote de sorvete</option>
+                  <option>Encomendas</option>
+                  <option>Farmacia</option>
+                </select></label
+              >
+              <p class="muted">
+                1. Salve e clique em Gerar chave. 2. No SeuComércioAqui, abra
+                Integrações › MotoJá e cole o endereço e a chave. 3. Mantenha saldo
+                na carteira para as corridas.
+              </p>
+              <div class="grid2 compact-buttons">
+                <button type="button" class="secondary" data-save="seucomercio">
+                  Salvar</button
+                ><button type="button" class="secondary" data-key="seucomercio">
+                  Gerar chave
+                </button>
+              </div>
+              <div class="status show capture-secret" data-status="seucomercio">
+                Carregando configuracao...
+              </div>
+            </div>
+          </article>
           <article class="integration-card" data-platform="cardapioweb">
             <button class="integration-head" type="button" data-expand="cardapioweb">
               <span class="integration-icon">C</span
@@ -5500,7 +5562,7 @@
         };
     </script>
     <script src="./empresa-tracking.js?v=211" defer></script>
-    <script src="./empresa-pedidos.js?v=134" defer></script>
+    <script src="./empresa-pedidos.js?v=135" defer></script>
     <script>
       (() => {
         const main = document.querySelector("main.app");

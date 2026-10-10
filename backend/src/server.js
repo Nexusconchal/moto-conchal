@@ -795,8 +795,8 @@ async function sendEvolutionGroupMessage(groupJid, text) {
   return sendEvolutionText(groupJid, text);
 }
 
-const CAPTURE_PLATFORMS = new Set(['anotaai', 'beefood', 'ifood']);
-const CAPTURE_SOURCES = new Set(['whatsapp', 'extension', 'print']);
+const CAPTURE_PLATFORMS = new Set(['anotaai', 'beefood', 'ifood', 'seucomercio']);
+const CAPTURE_SOURCES = new Set(['whatsapp', 'extension', 'print', 'api']);
 
 function capturePlatform(value) {
   const platform = normalizeText(value).replace(/[^a-z]/g, '');
@@ -804,6 +804,8 @@ function capturePlatform(value) {
 }
 
 function captureSource(value, platform) {
+  // SeuComercioAqui envia os pedidos direto pela API, ja estruturados.
+  if (platform === 'seucomercio') return 'api';
   const source = normalizeText(value).replace(/[^a-z]/g, '');
   if (CAPTURE_SOURCES.has(source)) return source;
   return platform === 'anotaai' ? 'whatsapp' : 'extension';
@@ -815,7 +817,7 @@ function defaultCaptureConfig(platform) {
     autoDispatch: false,
     commissionPercent: 0,
     deliveryType: 'Lanche / pizza / pastel / marmita',
-    captureMode: platform === 'anotaai' ? 'whatsapp' : 'extension',
+    captureMode: platform === 'anotaai' ? 'whatsapp' : platform === 'seucomercio' ? 'api' : 'extension',
     connected: false,
     updatedAtMs: 0
   };
@@ -868,6 +870,7 @@ function normalizeCapturedOrder(platform, source, body = {}) {
     orderTotal,
     platformDeliveryFee: money(supplied.deliveryFee || supplied.taxaEntrega || parsed.deliveryFee),
     declaredStoreFee: money(supplied.storeFee || supplied.taxaLoja || parsed.storeFee),
+    note: cleanText(supplied.note || supplied.observacao || '', 300),
     rawText: cleanText(supplied.rawText || incomingOrderText(body), 12000),
     receivedAtMs: Date.now()
   };
@@ -1014,7 +1017,7 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
     recebedor: captured.customer,
     telefoneRecebedor: captured.phone,
     descricao: captured.items.join(', ').slice(0, 500) || `Pedido ${captured.externalId || captured.platform}`,
-    observacao: `Capturado de ${captured.platform}${captured.externalId ? ` - pedido ${captured.externalId}` : ''}`,
+    observacao: `Capturado de ${captured.platform}${captured.externalId ? ` - pedido ${captured.externalId}` : ''}${captured.note ? ` - ${captured.note}` : ''}`.slice(0, 500),
     integracaoOrigem: captured.platform,
     integracaoPedidoId: captured.externalId || orderRef.id.slice(0, 70),
     integracaoPedidoRecebidoEm: String(captured.receivedAtMs || Date.now()),
@@ -7156,6 +7159,53 @@ app.post('/api/integrations/orders/:companyId/:platform', integrationLimiter, as
       }
     }
     return res.status(dispatch?.deliveryId ? 201 : 202).json({ ok: true, capturedOrderId: orderRef.id, order, amounts, dispatch });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Situacao da entrega de um pedido enviado por integracao (usado pelo SeuComercioAqui para avancar o pedido).
+app.get('/api/integrations/orders/:companyId/:platform/status', integrationLimiter, async (req, res, next) => {
+  try {
+    const companyId = onlyDigits(req.params.companyId);
+    const platform = capturePlatform(req.params.platform);
+    const companyRef = companyRefFromPhone(companyId);
+    if (!companyRef || !platform) return res.status(404).json({ error: 'integracao_nao_encontrada' });
+    const companySnap = await companyRef.get();
+    if (!companySnap.exists) return res.status(404).json({ error: 'empresa_nao_encontrada' });
+    const company = companySnap.data() || {};
+    const suppliedKey = String(req.header('x-nexus-capture-key') || '').trim();
+    const expectedHash = captureSecretHash(company, platform, captureSource('', platform));
+    if (!suppliedKey || !expectedHash || !safeEqual(hashSecret(suppliedKey), expectedHash)) {
+      return res.status(401).json({ error: 'chave_captura_invalida' });
+    }
+    const externalId = cleanText(req.query.externalId || '', 100);
+    if (!externalId) return res.status(400).json({ error: 'pedido_obrigatorio' });
+    const config = companyCaptureConfig(company, platform);
+    const balance = companyBalance(company);
+    const orderSnap = await captureOrderRef(companyId, { platform, externalId }).get();
+    if (!orderSnap.exists) {
+      return res.status(404).json({ error: 'pedido_nao_encontrado', active: config.active, autoDispatch: config.autoDispatch, saldoDisponivel: Number(balance.disponivel || 0) });
+    }
+    const saved = orderSnap.data() || {};
+    const deliveryId = saved.deliveryId || saved.entregaId || '';
+    let delivery = null;
+    if (deliveryId) {
+      const deliverySnap = await db.collection('entregas').doc(deliveryId).get();
+      if (deliverySnap.exists && deliverySnap.data().empresaId === companyId) delivery = deliverySnap.data();
+    }
+    res.set('Cache-Control', 'no-store');
+    return res.json({
+      ok: true,
+      capturedStatus: saved.status || '',
+      reviewReason: cleanText(saved.reviewReason || '', 300),
+      deliveryId,
+      deliveryStatus: delivery?.status || '',
+      motoboy: cleanText(delivery?.motoboy || '', 100),
+      valor: Number(delivery?.valor || 0),
+      trackingUrl: delivery ? `${BACKEND_BASE_URL}/entrega/${encodeURIComponent(deliveryId)}` : '',
+      saldoDisponivel: Number(balance.disponivel || 0)
+    });
   } catch (error) {
     return next(error);
   }

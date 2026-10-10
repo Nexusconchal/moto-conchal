@@ -2,7 +2,7 @@
   'use strict';
   const BACKEND = 'https://motoboy-conchal.onrender.com';
   const TOKEN_KEY = 'nexusEmpresaToken';
-  const PLATFORM_NAMES = { anotaai: 'Anota AI', beefood: 'BeeFood', ifood: 'iFood' };
+  const PLATFORM_NAMES = { anotaai: 'Anota AI', beefood: 'BeeFood', ifood: 'iFood', seucomercio: 'SeuComercioAqui' };
   let loadedToken = '';
   let settings = {};
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -44,7 +44,7 @@
       autoDispatch: !!field(platform, 'autoDispatch')?.checked,
       commissionPercent: Number(field(platform, 'commissionPercent')?.value || 0),
       deliveryType: field(platform, 'deliveryType')?.value || 'Lanche / pizza / pastel / marmita',
-      captureMode: platform === 'anotaai' ? 'whatsapp' : ($('input[name="beefoodCapture"]:checked')?.value || 'extension')
+      captureMode: platform === 'anotaai' ? 'whatsapp' : platform === 'seucomercio' ? 'api' : ($('input[name="beefoodCapture"]:checked')?.value || 'extension')
     };
   }
 
@@ -66,6 +66,10 @@
     }
     if (platform === 'anotaai') {
       setPlatformStatus(platform, data.connected ? 'WhatsApp conectado e pronto para receber pedidos.' : 'Salve e conecte o WhatsApp da loja pelo QR Code.');
+    } else if (platform === 'seucomercio') {
+      setPlatformStatus(platform, data.secretConfigured
+        ? `Chave configurada. Endereco para colar no SeuComercioAqui: ${data.ingestUrl || ''}\nSe perdeu a chave, clique em Gerar nova chave e cole a nova no SeuComercioAqui.`
+        : 'Clique em Gerar chave e cole o endereco e a chave no SeuComercioAqui (Integracoes > MotoJa).');
     } else if (platform === 'beefood') {
       const modeText = data.captureMode === 'print' ? 'programa Nexus Captura' : 'extensao do Chrome';
       setPlatformStatus(platform, `${data.secretConfigured ? 'Chave configurada.' : 'Gere uma chave.'} Modo atual: ${modeText}.`);
