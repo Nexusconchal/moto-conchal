@@ -5724,6 +5724,100 @@ app.post('/api/customers/login', authLimiter, async (req, res, next) => {
   }
 });
 
+// Esqueci minha senha: o codigo vai somente para o WhatsApp ja cadastrado na conta
+// (nunca para um numero digitado agora). A senha antiga nao e exibida em lugar nenhum.
+function customerPasswordResetRef(cpf, deviceId) {
+  return db.collection('customerPasswordReset').doc(hashSecret(`${cpf}:${deviceId}`));
+}
+
+app.post('/api/customers/password-reset/request', customerOtpLimiter, async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.body.cpf);
+    const deviceId = validDeviceId(req.body.deviceId);
+    if (!validCpf(cpf) || !deviceId) {
+      return res.status(400).json({ error: 'cpf_invalido', message: 'Digite o CPF da sua conta.' });
+    }
+    const generic = { ok: true, message: 'Se o CPF tiver cadastro, enviamos um código para o WhatsApp da conta. Ele vence em 10 minutos.' };
+    const snap = await db.collection('clientes').where('cpfHash', '==', hashSecret(cpf)).limit(1).get();
+    const customer = snap.empty ? null : snap.docs[0].data() || {};
+    const phone = customer ? onlyDigits(customer.telefoneCliente || snap.docs[0].id) : '';
+    if (!customer || !customerProfileComplete(customer) || phone.length < 10 || phone.length > 11) {
+      return res.json(generic);
+    }
+    const code = String(crypto.randomInt(100000, 1000000));
+    const delivery = await sendEvolutionText(`55${phone}`, `Nexus MotoJá: seu código para criar uma nova senha é ${code}. Ele vence em 10 minutos. Se não foi você, ignore esta mensagem e não compartilhe o código.`);
+    if (!delivery.sent) {
+      return res.status(503).json({ error: 'whatsapp_otp_indisponivel', message: 'Não consegui enviar o código pelo WhatsApp agora. Tente de novo em alguns minutos ou fale com o suporte.' });
+    }
+    await customerPasswordResetRef(cpf, deviceId).set({
+      customerId: snap.docs[0].id,
+      codeHash: hashSecret(code),
+      expiresAtMs: Date.now() + CUSTOMER_OTP_MS,
+      attempts: 0,
+      criadaEm: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return res.json(generic);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/customers/password-reset/confirm', authLimiter, async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.body.cpf);
+    const deviceId = validDeviceId(req.body.deviceId);
+    const code = onlyDigits(req.body.code).slice(0, 6);
+    const password = String(req.body.password || '');
+    if (!validCpf(cpf) || !deviceId || code.length !== 6) {
+      return res.status(400).json({ error: 'codigo_invalido', message: 'Digite o código de 6 números.' });
+    }
+    if (password.length < 6 || password.length > 128) {
+      return res.status(400).json({ error: 'senha_invalida', message: 'A nova senha precisa ter pelo menos 6 caracteres.' });
+    }
+    const resetRef = customerPasswordResetRef(cpf, deviceId);
+    const auth = passwordHash(password);
+    let customerRef = null;
+    let failure = null;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(resetRef);
+      const data = snap.data() || {};
+      if (!snap.exists || Number(data.expiresAtMs || 0) < Date.now() || Number(data.attempts || 0) >= 5) {
+        failure = { code: 'codigo_expirado', message: 'Código expirado. Peça um novo código.' };
+        return;
+      }
+      if (!safeEqual(hashSecret(code), data.codeHash || '')) {
+        tx.set(resetRef, { attempts: admin.firestore.FieldValue.increment(1) }, { merge: true });
+        failure = { code: 'codigo_incorreto', message: 'Código incorreto. Confira e tente novamente.' };
+        return;
+      }
+      const ref = db.collection('clientes').doc(String(data.customerId || ''));
+      const customerSnap = await tx.get(ref);
+      const customer = customerSnap.data() || {};
+      if (!customerSnap.exists || customer.cpfHash !== hashSecret(cpf)) {
+        failure = { code: 'codigo_expirado', message: 'Código expirado. Peça um novo código.' };
+        tx.delete(resetRef);
+        return;
+      }
+      tx.set(ref, {
+        passwordSalt: auth.salt,
+        passwordHash: auth.hash,
+        senhaRedefinidaEm: admin.firestore.FieldValue.serverTimestamp(),
+        clienteDeviceId: deviceId,
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      tx.delete(resetRef);
+      customerRef = ref;
+    });
+    if (failure) return res.status(400).json({ error: failure.code, message: failure.message });
+    // Uma nova sessao substitui a anterior: outros aparelhos precisam entrar de novo.
+    const token = await issueCustomerSession(customerRef);
+    const fresh = await customerRef.get();
+    return res.json({ ok: true, token, customer: publicCustomer(fresh.data() || {}, customerRef.id), message: 'Senha alterada com sucesso.' });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/customers/logout', async (req, res, next) => {
   try {
     const header = String(req.header('authorization') || '');
