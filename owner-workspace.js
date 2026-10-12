@@ -8,6 +8,12 @@
       description: "Acompanhe a saúde da operação e resolva primeiro o que exige atenção.",
       targets: ["visao-section"],
     },
+    plans: {
+      title: "Planos das empresas",
+      eyebrow: "Plano Diário Pro e Meio Período",
+      description: "Veja qual empresa ativou cada plano e escolha o motoboy que roda sozinho as entregas desse plano.",
+      targets: ["planos-section"],
+    },
     deliveries: {
       title: "Entregas de empresas",
       eyebrow: "Operação",
@@ -60,14 +66,15 @@
 
   const navConfig = [
     ["Visão geral", "overview", "01", ""],
-    ["Entregas", "deliveries", "02", "Operação"],
-    ["Corridas", "rides", "03", ""],
-    ["CarroJÁ", "cars", "04", ""],
-    ["Depósitos", "deposits", "05", "Financeiro"],
-    ["Empresas", "companies", "06", "Gestão"],
-    ["Motoboys", "drivers", "07", ""],
-    ["Equipe suporte", "support", "08", ""],
-    ["Funil", "funnel", "09", "Análise"],
+    ["Planos", "plans", "02", ""],
+    ["Entregas", "deliveries", "03", "Operação"],
+    ["Corridas", "rides", "04", ""],
+    ["CarroJÁ", "cars", "05", ""],
+    ["Depósitos", "deposits", "06", "Financeiro"],
+    ["Empresas", "companies", "07", "Gestão"],
+    ["Motoboys", "drivers", "08", ""],
+    ["Equipe suporte", "support", "09", ""],
+    ["Funil", "funnel", "10", "Análise"],
   ];
 
   const DEFAULT_BACKEND = "https://motoboy-conchal.onrender.com";
@@ -182,6 +189,85 @@
         button.disabled = false;
       }
     });
+  }
+
+  function planDate(ms) {
+    const value = Number(ms || 0);
+    if (!value) return "-";
+    return new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  }
+
+  function ensurePlansSection(panel) {
+    if (document.getElementById("planos-section")) return;
+    const section = document.createElement("section");
+    section.id = "planos-section";
+    section.className = "box owner-plans";
+    section.innerHTML = `
+      <div class="owner-plans-head"><div><h2>Planos ativados</h2><p class="muted">Últimos 30 dias. Ao escolher um motoboy, as entregas desse plano aparecem e notificam só para ele enquanto o plano estiver valendo. A empresa continua chamando pelo app normalmente.</p></div></div>
+      <div class="owner-plans-filter" role="group" aria-label="Filtrar planos"><button type="button" data-plans-filter="ativos" aria-pressed="true">Valendo agora</button><button type="button" data-plans-filter="todos" aria-pressed="false">Todos</button></div>
+      <div id="ownerPlansList" class="owner-plans-list"><div class="owner-support-empty">Aguardando dados do painel...</div></div>`;
+    panel.appendChild(section);
+    section.addEventListener("click", handlePlanAction);
+  }
+
+  let plansFilter = "ativos";
+  function renderPlansSection() {
+    const root = document.getElementById("ownerPlansList");
+    if (!root) return;
+    const now = Date.now();
+    const plans = (Array.isArray(carAdminState.planosAtivados) ? carAdminState.planosAtivados : [])
+      .filter((plan) => plansFilter === "todos" || Number(plan.expiraEmMs || 0) > now);
+    document.querySelectorAll("[data-plans-filter]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.plansFilter === plansFilter)));
+    const drivers = (Array.isArray(carAdminState.motoboys) ? carAdminState.motoboys : [])
+      .filter((driver) => driver.status !== "bloqueado" && String(driver.id || driver.cpf || "").replace(/\D/g, "").length === 11)
+      .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || ""), "pt-BR"));
+    if (!plans.length) {
+      root.innerHTML = `<div class="owner-support-empty">${plansFilter === "todos" ? "Nenhuma empresa ativou plano nos últimos 30 dias." : "Nenhum plano valendo agora. Toque em Todos para ver os anteriores."}</div>`;
+      return;
+    }
+    root.innerHTML = plans.map((plan) => {
+      const active = Number(plan.expiraEmMs || 0) > now;
+      const daily = plan.tipo !== "meio_periodo";
+      const chosen = String(plan.motoboyExclusivoCpf || "");
+      const options = drivers.map((driver) => {
+        const cpf = String(driver.id || driver.cpf || "").replace(/\D/g, "");
+        return `<option value="${cpf}" ${cpf === chosen ? "selected" : ""}>${escapeHtml(driver.nome || "Motoboy")} · CPF ${formatCpf(cpf)}</option>`;
+      }).join("");
+      const choice = active
+        ? `<div class="owner-plan-driver"><label>Motoboy do plano<select data-plan-driver="${escapeHtml(plan.id)}"><option value="">Todos os motoboys (sem reserva)</option>${options}</select></label><button class="approve" type="button" data-plan-save="${escapeHtml(plan.id)}">Salvar motoboy</button></div>`
+        : `<div class="owner-plan-driver"><span>Motoboy do plano</span><strong>${chosen ? escapeHtml(plan.motoboyExclusivoNome || formatCpf(chosen)) : "Todos os motoboys"}</strong></div>`;
+      return `<article class="owner-plan ${active ? "active" : ""}"><div><span>Empresa</span><strong>${escapeHtml(plan.empresa || plan.empresaId || "-")}</strong><small>${escapeHtml(formatPhone(plan.empresaId || ""))}</small></div><div><span>Modalidade</span><strong>${daily ? "Plano Diário Pro" : "Plano Meio Período"}</strong><small>${Number(plan.valor || (daily ? 70 : 25)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} · ${daily ? "R$ 4,00 / R$ 10,00 por entrega" : "R$ 5,50 / R$ 12,00 por entrega"}</small></div><div><span>Escolheu em</span><strong>${planDate(plan.ativadoEmMs)}</strong><small>${active ? `Vale até ${planDate(plan.expiraEmMs)}` : `Encerrou ${planDate(plan.expiraEmMs)}`}</small></div><div><span>Situação</span><strong class="${active ? "state-aprovada" : ""}">${active ? "Valendo agora" : "Encerrado"}</strong><small>${chosen ? `Só ${escapeHtml(plan.motoboyExclusivoNome || "o motoboy escolhido")}` : "Aberto para todos"}</small></div>${choice}</article>`;
+    }).join("");
+  }
+
+  async function handlePlanAction(event) {
+    const filter = event.target.closest("[data-plans-filter]");
+    if (filter) {
+      plansFilter = filter.dataset.plansFilter;
+      renderPlansSection();
+      return;
+    }
+    const save = event.target.closest("[data-plan-save]");
+    if (!save) return;
+    const key = save.dataset.planSave;
+    const select = [...document.querySelectorAll("[data-plan-driver]")].find((item) => item.dataset.planDriver === key);
+    const cpf = select?.value || "";
+    const label = cpf ? select.options[select.selectedIndex].textContent : "todos os motoboys";
+    if (!confirm(cpf ? `Reservar as entregas deste plano só para ${label}?` : "Liberar as entregas deste plano para todos os motoboys?")) return;
+    save.disabled = true;
+    save.textContent = "Salvando...";
+    try {
+      const response = await fetch(`${getBackendUrl()}/api/admin/plans/${encodeURIComponent(key)}/driver`, { method: "POST", headers: { "content-type": "application/json", "x-owner-password": getOwnerPassword() }, body: JSON.stringify({ cpf }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || data.error || "Não consegui salvar o motoboy do plano.");
+      alert(cpf ? `Pronto: as entregas deste plano agora vão só para ${data.motoboy?.nome || "o motoboy escolhido"}.${data.entregasAtualizadas ? ` ${data.entregasAtualizadas} entrega(s) esperando também foram reservadas.` : ""}` : "Pronto: as entregas deste plano voltaram a aparecer para todos os motoboys.");
+      if (typeof window.carregarPainel === "function") await window.carregarPainel();
+    } catch (error) {
+      alert(error.message || "Não consegui salvar o motoboy do plano.");
+    } finally {
+      save.disabled = false;
+      save.textContent = "Salvar motoboy";
+    }
   }
 
   function carStatusLabel(status) {
@@ -368,6 +454,7 @@
     }
     if (name === "support") loadSupportAccounts();
     if (name === "cars") renderCarSection();
+    if (name === "plans") renderPlansSection();
   }
 
   function buildNavigation(nav) {
@@ -399,6 +486,7 @@
     if (!panel || !nav || !overview || document.getElementById("ownerWorkspace")) return;
     ensureSupportSection(panel);
     ensureCarSection(panel);
+    ensurePlansSection(panel);
 
     const originalChildren = [...panel.children];
     const globalFilters = originalChildren.find((element) => element.querySelector?.("#periodo"));
@@ -467,6 +555,7 @@
   window.addEventListener("motoja:admin-state", (event) => {
     carAdminState = event.detail || carAdminState;
     renderCarSection();
+    renderPlansSection();
     if (Array.isArray(event.detail?.contasSuporte) && event.detail.contasSuporte.length) {
       renderSupportAccounts(event.detail.contasSuporte);
     } else if (getOwnerPassword()) {

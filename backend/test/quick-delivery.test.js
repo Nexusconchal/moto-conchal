@@ -27,7 +27,7 @@ test('invalid quantities, regions, distance fares, forged daily types and integr
 function harness(balance = 100, { taxaAvulsa = false } = {}) {
   const records = new Map([['empresas/company', { ...company, saldo: balance }]]);
   const geocodes = [], notices = [], writes = [], reads = [], earnings = [];
-  const ref = path => ({ path, id: path.split('/').at(-1), get: async () => snap(path) });
+  const ref = path => ({ path, id: path.split('/').at(-1), get: async () => snap(path), collection: name => ({ doc: id => ref(`${path}/${name}/${id}`) }) });
   const snap = path => ({ exists: records.has(path), data: () => records.get(path), ref: ref(path) });
   const db = { collection: name => ({ doc: id => ref(`${name}/${id || 'generated'}`) }), runTransaction: async fn => {
     const pending = [];
@@ -295,10 +295,10 @@ test('half period batch renewals stop after the 6 hours expire', async () => {
 test('half period activation debits R$ 25 once, lasts 6 hours and refuses insufficient balance', async () => {
   const docs = new Map();
   const ref = path => ({ path, id: path.split('/').at(-1), collection: name => ({ doc: id => ref(`${path}/${name}/${id}`) }) });
-  const ctx = vm.createContext({ Date, money: n => Math.round(Number(n || 0) * 100) / 100,
+  const ctx = vm.createContext({ Date, money: n => Math.round(Number(n || 0) * 100) / 100, onlyDigits: v => String(v || '').replace(/\D/g, ''), cleanText: v => String(v || '').trim(),
     todayKeySaoPaulo: () => '2026-10-04', companyBalance: d => ({ saldo: d.saldo || 0, reservado: d.reservado || 0, disponivel: (d.saldo || 0) - (d.reservado || 0) }),
     ledgerRef: () => ref(`ledger/${docs.size}`), admin: { firestore: { FieldValue: { serverTimestamp: () => 'TIME' } } },
-    db: { runTransaction: async fn => { const pending = []; await fn({ get: async r => ({ exists: docs.has(r.path), data: () => docs.get(r.path) }), set: (r, data, opt) => pending.push([r, data, opt]) }); for (const [r, data, opt] of pending) docs.set(r.path, opt?.merge ? { ...docs.get(r.path), ...data } : data); } },
+    db: { collection: name => ({ doc: id => ref(`${name}/${id}`) }), runTransaction: async fn => { const pending = []; await fn({ get: async r => ({ exists: docs.has(r.path), data: () => docs.get(r.path) }), set: (r, data, opt) => pending.push([r, data, opt]) }); for (const [r, data, opt] of pending) docs.set(r.path, opt?.merge ? { ...docs.get(r.path), ...data } : data); } },
     assertCompany: 0, assertCompanyApproved: 0, createRideLimiter: 0, app: { post: (_p, ...h) => { ctx.handler = h.at(-1); } } });
   for (const name of ['HALF_PLAN_TYPE', 'HALF_PLAN_PRICE', 'HALF_PLAN_DELIVERY_FEE', 'HALF_PLAN_APP_FEE', 'HALF_PLAN_DURATION_MS']) {
     const line = source.split('\n').find(l => l.startsWith(`const ${name} =`)); vm.runInContext(line.replace('const ', 'var '), ctx);
@@ -413,11 +413,11 @@ test('taxa avulsa: with a plan active, fixed fares are allowed and do not consum
 test('taxa avulsa: activating either plan resets the counter and opens a new cycle', async () => {
   const docs = new Map();
   const ref = path => ({ path, id: path.split('/').at(-1), collection: name => ({ doc: id => ref(`${path}/${name}/${id}`) }) });
-  const ctx = vm.createContext({ Date, money: n => Math.round(Number(n || 0) * 100) / 100,
+  const ctx = vm.createContext({ Date, money: n => Math.round(Number(n || 0) * 100) / 100, onlyDigits: v => String(v || '').replace(/\D/g, ''), cleanText: v => String(v || '').trim(),
     todayKeySaoPaulo: () => '2026-10-04', companyBalance: d => ({ saldo: d.saldo || 0, reservado: d.reservado || 0, disponivel: (d.saldo || 0) - (d.reservado || 0) }),
     ledgerRef: () => ref(`ledger/${docs.size}`), admin: { firestore: { FieldValue: { serverTimestamp: () => 'TIME' } } },
     dailyPlanRef: (id, day) => ref(`empresas/${id}/planosDiarios/${day}`),
-    db: { runTransaction: async fn => { const pending = []; await fn({ get: async r => ({ exists: docs.has(r.path), data: () => docs.get(r.path) }), set: (r, data, opt) => pending.push([r, data, opt]) }); for (const [r, data, opt] of pending) docs.set(r.path, opt?.merge ? { ...docs.get(r.path), ...data } : data); } },
+    db: { collection: name => ({ doc: id => ref(`${name}/${id}`) }), runTransaction: async fn => { const pending = []; await fn({ get: async r => ({ exists: docs.has(r.path), data: () => docs.get(r.path) }), set: (r, data, opt) => pending.push([r, data, opt]) }); for (const [r, data, opt] of pending) docs.set(r.path, opt?.merge ? { ...docs.get(r.path), ...data } : data); } },
     assertCompany: 0, assertCompanyApproved: 0, createRideLimiter: 0, app: { post: (path, ...h) => { ctx.handlers[path] = h.at(-1); } }, handlers: {} });
   for (const name of ['DAILY_PLAN_TYPE', 'DAILY_PLAN_PRICE', 'DAILY_PLAN_DELIVERY_FEE', 'DAILY_PLAN_APP_FEE', 'HALF_PLAN_TYPE', 'HALF_PLAN_PRICE', 'HALF_PLAN_DELIVERY_FEE', 'HALF_PLAN_APP_FEE', 'HALF_PLAN_DURATION_MS']) {
     const line = source.split('\n').find(l => l.startsWith(`const ${name} =`)); vm.runInContext(line.replace('const ', 'var '), ctx);
@@ -452,4 +452,20 @@ test('company app blocks R$ 6,50/R$ 16 after the 5 taxa avulsa deliveries unless
   assert.equal(ctx.taxaAvulsaLiberada('Plano Diario MotoJa Pro', 3), true);
   ctx.meioPeriodoAtivo = true;
   assert.equal(ctx.taxaAvulsaLiberada('Farmacia', 4), true);
+});
+test('plan deliveries created while the owner reserved a motoboy carry that motoboy (daily and half period)', async () => {
+  const daily = harness();
+  daily.records.set('plans/11999999999/2026-10-04', { status: 'ativo', motoboyExclusivoCpf: '22222222222', motoboyExclusivoNome: 'Bruno' });
+  assert.equal((await daily.call(dailyRaw())).status, 201);
+  assert.equal(daily.records.get('entregas/quick-test').motoboyExclusivoCpf, '22222222222');
+  const half = harness();
+  half.records.set('empresas/company', { ...half.records.get('empresas/company'), meioPeriodoExpiraEmMs: Date.now() + 3600000, meioPeriodoAtivacaoId: '2026-10-04-meio-1' });
+  half.records.set('empresas/company/planosDiarios/2026-10-04-meio-1', { status: 'ativo', motoboyExclusivoCpf: '33333333333' });
+  assert.equal((await half.call(halfRaw())).status, 201);
+  const d = half.records.get('entregas/quick-test');
+  assert.equal(d.motoboyExclusivoCpf, '33333333333'); assert.equal(d.planoAtivacaoChave, '11999999999_2026-10-04-meio-1');
+  const open = harness();
+  open.records.set('plans/11999999999/2026-10-04', { status: 'ativo' });
+  await open.call(dailyRaw());
+  assert.equal(open.records.get('entregas/quick-test').motoboyExclusivoCpf, undefined);
 });

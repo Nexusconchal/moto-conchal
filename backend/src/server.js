@@ -306,6 +306,48 @@ function taxaAvulsaResetFields(company = {}) {
   return { taxaAvulsaUsadas: 0, taxaAvulsaCiclo: Number(company.taxaAvulsaCiclo || 0) + 1 };
 }
 
+// Planos ativados pelas empresas ficam espelhados em planosAtivados para o
+// painel do dono. O dono pode reservar as entregas do plano para um motoboy:
+// enquanto o plano vale, so esse motoboy ve, recebe aviso e aceita essas entregas.
+function planActivationKey(companyId, planDocId) {
+  return `${onlyDigits(companyId)}_${String(planDocId || '').replace(/[^0-9a-z-]/gi, '')}`;
+}
+
+function planActivationRef(key) {
+  return db.collection('planosAtivados').doc(key);
+}
+
+function mirrorPlanActivation(tx, companyId, company, planDocId, plan) {
+  const daily = plan.tipo !== 'meio_periodo';
+  tx.set(planActivationRef(planActivationKey(companyId, planDocId)), {
+    empresaId: onlyDigits(companyId),
+    empresa: cleanText(company.empresa || '', 120),
+    planoDocId: planDocId,
+    tipo: daily ? 'diario' : 'meio_periodo',
+    tipoEntrega: plan.tipoEntrega,
+    dia: plan.dia,
+    valor: plan.valor,
+    ativadoEmMs: plan.ativadoEmMs || Date.now(),
+    expiraEmMs: plan.expiraEmMs || Date.parse(`${plan.dia}T23:59:59.999-03:00`),
+    ativadoEm: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
+}
+
+// Copia o motoboy reservado do plano para a entrega criada durante o plano.
+function applyPlanDriver(delivery, companyId, planDocId, plan = {}) {
+  delivery.planoAtivacaoChave = planActivationKey(companyId, planDocId);
+  const cpf = onlyDigits(plan.motoboyExclusivoCpf);
+  if (cpf.length === 11) {
+    delivery.motoboyExclusivoCpf = cpf;
+    delivery.motoboyExclusivoNome = cleanText(plan.motoboyExclusivoNome || '', 80);
+  }
+}
+
+function deliveryReservedForOther(delivery = {}, driverCpf = '') {
+  const reserved = onlyDigits(delivery.motoboyExclusivoCpf);
+  return reserved.length === 11 && reserved !== onlyDigits(driverCpf);
+}
+
 function halfPlanInactiveError(message = 'O Plano Meio Periodo MotoJa nao esta ativo agora. Ative por R$ 25,00 para liberar a taxa de R$ 5,50.') {
   const error = new Error(message);
   error.status = 403;
@@ -1095,6 +1137,7 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
         error.code = 'plano_diario_inativo';
         throw error;
       }
+      applyPlanDriver(delivery, companyId, planSnap.ref?.id || todayKeySaoPaulo(), planSnap.data());
     }
     if (isHalfPlanDelivery(delivery.tipoEntrega)) {
       const until = halfPlanActiveUntil(latestCompany);
@@ -1102,6 +1145,10 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
       delivery.meioPeriodo = true;
       delivery.meioPeriodoAtivacaoId = latestCompany.meioPeriodoAtivacaoId || '';
       delivery.meioPeriodoExpiraEmMs = until;
+      if (delivery.meioPeriodoAtivacaoId) {
+        const halfSnap = await tx.get(db.collection('empresas').doc(companyId).collection('planosDiarios').doc(delivery.meioPeriodoAtivacaoId));
+        applyPlanDriver(delivery, companyId, delivery.meioPeriodoAtivacaoId, halfSnap.exists ? halfSnap.data() : {});
+      }
     }
     if (isDailyPlanDelivery(delivery.tipoEntrega) || isHalfPlanDelivery(delivery.tipoEntrega)) {
       delivery.planoAppFee = planDeliveryAmounts(delivery).appFee;
@@ -2700,6 +2747,8 @@ async function notifyTelegramAboutRide(rideId, ride) {
 }
 
 async function notifyTelegramAboutDelivery(deliveryId, delivery) {
+  // Entrega reservada para o motoboy do plano: nao avisa o grupo inteiro.
+  if (onlyDigits(delivery.motoboyExclusivoCpf).length === 11) return { sent: false, skipped: 'motoboy_exclusivo_do_plano' };
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
   if (!token || !chatId) return { sent: false, skipped: true };
@@ -2842,6 +2891,38 @@ const driverAvailabilitySocket = attachDriverAvailability(io, driverAvailability
   enabledCities: driverRideCities,
   loadJobs: loadDriverActiveJobs
 });
+
+// Planos ativados antes do espelho existir (ou enquanto ele falhava) entram na lista do dono.
+async function backfillActivePlanActivations() {
+  const now = Date.now();
+  const today = todayKeySaoPaulo(new Date(now));
+  const [daily, half] = await Promise.all([
+    db.collection('empresas').where('planoDiarioAtivoDia', '==', today).limit(500).get(),
+    db.collection('empresas').where('meioPeriodoExpiraEmMs', '>', now).limit(500).get()
+  ]);
+  const writes = [];
+  const writer = { set: (ref, data, options) => writes.push(ref.set(data, options)) };
+  for (const doc of daily.docs) {
+    const planSnap = await dailyPlanRef(doc.id, today).get();
+    if (!planSnap.exists || planSnap.data()?.status !== 'ativo') continue;
+    const mirror = await planActivationRef(planActivationKey(doc.id, today)).get();
+    if (mirror.exists) continue;
+    const plan = planSnap.data() || {};
+    mirrorPlanActivation(writer, doc.id, doc.data() || {}, today, { tipo: 'diario', dia: today, valor: plan.valor || DAILY_PLAN_PRICE, tipoEntrega: DAILY_PLAN_TYPE, ativadoEmMs: timestampMs(plan.ativadoEm) || now });
+  }
+  for (const doc of half.docs) {
+    const company = doc.data() || {};
+    const planDocId = String(company.meioPeriodoAtivacaoId || '');
+    if (!planDocId) continue;
+    const mirror = await planActivationRef(planActivationKey(doc.id, planDocId)).get();
+    if (mirror.exists) continue;
+    const planSnap = await db.collection('empresas').doc(doc.id).collection('planosDiarios').doc(planDocId).get();
+    const plan = planSnap.data() || {};
+    mirrorPlanActivation(writer, doc.id, company, planDocId, { tipo: 'meio_periodo', dia: plan.dia || today, valor: plan.valor || HALF_PLAN_PRICE, tipoEntrega: HALF_PLAN_TYPE, ativadoEmMs: plan.ativadoEmMs || now, expiraEmMs: Number(company.meioPeriodoExpiraEmMs) });
+  }
+  await Promise.all(writes);
+  return writes.length;
+}
 
 // Ao iniciar, volta a contar quem deixou Disponivel marcado (mesmo com o app fechado).
 async function restoreDriverAvailability() {
@@ -3540,7 +3621,10 @@ async function runCustomerReminderTick(date = new Date()) {
 }
 
 async function notifyDriversAboutDelivery(deliveryId, delivery) {
-  const drivers = await db.collection('motoboys').where('status', '==', 'ativo').get();
+  const reservedCpf = onlyDigits(delivery.motoboyExclusivoCpf);
+  const drivers = reservedCpf.length === 11
+    ? [await db.collection('motoboys').doc(reservedCpf).get()].filter((doc) => doc.exists && doc.data()?.status !== 'bloqueado')
+    : await db.collection('motoboys').where('status', '==', 'ativo').get();
   const tokens = [];
 
   drivers.forEach((doc) => {
@@ -4672,6 +4756,9 @@ app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
       collectionState('eventosFunil', 2000),
       db.collection('contasSuporte').limit(100).get().catch(() => ({ docs: [] }))
     ]);
+    const planosAtivados = await db.collection('planosAtivados').where('ativadoEmMs', '>=', Date.now() - 31 * 86400000).limit(300).get()
+      .then((snapshot) => snapshot.docs.map((doc) => serializeFirestore({ id: doc.id, ...doc.data() })).sort((a, b) => Number(b.ativadoEmMs || 0) - Number(a.ativadoEmMs || 0)))
+      .catch((error) => { console.error('plan activations load failed', error); return []; });
     const clientesCadastrados = await customerSignupCounts().catch((error) => {
       console.error('customer signup counts failed', error);
       return null;
@@ -4680,9 +4767,53 @@ app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
     const contasSuporte = (contasSuporteSnap.docs || [])
       .map((doc) => publicSupportAccount(doc.data() || {}, doc.id, true))
       .sort((a, b) => timestampMs(b.cadastradaEm) - timestampMs(a.cadastradaEm));
-    const payload = { ok: true, corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil, contasSuporte, clientesCadastrados };
+    const payload = { ok: true, corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil, contasSuporte, clientesCadastrados, planosAtivados };
     adminStateCache = { payload, expiresAt: Date.now() + ADMIN_STATE_CACHE_MS };
     return res.json(payload);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Dono escolhe (ou tira) o motoboy que roda sozinho as entregas de um plano ativado.
+app.post('/api/admin/plans/:key/driver', assertOwner, async (req, res, next) => {
+  try {
+    const key = String(req.params.key || '');
+    if (!/^\d{10,11}_[0-9a-z-]{8,40}$/i.test(key)) return res.status(400).json({ error: 'plano_invalido' });
+    const cpf = onlyDigits(req.body.cpf);
+    if (cpf && cpf.length !== 11) return res.status(400).json({ error: 'cpf_invalido', message: 'Digite os 11 numeros do CPF do motoboy.' });
+    const mirrorRef = planActivationRef(key);
+    const mirrorSnap = await mirrorRef.get();
+    if (!mirrorSnap.exists) return res.status(404).json({ error: 'plano_nao_encontrado' });
+    const mirror = mirrorSnap.data() || {};
+    let driver = null;
+    if (cpf) {
+      const driverSnap = await db.collection('motoboys').doc(cpf).get();
+      driver = driverSnap.exists ? driverSnap.data() || {} : null;
+      if (!driver) return res.status(404).json({ error: 'motoboy_nao_encontrado', message: 'Nao encontrei motoboy com esse CPF.' });
+      if (driver.status === 'bloqueado') return res.status(409).json({ error: 'motoboy_bloqueado', message: 'Esse motoboy esta bloqueado.' });
+    }
+    const assignment = cpf
+      ? { motoboyExclusivoCpf: cpf, motoboyExclusivoNome: cleanText(driver.nome || '', 80), motoboyExclusivoTelefone: onlyDigits(driver.telefone), motoboyExclusivoDefinidoEm: admin.firestore.FieldValue.serverTimestamp() }
+      : { motoboyExclusivoCpf: admin.firestore.FieldValue.delete(), motoboyExclusivoNome: admin.firestore.FieldValue.delete(), motoboyExclusivoTelefone: admin.firestore.FieldValue.delete(), motoboyExclusivoDefinidoEm: admin.firestore.FieldValue.delete() };
+    const batch = db.batch();
+    batch.set(mirrorRef, assignment, { merge: true });
+    if (mirror.empresaId && mirror.planoDocId) {
+      batch.set(db.collection('empresas').doc(mirror.empresaId).collection('planosDiarios').doc(mirror.planoDocId), assignment, { merge: true });
+    }
+    // Entregas do plano que ainda estao esperando motoboy passam a seguir a escolha.
+    const pending = await db.collection('entregas').where('planoAtivacaoChave', '==', key).limit(200).get();
+    let updatedDeliveries = 0;
+    pending.docs.forEach((doc) => {
+      if (doc.data()?.status !== 'pendente') return;
+      batch.set(doc.ref, cpf
+        ? { motoboyExclusivoCpf: cpf, motoboyExclusivoNome: assignment.motoboyExclusivoNome, atualizadaEm: admin.firestore.FieldValue.serverTimestamp() }
+        : { motoboyExclusivoCpf: admin.firestore.FieldValue.delete(), motoboyExclusivoNome: admin.firestore.FieldValue.delete(), atualizadaEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      updatedDeliveries += 1;
+    });
+    await batch.commit();
+    adminStateCache = null;
+    return res.json({ ok: true, motoboy: cpf ? { cpf, nome: assignment.motoboyExclusivoNome } : null, entregasAtualizadas: updatedDeliveries });
   } catch (error) {
     return next(error);
   }
@@ -5406,7 +5537,7 @@ app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
         .get();
       docs = kind === 'rides'
         ? snapshot.docs.filter((docSnap) => enabledCities[rideOperatingCity(docSnap.data())])
-        : snapshot.docs;
+        : snapshot.docs.filter((docSnap) => !deliveryReservedForOther(docSnap.data(), driverCpf));
     }
     const jobs = sortJobs(docs.map((docSnap) => {
       const item = serializeFirestore({ id: docSnap.id, ...docSnap.data() });
@@ -9586,6 +9717,8 @@ app.post('/api/companies/daily-plan/activate', assertCompany, assertCompanyAppro
         tipoEntrega: DAILY_PLAN_TYPE,
         ativadoEm: admin.firestore.FieldValue.serverTimestamp()
       });
+      mirrorPlanActivation(tx, req.companyId, companySnap.exists ? companySnap.data() || {} : {}, planRef.id,
+        { tipo: 'diario', dia, valor: DAILY_PLAN_PRICE, tipoEntrega: DAILY_PLAN_TYPE, ativadoEmMs: Date.now() });
       tx.set(ledgerRef(req.companyId), {
         tipo: 'debito',
         origem: 'plano_diario_motoja_pro_ativado',
@@ -9658,6 +9791,8 @@ app.post('/api/companies/half-plan/activate', assertCompany, assertCompanyApprov
         expiraEmMs,
         ativadoEm: admin.firestore.FieldValue.serverTimestamp()
       });
+      mirrorPlanActivation(tx, req.companyId, company, planRef.id,
+        { tipo: 'meio_periodo', dia, valor: HALF_PLAN_PRICE, tipoEntrega: HALF_PLAN_TYPE, ativadoEmMs: now, expiraEmMs });
       tx.set(ledgerRef(req.companyId), {
         tipo: 'debito',
         origem: 'meio_periodo_motoja_ativado',
@@ -9863,6 +9998,7 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
         }
         delivery.planoDiario = true;
         delivery.planoDiarioDia = dia;
+        applyPlanDriver(delivery, req.companyId, dia, planSnap.data());
         delivery.taxaFixaEntrega = DAILY_PLAN_DELIVERY_FEE;
         delivery.empresaFicaPorTaxa = DAILY_PLAN_APP_FEE;
         delivery.planoAppFee = planDeliveryAmounts(delivery).appFee;
@@ -9875,6 +10011,10 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
         delivery.meioPeriodo = true;
         delivery.meioPeriodoAtivacaoId = company.meioPeriodoAtivacaoId || '';
         delivery.meioPeriodoExpiraEmMs = until;
+        if (delivery.meioPeriodoAtivacaoId) {
+          const halfSnap = await tx.get(companyRef.collection('planosDiarios').doc(delivery.meioPeriodoAtivacaoId));
+          applyPlanDriver(delivery, req.companyId, delivery.meioPeriodoAtivacaoId, halfSnap.exists ? halfSnap.data() : {});
+        }
         delivery.taxaFixaEntrega = HALF_PLAN_DELIVERY_FEE;
         delivery.empresaFicaPorTaxa = HALF_PLAN_APP_FEE;
         delivery.planoAppFee = planDeliveryAmounts(delivery).appFee;
@@ -10622,6 +10762,12 @@ app.post('/api/deliveries/:deliveryId/accept', async (req, res, next) => {
       if (delivery.status !== 'pendente') {
         const error = new Error(`Entrega ja foi aceita por ${delivery.motoboy || 'outro motoboy'}.`);
         error.status = 409;
+        throw error;
+      }
+      if (deliveryReservedForOther(delivery, driverCpf)) {
+        const error = new Error('Esta entrega e do plano de uma empresa e esta reservada para outro motoboy escolhido pelo dono.');
+        error.status = 403;
+        error.code = 'entrega_reservada_motoboy_plano';
         throw error;
       }
 
@@ -12059,6 +12205,9 @@ httpServer.listen(PORT, () => {
   restoreDriverAvailability()
     .then((count) => console.log('driver availability restored', count))
     .catch((error) => console.error('driver availability restore failed', error));
+  backfillActivePlanActivations()
+    .then((count) => console.log('plan activations backfilled', count))
+    .catch((error) => console.error('plan activations backfill failed', error));
   manualDeliveryDateMigrationStatus = { status: 'running' };
   migrateManualDeliveryEarningDates()
     .then((result) => {
