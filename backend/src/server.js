@@ -2747,8 +2747,6 @@ async function notifyTelegramAboutRide(rideId, ride) {
 }
 
 async function notifyTelegramAboutDelivery(deliveryId, delivery) {
-  // Entrega reservada para o motoboy do plano: nao avisa o grupo inteiro.
-  if (onlyDigits(delivery.motoboyExclusivoCpf).length === 11) return { sent: false, skipped: 'motoboy_exclusivo_do_plano' };
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
   if (!token || !chatId) return { sent: false, skipped: true };
@@ -3621,10 +3619,8 @@ async function runCustomerReminderTick(date = new Date()) {
 }
 
 async function notifyDriversAboutDelivery(deliveryId, delivery) {
-  const reservedCpf = onlyDigits(delivery.motoboyExclusivoCpf);
-  const drivers = reservedCpf.length === 11
-    ? [await db.collection('motoboys').doc(reservedCpf).get()].filter((doc) => doc.exists && doc.data()?.status !== 'bloqueado')
-    : await db.collection('motoboys').where('status', '==', 'ativo').get();
+  // Entregas reservadas para o motoboy do plano tambem avisam todos; so ele ve e aceita.
+  const drivers = await db.collection('motoboys').where('status', '==', 'ativo').get();
   const tokens = [];
 
   drivers.forEach((doc) => {

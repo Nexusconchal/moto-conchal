@@ -203,7 +203,7 @@
     section.id = "planos-section";
     section.className = "box owner-plans";
     section.innerHTML = `
-      <div class="owner-plans-head"><div><h2>Planos ativados</h2><p class="muted">Últimos 30 dias. Ao escolher um motoboy, as entregas desse plano aparecem e notificam só para ele enquanto o plano estiver valendo. A empresa continua chamando pelo app normalmente.</p></div></div>
+      <div class="owner-plans-head"><div><h2>Planos ativados</h2><p class="muted">Últimos 30 dias. Ao escolher um motoboy, as entregas desse plano só aparecem para ele aceitar enquanto o plano estiver valendo (a notificação continua indo para todos). A empresa continua chamando pelo app normalmente.</p></div></div>
       <div class="owner-plans-filter" role="group" aria-label="Filtrar planos"><button type="button" data-plans-filter="ativos" aria-pressed="true">Valendo agora</button><button type="button" data-plans-filter="todos" aria-pressed="false">Todos</button></div>
       <div id="ownerPlansList" class="owner-plans-list"><div class="owner-support-empty">Aguardando dados do painel...</div></div>`;
     panel.appendChild(section);
