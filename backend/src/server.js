@@ -3582,6 +3582,7 @@ async function cleanupRides() {
   let updated = 0;
   let batchUpdated = 0;
   const releasedAvailabilityRides = [];
+  const lateNoticeRides = [];
 
   const pending = await db.collection('corridas').where('status', '==', 'pendente').get();
   pending.forEach((doc) => {
@@ -3619,7 +3620,19 @@ async function cleanupRides() {
       return;
     }
     if (acceptedAt && !data.clienteAvisadoEm && now - acceptedAt > ACCEPTED_NOTICE_MS) {
-      batch.update(doc.ref, {
+      lateNoticeRides.push(doc.ref);
+    }
+  });
+
+  // Reabre em transacao, conferindo de novo: se o motoboy avisou o cliente (ou a
+  // corrida mudou) depois da leitura acima, ela continua com ele.
+  for (const rideRef of lateNoticeRides) {
+    const reopened = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(rideRef);
+      const data = snap.data() || {};
+      const acceptedAt = timestampMs(data.aceitaEm);
+      if (!snap.exists || data.status !== 'aceita' || data.clienteAvisadoEm || !acceptedAt || Date.now() - acceptedAt <= ACCEPTED_NOTICE_MS) return false;
+      tx.update(rideRef, {
         status: 'pendente',
         motoboy: '',
         motoboyCpf: '',
@@ -3633,11 +3646,16 @@ async function cleanupRides() {
         motivoReabertura: `Backend reabriu: motoboy ${cleanText(data.motoboy || '', 80) || 'sem nome'} aceitou e nao avisou o cliente em ${Math.round(ACCEPTED_NOTICE_MS / 60000)} minutos`,
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
-      releasedAvailabilityRides.push(doc.id);
+      return true;
+    }).catch((error) => {
+      console.error('reopen late ride failed', rideRef.id, error);
+      return false;
+    });
+    if (reopened) {
+      releasedAvailabilityRides.push(rideRef.id);
       updated += 1;
-      batchUpdated += 1;
     }
-  });
+  }
 
   const pendingCarRides = await db.collection('corridasCarro').where('status', '==', 'pendente').get();
   pendingCarRides.forEach((doc) => {
@@ -10657,12 +10675,28 @@ app.post('/api/rides/:rideId/notify-client', async (req, res, next) => {
     await getDriverWithProof(driverCpf, req.body);
 
     const rideRef = db.collection('corridas').doc(req.params.rideId);
-    const rideSnap = await rideRef.get();
-    if (!rideSnap.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
-
-    const ride = rideSnap.data();
-    if (ride.status !== 'aceita' || onlyDigits(ride.motoboyCpf) !== driverCpf) {
-      return res.status(409).json({ error: 'corrida_nao_pertence_ao_motoboy' });
+    // Confere e marca o aviso numa transacao: a corrida nao pode ser reaberta
+    // (nem passar para outro motoboy) entre a conferencia e a gravacao.
+    let ride = null;
+    let notFound = false;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(rideRef);
+      if (!snap.exists) { notFound = true; return; }
+      const current = snap.data() || {};
+      if (current.status !== 'aceita' || onlyDigits(current.motoboyCpf) !== driverCpf) return;
+      ride = current;
+      if (!current.clienteAvisadoEm) {
+        tx.set(rideRef, {
+          clienteAvisadoEm: admin.firestore.FieldValue.serverTimestamp(),
+          clienteAvisadoPor: current.motoboy || '',
+          rastreamentoAtivo: true,
+          atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      }
+    });
+    if (notFound) return res.status(404).json({ error: 'corrida_nao_encontrada' });
+    if (!ride) {
+      return res.status(409).json({ error: 'corrida_nao_pertence_ao_motoboy', message: 'Esta corrida nao esta mais com voce: o tempo para avisar o cliente acabou ou ela foi cancelada.' });
     }
 
     const driverUrl = BACKEND_BASE_URL ? `${BACKEND_BASE_URL}/corrida/${req.params.rideId}` : '';
@@ -10682,13 +10716,6 @@ app.post('/api/rides/:rideId/notify-client', async (req, res, next) => {
     const message = standalone
       ? `Ola, ${ride.nome || 'cliente'}! Seu motoboy ${ride.motoboy || 'MotoJa Conchal'} aceitou a entrega e iniciou o trajeto com GPS.\n\nValor: ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nBuscar em: ${ride.origem || '-'}\nEntregar em: ${ride.destino || '-'}\nQuem recebe: ${ride.nomeRecebedor || '-'}${driverUrl ? `\n\nAcompanhe a foto e a localizacao do motoboy ao vivo:\n${driverUrl}` : ''}\n\nCodigo de entrega: ${ride.codigoEntrega || '-'}. ${recipientNotice?.sent ? 'Ele tambem foi enviado no WhatsApp de quem recebe.' : 'Envie esse codigo para quem recebe.'} O motoboy so finaliza com esse codigo.\n\n${ridePaymentInstructions(ride)}`
       : `Ola, ${ride.nome || 'cliente'}! Seu motoboy ${ride.motoboy || 'MotoJa Conchal'} aceitou a corrida e iniciou o trajeto com GPS.\n\nValor: ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nOrigem: ${ride.origem || '-'}\nDestino: ${ride.destino || '-'}${driverUrl ? `\n\nAcompanhe a foto e a localizacao do motoboy ao vivo:\n${driverUrl}` : ''}\n\n${ridePaymentInstructions(ride)}`;
-
-    await rideRef.set({
-      clienteAvisadoEm: admin.firestore.FieldValue.serverTimestamp(),
-      clienteAvisadoPor: ride.motoboy || '',
-      rastreamentoAtivo: true,
-      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
 
     res.json({ ok: true, whatsapp: whatsappLink(ride.telefoneCliente, message) });
   } catch (error) {
