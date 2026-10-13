@@ -203,7 +203,7 @@ const HALF_PLAN_PRICE = 25;
 const HALF_PLAN_DELIVERY_FEE = 5.5;
 const HALF_PLAN_APP_FEE = 1.5;
 const HALF_PLAN_DURATION_MS = 6 * 60 * 60 * 1000;
-const DAILY_PLAN_DURATION_MS = 9 * 60 * 60 * 1000;
+const DAILY_PLAN_DURATION_MS = 12 * 60 * 60 * 1000;
 const COMPANY_DELIVERY_RATE_PER_KM = 2.5;
 
 function todayKeySaoPaulo(date = new Date()) {
@@ -214,7 +214,7 @@ function dailyPlanRef(companyId, dayKey = todayKeySaoPaulo()) {
   return db.collection('empresas').doc(companyId).collection('planosDiarios').doc(dayKey);
 }
 
-// Plano Diario Pro vale 9 horas a partir da ativacao. Ativacoes antigas (antes
+// Plano Diario Pro vale 12 horas a partir da ativacao. Ativacoes antigas (antes
 // dessa regra, sem planoDiarioExpiraEmMs) continuam valendo ate o fim do dia delas.
 function dailyPlanActivation(company = {}, now = Date.now()) {
   const until = Number(company.planoDiarioExpiraEmMs || 0);
@@ -224,7 +224,7 @@ function dailyPlanActivation(company = {}, now = Date.now()) {
   return null;
 }
 
-function dailyPlanInactiveError(message = 'O Plano Diario MotoJa Pro nao esta ativo agora. Ative por R$ 70,00 para liberar a taxa de R$ 4,00 por 9 horas.') {
+function dailyPlanInactiveError(message = 'O Plano Diario MotoJa Pro nao esta ativo agora. Ative por R$ 70,00 para liberar a taxa de R$ 4,00 por 12 horas.') {
   const error = new Error(message);
   error.status = 403;
   error.code = 'plano_diario_inativo';

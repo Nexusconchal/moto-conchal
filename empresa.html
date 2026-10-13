@@ -1515,10 +1515,10 @@
           class="status show"
           style="display: grid; gap: 8px; text-align: left"
         >
-          <p><strong>Taxa fixa por 9 horas</strong></p>
+          <p><strong>Taxa fixa por 12 horas</strong></p>
           <p>
             Ative por R$ 70,00 e use entregas com taxa fixa de R$ 4,00 por
-            entrega/ponto durante 9 horas a partir da ativação.
+            entrega/ponto durante 12 horas a partir da ativação.
           </p>
           <p>
             <strong>Distritos com desconto:</strong> Martinho Prado, Tujuguaba e
@@ -1531,7 +1531,7 @@
           </p>
           <p class="muted">
             <strong>Seguranca:</strong> o sistema so libera depois de descontar
-            a diaria do saldo. Depois de 9 horas, bloqueia de novo
+            a diaria do saldo. Depois de 12 horas, bloqueia de novo
             automaticamente.
           </p>
         </div>
@@ -1539,7 +1539,7 @@
           Carregando plano diario...
         </div>
         <button id="ativarPlanoDiario" type="button" class="green">
-          Ativar por R$ 70,00 e liberar taxa de R$ 4,00 por 9 horas
+          Ativar por R$ 70,00 e liberar taxa de R$ 4,00 por 12 horas
         </button>
         <div
           id="planoDiarioAviso"
@@ -2044,7 +2044,7 @@
           <p>
             ⏱️ <strong>Plano Meio Período</strong> — R$ 25,00 por 6 horas:
             R$ 5,50 em Conchal e R$ 12,00 nos distritos.<br />
-            📅 <strong>Plano Diário Pro</strong> — R$ 70,00 por 9 horas:
+            📅 <strong>Plano Diário Pro</strong> — R$ 70,00 por 12 horas:
             R$ 4,00 em Conchal e R$ 10,00 nos distritos.
           </p>
           <div class="taxa-avulsa-acoes">
@@ -2807,7 +2807,7 @@
         const horas = Math.floor(minutos / 60), resto = minutos % 60;
         return horas ? `${horas}h ${String(resto).padStart(2, "0")}min` : `${resto} min`;
       }
-      // Plano Diario: vale 9 horas a partir da ativacao. Ativacoes antigas sem horario
+      // Plano Diario: vale 12 horas a partir da ativacao. Ativacoes antigas sem horario
       // (active sem expiraEmMs) continuam liberadas ate o servidor dizer o contrario.
       function definirPlanoDiario(expiraEmMs, ativoSemHorario = false) {
         planoDiarioExpiraEmMs = Number(expiraEmMs || 0);
@@ -2878,13 +2878,13 @@
           status.className = "status show";
           status.textContent = planoDiarioAtivo
             ? `Plano Diario MotoJa Pro ativo${planoDiarioExpiraEmMs ? ` até ${horaCurta(planoDiarioExpiraEmMs)} · faltam ${tempoRestante(planoDiarioExpiraEmMs)}` : ""}. A opcao de R$ 4,00 esta liberada.`
-            : "Plano Diario MotoJa Pro bloqueado. Ative por R$ 70,00 para liberar R$ 4,00 por entrega/ponto durante 9 horas.";
+            : "Plano Diario MotoJa Pro bloqueado. Ative por R$ 70,00 para liberar R$ 4,00 por entrega/ponto durante 12 horas.";
         }
         if (btn) {
           btn.disabled = planoDiarioAtivo;
           btn.textContent = planoDiarioAtivo
             ? `Plano ativo${planoDiarioExpiraEmMs ? ` até ${horaCurta(planoDiarioExpiraEmMs)}` : ""}`
-            : "Ativar por R$ 70,00 e liberar taxa de R$ 4,00 por 9 horas";
+            : "Ativar por R$ 70,00 e liberar taxa de R$ 4,00 por 12 horas";
         }
         if (planoDiarioAtivo) mostrarPlanoDiarioAviso("");
         if (!planoDiarioAtivo && $("tipoEntrega").value === PLANO_DIARIO_TIPO)
@@ -3877,7 +3877,7 @@
         }
         if (
           !confirm(
-            "Ativar Plano Diario MotoJa Pro? Vai descontar R$ 70,00 agora e liberar taxa fixa de R$ 4,00 por entrega/ponto durante 9 horas.",
+            "Ativar Plano Diario MotoJa Pro? Vai descontar R$ 70,00 agora e liberar taxa fixa de R$ 4,00 por entrega/ponto durante 12 horas.",
           )
         )
           return;
@@ -3898,7 +3898,7 @@
             throw new Error(
               d.message || d.error || "Nao consegui ativar o plano diario.",
             );
-          definirPlanoDiario(d.expiraEmMs || Date.now() + 9 * 3600000);
+          definirPlanoDiario(d.expiraEmMs || Date.now() + 12 * 3600000);
           definirTaxaAvulsa({ ativo: taxaAvulsa.ativo, usadas: 0, limite: taxaAvulsa.limite });
           mostrarPlanoDiarioAviso(
             `Plano Diario ativo até ${horaCurta(planoDiarioExpiraEmMs)}. A taxa fixa de R$ 4,00 esta liberada.`,
@@ -5210,7 +5210,7 @@
         const taxaOk = taxaAvulsaLiberada(tipo, count);
         const valido = Number.isInteger(count) && count >= 1 && count <= 30 && tipoLotePermitido(tipo) && taxaOk;
         const tarifa = tarifaLote(tipo, $("regiaoLote").value);
-        $("resumoLote").textContent = valido ? `${count} entrega(s) × ${moeda(tarifa)} = ${moeda(count * tarifa)}. Um motoboy para o lote.${tipoPlanoDiario(tipo) ? ' Plano diário ativo.' : tipoMeioPeriodo(tipo) ? ' Meio período ativo.' : ''}` : "Selecione um tipo com tarifa fixa e uma quantidade de 1 a 30 entregas. O plano diário exige ativação de R$ 70,00 por 9 horas e o meio período, de R$ 25,00 por 6 horas. Para cobrança por km, use Entrega com endereço.";
+        $("resumoLote").textContent = valido ? `${count} entrega(s) × ${moeda(tarifa)} = ${moeda(count * tarifa)}. Um motoboy para o lote.${tipoPlanoDiario(tipo) ? ' Plano diário ativo.' : tipoMeioPeriodo(tipo) ? ' Meio período ativo.' : ''}` : "Selecione um tipo com tarifa fixa e uma quantidade de 1 a 30 entregas. O plano diário exige ativação de R$ 70,00 por 12 horas e o meio período, de R$ 25,00 por 6 horas. Para cobrança por km, use Entrega com endereço.";
         if (!taxaOk) $("resumoLote").textContent = mensagemTaxaAvulsa(count);
         $("chamarLote").disabled = !valido || enviando;
       }
@@ -5304,7 +5304,7 @@
         }
         if (tipoPlanoDiario(tipoEntrega) && !planoDiarioAtivo) {
           mostrarStatus(
-            "Plano Diario MotoJa Pro bloqueado. Ative por R$ 70,00 para usar R$ 4,00 por 9 horas.",
+            "Plano Diario MotoJa Pro bloqueado. Ative por R$ 70,00 para usar R$ 4,00 por 12 horas.",
             true,
           );
           return;

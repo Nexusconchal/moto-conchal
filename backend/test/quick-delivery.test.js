@@ -122,7 +122,7 @@ test('tampered price and pickup are replaced by server data; another company can
 });
 
 const dailyRaw = () => ({ ...raw(), tipoEntrega: 'Plano Diario MotoJa Pro', valor: 0.01, planoDiario: true });
-// Plano Diario ativo por 9 horas: campos na empresa + documento da ativacao.
+// Plano Diario ativo por 12 horas: campos na empresa + documento da ativacao.
 function activeDaily(h, plan = {}, untilMs = Date.now() + 3600000) {
   h.records.set('empresas/company', { ...h.records.get('empresas/company'), planoDiarioExpiraEmMs: untilMs, planoDiarioAtivacaoId: '2026-10-04-pro-1' });
   h.records.set('empresas/company/planosDiarios/2026-10-04-pro-1', { status: 'ativo', ...plan });
@@ -478,7 +478,7 @@ test('plan deliveries created while the owner reserved a motoboy carry that moto
   assert.equal(open.records.get('entregas/quick-test').motoboyExclusivoCpf, undefined);
 });
 
-test('Plano Diario lasts 9 hours from activation, does not charge twice while valid and renewals stop after it', async () => {
+test('Plano Diario lasts 12 hours from activation, does not charge twice while valid and renewals stop after it', async () => {
   const docs = new Map();
   const ref = path => ({ path, id: path.split('/').at(-1), collection: name => ({ doc: id => ref(`${path}/${name}/${id}`) }) });
   const ctx = vm.createContext({ Date, money: n => Math.round(Number(n || 0) * 100) / 100, onlyDigits: v => String(v || '').replace(/\D/g, ''), cleanText: v => String(v || '').trim(),
@@ -499,7 +499,7 @@ test('Plano Diario lasts 9 hours from activation, does not charge twice while va
   const first = await call();
   const company = docs.get('empresas/19999990000');
   assert.equal(company.saldo, 130);
-  assert.ok(company.planoDiarioExpiraEmMs >= before + 9 * 3600000 && company.planoDiarioExpiraEmMs <= Date.now() + 9 * 3600000);
+  assert.ok(company.planoDiarioExpiraEmMs >= before + 12 * 3600000 && company.planoDiarioExpiraEmMs <= Date.now() + 12 * 3600000);
   assert.equal(first.data.expiraEmMs, company.planoDiarioExpiraEmMs);
   assert.equal(docs.get(`empresas/19999990000/planosDiarios/${company.planoDiarioAtivacaoId}`).expiraEmMs, company.planoDiarioExpiraEmMs);
   assert.equal(docs.get(`planosAtivados/19999990000_${company.planoDiarioAtivacaoId}`).expiraEmMs, company.planoDiarioExpiraEmMs);
@@ -507,10 +507,10 @@ test('Plano Diario lasts 9 hours from activation, does not charge twice while va
   // Expired: a new activation is charged again (for example, the same night or the next day).
   docs.set('empresas/19999990000', { ...docs.get('empresas/19999990000'), planoDiarioExpiraEmMs: Date.now() - 1 });
   await call(); assert.equal(docs.get('empresas/19999990000').saldo, 60);
-  // Old activations without the 9h field still last until the end of their day.
+  // Old activations without the 12h field still last until the end of their day.
   assert.ok(ctx.dailyPlanActivation({ planoDiarioAtivoDia: '2026-10-13' }));
   assert.equal(ctx.dailyPlanActivation({ planoDiarioAtivoDia: '2026-10-12' }), null);
-  // Batch renewals use the 9h expiry recorded on the delivery.
+  // Batch renewals use the 12h expiry recorded on the delivery.
   const rctx = vm.createContext({ Date, todayKeySaoPaulo: () => '2026-10-13', isDailyPlanDelivery: () => true, isHalfPlanDelivery: () => false, halfPlanInactiveError: m => new Error(m), dailyPlanRef: () => '' });
   vm.runInContext(source.slice(source.indexOf('async function assertQuickDailyPlanRenewable('), source.indexOf('function isFixedFoodDelivery(')), rctx);
   const tx = { get: async () => { throw new Error('no read expected'); } };
