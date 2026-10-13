@@ -624,6 +624,7 @@
           font-size: 0.72rem;
         }
       }
+.plano-motoboy{margin-top:10px;padding:12px 14px;border-radius:14px;background:linear-gradient(135deg,rgba(255,128,0,.22),rgba(255,172,79,.08));border:1px solid rgba(255,128,0,.55);color:#fff4e6;font-size:.9rem;line-height:1.45}.plano-motoboy strong{color:#ffac4f}.plano-motoboy small{display:block;margin-top:4px;color:#ffd9b0;font-size:.78rem}
     </style>
     <style>
       :root {
@@ -831,6 +832,7 @@
           <div class="availability-caption" aria-live="polite"><span class="availability-dot" aria-hidden="true"></span><span data-availability-status>Conectando disponibilidade…</span></div>
           <div class="availability-caption">Fechar o app não muda sua escolha. Ela fica salva neste aparelho até você alterar. A conexão é confirmada ao voltar.</div>
         </div>
+        <div id="planoMotoboy" class="plano-motoboy" role="status" aria-live="polite" hidden></div>
       </header>
       <section id="login" class="login">
         <div class="driver-onboarding-head">
@@ -2587,6 +2589,44 @@
         $("fotoPreview").classList.add("hidden");
         alert("Dados salvos apagados deste celular.");
       };
+      // Planos em que o dono escolheu este motoboy: mostra empresa e quanto tempo falta.
+      let planosMotoboy = [], planosMotoboyTimer = 0, planosMotoboyContagem = 0;
+      function tempoRestantePlano(ms) {
+        const minutos = Math.max(0, Math.ceil((Number(ms) - Date.now()) / 60000));
+        const horas = Math.floor(minutos / 60), resto = minutos % 60;
+        return horas ? `${horas}h ${String(resto).padStart(2, "0")}min` : `${resto} min`;
+      }
+      function renderPlanosMotoboy() {
+        const box = $("planoMotoboy");
+        if (!box) return;
+        const ativos = planosMotoboy.filter((plano) => Number(plano.expiraEmMs) > Date.now());
+        box.hidden = !ativos.length;
+        box.innerHTML = ativos.map((plano) => {
+          const fim = new Date(plano.expiraEmMs).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+          const nomePlano = plano.tipo === "meio_periodo" ? "Plano Meio Período" : "Plano Diário Pro";
+          return `🏍️ Você está no <strong>${nomePlano}</strong> da <strong>${String(plano.empresa || "empresa").replace(/[<>&"']/g, "")}</strong> · faltam <strong>${tempoRestantePlano(plano.expiraEmMs)}</strong><small>As entregas desse plano aparecem só para você até ${fim}. Fique com o app aberto e Disponível.</small>`;
+        }).join("<hr style=\"border:0;border-top:1px solid rgba(255,255,255,.12);margin:8px 0\" />");
+      }
+      async function carregarPlanosMotoboy() {
+        if (!motoboyCpf) return;
+        try {
+          const r = await fetch(`${CONFIG.backend}/api/drivers/${motoboyCpf}/plans`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(driverProof()),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (r.ok && Array.isArray(d.plans)) planosMotoboy = d.plans;
+        } catch (e) {}
+        renderPlanosMotoboy();
+      }
+      function iniciarPlanosMotoboy() {
+        clearInterval(planosMotoboyTimer);
+        clearInterval(planosMotoboyContagem);
+        carregarPlanosMotoboy();
+        planosMotoboyTimer = setInterval(carregarPlanosMotoboy, 2 * 60 * 1000);
+        planosMotoboyContagem = setInterval(renderPlanosMotoboy, 30 * 1000);
+      }
       async function entrarNoPainel(lembrarLogin) {
         salvarMotoboy(lembrarLogin);
         const loginLembrado = !lembrarLogin && loginSalvoValido(lerMotoboySalvo());
@@ -2661,6 +2701,7 @@
         $("painel").classList.remove("hidden");
         $("online").textContent = "Online";
         window.MotojaDriverAvailability?.start({ backend: CONFIG.backend, getProof: driverProof, onChange: () => { limparCache(); ouvir(true); } });
+        iniciarPlanosMotoboy();
         ocultarBoot();
         renderPerfilMotoboy();
         renderCidadesAtivas();

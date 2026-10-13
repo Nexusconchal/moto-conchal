@@ -62,6 +62,7 @@ function harness(balance = 100, { taxaAvulsa = false } = {}) {
   }
   vm.runInContext(source.slice(source.indexOf('function deliveryDestinations('), source.indexOf('function isPricedDeliveryType(')), context);
   vm.runInContext(source.slice(source.indexOf('const TAXA_AVULSA_LIMITE'), source.indexOf('function halfPlanInactiveError(')), context);
+  vm.runInContext(source.slice(source.indexOf('function dailyPlanActivation('), source.indexOf('async function assertQuickDailyPlanRenewable(')), context);
   vm.runInContext(source.slice(source.indexOf('function expectedDeliveryFare('), source.indexOf('function deliveryStopCount(')), context);
   const start = source.indexOf("app.post('/api/deliveries',");
   const end = source.indexOf("\napp.post(", start + 1);
@@ -121,12 +122,18 @@ test('tampered price and pickup are replaced by server data; another company can
 });
 
 const dailyRaw = () => ({ ...raw(), tipoEntrega: 'Plano Diario MotoJa Pro', valor: 0.01, planoDiario: true });
-test('daily plan requires an active record for this company today and cannot be forged from the request', async () => {
-  for (const scenario of ['missing', 'yesterday', 'other-company', 'inactive']) {
+// Plano Diario ativo por 9 horas: campos na empresa + documento da ativacao.
+function activeDaily(h, plan = {}, untilMs = Date.now() + 3600000) {
+  h.records.set('empresas/company', { ...h.records.get('empresas/company'), planoDiarioExpiraEmMs: untilMs, planoDiarioAtivacaoId: '2026-10-04-pro-1' });
+  h.records.set('empresas/company/planosDiarios/2026-10-04-pro-1', { status: 'ativo', ...plan });
+}
+test('daily plan requires an active activation for this company and cannot be forged from the request', async () => {
+  for (const scenario of ['missing', 'expired', 'other-company', 'inactive', 'yesterday-legacy']) {
     const h = harness();
-    if (scenario === 'yesterday') h.records.set('plans/11999999999/2026-10-03', { status: 'ativo' });
-    if (scenario === 'other-company') h.records.set('plans/11888888888/2026-10-04', { status: 'ativo' });
-    if (scenario === 'inactive') h.records.set('plans/11999999999/2026-10-04', { status: 'cancelado' });
+    if (scenario === 'expired') activeDaily(h, {}, Date.now() - 1000);
+    if (scenario === 'other-company') h.records.set('empresas/other', { planoDiarioExpiraEmMs: Date.now() + 3600000, planoDiarioAtivacaoId: 'x' });
+    if (scenario === 'inactive') activeDaily(h, { status: 'cancelado' });
+    if (scenario === 'yesterday-legacy') h.records.set('empresas/company', { ...h.records.get('empresas/company'), planoDiarioAtivoDia: '2026-10-03' });
     const result = await h.call(dailyRaw());
     assert.equal(result.status,403); assert.equal(h.writes.length,0); assert.equal(h.notices.length,0);
   }
@@ -135,7 +142,7 @@ test('active daily plan reserves R$ 4 in Conchal and R$ 10 in districts without 
   for (const region of ['conchal','martinho_prado','tujuguaba','iate']) {
     const h = harness();
     const district = region !== 'conchal', total = district ? 30 : 12, app = district ? 6 : 3;
-    h.records.set('plans/11999999999/2026-10-04', { status: 'ativo' });
+    activeDaily(h);
     assert.equal((await h.call({ ...dailyRaw(), regiaoEntrega: region })).status,201);
     const d = h.records.get('entregas/quick-test');
     assert.equal(d.valor,total); assert.equal(d.planoDiarioDia,'2026-10-04');
@@ -144,21 +151,21 @@ test('active daily plan reserves R$ 4 in Conchal and R$ 10 in districts without 
     assert.equal(h.context.deliverySplit(d).driverAmount,total - app);
     assert.equal(h.records.get('empresas/company').saldo,100);
     assert.equal(h.records.get('empresas/company').reservado,total);
-    assert.equal(h.reads.filter(p => p.startsWith('plans/')).length,1);
+    assert.equal(h.reads.filter(p => p.includes('/planosDiarios/')).length,1);
     assert.equal((await h.call({ ...dailyRaw(), regiaoEntrega: region })).data.duplicated,true);
     assert.equal(h.records.get('empresas/company').reservado,total);
   }
 });
 test('active daily plan does not permit insufficient balance', async () => {
   const h = harness(7);
-  h.records.set('plans/11999999999/2026-10-04', { status: 'ativo' });
+  activeDaily(h);
   assert.equal((await h.call(dailyRaw())).status,402);
   assert.equal(h.writes.length,0); assert.equal(h.notices.length,0);
 });
 test('legacy finalization debits standard R$ 6.50 and daily R$ 4 batches exactly once and pays the matching driver share', async () => {
   for (const daily of [false,true]) {
     const h = harness();
-    if (daily) h.records.set('plans/11999999999/2026-10-04', { status: 'ativo' });
+    if (daily) activeDaily(h);
     await h.call(daily ? dailyRaw() : raw());
     const d = h.records.get('entregas/quick-test');
     Object.assign(d,{ confirmacaoEmpresaVersao:0, status:'retirada', motoboyCpf:'12345678901', retiradaConfirmadaEm:Date.now()-60000, motoboyLocalizacao:{serverTimestampMs:Date.now()} });
@@ -401,7 +408,7 @@ test('taxa avulsa: with a plan active, fixed fares are allowed and do not consum
   for (const plan of [{ planoDiarioAtivoDia: '2026-10-04' }, { meioPeriodoExpiraEmMs: Date.now() + 3600000 }]) {
     const h = harness(100, { taxaAvulsa: true });
     h.records.set('empresas/company', { ...h.records.get('empresas/company'), taxaAvulsaUsadas: 5, ...plan });
-    if (plan.planoDiarioAtivoDia) h.records.set('plans/11999999999/2026-10-04', { status: 'ativo' });
+    if (plan.planoDiarioAtivoDia) h.records.set('empresas/company/planosDiarios/2026-10-04', { status: 'ativo' });
     assert.equal((await h.call({ ...raw(), clientRequestId: 'p1', paradas: 3 })).status, 201);
     assert.equal(h.records.get('empresas/company').taxaAvulsaUsadas, 5);
     assert.equal(h.records.get('entregas/p1').taxaAvulsaContada, undefined);
@@ -419,11 +426,12 @@ test('taxa avulsa: activating either plan resets the counter and opens a new cyc
     dailyPlanRef: (id, day) => ref(`empresas/${id}/planosDiarios/${day}`),
     db: { collection: name => ({ doc: id => ref(`${name}/${id}`) }), runTransaction: async fn => { const pending = []; await fn({ get: async r => ({ exists: docs.has(r.path), data: () => docs.get(r.path) }), set: (r, data, opt) => pending.push([r, data, opt]) }); for (const [r, data, opt] of pending) docs.set(r.path, opt?.merge ? { ...docs.get(r.path), ...data } : data); } },
     assertCompany: 0, assertCompanyApproved: 0, createRideLimiter: 0, app: { post: (path, ...h) => { ctx.handlers[path] = h.at(-1); } }, handlers: {} });
-  for (const name of ['DAILY_PLAN_TYPE', 'DAILY_PLAN_PRICE', 'DAILY_PLAN_DELIVERY_FEE', 'DAILY_PLAN_APP_FEE', 'HALF_PLAN_TYPE', 'HALF_PLAN_PRICE', 'HALF_PLAN_DELIVERY_FEE', 'HALF_PLAN_APP_FEE', 'HALF_PLAN_DURATION_MS']) {
+  for (const name of ['DAILY_PLAN_TYPE', 'DAILY_PLAN_PRICE', 'DAILY_PLAN_DELIVERY_FEE', 'DAILY_PLAN_APP_FEE', 'HALF_PLAN_TYPE', 'HALF_PLAN_PRICE', 'HALF_PLAN_DELIVERY_FEE', 'HALF_PLAN_APP_FEE', 'HALF_PLAN_DURATION_MS', 'DAILY_PLAN_DURATION_MS']) {
     const line = source.split('\n').find(l => l.startsWith(`const ${name} =`)); vm.runInContext(line.replace('const ', 'var '), ctx);
   }
   vm.runInContext(source.slice(source.indexOf('function halfPlanActiveUntil('), source.indexOf('const TAXA_AVULSA_LIMITE')), ctx);
   vm.runInContext(source.slice(source.indexOf('function taxaAvulsaResetFields('), source.indexOf('function halfPlanInactiveError(')), ctx);
+  vm.runInContext(source.slice(source.indexOf('function dailyPlanActivation('), source.indexOf('function dailyPlanInactiveError(')), ctx);
   for (const route of ["app.post('/api/companies/daily-plan/activate'", "app.post('/api/companies/half-plan/activate'"]) {
     const start = source.indexOf(route); vm.runInContext(source.slice(start, source.indexOf('\napp.', start + 1)), ctx);
   }
@@ -455,7 +463,7 @@ test('company app blocks R$ 6,50/R$ 16 after the 5 taxa avulsa deliveries unless
 });
 test('plan deliveries created while the owner reserved a motoboy carry that motoboy (daily and half period)', async () => {
   const daily = harness();
-  daily.records.set('plans/11999999999/2026-10-04', { status: 'ativo', motoboyExclusivoCpf: '22222222222', motoboyExclusivoNome: 'Bruno' });
+  activeDaily(daily, { motoboyExclusivoCpf: '22222222222', motoboyExclusivoNome: 'Bruno' });
   assert.equal((await daily.call(dailyRaw())).status, 201);
   assert.equal(daily.records.get('entregas/quick-test').motoboyExclusivoCpf, '22222222222');
   const half = harness();
@@ -465,7 +473,47 @@ test('plan deliveries created while the owner reserved a motoboy carry that moto
   const d = half.records.get('entregas/quick-test');
   assert.equal(d.motoboyExclusivoCpf, '33333333333'); assert.equal(d.planoAtivacaoChave, '11999999999_2026-10-04-meio-1');
   const open = harness();
-  open.records.set('plans/11999999999/2026-10-04', { status: 'ativo' });
+  activeDaily(open);
   await open.call(dailyRaw());
   assert.equal(open.records.get('entregas/quick-test').motoboyExclusivoCpf, undefined);
+});
+
+test('Plano Diario lasts 9 hours from activation, does not charge twice while valid and renewals stop after it', async () => {
+  const docs = new Map();
+  const ref = path => ({ path, id: path.split('/').at(-1), collection: name => ({ doc: id => ref(`${path}/${name}/${id}`) }) });
+  const ctx = vm.createContext({ Date, money: n => Math.round(Number(n || 0) * 100) / 100, onlyDigits: v => String(v || '').replace(/\D/g, ''), cleanText: v => String(v || '').trim(),
+    todayKeySaoPaulo: () => '2026-10-13', companyBalance: d => ({ saldo: d.saldo || 0, reservado: d.reservado || 0, disponivel: (d.saldo || 0) - (d.reservado || 0) }),
+    ledgerRef: () => ref(`ledger/${docs.size}`), admin: { firestore: { FieldValue: { serverTimestamp: () => 'TIME' } } },
+    db: { collection: name => ({ doc: id => ref(`${name}/${id}`) }), runTransaction: async fn => { const pending = []; await fn({ get: async r => ({ exists: docs.has(r.path), data: () => docs.get(r.path) }), set: (r, data, opt) => pending.push([r, data, opt]) }); for (const [r, data, opt] of pending) docs.set(r.path, opt?.merge ? { ...docs.get(r.path), ...data } : data); } },
+    assertCompany: 0, assertCompanyApproved: 0, createRideLimiter: 0, app: { post: (path, ...h) => { ctx.handler = h.at(-1); } } });
+  for (const name of ['DAILY_PLAN_TYPE', 'DAILY_PLAN_PRICE', 'DAILY_PLAN_DELIVERY_FEE', 'DAILY_PLAN_APP_FEE', 'DAILY_PLAN_DURATION_MS']) {
+    const line = source.split('\n').find(l => l.startsWith(`const ${name} =`)); vm.runInContext(line.replace('const ', 'var '), ctx);
+  }
+  vm.runInContext(source.slice(source.indexOf('function dailyPlanActivation('), source.indexOf('function dailyPlanInactiveError(')), ctx);
+  vm.runInContext(source.slice(source.indexOf('function planActivationKey('), source.indexOf('function halfPlanInactiveError(')), ctx);
+  ctx.taxaAvulsaResetFields = () => ({});
+  const start = source.indexOf("app.post('/api/companies/daily-plan/activate'"); vm.runInContext(source.slice(start, source.indexOf('\napp.', start + 1)), ctx);
+  const call = async () => { const out = {}; const res = { status: c => { out.status = c; return res; }, json: d => { out.data = d; return res; } }; await ctx.handler({ companyId: '19999990000', companySnap: { ref: ref('empresas/19999990000') } }, res, e => { throw e; }); return out; };
+  docs.set('empresas/19999990000', { saldo: 200, reservado: 0, empresa: 'Deck' });
+  const before = Date.now();
+  const first = await call();
+  const company = docs.get('empresas/19999990000');
+  assert.equal(company.saldo, 130);
+  assert.ok(company.planoDiarioExpiraEmMs >= before + 9 * 3600000 && company.planoDiarioExpiraEmMs <= Date.now() + 9 * 3600000);
+  assert.equal(first.data.expiraEmMs, company.planoDiarioExpiraEmMs);
+  assert.equal(docs.get(`empresas/19999990000/planosDiarios/${company.planoDiarioAtivacaoId}`).expiraEmMs, company.planoDiarioExpiraEmMs);
+  assert.equal(docs.get(`planosAtivados/19999990000_${company.planoDiarioAtivacaoId}`).expiraEmMs, company.planoDiarioExpiraEmMs);
+  assert.equal((await call()).data.alreadyActive, true); assert.equal(docs.get('empresas/19999990000').saldo, 130);
+  // Expired: a new activation is charged again (for example, the same night or the next day).
+  docs.set('empresas/19999990000', { ...docs.get('empresas/19999990000'), planoDiarioExpiraEmMs: Date.now() - 1 });
+  await call(); assert.equal(docs.get('empresas/19999990000').saldo, 60);
+  // Old activations without the 9h field still last until the end of their day.
+  assert.ok(ctx.dailyPlanActivation({ planoDiarioAtivoDia: '2026-10-13' }));
+  assert.equal(ctx.dailyPlanActivation({ planoDiarioAtivoDia: '2026-10-12' }), null);
+  // Batch renewals use the 9h expiry recorded on the delivery.
+  const rctx = vm.createContext({ Date, todayKeySaoPaulo: () => '2026-10-13', isDailyPlanDelivery: () => true, isHalfPlanDelivery: () => false, halfPlanInactiveError: m => new Error(m), dailyPlanRef: () => '' });
+  vm.runInContext(source.slice(source.indexOf('async function assertQuickDailyPlanRenewable('), source.indexOf('function isFixedFoodDelivery(')), rctx);
+  const tx = { get: async () => { throw new Error('no read expected'); } };
+  await rctx.assertQuickDailyPlanRenewable(tx, { entregaNaNota: true, planoDiarioExpiraEmMs: Date.now() + 1000 }, 'c');
+  await assert.rejects(rctx.assertQuickDailyPlanRenewable(tx, { entregaNaNota: true, planoDiarioExpiraEmMs: Date.now() - 1 }, 'c'), /venceu/);
 });

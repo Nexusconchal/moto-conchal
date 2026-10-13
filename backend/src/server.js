@@ -203,6 +203,7 @@ const HALF_PLAN_PRICE = 25;
 const HALF_PLAN_DELIVERY_FEE = 5.5;
 const HALF_PLAN_APP_FEE = 1.5;
 const HALF_PLAN_DURATION_MS = 6 * 60 * 60 * 1000;
+const DAILY_PLAN_DURATION_MS = 9 * 60 * 60 * 1000;
 const COMPANY_DELIVERY_RATE_PER_KM = 2.5;
 
 function todayKeySaoPaulo(date = new Date()) {
@@ -211,6 +212,36 @@ function todayKeySaoPaulo(date = new Date()) {
 
 function dailyPlanRef(companyId, dayKey = todayKeySaoPaulo()) {
   return db.collection('empresas').doc(companyId).collection('planosDiarios').doc(dayKey);
+}
+
+// Plano Diario Pro vale 9 horas a partir da ativacao. Ativacoes antigas (antes
+// dessa regra, sem planoDiarioExpiraEmMs) continuam valendo ate o fim do dia delas.
+function dailyPlanActivation(company = {}, now = Date.now()) {
+  const until = Number(company.planoDiarioExpiraEmMs || 0);
+  if (until) return until > now ? { until, planDocId: String(company.planoDiarioAtivacaoId || '') } : null;
+  const today = todayKeySaoPaulo(new Date(now));
+  if (company.planoDiarioAtivoDia === today) return { until: Date.parse(`${today}T23:59:59.999-03:00`), planDocId: today };
+  return null;
+}
+
+function dailyPlanInactiveError(message = 'O Plano Diario MotoJa Pro nao esta ativo agora. Ative por R$ 70,00 para liberar a taxa de R$ 4,00 por 9 horas.') {
+  const error = new Error(message);
+  error.status = 403;
+  error.code = 'plano_diario_inativo';
+  return error;
+}
+
+// Confere o Plano Diario na transacao e marca a entrega com a ativacao e o motoboy reservado.
+async function attachDailyPlan(tx, delivery, companyId, companyRef, company, message) {
+  const activation = dailyPlanActivation(company);
+  if (!activation || !activation.planDocId) throw dailyPlanInactiveError(message);
+  const planSnap = await tx.get(companyRef.collection('planosDiarios').doc(activation.planDocId));
+  if (planSnap.exists && planSnap.data()?.status && planSnap.data().status !== 'ativo') throw dailyPlanInactiveError(message);
+  delivery.planoDiario = true;
+  delivery.planoDiarioDia = activation.planDocId.slice(0, 10);
+  delivery.planoDiarioExpiraEmMs = activation.until;
+  applyPlanDriver(delivery, companyId, activation.planDocId, planSnap.exists ? planSnap.data() : {});
+  return activation;
 }
 
 async function assertQuickDailyPlanRenewable(tx, delivery, companyId) {
@@ -223,6 +254,15 @@ async function assertQuickDailyPlanRenewable(tx, delivery, companyId) {
     return;
   }
   if (!delivery.entregaNaNota || !isDailyPlanDelivery(delivery.tipoEntrega)) return;
+  if (delivery.planoDiarioExpiraEmMs) {
+    if (Number(delivery.planoDiarioExpiraEmMs) <= Date.now()) {
+      const error = new Error('O Plano Diario deste chamado venceu. Ative de novo e crie uma nova chamada.');
+      error.status = 403;
+      error.code = 'plano_diario_vencido';
+      throw error;
+    }
+    return;
+  }
   const day = todayKeySaoPaulo();
   if (delivery.planoDiarioDia !== day) {
     const error = new Error('A diaria deste chamado venceu. Ative o plano de hoje e crie uma nova chamada.');
@@ -264,7 +304,7 @@ const TAXA_AVULSA_LIMITE = 5;
 const TAXA_AVULSA_ATIVA = typeof process !== 'undefined' && process.env?.TAXA_AVULSA_LIMITE === 'on';
 
 function companyPlanActive(company = {}, now = Date.now()) {
-  return company.planoDiarioAtivoDia === todayKeySaoPaulo(new Date(now)) || !!halfPlanActiveUntil(company, now);
+  return !!dailyPlanActivation(company, now) || !!halfPlanActiveUntil(company, now);
 }
 
 function taxaAvulsaStatus(company = {}, now = Date.now()) {
@@ -1130,14 +1170,7 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
       throw error;
     }
     if (isDailyPlanDelivery(delivery.tipoEntrega)) {
-      const planSnap = await tx.get(dailyPlanRef(companyId));
-      if (!planSnap.exists || planSnap.data().status !== 'ativo') {
-        const error = new Error('O Plano Diario precisa estar ativo hoje. O pedido ficou na fila.');
-        error.status = 403;
-        error.code = 'plano_diario_inativo';
-        throw error;
-      }
-      applyPlanDriver(delivery, companyId, planSnap.ref?.id || todayKeySaoPaulo(), planSnap.data());
+      await attachDailyPlan(tx, delivery, companyId, db.collection('empresas').doc(companyId), latestCompany, 'O Plano Diario precisa estar ativo agora. O pedido ficou na fila.');
     }
     if (isHalfPlanDelivery(delivery.tipoEntrega)) {
       const until = halfPlanActiveUntil(latestCompany);
@@ -2895,18 +2928,23 @@ async function backfillActivePlanActivations() {
   const now = Date.now();
   const today = todayKeySaoPaulo(new Date(now));
   const [daily, half] = await Promise.all([
-    db.collection('empresas').where('planoDiarioAtivoDia', '==', today).limit(500).get(),
+    Promise.all([
+      db.collection('empresas').where('planoDiarioAtivoDia', '==', today).limit(500).get(),
+      db.collection('empresas').where('planoDiarioExpiraEmMs', '>', now).limit(500).get()
+    ]).then(([legacy, timed]) => ({ docs: [...new Map([...legacy.docs, ...timed.docs].map((doc) => [doc.id, doc])).values()] })),
     db.collection('empresas').where('meioPeriodoExpiraEmMs', '>', now).limit(500).get()
   ]);
   const writes = [];
   const writer = { set: (ref, data, options) => writes.push(ref.set(data, options)) };
   for (const doc of daily.docs) {
-    const planSnap = await dailyPlanRef(doc.id, today).get();
+    const activation = dailyPlanActivation(doc.data() || {}, now);
+    if (!activation?.planDocId) continue;
+    const planSnap = await db.collection('empresas').doc(doc.id).collection('planosDiarios').doc(activation.planDocId).get();
     if (!planSnap.exists || planSnap.data()?.status !== 'ativo') continue;
-    const mirror = await planActivationRef(planActivationKey(doc.id, today)).get();
+    const mirror = await planActivationRef(planActivationKey(doc.id, activation.planDocId)).get();
     if (mirror.exists) continue;
     const plan = planSnap.data() || {};
-    mirrorPlanActivation(writer, doc.id, doc.data() || {}, today, { tipo: 'diario', dia: today, valor: plan.valor || DAILY_PLAN_PRICE, tipoEntrega: DAILY_PLAN_TYPE, ativadoEmMs: timestampMs(plan.ativadoEm) || now });
+    mirrorPlanActivation(writer, doc.id, doc.data() || {}, activation.planDocId, { tipo: 'diario', dia: plan.dia || today, valor: plan.valor || DAILY_PLAN_PRICE, tipoEntrega: DAILY_PLAN_TYPE, ativadoEmMs: plan.ativadoEmMs || timestampMs(plan.ativadoEm) || now, expiraEmMs: activation.until });
   }
   for (const doc of half.docs) {
     const company = doc.data() || {};
@@ -5540,6 +5578,25 @@ app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
       return scope === 'pending' ? publicPendingJob(item) : privateDriverJob(item);
     })).slice(0, 30);
     return res.json({ ok: true, jobs });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Planos em que o dono reservou este motoboy, para a contagem no app do motoboy.
+app.post('/api/drivers/:cpf/plans', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+    const now = Date.now();
+    const snapshot = await db.collection('planosAtivados').where('motoboyExclusivoCpf', '==', driverCpf).limit(20).get();
+    const plans = snapshot.docs
+      .map((doc) => doc.data() || {})
+      .filter((plan) => Number(plan.expiraEmMs || 0) > now)
+      .map((plan) => ({ empresa: plan.empresa || 'Empresa', tipo: plan.tipo === 'meio_periodo' ? 'meio_periodo' : 'diario', ativadoEmMs: Number(plan.ativadoEmMs || 0), expiraEmMs: Number(plan.expiraEmMs || 0) }))
+      .sort((a, b) => a.expiraEmMs - b.expiraEmMs);
+    return res.json({ ok: true, plans, now });
   } catch (error) {
     return next(error);
   }
@@ -9646,11 +9703,11 @@ app.post('/api/rides/:rideId/client-cancel', async (req, res, next) => {
 app.get('/api/companies/daily-plan/status', assertCompany, async (req, res, next) => {
   try {
     const dia = todayKeySaoPaulo();
-    const snap = await dailyPlanRef(req.companyId, dia).get();
-    const plan = snap.exists ? snap.data() : null;
+    const activation = dailyPlanActivation(req.company);
     res.json({
       ok: true,
-      active: !!plan && plan.status === 'ativo',
+      active: !!activation,
+      expiraEmMs: activation?.until || 0,
       dia,
       tipoEntrega: DAILY_PLAN_TYPE,
       diaria: DAILY_PLAN_PRICE,
@@ -9672,21 +9729,25 @@ app.get('/api/companies/daily-plan/status', assertCompany, async (req, res, next
 
 app.post('/api/companies/daily-plan/activate', assertCompany, assertCompanyApproved, createRideLimiter, async (req, res, next) => {
   try {
-    const dia = todayKeySaoPaulo();
+    const now = Date.now();
+    const dia = todayKeySaoPaulo(new Date(now));
     const companyRef = req.companySnap.ref;
-    const planRef = dailyPlanRef(req.companyId, dia);
+    const planRef = companyRef.collection('planosDiarios').doc(`${dia}-pro-${now}`);
+    const expiraEmMs = now + DAILY_PLAN_DURATION_MS;
     let balanceAfter = null;
     let alreadyActive = false;
+    let activeUntil = expiraEmMs;
 
     await db.runTransaction(async (tx) => {
-      const planSnap = await tx.get(planRef);
-      if (planSnap.exists && planSnap.data().status === 'ativo') {
+      const companySnap = await tx.get(companyRef);
+      const current = dailyPlanActivation(companySnap.exists ? companySnap.data() || {} : {}, now);
+      if (current) {
         alreadyActive = true;
-        balanceAfter = companyBalance((await tx.get(companyRef)).data() || {});
+        activeUntil = current.until;
+        balanceAfter = companyBalance(companySnap.data() || {});
         return;
       }
 
-      const companySnap = await tx.get(companyRef);
       const balance = companyBalance(companySnap.exists ? companySnap.data() : {});
       if (balance.disponivel < DAILY_PLAN_PRICE) {
         const error = new Error('Saldo insuficiente para ativar o Plano Diario MotoJa Pro. Carregue saldo antes de aceitar.');
@@ -9700,6 +9761,8 @@ app.post('/api/companies/daily-plan/activate', assertCompany, assertCompanyAppro
         saldo: nextSaldo,
         reservado: balance.reservado,
         planoDiarioAtivoDia: dia,
+        planoDiarioExpiraEmMs: expiraEmMs,
+        planoDiarioAtivacaoId: planRef.id,
         planoDiarioTaxa: DAILY_PLAN_DELIVERY_FEE,
         ...taxaAvulsaResetFields(companySnap.exists ? companySnap.data() || {} : {}),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
@@ -9711,10 +9774,12 @@ app.post('/api/companies/daily-plan/activate', assertCompany, assertCompanyAppro
         taxaEntrega: DAILY_PLAN_DELIVERY_FEE,
         appFee: DAILY_PLAN_APP_FEE,
         tipoEntrega: DAILY_PLAN_TYPE,
+        ativadoEmMs: now,
+        expiraEmMs,
         ativadoEm: admin.firestore.FieldValue.serverTimestamp()
       });
       mirrorPlanActivation(tx, req.companyId, companySnap.exists ? companySnap.data() || {} : {}, planRef.id,
-        { tipo: 'diario', dia, valor: DAILY_PLAN_PRICE, tipoEntrega: DAILY_PLAN_TYPE, ativadoEmMs: Date.now() });
+        { tipo: 'diario', dia, valor: DAILY_PLAN_PRICE, tipoEntrega: DAILY_PLAN_TYPE, ativadoEmMs: now, expiraEmMs });
       tx.set(ledgerRef(req.companyId), {
         tipo: 'debito',
         origem: 'plano_diario_motoja_pro_ativado',
@@ -9728,7 +9793,7 @@ app.post('/api/companies/daily-plan/activate', assertCompany, assertCompanyAppro
       balanceAfter = companyBalance({ saldo: nextSaldo, reservado: balance.reservado });
     });
 
-    res.json({ ok: true, active: true, alreadyActive, dia, balance: balanceAfter, tipoEntrega: DAILY_PLAN_TYPE, diaria: DAILY_PLAN_PRICE, taxaEntrega: DAILY_PLAN_DELIVERY_FEE });
+    res.json({ ok: true, active: true, alreadyActive, dia, expiraEmMs: activeUntil, balance: balanceAfter, tipoEntrega: DAILY_PLAN_TYPE, diaria: DAILY_PLAN_PRICE, taxaEntrega: DAILY_PLAN_DELIVERY_FEE });
   } catch (error) {
     if (error.code === 'saldo_insuficiente') {
       return res.status(error.status || 402).json({ error: 'saldo_insuficiente', message: error.message, balance: error.balance || null });
@@ -9984,17 +10049,8 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
       }
       const dailyPlan = isDailyPlanDelivery(delivery.tipoEntrega);
       if (dailyPlan) {
-        const dia = todayKeySaoPaulo();
-        const planSnap = await tx.get(dailyPlanRef(req.companyId, dia));
-        if (!planSnap.exists || planSnap.data().status !== 'ativo') {
-          const error = new Error('Plano Diario MotoJa Pro nao esta ativo hoje. Ative e desconte a diaria antes de usar taxa fixa de R$ 4,00.');
-          error.status = 403;
-          error.code = 'plano_diario_inativo';
-          throw error;
-        }
-        delivery.planoDiario = true;
-        delivery.planoDiarioDia = dia;
-        applyPlanDriver(delivery, req.companyId, dia, planSnap.data());
+        await attachDailyPlan(tx, delivery, req.companyId, companyRef, companySnap.exists ? companySnap.data() || {} : {},
+          'Plano Diario MotoJa Pro nao esta ativo agora. Ative e desconte R$ 70,00 antes de usar a taxa fixa de R$ 4,00.');
         delivery.taxaFixaEntrega = DAILY_PLAN_DELIVERY_FEE;
         delivery.empresaFicaPorTaxa = DAILY_PLAN_APP_FEE;
         delivery.planoAppFee = planDeliveryAmounts(delivery).appFee;

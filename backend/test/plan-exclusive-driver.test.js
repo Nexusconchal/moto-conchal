@@ -86,3 +86,28 @@ test('new plan deliveries copy the reserved motoboy from the active plan', () =>
   assert.equal(open.motoboyExclusivoCpf, undefined);
   assert.equal(ctx.deliveryReservedForOther(d, A), true); assert.equal(ctx.deliveryReservedForOther(d, B), false); assert.equal(ctx.deliveryReservedForOther(open, A), false);
 });
+test('motoboy app lists only the active plans where the owner chose him', async () => {
+  const now = Date.now();
+  const records = new Map([
+    ['planosAtivados/a', { motoboyExclusivoCpf: B, empresa: 'Deck', tipo: 'diario', ativadoEmMs: now - 3600e3, expiraEmMs: now + 8 * 3600e3 }],
+    ['planosAtivados/b', { motoboyExclusivoCpf: B, empresa: 'Antiga', tipo: 'diario', expiraEmMs: now - 1000 }],
+    ['planosAtivados/c', { motoboyExclusivoCpf: A, empresa: 'Outra', tipo: 'meio_periodo', expiraEmMs: now + 3600e3 }]]);
+  const { ctx, routes } = context(records);
+  vm.runInContext(slice("app.post('/api/drivers/:cpf/plans'", "\napp.post("), ctx);
+  const out = await call(routes['/api/drivers/:cpf/plans'], { params: { cpf: B }, body: {} });
+  assert.deepEqual(out.data.plans.map(p => p.empresa), ['Deck']);
+  assert.equal(out.data.plans[0].tipo, 'diario');
+});
+test('countdown text in the company and motoboy apps', () => {
+  for (const [file, fn] of [['empresa.html', 'tempoRestante'], ['motoboy.html', 'tempoRestantePlano']]) {
+    const html = fs.readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8');
+    const start = html.indexOf(`function ${fn}(`);
+    const body = html.slice(start, html.indexOf('\n      }\n', start) + 8);
+    const ctx = vm.createContext({ Date, Math, String, Number });
+    vm.runInContext(body, ctx);
+    const now = Date.now();
+    assert.equal(ctx[fn](now + (8 * 60 + 42) * 60000 - 1000), '8h 42min');
+    assert.equal(ctx[fn](now + 5 * 60000 - 1000), '5 min');
+    assert.equal(ctx[fn](now - 1000), '0 min');
+  }
+});
