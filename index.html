@@ -3161,8 +3161,26 @@
             ) === i,
         );
       }
+      // Coordenadas coladas do Google Maps ou do WhatsApp, por exemplo
+      // "22,28896° S, 46,96437° O", "-22.28896, -46.96437" ou um link com @-22.2,-46.9.
+      function coordenadasDoTexto(txt) {
+        const numeros = [...String(txt || "").matchAll(/(-?\d{1,3}[.,]\d{3,})\s*°?\s*([NSLOEW](?![a-z]))?/gi)];
+        if (numeros.length < 2) return null;
+        const valor = ([, n, h]) => {
+          const v = Math.abs(Number(n.replace(",", "."))),
+            hem = String(h || "").toUpperCase();
+          return hem === "S" || hem === "O" || hem === "W" || (!hem && n.startsWith("-")) ? -v : v;
+        };
+        const lat = valor(numeros[0]),
+          lon = valor(numeros[1]);
+        // So aceita pontos da regiao atendida (interior de SP).
+        if (!(lat >= -25 && lat <= -20 && lon >= -50 && lon <= -44)) return null;
+        return { lat, lon, texto: `${lat.toFixed(5)}, ${lon.toFixed(5)}` };
+      }
       async function geocodificar(endereco, cidadePreferida = "conchal") {
         const base = endereco.trim();
+        const coordenadas = coordenadasDoTexto(base);
+        if (coordenadas) return coordenadas;
         const configCidade =
           CIDADES_OPERACAO[cidadePreferida] || CIDADES_OPERACAO.conchal;
         let ultimoErro = "",
@@ -4370,12 +4388,14 @@
               ? "Localização atual pronta. Buscando endereço e destino..."
               : "Localizando os endereços no mapa...",
           );
-          const cidadeOrigemDigitada =
+          // Coordenadas coladas no campo valem como o ponto do GPS.
+          const origemPonto = origemGps || coordenadasDoTexto(origemTxt),
+            cidadeOrigemDigitada =
               cidadeOperacaoPorTexto(origemTxt) || "conchal",
             origem =
-              origemGps ||
+              origemPonto ||
               (await geocodificar(origemTxt, cidadeOrigemDigitada)),
-            enderecoGps = origemGps ? await enderecoDoGps(origem) : "",
+            enderecoGps = origemPonto ? await enderecoDoGps(origem) : "",
             cidadeOperacao = cidadeOperacaoPorOrigem(
               origem,
               enderecoGps || origem.texto || origemTxt,
@@ -4387,8 +4407,8 @@
           rotaDistantePlausivel(km, destinoTxt, destino.texto);
           const preco = escolherPreco(km),
             linkOrigemGps = `https://www.google.com/maps?q=${origem.lat},${origem.lon}`,
-            origemTexto = origemGps
-              ? `Minha localização atual pelo GPS\nEndereço aproximado: ${enderecoGps || "Não identificado pelo mapa"}\nMapa: ${linkOrigemGps}`
+            origemTexto = origemPonto
+              ? `${origemGps ? "Minha localização atual pelo GPS" : "Localização enviada por coordenadas"}\nEndereço aproximado: ${enderecoGps || "Não identificado pelo mapa"}\nMapa: ${linkOrigemGps}`
               : origemTxt,
             destinoEncontrado = destino.texto || destinoTxt;
           corridaCalculada = {
@@ -4410,7 +4430,7 @@
             entrega,
           };
           atualizarMapaCorrida(origem, destino, rota.geometry);
-          resultadoBox.innerHTML = `<div class="result-title">Destino encontrado</div><div class="route-summary"><div><span>Distância aprox.</span><strong>${km.toFixed(1).replace(".", ",")} km</strong></div><div><span>Valor estimado</span><strong>${formatarValor(preco.valor)}</strong></div></div><span class="route-detail">Cidade da chamada: <strong>${CIDADES_OPERACAO[cidadeOperacao].nome}</strong></span>${origemGps ? `Endereço aproximado do cliente: <strong>${enderecoGps || "Não identificado pelo mapa"}</strong><br>Mapa do cliente: <strong>${linkOrigemGps}</strong><br>` : ""}<span class="route-detail">Destino: <strong>${destinoEncontrado}</strong></span>${preco.porKm ? `Cálculo: <strong>${km.toFixed(2).replace(".", ",")} km x R$ ${formatarValorKm(preco)} por km</strong><br>` : ""}${preco.noturno ? `<strong>${preco.periodo === "noite" ? "Modo noite ativado." : "Modo madrugada ativado."}</strong><br>` : ""}<br><strong>Podemos dar andamento e chamar um motoboy agora?</strong><br>A chamada expira em 10 minutos se nenhum motoboy aceitar.`;
+          resultadoBox.innerHTML = `<div class="result-title">Destino encontrado</div><div class="route-summary"><div><span>Distância aprox.</span><strong>${km.toFixed(1).replace(".", ",")} km</strong></div><div><span>Valor estimado</span><strong>${formatarValor(preco.valor)}</strong></div></div><span class="route-detail">Cidade da chamada: <strong>${CIDADES_OPERACAO[cidadeOperacao].nome}</strong></span>${origemPonto ? `Endereço aproximado do cliente: <strong>${enderecoGps || "Não identificado pelo mapa"}</strong><br>Mapa do cliente: <strong>${linkOrigemGps}</strong><br>` : ""}<span class="route-detail">Destino: <strong>${destinoEncontrado}</strong></span>${preco.porKm ? `Cálculo: <strong>${km.toFixed(2).replace(".", ",")} km x R$ ${formatarValorKm(preco)} por km</strong><br>` : ""}${preco.noturno ? `<strong>${preco.periodo === "noite" ? "Modo noite ativado." : "Modo madrugada ativado."}</strong><br>` : ""}<br><strong>Podemos dar andamento e chamar um motoboy agora?</strong><br>A chamada expira em 10 minutos se nenhum motoboy aceitar.`;
           resultadoBox.className = "result show";
           $("btn-confirmar-corrida").style.display = "flex";
           $("btn-confirmar-corrida").textContent = "Chamar motoboy";
