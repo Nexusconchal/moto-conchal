@@ -2294,6 +2294,10 @@
         return "";
       }
       function cidadeOperacaoPorOrigem(origem, endereco = "") {
+        // Estiva Gerbi fica quase a mesma distancia de Conchal e de Aguai;
+        // quem chama de la e atendido pelos motoboys de Conchal.
+        if (textoBusca(`${endereco} ${origem?.texto || ""}`).includes("estiva gerbi")) return "conchal";
+        if (coordenadaValida(origem) && distanciaKmMapa({ lat: Number(origem.lat), lon: Number(origem.lon) }, { lat: -22.2708, lon: -46.9478 }) <= 8) return "conchal";
         if (coordenadaValida(origem)) {
           const ponto = { lat: Number(origem.lat), lon: Number(origem.lon) },
             cidadeMaisProxima = Object.entries(CIDADES_OPERACAO)
@@ -2322,6 +2326,7 @@
         if (t.includes("campinas")) return "Campinas - SP";
         if (t.includes("americana")) return "Americana - SP";
         if (t.includes("araras")) return "Araras - SP";
+        if (t.includes("estiva gerbi")) return "Estiva Gerbi - SP";
         if (t.includes("conchal")) return "Conchal - SP";
         return "";
       }
@@ -2338,6 +2343,7 @@
             ["Campinas - SP", -22.9056, -47.0608, 30],
             ["Americana - SP", -22.7392, -47.3314, 24],
             ["Araras - SP", -22.3572, -47.3842, 24],
+            ["Estiva Gerbi - SP", -22.2708, -46.9478, 6],
           ]
             .map((c) => ({
               nome: c[0],
@@ -2959,6 +2965,7 @@
           "rio claro",
           "campinas",
           "cosmopolis",
+          "estiva gerbi",
         ];
       }
       function dicaLocal(v) {

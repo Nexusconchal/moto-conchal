@@ -423,7 +423,8 @@ function requestedPlaceHint(value) {
     'pirassununga',
     'rio claro',
     'campinas',
-    'cosmopolis'
+    'cosmopolis',
+    'estiva gerbi'
   ].find((hint) => new RegExp(`\\b${hint}\\b`).test(text)) || '';
 }
 
@@ -1248,6 +1249,9 @@ const RIDE_CITY_CENTERS = {
   aguai: { lat: -22.0572, lon: -46.9781, label: 'Aguai' },
   engenheiro_coelho: { lat: -22.48805, lon: -47.21572, label: 'Engenheiro Coelho' }
 };
+// Estiva Gerbi fica quase a mesma distancia de Conchal e de Aguai; quem chama de
+// la e atendido pelos motoboys de Conchal.
+const ESTIVA_GERBI_CENTER = { lat: -22.2708, lon: -46.9478 };
 
 function canonicalRideCity(value, fallback = 'conchal') {
   const city = normalizeText(value);
@@ -1298,6 +1302,7 @@ function inferNewRideOperatingCity(ride = {}, requested = '') {
     ride.origemEncontrada
   ].filter(Boolean).join(' '));
   const origin = { lat: Number(ride.origemLat), lon: Number(ride.origemLon) };
+  if (originText.includes('estiva gerbi') || coordinateDistanceKm(origin, ESTIVA_GERBI_CENTER) <= 8) return 'conchal';
   if (Number.isFinite(origin.lat) && Number.isFinite(origin.lon) && origin.lat && origin.lon) {
     const nearestCity = Object.entries(RIDE_CITY_CENTERS)
       .map(([city, center]) => ({ city, km: coordinateDistanceKm(origin, center) }))
