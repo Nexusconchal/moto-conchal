@@ -1294,7 +1294,7 @@
       const ganhosCache = new Map();
       const TEMPO_CORRIDA_MS = 10 * 60 * 1000,
         TEMPO_ENTREGA_MS = 15 * 60 * 1000,
-        TEMPO_AVISO_MS = 3 * 60 * 1000;
+        TEMPO_AVISO_MS = 6 * 60 * 1000;
       function tempoLimiteMs(c) {
         return c?.tipo === "entrega_empresarial" || modoEntrega()
           ? TEMPO_ENTREGA_MS
@@ -2043,7 +2043,7 @@
               btn.disabled = true;
               const textoBotao = btn.textContent;
               // Avisa o cliente primeiro: isso segura a corrida com o motoboy (o servidor
-              // devolve para pendentes se o cliente nao for avisado em 3 minutos).
+              // devolve para pendentes se o cliente nao for avisado em 6 minutos).
               // O GPS e ligado em seguida e o acompanhamento continua tentando sozinho.
               const lerGps = (opcoes) =>
                 new Promise((resolve, reject) => {

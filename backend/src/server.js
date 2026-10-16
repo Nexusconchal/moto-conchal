@@ -32,7 +32,7 @@ const RIDE_EXPIRE_MINUTES = Number(process.env.RIDE_EXPIRE_MINUTES || process.en
 const DELIVERY_EXPIRE_MINUTES = Number(process.env.DELIVERY_EXPIRE_MINUTES || 15);
 const RIDE_EXPIRE_MS = RIDE_EXPIRE_MINUTES * 60 * 1000;
 const DELIVERY_EXPIRE_MS = DELIVERY_EXPIRE_MINUTES * 60 * 1000;
-const ACCEPTED_NOTICE_MS = Number(process.env.ACCEPTED_NOTICE_MINUTES || 3) * 60 * 1000;
+const ACCEPTED_NOTICE_MS = Number(process.env.ACCEPTED_NOTICE_MINUTES || 6) * 60 * 1000;
 const DUPLICATE_RIDE_MS = Number(process.env.DUPLICATE_RIDE_SECONDS || 45) * 1000;
 const MP_API = 'https://api.mercadopago.com';
 const BACKEND_BASE_URL = String(process.env.BACKEND_BASE_URL || 'https://motoboy-conchal.onrender.com').replace(/\/$/, '');
@@ -3694,6 +3694,56 @@ async function notifyDriversAboutDelivery(deliveryId, delivery) {
   };
 }
 
+function clientWhatsappNumber(ride = {}) {
+  const phone = onlyDigits(ride.telefoneCliente);
+  return phone.length === 10 || phone.length === 11 ? `55${phone}` : '';
+}
+
+// Enviado pelo WhatsApp da MotoJa no aceite: o cliente recebe o motoboy e o link
+// de pagamento mesmo que o motoboy nao aperte "Avisar cliente".
+function rideAcceptedClientMessage(rideId, ride = {}) {
+  const valor = money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const driverUrl = BACKEND_BASE_URL ? `${BACKEND_BASE_URL}/corrida/${rideId}` : '';
+  const standalone = isStandaloneDelivery(ride);
+  const rota = standalone
+    ? `Buscar em: ${ride.origem || '-'}\nEntregar em: ${ride.destino || '-'}\nQuem recebe: ${ride.nomeRecebedor || '-'}`
+    : `Origem: ${ride.origem || '-'}\nDestino: ${ride.destino || '-'}`;
+  const codigo = standalone && ride.codigoEntrega
+    ? `\n\nCodigo de entrega: ${ride.codigoEntrega}. Passe o codigo para quem recebe; o motoboy so finaliza com ele.`
+    : '';
+  return `Ola, ${ride.nome || 'cliente'}! O motoboy ${ride.motoboy || 'MotoJa Conchal'} aceitou ${standalone ? 'a sua entrega' : 'a sua corrida'} pela Nexus MotoJa e esta indo ate voce.\n\nValor: ${valor}\n${rota}${driverUrl ? `\n\nAcompanhe o motoboy:\n${driverUrl}` : ''}${codigo}\n\n${ridePaymentInstructions(ride)}`;
+}
+
+async function notifyClientRideAccepted(rideRef, ride = {}) {
+  const number = clientWhatsappNumber(ride);
+  let result;
+  if (!ride.pagamento?.initPoint) result = { sent: false, reason: 'sem_link_pagamento' };
+  else if (!number) result = { sent: false, reason: 'telefone_cliente_invalido' };
+  else {
+    result = await Promise.race([
+      sendEvolutionText(number, rideAcceptedClientMessage(rideRef.id, ride)),
+      new Promise((resolve) => setTimeout(() => resolve({ sent: false, reason: 'timeout' }), 15000))
+    ]).catch((error) => ({ sent: false, reason: error.code || error.message || 'envio_falhou' }));
+  }
+  // So marca se a corrida ainda esta com o mesmo motoboy.
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(rideRef);
+    const current = snap.data() || {};
+    if (!snap.exists || current.status !== 'aceita' || onlyDigits(current.motoboyCpf) !== onlyDigits(ride.motoboyCpf)) return;
+    tx.update(rideRef, {
+      clienteAvisoAutomatico: { enviado: !!result?.sent, motivo: result?.sent ? '' : String(result?.reason || ''), emMs: Date.now() }
+    });
+  });
+  return result;
+}
+
+async function notifyClientRideReopened(ride = {}) {
+  const number = clientWhatsappNumber(ride);
+  if (!number) return { sent: false, reason: 'telefone_cliente_invalido' };
+  const text = `Ola, ${ride.nome || 'cliente'}. O motoboy ${ride.motoboy || 'MotoJa'} nao confirmou a saida pelo app, entao estamos procurando outro motoboy para voce.\n\nSe ele ja estiver com voce, pague pelo link que enviamos antes, para a corrida ficar registrada.`;
+  return sendEvolutionText(number, text);
+}
+
 async function cleanupRides() {
   const now = Date.now();
   const batch = db.batch();
@@ -3745,11 +3795,15 @@ async function cleanupRides() {
   // Reabre em transacao, conferindo de novo: se o motoboy avisou o cliente (ou a
   // corrida mudou) depois da leitura acima, ela continua com ele.
   for (const rideRef of lateNoticeRides) {
+    let reopenedRide = null;
     const reopened = await db.runTransaction(async (tx) => {
       const snap = await tx.get(rideRef);
       const data = snap.data() || {};
       const acceptedAt = timestampMs(data.aceitaEm);
       if (!snap.exists || data.status !== 'aceita' || data.clienteAvisadoEm || !acceptedAt || Date.now() - acceptedAt <= ACCEPTED_NOTICE_MS) return false;
+      // O cliente ja recebeu o link de pagamento no aceite: ele continua valendo.
+      const clienteRecebeuLink = !!data.clienteAvisoAutomatico?.enviado;
+      reopenedRide = data;
       tx.update(rideRef, {
         status: 'pendente',
         motoboy: '',
@@ -3757,11 +3811,20 @@ async function cleanupRides() {
         motoboyCnh: '',
         motoboyTelefone: '',
         motoboyFoto: admin.firestore.FieldValue.delete(),
-        // O link de pagamento era do motoboy anterior e o cliente ainda nao o recebeu.
-        ...(data.pagamento?.status === 'approved' ? {} : { pagamento: admin.firestore.FieldValue.delete() }),
+        // Sem o link enviado ao cliente, o pagamento era so do motoboy anterior.
+        ...(data.pagamento?.status === 'approved' || clienteRecebeuLink ? {} : { pagamento: admin.firestore.FieldValue.delete() }),
         aceitaEm: null,
         reabertaEm: admin.firestore.FieldValue.serverTimestamp(),
         motivoReabertura: `Backend reabriu: motoboy ${cleanText(data.motoboy || '', 80) || 'sem nome'} aceitou e nao avisou o cliente em ${Math.round(ACCEPTED_NOTICE_MS / 60000)} minutos`,
+        // Historico para o painel do dono: quem aceitou e deixou a corrida voltar.
+        reaberturas: [...(Array.isArray(data.reaberturas) ? data.reaberturas : []), {
+          motoboy: cleanText(data.motoboy || '', 80),
+          motoboyCpf: data.motoboyCpf || '',
+          motoboyTelefone: data.motoboyTelefone || '',
+          aceitaEmMs: acceptedAt,
+          reabertaEmMs: Date.now(),
+          clienteRecebeuLink
+        }].slice(-10),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
       return true;
@@ -3772,6 +3835,9 @@ async function cleanupRides() {
     if (reopened) {
       releasedAvailabilityRides.push(rideRef.id);
       updated += 1;
+      if (reopenedRide?.clienteAvisoAutomatico?.enviado) {
+        notifyClientRideReopened(reopenedRide).catch((error) => console.error('ride reopen client whatsapp failed', rideRef.id, error));
+      }
     }
   }
 
@@ -10599,6 +10665,15 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
         ownerPaymentError.code = ownerPaymentError.code || 'mercadopago_indisponivel';
         throw ownerPaymentError;
       }
+    }
+
+    if (payment?.initPoint) {
+      notifyClientRideAccepted(rideRef, {
+        ...acceptedRide,
+        motoboy: driver.nome || req.body.driverName || '',
+        motoboyCpf: driverCpf,
+        pagamento: { initPoint: payment.initPoint }
+      }).catch((error) => console.error('ride accepted client whatsapp failed', rideRef.id, error));
     }
 
     res.json({
