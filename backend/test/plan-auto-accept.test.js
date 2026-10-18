@@ -11,13 +11,15 @@ const planDelivery = (extra = {}) => ({
 function setup(delivery = planDelivery(), driver = { nome: 'Joao Pedro', telefone: '19988887777', status: 'ativo' }) {
   const h = harness({ [`empresas/${companyId}`]: { saldo: 100, reservado: 4 }, [`motoboys/${driverCpf}`]: driver, 'entregas/d': delivery });
   const timers = [];
-  const sent = { telegram: [], whatsapp: [] };
+  const sent = { telegram: [], whatsapp: [], group: [] };
   Object.assign(h.context, {
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return { unref() {} }; }, clearTimeout: () => {},
     escapeTelegram: (value) => String(value), AbortSignal: { timeout: () => undefined },
     process: { env: { TELEGRAM_BOT_TOKEN: 'test-token', TELEGRAM_CHAT_ID: 'group' } },
     fetch: async (_url, options) => { sent.telegram.push(JSON.parse(options.body).text); return { ok: true, json: async () => ({ result: { message_id: 1 } }) }; },
-    sendEvolutionText: async (number, text) => { sent.whatsapp.push({ number, text }); return { sent: true }; }
+    sendEvolutionText: async (number, text) => { sent.whatsapp.push({ number, text }); return { sent: true }; },
+    sendEvolutionGroupMessage: async (jid, text) => { sent.group.push({ jid, text }); return { sent: true }; },
+    supportAutomation: { config: async () => ({ enabled: true, groupAlerts: true, driverGroupJid: 'motoboys@g.us' }) }
   });
   const collection = h.context.db.collection;
   h.context.db.collection = (name) => ({
@@ -34,7 +36,7 @@ function setup(delivery = planDelivery(), driver = { nome: 'Joao Pedro', telefon
   return { ...h, timers, sent };
 }
 
-test('the fixed plan motoboy accepts on his own and only he is told (WhatsApp), nothing goes to the group', async () => {
+test('the fixed plan motoboy accepts on his own; he gets WhatsApp and both groups see it already has a motoboy', async () => {
   const h = setup();
   const before = Date.now();
   const auto = await h.context.autoAcceptPlanDelivery('d');
@@ -46,15 +48,45 @@ test('the fixed plan motoboy accepts on his own and only he is told (WhatsApp), 
   assert.equal(delivery.aceiteAutomaticoPlano, true);
   assert.ok(delivery.autoFinalizarEmMs >= before + 60000 && delivery.autoFinalizarEmMs <= Date.now() + 60000);
   assert.deepEqual(h.timers.map((timer) => timer.ms), [60000]);
-  assert.equal(h.sent.telegram.length, 0);
+  assert.equal(h.sent.telegram.length, 1);
+  assert.match(h.sent.telegram[0], /JA TEM MOTOBOY/);
+  assert.match(h.sent.telegram[0], /Joao Pedro/);
+  assert.equal(h.sent.group.length, 1);
+  assert.equal(h.sent.group[0].jid, 'motoboys@g.us');
+  assert.match(h.sent.group[0].text, /Joao Pedro/);
   assert.equal(h.sent.whatsapp[0].number, '5519988887777');
   assert.match(h.sent.whatsapp[0].text, /Rua B, 20/);
   assert.match(h.sent.whatsapp[0].text, /Ver ganhos/);
 
   const again = await h.context.autoAcceptPlanDelivery('d');
   assert.deepEqual({ ...again }, { accepted: false, reason: 'entrega_nao_pendente' });
-  assert.equal(h.sent.telegram.length, 0);
+  assert.equal(h.sent.telegram.length, 1);
+  assert.equal(h.sent.group.length, 1);
   assert.equal(h.sent.whatsapp.length, 1);
+});
+
+test('app notification goes to every motoboy; the fixed one is told the delivery is already his', async () => {
+  const other = '98765432100';
+  const h = setup();
+  h.records.set(`motoboys/${driverCpf}`, { nome: 'Joao Pedro', status: 'ativo', fcmTokens: { fixo: { ativo: true } } });
+  h.records.set(`motoboys/${other}`, { nome: 'Outro', status: 'ativo', fcmTokens: { outro: { ativo: true }, velho: { ativo: false } } });
+  const collection = h.context.db.collection;
+  h.context.db.collection = (name) => ({
+    ...collection(name),
+    where: () => ({ get: async () => ({ docs: [...h.records.keys()].filter((key) => key.startsWith('motoboys/')).map((key) => ({ id: key.split('/')[1], data: () => h.records.get(key) })) }) })
+  });
+  const pushes = [];
+  h.context.admin = { ...h.context.admin, messaging: () => ({ sendEachForMulticast: async (message) => { pushes.push(message); return { successCount: message.tokens.length, failureCount: 0 }; } }) };
+  h.context.appUrl = (path) => path;
+  h.fn('notifyDriversAboutDelivery');
+
+  const result = await h.context.notifyDriversAboutDelivery('d', planDelivery());
+  assert.equal(result.sent, 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(pushes.map((push) => [push.tokens, push.notification.title]))), [[['outro'], 'Nova entrega Nexus MotoJa'], [['fixo'], 'Entrega do plano ja e sua']]);
+
+  pushes.length = 0;
+  await h.context.notifyDriversAboutDelivery('d', planDelivery(), { onlyReserved: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(pushes.map((push) => push.tokens))), [['fixo']]);
 });
 
 test('one minute later it finishes by itself: company is debited and the motoboy earning is recorded once', async () => {
@@ -106,14 +138,15 @@ test('a failed auto finish leaves the queue instead of retrying forever', async 
   assert.match(h.records.get('entregas/d').autoFinalizarErro, /reserva/);
 });
 
-test('new plan delivery never goes to the Telegram group: it is accepted for the fixed motoboy and only he gets WhatsApp', async () => {
+test('new plan delivery: the Telegram group sees it already has the fixed motoboy instead of an open call to accept', async () => {
   const h = setup();
   const telegram = await h.context.notifyTelegramAboutDelivery('d', planDelivery());
-  assert.equal(telegram.skipped, 'entrega_do_plano_so_para_o_motoboy_fixo');
-  assert.equal(h.sent.telegram.length, 0);
+  assert.equal(telegram.sent, true);
+  assert.equal(h.sent.telegram.length, 1);
+  assert.doesNotMatch(h.sent.telegram[0], /NOVA ENTREGA EMPRESARIAL/);
   assert.equal(h.sent.whatsapp.length, 1);
   assert.equal(h.records.get('entregas/d').status, 'aceita');
   assert.equal((await h.context.notifyTelegramAboutDelivery('d', planDelivery())).skipped, 'entrega_nao_pendente');
-  assert.equal(h.sent.telegram.length, 0);
+  assert.equal(h.sent.telegram.length, 1);
   assert.equal(h.sent.whatsapp.length, 1);
 });

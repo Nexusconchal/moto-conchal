@@ -2785,11 +2785,11 @@ async function notifyTelegramAboutRide(rideId, ride) {
 }
 
 async function notifyTelegramAboutDelivery(deliveryId, delivery) {
-  // Entrega do plano com motoboy fixo: ele aceita sozinho e e avisado no WhatsApp
-  // dele. Nada vai para o grupo: os outros motoboys nao veem essa entrega.
+  // Entrega do plano com motoboy fixo: ele aceita sozinho e o grupo recebe o aviso
+  // de que ela ja tem motoboy (so ele ve e pega no app).
   if (onlyDigits(delivery.motoboyExclusivoCpf).length === 11) {
     const auto = await autoAcceptPlanDelivery(deliveryId);
-    return { sent: false, skipped: auto.accepted ? 'entrega_do_plano_so_para_o_motoboy_fixo' : auto.reason };
+    return auto.accepted ? auto.telegram : { sent: false, skipped: auto.reason };
   }
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
@@ -3667,50 +3667,45 @@ async function runCustomerReminderTick(date = new Date()) {
   }, { merge: true });
 }
 
-async function notifyDriversAboutDelivery(deliveryId, delivery) {
-  // Entrega do plano com motoboy fixo ja e dele (aceite automatico): so ele recebe o push.
+async function notifyDriversAboutDelivery(deliveryId, delivery, { onlyReserved = false } = {}) {
+  // Entrega do plano com motoboy fixo: o push vai para todos (mostra que tem
+  // movimento), mas so ele ve e pega; para ele o aviso diz que a entrega ja e dele.
   const reservedCpf = onlyDigits(delivery.motoboyExclusivoCpf);
-  const drivers = reservedCpf.length === 11
-    ? [await db.collection('motoboys').doc(reservedCpf).get()].filter((doc) => doc.exists && doc.data()?.status !== 'bloqueado')
-    : await db.collection('motoboys').where('status', '==', 'ativo').get();
+  const reserved = reservedCpf.length === 11;
+  const reservedDriver = reserved ? await db.collection('motoboys').doc(reservedCpf).get() : null;
+  const drivers = onlyReserved ? [] : (await db.collection('motoboys').where('status', '==', 'ativo').get()).docs || [];
   const tokens = [];
-
-  drivers.forEach((doc) => {
-    const data = doc.data();
-    const saved = data.fcmTokens || {};
-    Object.entries(saved).forEach(([token, info]) => {
-      if (info?.ativo !== false) tokens.push(token);
+  const reservedTokens = [];
+  const collect = (doc, list) => {
+    Object.entries(doc.data()?.fcmTokens || {}).forEach(([token, info]) => {
+      if (info?.ativo !== false) list.push(token);
     });
-  });
+  };
+  drivers.forEach((doc) => { if (!reserved || doc.id !== reservedCpf) collect(doc, tokens); });
+  if (reservedDriver?.exists && reservedDriver.data()?.status !== 'bloqueado') collect(reservedDriver, reservedTokens);
 
-  if (!tokens.length) return { sent: 0, failed: 0 };
-
-  const response = await admin.messaging().sendEachForMulticast({
-    tokens,
-    notification: {
-      title: reservedCpf.length === 11 ? 'Entrega do plano ja e sua' : 'Nova entrega Nexus MotoJa',
-      body: `${delivery.empresa || 'Empresa'}${delivery.entregaNaNota ? ` — lote de ${delivery.paradas} entregas, enderecos nas notas` : ''} - ${money(delivery.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`
-    },
-    webpush: {
-      fcmOptions: {
-        link: appUrl('/motoboy.html?aba=entregas')
-      }
-    },
-    data: {
-      deliveryId,
-      tipo: 'nova_entrega'
-    }
-  });
+  const body = `${delivery.empresa || 'Empresa'}${delivery.entregaNaNota ? ` — lote de ${delivery.paradas} entregas, enderecos nas notas` : ''} - ${money(delivery.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`;
+  const send = (list, title) => (list.length ? admin.messaging().sendEachForMulticast({
+    tokens: list,
+    notification: { title, body },
+    webpush: { fcmOptions: { link: appUrl('/motoboy.html?aba=entregas') } },
+    data: { deliveryId, tipo: 'nova_entrega' }
+  }) : Promise.resolve({ successCount: 0, failureCount: 0 }));
+  const responses = await Promise.all([
+    send(tokens, 'Nova entrega Nexus MotoJa'),
+    send(reservedTokens, 'Entrega do plano ja e sua')
+  ]);
 
   return {
-    sent: response.successCount,
-    failed: response.failureCount
+    sent: responses.reduce((total, response) => total + response.successCount, 0),
+    failed: responses.reduce((total, response) => total + response.failureCount, 0)
   };
 }
 
 // Entrega do plano com motoboy fixo: o servidor aceita no nome dele, avisa no
-// WhatsApp dele (e push so para ele) e finaliza sozinho 1 minuto depois. O ganho
-// entra em Ver ganhos como qualquer entrega finalizada. Nada vai para o grupo.
+// WhatsApp dele e nos grupos (Telegram e WhatsApp, para mostrar o movimento) e
+// finaliza sozinho 1 minuto depois. O ganho entra em Ver ganhos como qualquer
+// entrega finalizada.
 const PLAN_AUTO_FINISH_MS = 60 * 1000;
 const planAutoFinishTimers = new Map();
 const planAutoFinishRunning = new Set();
@@ -3726,6 +3721,48 @@ function planDeliveryLines(delivery = {}) {
     delivery.descricao ? `Pedido: ${delivery.descricao}` : '',
     delivery.observacao ? `Obs: ${delivery.observacao}` : ''
   ].filter(Boolean);
+}
+
+async function notifyTelegramAboutPlanDelivery(deliveryId, delivery) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) return { sent: false, skipped: true };
+  const ganho = deliverySplit(delivery).driverAmount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const message = [
+    '<b>ENTREGA DO PLANO — JA TEM MOTOBOY</b>',
+    '',
+    `<b>Empresa:</b> ${escapeTelegram(delivery.empresa || '-')}`,
+    `<b>Motoboy fixo do plano:</b> ${escapeTelegram(delivery.motoboy || '-')}`,
+    `<b>Ganho do motoboy:</b> ${escapeTelegram(ganho)}`,
+    ...planDeliveryLines(delivery).map(escapeTelegram),
+    '',
+    'Ja foi aceita automaticamente por ele e finaliza sozinha em 1 minuto. Nao precisa aceitar.',
+    '',
+    `Codigo: <code>${escapeTelegram(deliveryId)}</code>`
+  ].join('\n');
+  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML', disable_web_page_preview: true }),
+    signal: AbortSignal.timeout(10000)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.description || `Telegram error ${response.status}`);
+  return { sent: true, messageId: data.result?.message_id || null };
+}
+
+async function notifyWhatsappGroupAboutPlanDelivery(deliveryId, delivery) {
+  const settings = await supportAutomation.config();
+  if (!settings.enabled || !settings.groupAlerts || !settings.driverGroupJid) return { sent: false, skipped: true };
+  const value = money(delivery.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const text = [
+    'NOVA ENTREGA NEXUS MOTOJÁ — PLANO',
+    `Entrega do plano da ${delivery.empresa || 'empresa'}: ${value}.`,
+    `Já ficou com o motoboy fixo do plano: ${delivery.motoboy || '-'}. Não precisa aceitar.`,
+    'Fique disponível no app para pegar as próximas.',
+    `Código: ${deliveryId}`
+  ].join('\n');
+  return sendEvolutionGroupMessage(settings.driverGroupJid, text);
 }
 
 async function notifyPlanDriverWhatsapp(deliveryId, delivery) {
@@ -3778,11 +3815,16 @@ async function autoAcceptPlanDelivery(deliveryId) {
   adminStateCache = null;
   emitDeliveryTracking(accepted.empresaId || accepted.telefoneEmpresa, { deliveryId: deliveryRef.id, status: 'aceita', rastreamentoAtivo: false });
   schedulePlanAutoFinish(deliveryRef.id, PLAN_AUTO_FINISH_MS);
-  const whatsapp = await notifyPlanDriverWhatsapp(deliveryRef.id, accepted).catch((error) => {
-    console.error('whatsapp plan driver notify failed', deliveryRef.id, error);
+  const failed = (label) => (error) => {
+    console.error(label, deliveryRef.id, error);
     return { sent: false, failed: true };
-  });
-  return { accepted: true, whatsapp, delivery: accepted };
+  };
+  const [telegram, whatsapp, whatsappGroup] = await Promise.all([
+    notifyTelegramAboutPlanDelivery(deliveryRef.id, accepted).catch(failed('telegram plan delivery notify failed')),
+    notifyPlanDriverWhatsapp(deliveryRef.id, accepted).catch(failed('whatsapp plan driver notify failed')),
+    notifyWhatsappGroupAboutPlanDelivery(deliveryRef.id, accepted).catch(failed('whatsapp group plan delivery notify failed'))
+  ]);
+  return { accepted: true, telegram, whatsapp, whatsappGroup, delivery: accepted };
 }
 
 function schedulePlanAutoFinish(deliveryId, delayMs) {
@@ -5059,7 +5101,7 @@ app.post('/api/admin/plans/:key/driver', assertOwner, async (req, res, next) => 
         });
         if (!auto.accepted) continue;
         acceptedDeliveries += 1;
-        notifyDriversAboutDelivery(id, auto.delivery).catch((error) => console.error('push plan driver failed', id, error));
+        notifyDriversAboutDelivery(id, auto.delivery, { onlyReserved: true }).catch((error) => console.error('push plan driver failed', id, error));
       }
     }
     return res.json({ ok: true, motoboy: cpf ? { cpf, nome: assignment.motoboyExclusivoNome } : null, entregasAtualizadas: updatedIds.length, entregasAceitas: acceptedDeliveries });
