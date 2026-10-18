@@ -203,7 +203,7 @@
     section.id = "planos-section";
     section.className = "box owner-plans";
     section.innerHTML = `
-      <div class="owner-plans-head"><div><h2>Planos ativados</h2><p class="muted">Últimos 30 dias. Ao escolher um motoboy, as entregas desse plano só aparecem para ele aceitar enquanto o plano estiver valendo (a notificação continua indo para todos). A empresa continua chamando pelo app normalmente.</p></div></div>
+      <div class="owner-plans-head"><div><h2>Planos ativados</h2><p class="muted">Últimos 30 dias. Ao escolher um motoboy, ele fica fixo no plano: cada entrega desse plano é aceita automaticamente por ele, o app avisa no Telegram e no WhatsApp dele e a entrega finaliza sozinha em 1 minuto (o ganho aparece em Ver ganhos). A empresa continua chamando pelo app normalmente.</p></div></div>
       <div class="owner-plans-filter" role="group" aria-label="Filtrar planos"><button type="button" data-plans-filter="ativos" aria-pressed="true">Valendo agora</button><button type="button" data-plans-filter="todos" aria-pressed="false">Todos</button></div>
       <div id="ownerPlansList" class="owner-plans-list"><div class="owner-support-empty">Aguardando dados do painel...</div></div>`;
     panel.appendChild(section);
@@ -253,14 +253,14 @@
     const select = [...document.querySelectorAll("[data-plan-driver]")].find((item) => item.dataset.planDriver === key);
     const cpf = select?.value || "";
     const label = cpf ? select.options[select.selectedIndex].textContent : "todos os motoboys";
-    if (!confirm(cpf ? `Reservar as entregas deste plano só para ${label}?` : "Liberar as entregas deste plano para todos os motoboys?")) return;
+    if (!confirm(cpf ? `Deixar ${label} fixo neste plano? As entregas serão aceitas automaticamente por ele e finalizadas sozinhas em 1 minuto.` : "Liberar as entregas deste plano para todos os motoboys?")) return;
     save.disabled = true;
     save.textContent = "Salvando...";
     try {
       const response = await fetch(`${getBackendUrl()}/api/admin/plans/${encodeURIComponent(key)}/driver`, { method: "POST", headers: { "content-type": "application/json", "x-owner-password": getOwnerPassword() }, body: JSON.stringify({ cpf }) });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || data.error || "Não consegui salvar o motoboy do plano.");
-      alert(cpf ? `Pronto: as entregas deste plano agora vão só para ${data.motoboy?.nome || "o motoboy escolhido"}.${data.entregasAtualizadas ? ` ${data.entregasAtualizadas} entrega(s) esperando também foram reservadas.` : ""}` : "Pronto: as entregas deste plano voltaram a aparecer para todos os motoboys.");
+      alert(cpf ? `Pronto: ${data.motoboy?.nome || "o motoboy escolhido"} ficou fixo neste plano. Cada entrega nova é aceita por ele na hora, ele recebe aviso no Telegram e no WhatsApp e ela finaliza sozinha em 1 minuto.${data.entregasAceitas ? ` ${data.entregasAceitas} entrega(s) que estavam esperando já ficaram com ele.` : ""}` : "Pronto: as entregas deste plano voltaram a aparecer para todos os motoboys.");
       if (typeof window.carregarPainel === "function") await window.carregarPainel();
     } catch (error) {
       alert(error.message || "Não consegui salvar o motoboy do plano.");

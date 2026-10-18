@@ -210,10 +210,10 @@ test('company summary enables the daily plan (R$ 10 in districts) only when acti
 });
 
 test('batch finish needs explicit whole-lot confirmation, pickup and fresh GPS; addressed delivery still needs destination proximity', () => {
-  const start = source.indexOf('      if (!exclusiveService && !approvalCompanyId) {', source.indexOf('async function finishCompanyDelivery('));
+  const start = source.indexOf('      if (!exclusiveService && !approvalCompanyId && !planAuto) {', source.indexOf('async function finishCompanyDelivery('));
   const end = source.indexOf('      if (protectedDelivery(delivery)', start);
   const context = vm.createContext({ timestampMs: Number, coordinateDistanceKm: () => 100 });
-  vm.runInContext(`function validate(delivery, req) { const exclusiveService = false, approvalCompanyId = '', body = req.body; ${source.slice(start, end)} }`, context);
+  vm.runInContext(`function validate(delivery, req) { const exclusiveService = false, approvalCompanyId = '', planAuto = false, body = req.body; ${source.slice(start, end)} }`, context);
   const d = { entregaNaNota: true, retiradaConfirmadaEm: Date.now() - 60000, motoboyLocalizacao: { serverTimestampMs: Date.now() } };
   assert.throws(() => context.validate(d, { body: {} }), /todas as entregas/);
   assert.doesNotThrow(() => context.validate(d, { body: { confirmarLoteEntregue: true } }));
@@ -225,9 +225,9 @@ test('batch finish needs explicit whole-lot confirmation, pickup and fresh GPS; 
 test('finish authorization still rejects another driver, a cancelled batch and repeated debit', () => {
   const route = source.indexOf('async function finishCompanyDelivery(');
   const start = source.indexOf('      const delivery = deliverySnap.data();', route);
-  const end = source.indexOf('      if (!exclusiveService && !approvalCompanyId) {', start);
+  const end = source.indexOf('      if (!exclusiveService && !approvalCompanyId && !planAuto) {', start);
   const ctx = vm.createContext({ protectedDelivery, assertCompanyDelivery, onlyDigits: s => String(s || '').replace(/\D/g, '') });
-  vm.runInContext(`function validate(data) { const approvalCompanyId = '', driverCpf = '12345678901', deliverySnap = {data: () => data}; ${source.slice(start,end)} }`, ctx);
+  vm.runInContext(`function validate(data) { const approvalCompanyId = '', planAuto = false, driverCpf = '12345678901', deliverySnap = {data: () => data}; ${source.slice(start,end)} }`, ctx);
   const batch = { entregaNaNota: true, status: 'retirada', motoboyCpf: '12345678901' };
   assert.doesNotThrow(() => ctx.validate(batch));
   assert.throws(() => ctx.validate({ ...batch, motoboyCpf: '99999999999' }), /nao pertence/);

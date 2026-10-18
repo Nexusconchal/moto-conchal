@@ -63,17 +63,21 @@ test('owner chooses the motoboy: plan, mirror and waiting deliveries follow; cle
     ['motoboys/' + A, { nome: 'Ana', status: 'bloqueado' }],
     ['entregas/p1', { status: 'pendente', planoAtivacaoChave: key }],
     ['entregas/p2', { status: 'aceita', planoAtivacaoChave: key, motoboyCpf: A }]]);
-  const { ctx, routes } = context(records);
+  const autoAccepted = [];
+  const { ctx, routes } = context(records, { autoAcceptPlanDelivery: async id => { autoAccepted.push(id); return { accepted: true, delivery: {} }; }, notifyDriversAboutDelivery: async () => ({}) });
   vm.runInContext(slice("app.post('/api/admin/plans/:key/driver'", "\napp.post("), ctx);
   const choose = cpf => call(routes['/api/admin/plans/:key/driver'], { params: { key }, body: { cpf } });
   assert.equal((await choose(A)).status, 409);
   const ok = await choose(B);
   assert.equal(ok.data.entregasAtualizadas, 1);
+  assert.equal(ok.data.entregasAceitas, 1);
+  assert.deepEqual(autoAccepted, ['p1']);
   assert.equal(records.get(`planosAtivados/${key}`).motoboyExclusivoCpf, B);
   assert.equal(records.get(`empresas/${company}/planosDiarios/2026-10-12`).motoboyExclusivoCpf, B);
   assert.equal(records.get('entregas/p1').motoboyExclusivoCpf, B);
   assert.equal(records.get('entregas/p2').motoboyExclusivoCpf, undefined);
   await choose('');
+  assert.deepEqual(autoAccepted, ['p1']);
   assert.equal(records.get('entregas/p1').motoboyExclusivoCpf, undefined);
   assert.equal(records.get(`planosAtivados/${key}`).motoboyExclusivoCpf, undefined);
   assert.equal((await call(routes['/api/admin/plans/:key/driver'], { params: { key: '../x' }, body: {} })).status, 400);
