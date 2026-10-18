@@ -2998,6 +2998,24 @@
         return textoBusca(resultado).includes(esperado);
       }
       function resultadoEnderecoConfiavel(entrada, props, formatado) {
+        // Mesma palavra do nome da rua, tolerando letra dobrada (Pradela/Pradella),
+        // y/i, ph/f, th/t e, em nomes de 5+ letras, uma letra trocada/faltando.
+        function mesmaPalavraRua(a, b) {
+          if (a === b) return true;
+          const simples = (p) => p.replace(/ph/g, "f").replace(/th/g, "t").replace(/y/g, "i").replace(/(.)\1+/g, "$1");
+          const x = simples(a), y = simples(b);
+          if (x === y) return true;
+          if (/\d/.test(x) || /\d/.test(y) || Math.min(x.length, y.length) < 5 || x[0] !== y[0] || Math.abs(x.length - y.length) > 1) return false;
+          let i = 0, j = 0, diferencas = 0;
+          while (i < x.length && j < y.length) {
+            if (x[i] === y[j]) { i++; j++; continue; }
+            if (++diferencas > 1) return false;
+            if (x.length > y.length) i++;
+            else if (y.length > x.length) j++;
+            else { i++; j++; }
+          }
+          return diferencas + (x.length - i) + (y.length - j) <= 1;
+        }
         // Rua conferida no cadastro oficial de Conchal (IBGE + OSM) pelo servidor.
         if (props && props.match_confirmed === true && ["ibge-cnefe-2022", "osm"].includes(props.match_source)) return true;
         const normalizar = normalizarNomeRuaMapa;
@@ -3014,8 +3032,8 @@
         const encontrada = normalizar(props.street).replace(/^(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+/, "").split(/[^a-z0-9]+/)
           .filter((p) => (p.length > 1 || /^\d+$/.test(p)) && !["de", "da", "do", "das", "dos", "dr", "dra", "doutor", "doutora", "vereador", "professor", "professora", "prefeito", "presbitero"].includes(p));
         const iniciais = rua[1].split(/[^a-z0-9]+/).filter((p) => /^[a-z]$/.test(p));
-        const restantes = encontrada.filter((p) => !palavras.includes(p));
-        return palavras.length > 0 && palavras.every((p) => encontrada.includes(p)) && restantes.length <= iniciais.length && restantes.every((p) => iniciais.includes(p[0]));
+        const restantes = encontrada.filter((p) => !palavras.some((w) => mesmaPalavraRua(w, p)));
+        return palavras.length > 0 && palavras.every((p) => encontrada.some((f) => mesmaPalavraRua(p, f))) && restantes.length <= iniciais.length && restantes.every((p) => iniciais.includes(p[0]));
       }
       function normalizarNomeRuaMapa(valor) {
         return textoBusca(valor)

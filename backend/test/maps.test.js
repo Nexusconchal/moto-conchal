@@ -97,3 +97,20 @@ test('fallback can use a fresh accurate position but cannot reuse a two-minute-o
   const h=gpsHarness([{error:{code:3}},fix()]);assert.equal((await h.ctx.pegarGpsComFallback()).accuracy,15);assert.equal(h.calls[1].maximumAge,0);
   const bad=gpsHarness([{error:{code:3}},fix({timestamp:Date.now()-120000})]);await assert.rejects(bad.ctx.pegarGpsComFallback(),/aproximado ou desatualizado/);
 });
+test('street spelled with one L or one letter off (Dorival Pradela x Pradella, Limeira) is accepted; other streets are not', async () => {
+  const { addressFeatureMatches, sameStreetWord } = await import('../src/address-search.js');
+  for (const street of ['Rua Dorival Pradella', 'Rua Dorival Pradela', 'Rua Dorival Pradelha']) {
+    assert.equal(context.resultadoEnderecoConfiavel('Rua Dorival Pradela, 140, Limeira', { result_type: 'building', street, housenumber: '140' }), true, street);
+    assert.equal(context.resultadoEnderecoConfiavel('Rua Dorival Pradela, 140, Limeira', { result_type: 'street', street }), true, street);
+    assert.equal(addressFeatureMatches('Rua Dorival Pradela, 140', { result_type: 'street', street }), true, street);
+  }
+  assert.equal(context.resultadoEnderecoConfiavel('Rua Dorival Pradela, 140, Limeira', { result_type: 'street', street: 'Rua Dorival Prado' }), false);
+  assert.equal(context.resultadoEnderecoConfiavel('Rua Dorival Pradela, 140, Limeira', { result_type: 'street', street: 'Rua Doralice Pradela' }), false);
+  assert.equal(context.resultadoEnderecoConfiavel('Rua Dorival Pradela, 140, Limeira', { result_type: 'building', street: 'Rua Dorival Pradella', housenumber: '410' }), false);
+  assert.equal(addressFeatureMatches('Rua Dorival Pradela, 140', { result_type: 'street', street: 'Rua Dorival Prado' }), false);
+  // Short words and numbers stay exact.
+  assert.equal(sameStreetWord('lima', 'lira'), false);
+  assert.equal(sameStreetWord('15', '16'), false);
+  assert.equal(sameStreetWord('pradela', 'pradella'), true);
+  assert.equal(sameStreetWord('anthonio', 'antonio'), true);
+});

@@ -42,6 +42,25 @@ export function mapSearchText(value) {
     .replace(/\bdos Paulo\b/gi, 'dos Paulos');
 }
 
+// Same street word, tolerating a doubled letter (Pradela/Pradella), y/i, ph/f, th/t
+// and, for words with 5+ letters, one changed or missing letter. Numbers must match exactly.
+export function sameStreetWord(a, b) {
+  if (a === b) return true;
+  const simple = word => word.replace(/ph/g, 'f').replace(/th/g, 't').replace(/y/g, 'i').replace(/(.)\1+/g, '$1');
+  const x = simple(a), y = simple(b);
+  if (x === y) return true;
+  if (/\d/.test(x) || /\d/.test(y) || Math.min(x.length, y.length) < 5 || x[0] !== y[0] || Math.abs(x.length - y.length) > 1) return false;
+  let i = 0, j = 0, differences = 0;
+  while (i < x.length && j < y.length) {
+    if (x[i] === y[j]) { i++; j++; continue; }
+    if (++differences > 1) return false;
+    if (x.length > y.length) i++;
+    else if (y.length > x.length) j++;
+    else { i++; j++; }
+  }
+  return differences + (x.length - i) + (y.length - j) <= 1;
+}
+
 export function addressFeatureMatches(value, props = {}) {
   // Endereco ja conferido no cadastro oficial de ruas de Conchal (IBGE/OSM).
   if (props.match_confirmed === true && ['ibge-cnefe-2022', 'osm'].includes(props.match_source)) return true;
@@ -57,6 +76,6 @@ export function addressFeatureMatches(value, props = {}) {
   const found = normalized(props.street).replace(/^(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+/, '').split(/[^a-z0-9]+/)
     .filter(word => (word.length > 1 || /^\d+$/.test(word)) && !['de','da','do','das','dos','dr','dra','doutor','doutora','vereador','professor','professora','prefeito','presbitero'].includes(word));
   const initials = road[1].split(/[^a-z0-9]+/).filter(word => /^[a-z]$/.test(word));
-  const remaining = found.filter(word => !words.includes(word));
-  return words.length > 0 && words.every(word => found.includes(word)) && remaining.length <= initials.length && remaining.every(word => initials.includes(word[0]));
+  const remaining = found.filter(word => !words.some(typed => sameStreetWord(typed, word)));
+  return words.length > 0 && words.every(word => found.some(name => sameStreetWord(word, name))) && remaining.length <= initials.length && remaining.every(word => initials.includes(word[0]));
 }
