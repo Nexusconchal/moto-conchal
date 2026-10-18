@@ -34,7 +34,7 @@ function setup(delivery = planDelivery(), driver = { nome: 'Joao Pedro', telefon
   return { ...h, timers, sent };
 }
 
-test('the fixed plan motoboy accepts on his own and is told on Telegram and WhatsApp', async () => {
+test('the fixed plan motoboy accepts on his own and only he is told (WhatsApp), nothing goes to the group', async () => {
   const h = setup();
   const before = Date.now();
   const auto = await h.context.autoAcceptPlanDelivery('d');
@@ -46,15 +46,14 @@ test('the fixed plan motoboy accepts on his own and is told on Telegram and What
   assert.equal(delivery.aceiteAutomaticoPlano, true);
   assert.ok(delivery.autoFinalizarEmMs >= before + 60000 && delivery.autoFinalizarEmMs <= Date.now() + 60000);
   assert.deepEqual(h.timers.map((timer) => timer.ms), [60000]);
-  assert.match(h.sent.telegram[0], /JA TEM MOTOBOY/);
-  assert.match(h.sent.telegram[0], /Joao Pedro/);
+  assert.equal(h.sent.telegram.length, 0);
   assert.equal(h.sent.whatsapp[0].number, '5519988887777');
   assert.match(h.sent.whatsapp[0].text, /Rua B, 20/);
   assert.match(h.sent.whatsapp[0].text, /Ver ganhos/);
 
   const again = await h.context.autoAcceptPlanDelivery('d');
   assert.deepEqual({ ...again }, { accepted: false, reason: 'entrega_nao_pendente' });
-  assert.equal(h.sent.telegram.length, 1);
+  assert.equal(h.sent.telegram.length, 0);
   assert.equal(h.sent.whatsapp.length, 1);
 });
 
@@ -107,13 +106,14 @@ test('a failed auto finish leaves the queue instead of retrying forever', async 
   assert.match(h.records.get('entregas/d').autoFinalizarErro, /reserva/);
 });
 
-test('new plan delivery: Telegram announces it already has the fixed motoboy instead of asking someone to accept', async () => {
+test('new plan delivery never goes to the Telegram group: it is accepted for the fixed motoboy and only he gets WhatsApp', async () => {
   const h = setup();
   const telegram = await h.context.notifyTelegramAboutDelivery('d', planDelivery());
-  assert.equal(telegram.sent, true);
-  assert.equal(h.sent.telegram.length, 1);
-  assert.doesNotMatch(h.sent.telegram[0], /NOVA ENTREGA EMPRESARIAL/);
+  assert.equal(telegram.skipped, 'entrega_do_plano_so_para_o_motoboy_fixo');
+  assert.equal(h.sent.telegram.length, 0);
+  assert.equal(h.sent.whatsapp.length, 1);
   assert.equal(h.records.get('entregas/d').status, 'aceita');
   assert.equal((await h.context.notifyTelegramAboutDelivery('d', planDelivery())).skipped, 'entrega_nao_pendente');
-  assert.equal(h.sent.telegram.length, 1);
+  assert.equal(h.sent.telegram.length, 0);
+  assert.equal(h.sent.whatsapp.length, 1);
 });

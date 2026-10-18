@@ -2785,12 +2785,11 @@ async function notifyTelegramAboutRide(rideId, ride) {
 }
 
 async function notifyTelegramAboutDelivery(deliveryId, delivery) {
-  // Entrega do plano com motoboy fixo: ele aceita sozinho e o grupo so fica sabendo.
+  // Entrega do plano com motoboy fixo: ele aceita sozinho e e avisado no WhatsApp
+  // dele. Nada vai para o grupo: os outros motoboys nao veem essa entrega.
   if (onlyDigits(delivery.motoboyExclusivoCpf).length === 11) {
     const auto = await autoAcceptPlanDelivery(deliveryId);
-    if (auto.accepted) return auto.telegram;
-    // Ja estava com alguem: nao anuncia de novo. Motoboy bloqueado/sumido: avisa o grupo como sempre.
-    if (auto.reason !== 'motoboy_do_plano_indisponivel') return { sent: false, skipped: auto.reason };
+    return { sent: false, skipped: auto.accepted ? 'entrega_do_plano_so_para_o_motoboy_fixo' : auto.reason };
   }
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
@@ -3710,8 +3709,8 @@ async function notifyDriversAboutDelivery(deliveryId, delivery) {
 }
 
 // Entrega do plano com motoboy fixo: o servidor aceita no nome dele, avisa no
-// Telegram e no WhatsApp dele e finaliza sozinho 1 minuto depois. O ganho entra
-// em Ver ganhos como qualquer entrega finalizada.
+// WhatsApp dele (e push so para ele) e finaliza sozinho 1 minuto depois. O ganho
+// entra em Ver ganhos como qualquer entrega finalizada. Nada vai para o grupo.
 const PLAN_AUTO_FINISH_MS = 60 * 1000;
 const planAutoFinishTimers = new Map();
 const planAutoFinishRunning = new Set();
@@ -3727,34 +3726,6 @@ function planDeliveryLines(delivery = {}) {
     delivery.descricao ? `Pedido: ${delivery.descricao}` : '',
     delivery.observacao ? `Obs: ${delivery.observacao}` : ''
   ].filter(Boolean);
-}
-
-async function notifyTelegramAboutPlanDelivery(deliveryId, delivery) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (!token || !chatId) return { sent: false, skipped: true };
-  const ganho = deliverySplit(delivery).driverAmount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-  const message = [
-    '<b>ENTREGA DO PLANO — JA TEM MOTOBOY</b>',
-    '',
-    `<b>Empresa:</b> ${escapeTelegram(delivery.empresa || '-')}`,
-    `<b>Motoboy fixo do plano:</b> ${escapeTelegram(delivery.motoboy || '-')}`,
-    `<b>Ganho do motoboy:</b> ${escapeTelegram(ganho)}`,
-    ...planDeliveryLines(delivery).map(escapeTelegram),
-    '',
-    'Ja foi aceita automaticamente por ele e finaliza sozinha em 1 minuto. Nao precisa aceitar.',
-    '',
-    `Codigo: <code>${escapeTelegram(deliveryId)}</code>`
-  ].join('\n');
-  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML', disable_web_page_preview: true }),
-    signal: AbortSignal.timeout(10000)
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.description || `Telegram error ${response.status}`);
-  return { sent: true, messageId: data.result?.message_id || null };
 }
 
 async function notifyPlanDriverWhatsapp(deliveryId, delivery) {
@@ -3807,17 +3778,11 @@ async function autoAcceptPlanDelivery(deliveryId) {
   adminStateCache = null;
   emitDeliveryTracking(accepted.empresaId || accepted.telefoneEmpresa, { deliveryId: deliveryRef.id, status: 'aceita', rastreamentoAtivo: false });
   schedulePlanAutoFinish(deliveryRef.id, PLAN_AUTO_FINISH_MS);
-  const [telegram, whatsapp] = await Promise.all([
-    notifyTelegramAboutPlanDelivery(deliveryRef.id, accepted).catch((error) => {
-      console.error('telegram plan delivery notify failed', deliveryRef.id, error);
-      return { sent: false, failed: true };
-    }),
-    notifyPlanDriverWhatsapp(deliveryRef.id, accepted).catch((error) => {
-      console.error('whatsapp plan driver notify failed', deliveryRef.id, error);
-      return { sent: false, failed: true };
-    })
-  ]);
-  return { accepted: true, telegram, whatsapp, delivery: accepted };
+  const whatsapp = await notifyPlanDriverWhatsapp(deliveryRef.id, accepted).catch((error) => {
+    console.error('whatsapp plan driver notify failed', deliveryRef.id, error);
+    return { sent: false, failed: true };
+  });
+  return { accepted: true, whatsapp, delivery: accepted };
 }
 
 function schedulePlanAutoFinish(deliveryId, delayMs) {
