@@ -48,7 +48,10 @@
         <div class="mjhome-top">
           <button type="button" class="mjhome-av" data-home-perfil aria-label="Meu perfil"></button>
           <button type="button" class="mjhome-earn" data-home-ganhos aria-label="Ver meus ganhos"><small>HOJE</small><b data-home-ganho>R$ --</b></button>
-          <button type="button" class="mjhome-round" data-home-centralizar aria-label="Centralizar no meu GPS">◎</button>
+          <div class="mjhome-right">
+            <img class="mjhome-logo" src="./nexus-motoja-icon-192.png?v=173" alt="Nexus MotoJÁ">
+            <button type="button" class="mjhome-round" data-home-centralizar aria-label="Centralizar no meu GPS">◎</button>
+          </div>
         </div>
         <div class="mjhome-searching" data-home-procurando hidden>
           <span class="mjhome-radar" aria-hidden="true"></span>

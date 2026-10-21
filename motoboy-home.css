@@ -849,3 +849,30 @@ body[data-tela="perfil"] #lista {
   grid-auto-columns: 1fr;
   gap: 8px;
 }
+
+.mjhome-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mjhome-logo {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: 14px;
+  background: #050505;
+  border: 1px solid rgba(255, 157, 0, 0.45);
+  padding: 3px;
+  object-fit: contain;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+@media (max-width: 360px) {
+  .mjhome-logo {
+    width: 38px;
+    height: 38px;
+  }
+  .mjhome-earn {
+    padding: 9px 13px;
+    font-size: 16px;
+  }
+}
