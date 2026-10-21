@@ -1052,7 +1052,7 @@
       </section>
     </main>
     <script src="./driver-availability.js?v=226"></script>
-    <script src="./motoboy-nav.js?v=2" defer></script>
+    <script src="./motoboy-nav.js?v=3" defer></script>
     <script src="./motoboy-home.js?v=2" defer></script>
     <script type="module">
       let cidadesAtivas = {
@@ -1333,8 +1333,20 @@
       function kmTexto(km) {
         return Number(km) > 0 ? `${Number(km).toFixed(1).replace(".", ",")} km` : "-";
       }
-      function abrirOfertaMapa(c) {
+      // Fecha a notificacao do celular de uma chamada (ou de todas que ja sairam).
+      function fecharNotificacoesOferta(manter) {
+        navigator.serviceWorker?.getRegistration?.()
+          .then((reg) => reg?.getNotifications?.())
+          .then((lista) =>
+            (lista || []).forEach((n) => {
+              if (String(n.tag || "").startsWith("oferta-") && !manter(n.tag.slice(7))) n.close();
+            }),
+          )
+          .catch(() => {});
+      }
+      function abrirOfertaMapa(c, { alarme = false } = {}) {
         if (!window.MotoNav || !c?.id || servicoExclusivo(c)) return false;
+        fecharNotificacoesOferta((id) => id !== c.id);
         const entrega = servicoEhEntrega(c),
           modoOferta = servicoEhEntrega(c) ? "entregas" : "pendentes",
           criadaMs = (c.criadaEm?.seconds || 0) * 1000,
@@ -1359,6 +1371,7 @@
           expiraEmMs: criadaMs ? criadaMs + tempoLimiteMs(c) : 0,
           duracaoMs: tempoLimiteMs(c),
           textoAceitar: entrega ? "Aceitar entrega" : "Aceitar corrida",
+          alarme,
           onRecusar: () => ofertasRecusadas.add(c.id),
           onExpirar: () => {
             ofertasRecusadas.add(c.id);
@@ -2361,7 +2374,7 @@
               !ofertasRecusadas.has(d.id) &&
               !servicoExclusivo(d.data),
           );
-          if (oferta) abrirOfertaMapa(jobPorId(oferta.id));
+          if (oferta) abrirOfertaMapa(jobPorId(oferta.id), { alarme: true });
         }
         lista.querySelectorAll("[data-ver-mapa]").forEach(
           (btn) => (btn.onclick = () => abrirOfertaMapa(jobPorId(btn.dataset.verMapa))),
@@ -2888,6 +2901,8 @@
           );
           const abertas = listas.flat();
           atualizarContaAbertas(abertas.length);
+          const idsAbertos = new Set(abertas.map((job) => job.id));
+          fecharNotificacoesOferta((id) => idsAbertos.has(id));
           window.dispatchEvent(new CustomEvent("motoja:jobs-rendered", { detail: { kind: "all", scope: "pending", jobs: abertas } }));
           // Uma oferta por vez: as outras continuam na fila para a proxima busca.
           const chave = (job) => `${job.__kind === "deliveries" ? "entregas" : "corridas"}-${job.id}`;
@@ -2895,13 +2910,19 @@
           if (nova && window.MotoNav && !window.MotoNav.aberto()) {
             vistos.add(chave(nova));
             if (audioLiberado) beep();
-            abrirOfertaMapa(nova);
+            abrirOfertaMapa(nova, { alarme: true });
           }
         } finally {
           procurandoChamadas = false;
         }
       }
       setInterval(procurarChamadas, 30000);
+      // O service worker avisa quando chega push de chamada: busca na hora,
+      // sem esperar os 30 segundos.
+      navigator.serviceWorker?.addEventListener("message", (event) => {
+        if (event.data?.tipo !== "motoja:push") return;
+        if (["nova_corrida", "nova_entrega"].includes(event.data.data?.tipo)) procurarChamadas();
+      });
       // Contagem regressiva das chamadas abertas na tela Servicos.
       setInterval(() => {
         document.querySelectorAll("#lista [data-expira]").forEach((el) => {

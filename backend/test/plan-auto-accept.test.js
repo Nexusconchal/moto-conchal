@@ -78,6 +78,7 @@ test('app notification goes to every motoboy; the fixed one is told the delivery
   const pushes = [];
   h.context.admin = { ...h.context.admin, messaging: () => ({ sendEachForMulticast: async (message) => { pushes.push(message); return { successCount: message.tokens.length, failureCount: 0 }; } }) };
   h.context.appUrl = (path) => path;
+  h.run('function deliveryOfferPush(', 'async function repeatDeliveryAlert(');
   h.fn('notifyDriversAboutDelivery');
 
   const result = await h.context.notifyDriversAboutDelivery('d', planDelivery());

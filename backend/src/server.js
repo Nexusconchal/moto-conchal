@@ -10,6 +10,7 @@ import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import { createDriverAvailability, observeAvailabilityJob } from './driver-availability.js';
 import { attachDriverAvailability } from './driver-availability-socket.js';
+import { createOfferAlerts } from './offer-alert.js';
 import { validateLocation } from './tracking-policy.js';
 import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state.js';
 import { createSupportAutomation, enrichSupportMessage, SUPPORT_PHONE, chooseDriverGroup, brazilPhone } from './support-automation.js';
@@ -2863,6 +2864,18 @@ const driverAvailability = createDriverAvailability({
     }, { merge: true }).catch((error) => console.error('driver availability save failed', error));
   }
 });
+// Alerta insistente: repete o push da chamada para quem esta Disponivel ate
+// alguem aceitar (a cada 20s, no maximo 8 vezes).
+const offerAlerts = createOfferAlerts({
+  async loadPending(kind, id) {
+    const snap = await db.collection(kind === 'deliveries' ? 'entregas' : 'corridas').doc(id).get();
+    const job = snap.exists ? snap.data() : null;
+    return job?.status === 'pendente' ? job : null;
+  },
+  send(kind, id, job, count) {
+    return kind === 'deliveries' ? repeatDeliveryAlert(id, job, count) : repeatRideAlert(id, job, count);
+  }
+});
 const app = express();
 const httpServer = createServer(app);
 app.set('trust proxy', 1);
@@ -3020,6 +3033,8 @@ app.use('/api', (req, res, next) => {
     const originalJson = res.json;
     res.json = function (body) {
       if (observeAvailabilityJob(driverAvailability, req.originalUrl, res.statusCode, body, onlyDigits(req.body?.driverCpf))) driverAvailabilitySocket.publishAll();
+      const offerDone = res.statusCode < 300 && body?.ok === true && req.originalUrl.split('?')[0].match(/^\/api\/(?:admin\/|companies\/me\/)?(rides|deliveries)\/([^/]+)\/(?:accept|cancel|client-cancel|force-finish)$/);
+      if (offerDone) offerAlerts.stop(offerDone[1], offerDone[2]);
       return originalJson.call(this, body);
     };
   }
@@ -3538,6 +3553,51 @@ async function getDriverWithMercadoPago(driverCpf) {
   return driver;
 }
 
+function rideOfferPush(rideId, ride, tokens, repeticao = 0) {
+  const city = rideOperatingCity(ride);
+  return {
+    tokens,
+    notification: {
+      title: `${isStandaloneDelivery(ride) ? 'Nova entrega avulsa' : 'Nova corrida'} MotoJa ${rideCityLabel(city)}`,
+      body: `${ride.nome || 'Cliente'} - ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`
+    },
+    webpush: {
+      // Alta prioridade: o celular entrega na hora mesmo economizando bateria.
+      headers: { Urgency: 'high', TTL: '120' },
+      fcmOptions: {
+        link: appUrl('/motoboy.html')
+      }
+    },
+    data: {
+      rideId,
+      tipo: 'nova_corrida',
+      cidadeOperacao: city,
+      repeticao: String(repeticao)
+    }
+  };
+}
+
+// Tokens de quem escolheu Disponivel e nao esta em servico.
+async function availableDriverTokens(accepts = () => true) {
+  const drivers = await db.collection('motoboys').where('status', '==', 'ativo').get();
+  const tokens = [];
+  drivers.forEach((doc) => {
+    const presence = driverAvailability.state(doc.id);
+    const data = doc.data();
+    if (!presence.desired || presence.busy || !accepts(data)) return;
+    Object.entries(data.fcmTokens || {}).forEach(([token, info]) => {
+      if (info?.ativo !== false) tokens.push(token);
+    });
+  });
+  return tokens;
+}
+
+async function repeatRideAlert(rideId, ride, count) {
+  const city = rideOperatingCity(ride);
+  const tokens = await availableDriverTokens((data) => driverRideCities(data)[city]);
+  if (tokens.length) await admin.messaging().sendEachForMulticast(rideOfferPush(rideId, ride, tokens, count));
+}
+
 async function notifyDriversAboutRide(rideId, ride) {
   const drivers = await db.collection('motoboys').where('status', '==', 'ativo').get();
   const tokens = [];
@@ -3554,23 +3614,8 @@ async function notifyDriversAboutRide(rideId, ride) {
 
   if (!tokens.length) return { sent: 0, failed: 0 };
 
-  const response = await admin.messaging().sendEachForMulticast({
-    tokens,
-    notification: {
-      title: `${isStandaloneDelivery(ride) ? 'Nova entrega avulsa' : 'Nova corrida'} MotoJa ${rideCityLabel(city)}`,
-      body: `${ride.nome || 'Cliente'} - ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`
-    },
-    webpush: {
-      fcmOptions: {
-        link: appUrl('/motoboy.html')
-      }
-    },
-    data: {
-      rideId,
-      tipo: 'nova_corrida',
-      cidadeOperacao: city
-    }
-  });
+  const response = await admin.messaging().sendEachForMulticast(rideOfferPush(rideId, ride, tokens));
+  offerAlerts.start('rides', rideId);
 
   return {
     sent: response.successCount,
@@ -3668,6 +3713,22 @@ async function runCustomerReminderTick(date = new Date()) {
   }, { merge: true });
 }
 
+function deliveryOfferPush(deliveryId, delivery, tokens, title, repeticao = 0) {
+  const body = `${delivery.empresa || 'Empresa'}${delivery.entregaNaNota ? ` — lote de ${delivery.paradas} entregas, enderecos nas notas` : ''} - ${money(delivery.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`;
+  return {
+    tokens,
+    notification: { title, body },
+    webpush: { headers: { Urgency: 'high', TTL: '120' }, fcmOptions: { link: appUrl('/motoboy.html?aba=entregas') } },
+    data: { deliveryId, tipo: 'nova_entrega', repeticao: String(repeticao) }
+  };
+}
+
+async function repeatDeliveryAlert(deliveryId, delivery, count) {
+  if (onlyDigits(delivery.motoboyExclusivoCpf).length === 11) return;
+  const tokens = await availableDriverTokens();
+  if (tokens.length) await admin.messaging().sendEachForMulticast(deliveryOfferPush(deliveryId, delivery, tokens, 'Nova entrega Nexus MotoJa', count));
+}
+
 async function notifyDriversAboutDelivery(deliveryId, delivery, { onlyReserved = false } = {}) {
   // Entrega do plano com motoboy fixo: o push vai para todos (mostra que tem
   // movimento), mas so ele ve e pega; para ele o aviso diz que a entrega ja e dele.
@@ -3685,17 +3746,15 @@ async function notifyDriversAboutDelivery(deliveryId, delivery, { onlyReserved =
   drivers.forEach((doc) => { if (!reserved || doc.id !== reservedCpf) collect(doc, tokens); });
   if (reservedDriver?.exists && reservedDriver.data()?.status !== 'bloqueado') collect(reservedDriver, reservedTokens);
 
-  const body = `${delivery.empresa || 'Empresa'}${delivery.entregaNaNota ? ` — lote de ${delivery.paradas} entregas, enderecos nas notas` : ''} - ${money(delivery.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`;
-  const send = (list, title) => (list.length ? admin.messaging().sendEachForMulticast({
-    tokens: list,
-    notification: { title, body },
-    webpush: { fcmOptions: { link: appUrl('/motoboy.html?aba=entregas') } },
-    data: { deliveryId, tipo: 'nova_entrega' }
-  }) : Promise.resolve({ successCount: 0, failureCount: 0 }));
+  const send = (list, title) => (list.length
+    ? admin.messaging().sendEachForMulticast(deliveryOfferPush(deliveryId, delivery, list, title))
+    : Promise.resolve({ successCount: 0, failureCount: 0 }));
   const responses = await Promise.all([
     send(tokens, 'Nova entrega Nexus MotoJa'),
     send(reservedTokens, 'Entrega do plano ja e sua')
   ]);
+  // Entrega do plano ja tem dono: so as entregas abertas ficam apitando.
+  if (!reserved && tokens.length) offerAlerts.start('deliveries', deliveryId);
 
   return {
     sent: responses.reduce((total, response) => total + response.successCount, 0),
