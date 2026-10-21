@@ -3625,11 +3625,9 @@
           pagHtml = `<div id="pagamento-cliente-box" style="margin:12px 0;padding:14px;border-radius:14px;background:linear-gradient(135deg,rgba(0,158,227,.18),rgba(0,158,227,.08));border:1px solid rgba(0,158,227,.4);text-align:center"><div class="small" style="font-weight:800;color:#75d1ff;margin-bottom:8px">Pagar corrida online</div><a href="${escHtml(pag.initPoint)}" target="_blank" rel="noopener" class="btn-main" style="display:inline-block;padding:11px 22px;text-decoration:none;border-radius:999px;background:linear-gradient(135deg,#009ee3,#007eb5);color:#fff;font-weight:900;font-size:1.02rem;box-shadow:0 8px 22px rgba(0,158,227,.35)">Pagar com Pix / Cartão (${valorTxt})</a><div class="small" style="margin-top:8px;color:#aeb4c3">Ou pague direto ao motoboy em dinheiro ou Pix.</div></div>`;
         }
 
-        let driverWaBtn = "";
-        if (dados.motoboyTelefone) {
-          const waLink = `https://wa.me/55${dados.motoboyTelefone}?text=${encodeURIComponent("Olá! Estou acompanhando sua localização na corrida MotoJá.")}`;
-          driverWaBtn = `<a href="${waLink}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:5px;padding:7px 12px;border-radius:999px;background:#25d366;color:#090911;text-decoration:none;font-weight:900;font-size:12px;box-shadow:0 4px 12px rgba(37,211,102,.35)">💬 WhatsApp</a>`;
-        }
+        // Conversa com o motoboy pelo chat do app (sem trocar WhatsApp), como no 99.
+        const chatNovo = !!window.MotojaRideChat?.hasUnread(pedido.id, dados.chatUltimaEmMs, dados.chatUltimoAutor, "cliente");
+        const driverWaBtn = `<button type="button" id="abrir-chat-corrida" data-ride="${escHtml(pedido.id)}" data-modalidade="${escHtml(dados.modalidade || "corrida")}" data-motoboy="${escHtml(dados.motoboy || "Motoboy")}" style="display:inline-flex;align-items:center;gap:5px;padding:8px 13px;border-radius:999px;border:0;background:#ff9a00;color:#111;font-weight:900;font-size:12.5px;box-shadow:0 4px 12px rgba(255,154,0,.35);cursor:pointer">💬 Chat${chatNovo ? '<span class="mjchat-badge" aria-label="mensagem nova"></span>' : ""}</button>`;
 
         if (!$("mapa-acompanhamento") || corridaAcompanhadaId !== pedido.id) {
           if (mapaAcompanhamento) mapaAcompanhamento.remove();
@@ -3694,7 +3692,7 @@
           } else if (!existingPag && pagHtml && $("gps-cliente-status")) {
             $("gps-cliente-status").insertAdjacentHTML("beforebegin", pagHtml);
           }
-          if ($("driver-contact-box") && driverWaBtn && !$("driver-contact-box").innerHTML.trim()) {
+          if ($("driver-contact-box") && driverWaBtn && $("driver-contact-box").innerHTML !== driverWaBtn) {
             $("driver-contact-box").innerHTML = driverWaBtn;
           }
         }
@@ -4159,6 +4157,25 @@
           button.disabled = false;
           button.textContent = "Entrar";
         }
+      });
+      document.addEventListener("click", (event) => {
+        const botao = event.target.closest?.("#abrir-chat-corrida");
+        if (!botao || !window.MotojaRideChat) return;
+        botao.querySelector(".mjchat-badge")?.remove();
+        const entrega = botao.dataset.modalidade === "entrega_avulsa";
+        window.MotojaRideChat.open({
+          rideId: botao.dataset.ride,
+          backend: CONFIG.backend,
+          titulo: botao.dataset.motoboy || "Motoboy",
+          subtitulo: `Seu motoboy da ${entrega ? "entrega" : "corrida"} · conversa pelo app`,
+          voce: "cliente",
+          servico: entrega ? "entrega" : "corrida",
+          auth: () => ({ headers: {
+            "x-customer-device": clienteDeviceId(),
+            ...(localStorage.getItem(TOKEN_CLIENTE) ? { authorization: `Bearer ${localStorage.getItem(TOKEN_CLIENTE)}` } : {}),
+          } }),
+          rapidas: ["Estou te esperando", "Já estou saindo", "Pode buzinar quando chegar", "Estou na frente"],
+        });
       });
       let cpfRecuperacao = "";
       $("auth-forgot")?.addEventListener("click", () => {
@@ -4735,5 +4752,6 @@
       })();
     </script>
     <script src="./customer-availability.js?v=224" defer></script>
+    <script src="./ride-chat.js?v=233" defer></script>
   </body>
 </html>

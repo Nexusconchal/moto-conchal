@@ -1052,6 +1052,7 @@
       </section>
     </main>
     <script src="./driver-availability.js?v=226"></script>
+    <script src="./ride-chat.js?v=233"></script>
     <script src="./motoboy-nav.js?v=3" defer></script>
     <script src="./motoboy-home.js?v=3" defer></script>
     <script type="module">
@@ -1486,12 +1487,12 @@
                 aviso: {
                   tipo: "alerta",
                   texto: c.confirmacaoEmpresaVersao === 1
-                    ? "Peça à loja para confirmar a retirada no app da empresa. Depois, confirme aqui para iniciar o GPS."
-                    : "Ao pegar o pedido, confirme a retirada para iniciar o GPS da entrega.",
+                    ? "GPS ativo: a loja vê você chegando. Peça à loja para confirmar a retirada no app da empresa e depois confirme aqui."
+                    : "GPS ativo: a loja vê você chegando. Ao pegar o pedido, confirme a retirada.",
                 },
                 principal: {
                   texto: "Confirmei a retirada",
-                  textoCarregando: "Ativando GPS...",
+                  textoCarregando: "Confirmando...",
                   acao: acaoDoCard(c, `[data-confirmar-retirada="${c.id}"]`),
                 },
               }
@@ -1524,7 +1525,9 @@
               nome: c.nome || "Cliente",
               foto: fotoClienteSegura(c),
               linha: etapa === "buscar" ? coleta.titulo : destino.titulo,
-              telefone: telefoneCliente(c),
+              // Mototaxi: sem WhatsApp do cliente; a conversa e pelo chat do app.
+              chat: () => abrirChatCorrida(c),
+              chatNaoLido: chatNaoLido(c),
             },
             aviso: !avisado
               ? { tipo: "alerta", texto: `Avise o cliente para liberar a ${avulsa ? "entrega" : "corrida"}${prazo ? ` · ${prazo}` : ""}. Ele recebe seu nome, foto e acompanha você ao vivo.` }
@@ -2272,11 +2275,41 @@
                 : avisado ? "Cliente avisado" : "Avise o cliente",
           seloOk = !cancelada && (finalizada || (isEntrega ? c.status === "retirada" && !c.conclusaoStatus : avisado)),
           topo = `<div class="job-top"><div><div class="job-tag">${isEntrega ? `📦 Entrega · ${escSeguro(c.empresa || "Empresa")}` : `${entregaAvulsa(c) ? "📦 Entrega avulsa" : "🏍️ Corrida"} · ${escSeguro(c.nome || "Cliente")}`}</div><div class="job-price">${moeda(ganhoMotoboy(c.valor, c))}<small>você recebe</small></div></div><div class="job-selo${seloOk ? " ok" : ""}">${selo}</div></div>${cancelada ? "" : `<div class="job-steps">${etapas.map((_, i) => `<i class="${i <= etapa ? "on" : ""}"></i>`).join("")}</div><div class="job-steps-l">${etapas.map((nome, i) => `<span class="${i === etapa ? "on" : ""}">${nome}</span>`).join("")}</div>`}${paradasServico(c, { coleta: { titulo: coleta.titulo, sub: coleta.detalhe }, destino: { titulo: destino.titulo, sub: destino.detalhe } })}`;
-        return `<article class="card job-card job-ativo">${topo}<details class="job-more"><summary>Ver detalhes</summary><div class="line">${cabecalho}</div><div>${detalhes(c)}</div><p class="muted">${isEntrega ? (servicoExclusivo(c) ? "Atencao: escala exclusiva so deve ser aceita se horario e valor foram combinados pelo suporte MotoJa. Abandono pode causar bloqueio." : "Atencao: confira retirada, entrega, quantidade de paradas e observacao antes de sair. Entrega aceita e abandonada pode causar bloqueio.") : "Atencao: depois de aceitar, clique em Avisar cliente e iniciar corrida com GPS. Esse botao envia seu nome, foto, acompanhamento ao vivo e pagamento ao cliente. Mantenha o app aberto durante o trajeto. Se o tempo zerar sem aviso, a corrida volta para pendentes."}</p></details><p class="muted"><strong>${pagamento}</strong></p>${tempoAviso ? `<p class="muted">Tempo para avisar cliente: <strong>${tempoAviso}</strong></p>` : ""}<div class="actions">${finalizada || cancelada || servicoExclusivo(c) ? "" : `<button class="ok" data-abrir-gps="${id}">Abrir GPS</button>`}<button class="done" data-finalizar="${id}" ${finalizada || cancelada || !!c.conclusaoStatus || !avisado ? "disabled" : ""}>${cancelada ? "Cancelada" : finalizada ? "Finalizada" : servicoExclusivo(c) ? "Finalizar escala" : isEntrega ? (c.conclusaoStatus ? (c.conclusaoStatus === "contestada" ? "Em conferência pelo dono" : "Aguardando confirmação da empresa") : c.confirmacaoEmpresaVersao === 1 ? "Solicitar conclusão" : c.entregaNaNota ? "Finalizar lote" : "Finalizar entrega") : entregaAvulsa(c) ? "Finalizar entrega com codigo" : "Finalizar corrida"}</button>${isEntrega ? "" : `<button class="secondary" data-avisar="${id}" ${finalizada || cancelada || avisado ? "disabled" : ""}>${avisado ? "Cliente avisado - GPS ativo" : entregaAvulsa(c) ? "Avisar cliente e iniciar entrega com GPS" : "Avisar cliente e iniciar corrida com GPS"}</button>`}${isEntrega || finalizada || cancelada ? "" : `<button class="secondary" data-point="${id}" ${!avisado || c.pagamento?.status === "approved" || c.pagamento?.presencialManual?.codigo ? "disabled" : ""}>Informar aproximacao</button>`}${isEntrega || finalizada || cancelada || !c.pagamento?.point?.orderId ? "" : `<button class="secondary" data-point-status="${id}">Ver status aproximacao</button>`}${isEntrega && c.confirmacaoEmpresaVersao === 1 && c.retiradaLiberadaEm && !finalizada && !cancelada && c.conclusaoStatus !== "contestada" ? `<button class="secondary" data-problema-entrega="${id}">Informar problema ao dono</button>` : ""}<button class="secondary" data-cancelar="${id}" ${finalizada || cancelada || (isEntrega && c.confirmacaoEmpresaVersao === 1 && !!c.retiradaLiberadaEm) ? "disabled" : ""}>Cancelar ${nomeServico()}</button></div></article>`;
+        return `<article class="card job-card job-ativo">${topo}<details class="job-more"><summary>Ver detalhes</summary><div class="line">${cabecalho}</div><div>${detalhes(c)}</div><p class="muted">${isEntrega ? (servicoExclusivo(c) ? "Atencao: escala exclusiva so deve ser aceita se horario e valor foram combinados pelo suporte MotoJa. Abandono pode causar bloqueio." : "Atencao: confira retirada, entrega, quantidade de paradas e observacao antes de sair. Entrega aceita e abandonada pode causar bloqueio.") : "Ao aceitar, o GPS liga sozinho e o cliente recebe seu nome, foto, acompanhamento ao vivo e pagamento. Converse com o cliente pelo Chat do app. Mantenha o app aberto durante o trajeto."}</p></details><p class="muted"><strong>${pagamento}</strong></p>${tempoAviso ? `<p class="muted">Tempo para avisar cliente: <strong>${tempoAviso}</strong></p>` : ""}<div class="actions">${finalizada || cancelada || servicoExclusivo(c) ? "" : `<button class="ok" data-abrir-gps="${id}">Abrir GPS</button>`}<button class="done" data-finalizar="${id}" ${finalizada || cancelada || !!c.conclusaoStatus || !avisado ? "disabled" : ""}>${cancelada ? "Cancelada" : finalizada ? "Finalizada" : servicoExclusivo(c) ? "Finalizar escala" : isEntrega ? (c.conclusaoStatus ? (c.conclusaoStatus === "contestada" ? "Em conferência pelo dono" : "Aguardando confirmação da empresa") : c.confirmacaoEmpresaVersao === 1 ? "Solicitar conclusão" : c.entregaNaNota ? "Finalizar lote" : "Finalizar entrega") : entregaAvulsa(c) ? "Finalizar entrega com codigo" : "Finalizar corrida"}</button>${isEntrega || finalizada || cancelada ? "" : `<button class="ok" data-chat="${id}">💬 Chat com o cliente${chatNaoLido(c) ? '<span class="mjchat-badge" aria-label="mensagem nova"></span>' : ""}</button>`}${isEntrega || avisado ? "" : `<button class="secondary" data-avisar="${id}" ${finalizada || cancelada ? "disabled" : ""}>${entregaAvulsa(c) ? "Avisar cliente e iniciar entrega com GPS" : "Avisar cliente e iniciar corrida com GPS"}</button>`}${isEntrega || finalizada || cancelada ? "" : `<button class="secondary" data-point="${id}" ${!avisado || c.pagamento?.status === "approved" || c.pagamento?.presencialManual?.codigo ? "disabled" : ""}>Informar aproximacao</button>`}${isEntrega || finalizada || cancelada || !c.pagamento?.point?.orderId ? "" : `<button class="secondary" data-point-status="${id}">Ver status aproximacao</button>`}${isEntrega && c.confirmacaoEmpresaVersao === 1 && c.retiradaLiberadaEm && !finalizada && !cancelada && c.conclusaoStatus !== "contestada" ? `<button class="secondary" data-problema-entrega="${id}">Informar problema ao dono</button>` : ""}<button class="secondary" data-cancelar="${id}" ${finalizada || cancelada || (isEntrega && c.confirmacaoEmpresaVersao === 1 && !!c.retiradaLiberadaEm) ? "disabled" : ""}>Cancelar ${nomeServico()}</button></div></article>`;
+      }
+      // Aceitar ja liga o GPS: corrida (o cliente acompanha) e entrega (a empresa acompanha).
+      function iniciarGpsDoAceite(kind, id) {
+        const evento = kind === "deliveries" ? "motoja:delivery-gps-start" : "motoja:ride-gps-start";
+        window.dispatchEvent(new CustomEvent(evento, { detail: { rideId: id, deliveryId: id } }));
+      }
+      function pedirGpsNoToque() {
+        // Pede a permissao ainda dentro do toque em Aceitar (exigencia do iPhone).
+        try { navigator.geolocation?.getCurrentPosition(() => {}, () => {}, { enableHighAccuracy: true, maximumAge: 30000, timeout: 15000 }); } catch (e) {}
+      }
+      function abrirChatCorrida(c) {
+        if (!c?.id || !window.MotojaRideChat) return;
+        const avulsa = entregaAvulsa(c);
+        window.MotojaRideChat.open({
+          rideId: c.id,
+          backend: CONFIG.backend,
+          titulo: c.nome || "Cliente",
+          subtitulo: avulsa ? "Cliente da entrega · conversa pelo app" : "Cliente da corrida · conversa pelo app",
+          voce: "motoboy",
+          servico: avulsa ? "entrega" : "corrida",
+          auth: () => ({ body: driverProof() }),
+          rapidas: ["Estou a caminho", "Cheguei no local", "Estou aguardando na frente", "Pode me passar uma referência?"],
+          onClose: () => {
+            document.querySelectorAll(`[data-chat="${c.id}"] .mjchat-badge`).forEach((badge) => badge.remove());
+          },
+        });
+      }
+      function chatNaoLido(c) {
+        return !!window.MotojaRideChat?.hasUnread(c.id, c.chatUltimaEmMs, c.chatUltimoAutor, "motoboy");
       }
       async function aceitarCorrida(id) {
         if (window.MotojaDriverAvailability?.canReceive() === false) throw new Error('Toque em Ficar disponível no Início e espere conectar antes de aceitar um novo serviço.');
         const kind = recursoAtual();
+        pedirGpsNoToque();
         const r = await fetchMotoboyComRetry(
           `${CONFIG.backend}/api/${kind}/${id}/accept`,
           {
@@ -2309,8 +2342,10 @@
               confirmacao?.ok &&
               Array.isArray(confirmado.jobs) &&
               confirmado.jobs.some((job) => job.id === id)
-            )
+            ) {
+              iniciarGpsDoAceite(kind, id);
               return { ok: true, alreadyAccepted: true };
+            }
           }
           throw new Error(
             d.message ||
@@ -2318,6 +2353,7 @@
               `Nao consegui aceitar essa ${nomeServico()} pelo servidor.`,
           );
         }
+        iniciarGpsDoAceite(kind, id);
         return d;
       }
       function render(jobs = []) {
@@ -2381,6 +2417,9 @@
         );
         lista.querySelectorAll("[data-abrir-gps]").forEach(
           (btn) => (btn.onclick = () => abrirNavegacaoServico(jobPorId(btn.dataset.abrirGps))),
+        );
+        lista.querySelectorAll("[data-chat]").forEach(
+          (btn) => (btn.onclick = () => abrirChatCorrida(jobPorId(btn.dataset.chat))),
         );
         lista.querySelectorAll("[data-aceitar]").forEach(
           (btn) =>

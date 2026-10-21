@@ -488,7 +488,7 @@
           ${avatar}
           <div><b>${esc(cliente.nome || '-')}</b><span>${esc(cliente.linha || '')}</span></div>
           <div class="mjnav-client-icons">
-            ${fone ? `<a class="mjnav-round" href="https://api.whatsapp.com/send?phone=55${esc(fone)}" target="_blank" rel="noopener" aria-label="WhatsApp">💬</a><a class="mjnav-round" href="tel:${esc(fone)}" aria-label="Ligar">📞</a>` : ''}
+            ${typeof cliente.chat === 'function' ? `<button type="button" class="mjnav-round" data-mjnav-chat aria-label="Chat com o cliente" style="position:relative">💬${cliente.chatNaoLido ? '<span class="mjchat-badge" style="position:absolute;top:2px;right:2px;margin:0"></span>' : ''}</button>` : fone ? `<a class="mjnav-round" href="https://api.whatsapp.com/send?phone=55${esc(fone)}" target="_blank" rel="noopener" aria-label="WhatsApp">💬</a><a class="mjnav-round" href="tel:${esc(fone)}" aria-label="Ligar">📞</a>` : ''}
           </div>
         </div>
         <div class="mjnav-actions">
@@ -531,6 +531,11 @@
     ui().querySelectorAll('[data-mjnav-sec]').forEach((btn) => {
       btn.onclick = () => executar(btn, cfg.secundarias[Number(btn.dataset.mjnavSec)]);
     });
+    const chatBotao = ui().querySelector('[data-mjnav-chat]');
+    if (chatBotao) chatBotao.onclick = () => {
+      chatBotao.querySelector('.mjchat-badge')?.remove();
+      cliente.chat();
+    };
     const principal = ui().querySelector('[data-mjnav-principal]');
     if (principal) principal.onclick = () => executar(principal, cfg.principal);
   }

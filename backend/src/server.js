@@ -1742,6 +1742,8 @@ function driverPasswordValues() {
 function privateDriverJob(job = {}) {
   const copy = { ...job };
   delete copy.clienteDeviceId;
+  // Mototaxi: o motoboy fala com o cliente pelo chat do app, sem o WhatsApp pessoal dele.
+  delete copy.telefoneCliente;
   delete copy.codigoEntrega;
   delete copy.tentativasCodigoEntrega;
   // A foto do proprio motoboy ja fica salva no perfil. Repeti-la em cada
@@ -3973,6 +3975,13 @@ async function notifyClientRideAccepted(rideRef, ride = {}) {
     });
   });
   return result;
+}
+
+// Entrega avulsa do mototaxi: quem recebe ganha o codigo de entrega assim que o motoboy aceita.
+async function notifyStandaloneRecipientCode(ride = {}) {
+  if (!isStandaloneDelivery(ride) || !ride.telefoneRecebedor || !ride.codigoEntrega) return { sent: false, skipped: true };
+  const message = `Ola, ${ride.nomeRecebedor || 'tudo bem'}! ${ride.nome || 'Alguem'} enviou uma entrega para voce pela Nexus MotoJa: ${ride.itemEntrega || 'encomenda'}.\n\nO motoboy ${ride.motoboy || 'MotoJa'} ja esta a caminho.\n\nSeu codigo de entrega e ${ride.codigoEntrega}. Passe o codigo para o motoboy somente quando receber a encomenda.`;
+  return sendEvolutionText(`55${onlyDigits(ride.telefoneRecebedor)}`, message);
 }
 
 async function notifyClientRideReopened(ride = {}) {
@@ -9884,8 +9893,9 @@ app.get('/api/rides/:rideId/status', async (req, res, next) => {
       aceitaEmMs: timestampMs(ride.aceitaEm),
       motoboy: ride.motoboy || '',
       motoboyFoto: validDriverPhoto(ride.motoboyFoto) || '',
-      motoboyTelefone: onlyDigits(ride.motoboyTelefone || '').slice(0, 11),
       valor: money(ride.valor),
+      chatUltimaEmMs: Number(ride.chatUltimaEmMs || 0),
+      chatUltimoAutor: ride.chatUltimoAutor || '',
       origem: ride.origem || '',
       origemLat: Number(ride.origemLat || 0),
       origemLon: Number(ride.origemLon || 0),
@@ -9921,6 +9931,94 @@ app.get('/api/rides/:rideId/status', async (req, res, next) => {
     res.json(payload);
   } catch (error) {
     next(error);
+  }
+});
+
+// Chat da corrida dentro do app (como no 99): cliente e motoboy conversam sem
+// trocar WhatsApp. Telefones e links digitados na conversa sao escondidos.
+const RIDE_CHAT_MAX = 500;
+const rideChatRate = new Map();
+
+function maskChatText(value) {
+  return cleanText(value, RIDE_CHAT_MAX)
+    .replace(/(?:https?:\/\/|www\.)\S+|\b(?:wa\.me|api\.whatsapp\.com|chat\.whatsapp\.com|instagram\.com|t\.me)\/?\S*/gi, '[link oculto]')
+    .replace(/(?:\+?\d[\s().-]*){8,}/g, (match) => (match.replace(/\D/g, '').length >= 8 ? '[número oculto] ' : match))
+    .replace(/[^\S\n]{2,}/g, ' ')
+    .trim();
+}
+
+function rideChatAllowed(key) {
+  const now = Date.now();
+  const recent = (rideChatRate.get(key) || []).filter((at) => now - at < 60000);
+  if (recent.length >= 20) return false;
+  recent.push(now);
+  rideChatRate.set(key, recent);
+  if (rideChatRate.size > 2000) rideChatRate.delete(rideChatRate.keys().next().value);
+  return true;
+}
+
+// Identifica quem esta no chat: o motoboy da corrida (prova do motoboy) ou o cliente
+// que pediu (mesmo aparelho ou mesma conta).
+async function rideChatParticipant(req, ride) {
+  const driverCpf = onlyDigits(req.body?.driverCpf);
+  if (driverCpf) {
+    await getDriverWithProof(driverCpf, req.body);
+    return onlyDigits(ride.motoboyCpf) === driverCpf ? 'motoboy' : '';
+  }
+  const access = { deviceHash: ride.clienteDeviceId ? hashSecret(ride.clienteDeviceId) : '', customerId: ride.customerId || '' };
+  return await canReadRideTracking(req, access) ? 'cliente' : '';
+}
+
+function rideChatOpen(ride = {}) {
+  if (ride.status === 'aceita') return true;
+  const closedAt = timestampMs(ride.finalizadaEm || ride.canceladoEm || ride.atualizadaEm);
+  return ['finalizada', 'cancelada'].includes(ride.status) && closedAt && Date.now() - closedAt < 2 * 60 * 60 * 1000;
+}
+
+app.post('/api/rides/:rideId/chat/send', createRideLimiter, async (req, res, next) => {
+  try {
+    const rideRef = db.collection('corridas').doc(String(req.params.rideId || ''));
+    const snap = await rideRef.get();
+    if (!snap.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
+    const ride = snap.data() || {};
+    const autor = await rideChatParticipant(req, ride);
+    if (!autor) return res.status(403).json({ error: 'chat_nao_autorizado', message: 'Este chat e so do cliente e do motoboy desta corrida.' });
+    if (ride.status !== 'aceita') return res.status(409).json({ error: 'chat_encerrado', message: 'O chat fica aberto so enquanto a corrida esta em andamento.' });
+    const texto = maskChatText(req.body?.texto);
+    if (!texto) return res.status(400).json({ error: 'mensagem_vazia', message: 'Digite uma mensagem.' });
+    if (!rideChatAllowed(`${rideRef.id}:${autor}`)) return res.status(429).json({ error: 'muitas_mensagens', message: 'Aguarde um pouco antes de mandar outra mensagem.' });
+    const criadoEmMs = Date.now();
+    const messageRef = rideRef.collection('chat').doc();
+    const batch = db.batch();
+    batch.set(messageRef, { autor, texto, criadoEmMs, criadoEm: admin.firestore.FieldValue.serverTimestamp() });
+    batch.set(rideRef, { chatUltimaEmMs: criadoEmMs, chatUltimoAutor: autor, chatTotal: admin.firestore.FieldValue.increment(1) }, { merge: true });
+    await batch.commit();
+    rideStatusCache.delete(rideRef.id);
+    return res.json({ ok: true, mensagem: { id: messageRef.id, autor, texto, criadoEmMs } });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/rides/:rideId/chat/list', createRideLimiter, async (req, res, next) => {
+  try {
+    const rideRef = db.collection('corridas').doc(String(req.params.rideId || ''));
+    const snap = await rideRef.get();
+    if (!snap.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
+    const ride = snap.data() || {};
+    const voce = await rideChatParticipant(req, ride);
+    if (!voce) return res.status(403).json({ error: 'chat_nao_autorizado', message: 'Este chat e so do cliente e do motoboy desta corrida.' });
+    if (!rideChatOpen(ride)) return res.json({ ok: true, voce, aberto: false, mensagens: [] });
+    const depois = Math.max(0, Number(req.body?.depoisDeMs || 0));
+    const query = depois ? rideRef.collection('chat').where('criadoEmMs', '>', depois) : rideRef.collection('chat');
+    const messages = await query.limit(200).get();
+    const mensagens = messages.docs
+      .map((doc) => ({ id: doc.id, autor: doc.data().autor, texto: doc.data().texto, criadoEmMs: Number(doc.data().criadoEmMs || 0) }))
+      .sort((a, b) => a.criadoEmMs - b.criadoEmMs);
+    return res.json({ ok: true, voce, aberto: ride.status === 'aceita', mensagens,
+      outro: voce === 'cliente' ? { nome: ride.motoboy || 'Motoboy' } : { nome: ride.nome || 'Cliente' } });
+  } catch (error) {
+    return next(error);
   }
 });
 
@@ -10839,6 +10937,10 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
         motoboyTelefone: driver.telefone || '',
         motoboyFoto: driver.fotoMotoboy || '',
         aceitaEm: admin.firestore.FieldValue.serverTimestamp(),
+        // Aceitar ja inicia o trajeto: GPS ligado e cliente avisado pelo app/WhatsApp da MotoJa.
+        clienteAvisadoEm: admin.firestore.FieldValue.serverTimestamp(),
+        clienteAvisadoPor: driver.nome || req.body.driverName || '',
+        rastreamentoAtivo: true,
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
     });
@@ -10902,6 +11004,9 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
           motoboyTelefone: admin.firestore.FieldValue.delete(),
           motoboyFoto: admin.firestore.FieldValue.delete(),
           aceitaEm: admin.firestore.FieldValue.delete(),
+          clienteAvisadoEm: admin.firestore.FieldValue.delete(),
+          clienteAvisadoPor: admin.firestore.FieldValue.delete(),
+          rastreamentoAtivo: false,
           pagamento: {
             provider: 'mercadopago',
             status: 'preference_failed',
@@ -10926,6 +11031,8 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
         pagamento: { initPoint: payment.initPoint }
       }).catch((error) => console.error('ride accepted client whatsapp failed', rideRef.id, error));
     }
+    notifyStandaloneRecipientCode({ ...acceptedRide, motoboy: driver.nome || req.body.driverName || '' })
+      .catch((error) => console.error('standalone delivery code whatsapp failed', rideRef.id, error));
 
     res.json({
       ok: true,
@@ -10939,6 +11046,8 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
         motoboyCnh: driver.cnh || '',
         motoboyTelefone: driver.telefone || '',
         motoboyFoto: driver.fotoMotoboy || '',
+        clienteAvisadoEm: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
+        rastreamentoAtivo: true,
         pagamento: payment ? {
           provider: 'mercadopago',
           preferenceId: payment.preferenceId,
@@ -11055,7 +11164,7 @@ async function saveTrackedLocation(ref, driverCpf, body, isDelivery) {
     const snap = await tx.get(ref);
     const job = snap.data();
     if (!job || onlyDigits(job.motoboyCpf) !== driverCpf ||
-        job.status !== (isDelivery ? 'retirada' : 'aceita') ||
+        !(isDelivery ? ['aceita', 'retirada'] : ['aceita']).includes(job.status) ||
         job.rastreamentoAtivo === false || (!isDelivery && !job.clienteAvisadoEm)) {
       const error = new Error('rastreamento_nao_ativo');
       error.status = 409;
@@ -11073,7 +11182,7 @@ async function saveTrackedLocation(ref, driverCpf, body, isDelivery) {
       localizacaoAtualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     });
-    return { ...result, companyId: job.empresaId || job.telefoneEmpresa, motoboy: job.motoboy || '' };
+    return { ...result, companyId: job.empresaId || job.telefoneEmpresa, motoboy: job.motoboy || '', status: job.status };
   });
 }
 
@@ -11100,7 +11209,7 @@ app.post('/api/deliveries/:deliveryId/location', async (req, res, next) => {
     if (result.ignored) return res.json({ ok: true, ignored: result.ignored });
     emitDeliveryTracking(result.companyId, {
       deliveryId: deliveryRef.id,
-      status: 'retirada',
+      status: result.status || 'retirada',
       rastreamentoAtivo: true,
       motoboy: result.motoboy,
       location: result.location
@@ -11241,7 +11350,9 @@ app.post('/api/rides/:rideId/notify-client', async (req, res, next) => {
       ? `Ola, ${ride.nome || 'cliente'}! Seu motoboy ${ride.motoboy || 'MotoJa Conchal'} aceitou a entrega e iniciou o trajeto com GPS.\n\nValor: ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nBuscar em: ${ride.origem || '-'}\nEntregar em: ${ride.destino || '-'}\nQuem recebe: ${ride.nomeRecebedor || '-'}${driverUrl ? `\n\nAcompanhe a foto e a localizacao do motoboy ao vivo:\n${driverUrl}` : ''}\n\nCodigo de entrega: ${ride.codigoEntrega || '-'}. ${recipientNotice?.sent ? 'Ele tambem foi enviado no WhatsApp de quem recebe.' : 'Envie esse codigo para quem recebe.'} O motoboy so finaliza com esse codigo.\n\n${ridePaymentInstructions(ride)}`
       : `Ola, ${ride.nome || 'cliente'}! Seu motoboy ${ride.motoboy || 'MotoJa Conchal'} aceitou a corrida e iniciou o trajeto com GPS.\n\nValor: ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}\nOrigem: ${ride.origem || '-'}\nDestino: ${ride.destino || '-'}${driverUrl ? `\n\nAcompanhe a foto e a localizacao do motoboy ao vivo:\n${driverUrl}` : ''}\n\n${ridePaymentInstructions(ride)}`;
 
-    res.json({ ok: true, whatsapp: whatsappLink(ride.telefoneCliente, message) });
+    // O WhatsApp do cliente nao vai para o motoboy: a conversa e pelo chat do app.
+    void message;
+    res.json({ ok: true, whatsapp: '' });
   } catch (error) {
     next(error);
   }
@@ -11281,7 +11392,9 @@ app.post('/api/rides/:rideId/cancel', async (req, res, next) => {
     }, { merge: true });
 
     const message = `Ola, ${ride.nome || 'cliente'}. O motoboy ${ride.motoboy || 'MotoJa Conchal'} cancelou a corrida.\n\nMotivo: ${reason}\n\nPor favor, peca uma nova corrida pelo app.`;
-    res.json({ ok: true, whatsapp: whatsappLink(ride.telefoneCliente, message) });
+    const number = clientWhatsappNumber(ride);
+    if (number) sendEvolutionText(number, message).catch((error) => console.error('ride cancel client whatsapp failed', rideRef.id, error));
+    res.json({ ok: true, whatsapp: '' });
   } catch (error) {
     next(error);
   }

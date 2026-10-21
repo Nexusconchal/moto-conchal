@@ -55,7 +55,12 @@ test('active assigned delivery writes one location in transaction', async () => 
   assert.equal(h.writes.length, 1);
   assert.equal(h.writes[0].data.motoboyLocalizacao.clientTimestamp, now);
 });
-for (const status of ['finalizada', 'cancelada', 'aceita']) test(`GPS cannot revive ${status} delivery`, async () => {
+test('accepted delivery already sends GPS on the way to the pickup', async () => {
+  const h = transactionHarness({ status: 'aceita', motoboyCpf: '12345678901' });
+  await h.save();
+  assert.equal(h.writes.length, 1);
+});
+for (const status of ['finalizada', 'cancelada', 'pendente']) test(`GPS cannot revive ${status} delivery`, async () => {
   const h = transactionHarness({ status, motoboyCpf: '12345678901', rastreamentoAtivo: true });
   await assert.rejects(h.save(), /rastreamento_nao_ativo/);
   assert.equal(h.writes.length, 0);
