@@ -21,6 +21,7 @@
       href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
+    <link rel="stylesheet" href="./motoboy-nav.css?v=1" />
     <style>
       * {
         box-sizing: border-box;
@@ -1033,6 +1034,7 @@
       </section>
     </main>
     <script src="./driver-availability.js?v=226"></script>
+    <script src="./motoboy-nav.js?v=1" defer></script>
     <script type="module">
       let cidadesAtivas = {
           conchal: true,
@@ -1266,6 +1268,287 @@
             : `Nao consegui conectar no servidor agora (${ultimo?.message || "sem resposta"}). Confira a internet e tente novamente.`;
         throw new Error(msg);
       }
+      // Tela cheia estilo app de motorista (motoboy-nav.js): oferta com mapa e
+      // distancia antes de aceitar, e GPS + avisar cliente depois do aceite.
+      const NAV_ATIVA = "motoJaNavAtiva",
+        ofertasRecusadas = new Set();
+      let navRestaurada = false,
+        navAbertaEm = 0;
+      function lerNavAtiva() {
+        try {
+          return JSON.parse(localStorage.getItem(NAV_ATIVA) || "null");
+        } catch {
+          return null;
+        }
+      }
+      function salvarNavAtiva(valor) {
+        try {
+          if (valor) localStorage.setItem(NAV_ATIVA, JSON.stringify(valor));
+          else localStorage.removeItem(NAV_ATIVA);
+        } catch {}
+      }
+      function abaDaNavegacaoSalva() {
+        const nav = lerNavAtiva();
+        return nav?.id ? (nav.tipo === "entrega" ? "minhas-entregas" : "minhas") : "";
+      }
+      function servicoEhEntrega(c) {
+        return c?.tipo === "entrega_empresarial" || c?.tipo === "servico_exclusivo" || modoEntrega();
+      }
+      function pontoMapa(lat, lon, titulo, detalhe) {
+        return { lat: Number(lat) || 0, lon: Number(lon) || 0, titulo: titulo || "-", detalhe: detalhe || "" };
+      }
+      function pontosServico(c) {
+        if (servicoEhEntrega(c))
+          return {
+            coleta: pontoMapa(c.retiradaLat, c.retiradaLon, c.empresa ? `Coleta · ${c.empresa}` : "Coleta", c.retiradaEncontrada || c.retirada),
+            destino: pontoMapa(c.entregaLat, c.entregaLon, c.recebedor ? `Entrega · ${c.recebedor}` : "Entrega", c.entregaEncontrada || c.entrega),
+          };
+        return {
+          coleta: pontoMapa(c.origemLat, c.origemLon, c.origem || "Embarque", c.origemEncontrada && c.origemEncontrada !== c.origem ? c.origemEncontrada : ""),
+          destino: pontoMapa(c.destinoLat, c.destinoLon, c.destino || "Destino", c.destinoEncontrado && c.destinoEncontrado !== c.destino ? c.destinoEncontrado : ""),
+        };
+      }
+      function kmTexto(km) {
+        return Number(km) > 0 ? `${Number(km).toFixed(1).replace(".", ",")} km` : "-";
+      }
+      function abrirOfertaMapa(c) {
+        if (!window.MotoNav || !c?.id || servicoExclusivo(c)) return false;
+        const entrega = servicoEhEntrega(c),
+          modoOferta = modo,
+          criadaMs = (c.criadaEm?.seconds || 0) * 1000,
+          paradas = Number(c.paradas || 1),
+          cidade = c.cidadeOperacao === "aguai" ? "Aguaí" : c.cidadeOperacao === "engenheiro_coelho" ? "Eng. Coelho" : "Conchal";
+        window.MotoNav.abrirOferta({
+          id: c.id,
+          backend: CONFIG.backend,
+          tipo: entrega ? "entrega" : "corrida",
+          tag: entrega
+            ? `📦 MotoJá Entrega${c.tipoEntrega && c.tipoEntrega.length <= 14 ? ` · ${c.tipoEntrega}` : ""}`
+            : `🏍️ MotoJá Corrida · ${cidade}`,
+          topo: "Online",
+          ganhoTexto: moeda(ganhoMotoboy(c.valor, c)),
+          ganhoLegenda: "você recebe",
+          kmViagemTexto: kmTexto(c.km),
+          extra: entrega
+            ? { valor: String(paradas), rotulo: paradas > 1 ? "paradas" : "parada" }
+            : { valor: moeda(c.valor), rotulo: "total da corrida" },
+          ...pontosServico(c),
+          observacao: c.observacao || c.descricao || "",
+          expiraEmMs: criadaMs ? criadaMs + tempoLimiteMs(c) : 0,
+          duracaoMs: tempoLimiteMs(c),
+          textoAceitar: entrega ? "Aceitar entrega" : "Aceitar corrida",
+          onRecusar: () => ofertasRecusadas.add(c.id),
+          onExpirar: () => {
+            ofertasRecusadas.add(c.id);
+            ouvir(true);
+          },
+          onAceitar: async () => {
+            modo = modoOferta;
+            const aceite = await aceitarCorrida(c.id);
+            limparCache();
+            abrirNavegacaoServico({
+              ...c,
+              aceitaEm: { seconds: Math.floor(Date.now() / 1000) },
+              ...(aceite?.job || {}),
+              id: c.id,
+              status: "aceita",
+            });
+            ouvir();
+          },
+        });
+        return true;
+      }
+      function etapaServico(c) {
+        if (servicoEhEntrega(c)) return c.status === "retirada" ? "levar" : "buscar";
+        const salva = lerNavAtiva();
+        return c.clienteAvisadoEm && salva?.id === c.id && salva.etapa === "levar" ? "levar" : "buscar";
+      }
+      // As acoes da tela de GPS tocam o botao correspondente do card, para
+      // seguir exatamente as regras de cada servico (codigo da entrega avulsa,
+      // confirmacao da loja, lote de notas, conclusao pela empresa...).
+      function botaoDoCard(seletor) {
+        return document.querySelector(`#lista ${seletor}`);
+      }
+      async function esperarBotaoDoCard(seletor, ms = 2500) {
+        const limite = Date.now() + ms;
+        let btn = botaoDoCard(seletor);
+        while (!btn && Date.now() < limite) {
+          await new Promise((r) => setTimeout(r, 250));
+          btn = botaoDoCard(seletor);
+        }
+        return btn;
+      }
+      function jobAtualizado(c) {
+        return (
+          [...jobsCache.values()]
+            .flatMap((x) => x.jobs || [])
+            .find((j) => j.id === c.id) || c
+        );
+      }
+      function acaoDoCard(c, seletor, confirmacao) {
+        return async () => {
+          const btn = await esperarBotaoDoCard(seletor);
+          if (!btn) {
+            limparCache();
+            ouvir(true);
+            throw new Error("Atualizando a lista. Toque de novo em alguns segundos.");
+          }
+          if (btn.disabled) throw new Error(btn.textContent || "Acao indisponivel agora.");
+          if (confirmacao && !confirm(confirmacao)) return;
+          btn.click();
+          // Espera o card terminar: o botao some (lista recarregada), muda de
+          // texto (ex.: retirada confirmada) ou volta a ficar ativo (erro).
+          const textoClique = btn.textContent;
+          const pausa = (ms) => new Promise((r) => setTimeout(r, ms));
+          const fim = Date.now() + 90000;
+          while (btn.isConnected && btn.disabled && btn.textContent === textoClique && Date.now() < fim)
+            await pausa(300);
+          if (window.MotoNav.idAtual() !== c.id) return;
+          if (btn.isConnected && !btn.disabled) {
+            // O card mostrou o erro; volta a tela de GPS ao estado anterior.
+            abrirNavegacaoServico(jobAtualizado(c));
+            return;
+          }
+          if (btn.isConnected) {
+            limparCache();
+            ouvir(true);
+          }
+          await pausa(400);
+          const limite = Date.now() + 15000;
+          while (window.__motojaJobsLoading && Date.now() < limite) await pausa(300);
+          if (window.MotoNav.idAtual() !== c.id) return;
+          const lista = jobsCache.get(chaveLista());
+          if (lista) sincronizarTelaMapa(lista.jobs.map((j) => ({ id: j.id, data: j })), true);
+          else abrirNavegacaoServico(jobAtualizado(c));
+        };
+      }
+      function abrirNavegacaoServico(c) {
+        if (!window.MotoNav || !c?.id || servicoExclusivo(c)) return false;
+        const entrega = servicoEhEntrega(c),
+          etapa = etapaServico(c),
+          { coleta, destino } = pontosServico(c),
+          avisado = entrega || !!c.clienteAvisadoEm,
+          abaMinha = entrega ? "minhas-entregas" : "minhas",
+          finalizarSel = `[data-finalizar="${c.id}"]`,
+          textoFinalizar = botaoDoCard(finalizarSel)?.textContent?.trim(),
+          confirmarFinalizar = c.entregaNaNota || entregaAvulsa(c) ? "" : "Confirmar que o servico foi concluido?";
+        if (modo !== abaMinha) {
+          modo = abaMinha;
+          atualizarAbas();
+        }
+        if (window.MotoNav.idAtual() !== c.id) navAbertaEm = Date.now();
+        navRestaurada = true;
+        salvarNavAtiva(c.conclusaoStatus ? null : { id: c.id, tipo: entrega ? "entrega" : "corrida", etapa });
+        let cfg;
+        if (entrega) {
+          const extras = Array.isArray(c.pontosExtras) ? c.pontosExtras.length : 0;
+          cfg = etapa === "buscar"
+            ? {
+                alvo: { ...coleta, rotulo: "Retirar pedido" },
+                etapaTexto: "INDO RETIRAR",
+                cliente: { nome: c.empresa || "Empresa", linha: c.responsavel ? `Responsável: ${c.responsavel}` : coleta.detalhe, telefone: telefoneCliente(c) },
+                aviso: {
+                  tipo: "alerta",
+                  texto: c.confirmacaoEmpresaVersao === 1
+                    ? "Peça à loja para confirmar a retirada no app da empresa. Depois, confirme aqui para iniciar o GPS."
+                    : "Ao pegar o pedido, confirme a retirada para iniciar o GPS da entrega.",
+                },
+                principal: {
+                  texto: "Confirmei a retirada",
+                  textoCarregando: "Ativando GPS...",
+                  acao: acaoDoCard(c, `[data-confirmar-retirada="${c.id}"]`),
+                },
+              }
+            : {
+                alvo: { ...destino, rotulo: "Entregar pedido" },
+                etapaTexto: c.conclusaoStatus ? "AGUARDANDO" : "INDO ENTREGAR",
+                cliente: { nome: c.recebedor || "Recebedor", linha: c.dadosNaNota ? "Dados do cliente na nota impressa" : destino.detalhe, telefone: c.telefoneRecebedor || telefoneCliente(c) },
+                aviso: c.conclusaoStatus
+                  ? { texto: c.conclusaoStatus === "contestada" ? "Problema registrado. O dono vai conferir o serviço." : "Conclusão solicitada. O ganho será registrado após a confirmação da empresa. Você pode aceitar outras chamadas." }
+                  : extras
+                    ? { tipo: "alerta", texto: `Esta entrega tem mais ${extras} ${extras > 1 ? "paradas" : "parada"}. Veja os pontos no card da entrega.` }
+                    : { texto: "GPS ativo: a empresa acompanha esta entrega." },
+                principal: {
+                  texto: textoFinalizar || (c.confirmacaoEmpresaVersao === 1 ? "Solicitar conclusão" : "Finalizar entrega"),
+                  textoCarregando: "Finalizando...",
+                  cor: "verde",
+                  desativado: !!c.conclusaoStatus,
+                  acao: acaoDoCard(c, finalizarSel, confirmarFinalizar),
+                },
+              };
+        } else {
+          const prazo = tempoAvisoRestante(c),
+            avulsa = entregaAvulsa(c);
+          cfg = {
+            alvo: etapa === "buscar"
+              ? { ...coleta, rotulo: avulsa ? "Retirar" : "Buscar passageiro" }
+              : { ...destino, rotulo: avulsa ? "Entregar" : "Levar ao destino" },
+            etapaTexto: etapa === "buscar" ? "INDO BUSCAR" : avulsa ? "INDO ENTREGAR" : "EM VIAGEM",
+            cliente: {
+              nome: c.nome || "Cliente",
+              foto: fotoClienteSegura(c),
+              linha: etapa === "buscar" ? coleta.titulo : destino.titulo,
+              telefone: telefoneCliente(c),
+            },
+            aviso: !avisado
+              ? { tipo: "alerta", texto: `Avise o cliente para liberar a ${avulsa ? "entrega" : "corrida"}${prazo ? ` · ${prazo}` : ""}. Ele recebe seu nome, foto e acompanha você ao vivo.` }
+              : etapa === "buscar"
+                ? { texto: "Cliente avisado: ele acompanha sua chegada ao vivo." }
+                : null,
+            principal: !avisado
+              ? {
+                  texto: "Avisar cliente e iniciar GPS",
+                  textoCarregando: "Avisando cliente...",
+                  acao: acaoDoCard(c, `[data-avisar="${c.id}"]`),
+                }
+              : etapa === "buscar"
+                ? {
+                    texto: "Cheguei no local",
+                    cor: "verde",
+                    acao: async () => {
+                      salvarNavAtiva({ id: c.id, tipo: "corrida", etapa: "levar" });
+                      abrirNavegacaoServico(c);
+                    },
+                  }
+                : {
+                    texto: textoFinalizar || "Finalizar corrida",
+                    textoCarregando: "Finalizando...",
+                    cor: "verde",
+                    acao: acaoDoCard(c, finalizarSel, confirmarFinalizar),
+                  },
+          };
+        }
+        window.MotoNav.abrirNavegacao({ id: c.id, backend: CONFIG.backend, tipo: entrega ? "entrega" : "corrida", etapa, ...cfg });
+        return true;
+      }
+      // Mantem a tela de GPS/oferta em dia com a lista que acabou de chegar.
+      // "posAcao" = lista recarregada depois de uma acao feita pela tela de GPS:
+      // os dados sao frescos, entao um servico que sumiu fecha na hora.
+      function sincronizarTelaMapa(docs, posAcao = false) {
+        if (!window.MotoNav) return;
+        const porId = new Map(docs.map((d) => [d.id, { ...d.data, id: d.id }]));
+        if (modoMinhas()) {
+          const salva = lerNavAtiva();
+          const tipoLista = modoEntrega() ? "entrega" : "corrida";
+          if (!navRestaurada && salva?.id && salva.tipo === tipoLista) {
+            navRestaurada = true;
+            if (porId.has(salva.id)) abrirNavegacaoServico(porId.get(salva.id));
+            else salvarNavAtiva(null);
+            return;
+          }
+          if (window.MotoNav.modo() !== "nav" || window.MotoNav.tipo() !== tipoLista) return;
+          if (window.MotoNav.ocupado() && !posAcao) return;
+          const atual = porId.get(window.MotoNav.idAtual());
+          if (atual && ["aceita", "retirada"].includes(atual.status)) abrirNavegacaoServico(atual);
+          else if (posAcao || Date.now() - navAbertaEm > 20000) {
+            // Finalizada, cancelada ou devolvida para pendentes.
+            if (lerNavAtiva()?.id === window.MotoNav.idAtual()) salvarNavAtiva(null);
+            window.MotoNav.fechar();
+          }
+          return;
+        }
+        if (window.MotoNav.modo() === "oferta" && !porId.has(window.MotoNav.idAtual())) window.MotoNav.fechar();
+      }
       let motoboy = "",
         motoboyCpf = "",
         motoboyCnh = "",
@@ -1281,7 +1564,7 @@
         modo =
           new URLSearchParams(location.search).get("aba") === "entregas"
             ? "entregas"
-            : "pendentes",
+            : abaDaNavegacaoSalva() || "pendentes",
         requestSeq = 0,
         jobsRequestsInFlight = 0,
         jobsRequestController = null;
@@ -1885,7 +2168,7 @@
         const cabecalho = modoEntrega() || servicoExclusivo(c)
           ? `<div><strong>${titulo}</strong><p class="muted">${quando(c.criadaEm)} - expira em ${tempoRestante(c)}</p></div>`
           : cabecalhoCliente(c, titulo, `${quando(c.criadaEm)} - expira em ${tempoRestante(c)}`);
-        return `<article class="card"><div class="line">${cabecalho}<div class="value">${moeda(c.valor)}</div></div><div>${detalhes(c)}</div><div class="actions"><button class="ok" data-aceitar="${id}">${servicoExclusivo(c) ? "Aceitar escala" : entregaAvulsa(c) ? "Aceitar entrega" : "Aceitar " + nomeServico()}</button><button class="secondary" onclick="location.href='https://api.whatsapp.com/send?phone=5519992306488&text=${encodeURIComponent("Quero falar sobre a " + nomeServico() + " " + id)}'">WhatsApp</button></div></article>`;
+        return `<article class="card"><div class="line">${cabecalho}<div class="value">${moeda(c.valor)}</div></div><div>${detalhes(c)}</div><div class="actions">${servicoExclusivo(c) ? "" : `<button class="secondary" data-ver-mapa="${id}">Ver no mapa</button>`}<button class="ok" data-aceitar="${id}">${servicoExclusivo(c) ? "Aceitar escala" : entregaAvulsa(c) ? "Aceitar entrega" : "Aceitar " + nomeServico()}</button><button class="secondary" onclick="location.href='https://api.whatsapp.com/send?phone=5519992306488&text=${encodeURIComponent("Quero falar sobre a " + nomeServico() + " " + id)}'">WhatsApp</button></div></article>`;
       }
       function cardMinha(id, c) {
         const finalizada = c.status === "finalizada",
@@ -1912,7 +2195,7 @@
           cabecalho = isEntrega
             ? `<div><strong>${titulo}</strong><p class="muted">${statusCorrida}</p></div>`
             : cabecalhoCliente(c, titulo, statusCorrida);
-        return `<article class="card"><div class="line">${cabecalho}<div class="value">${moeda(ganhoMotoboy(c.valor, c))}</div></div><div>${detalhes(c)}</div><p class="muted"><strong>${pagamento}</strong></p>${tempoAviso ? `<p class="muted">Tempo para avisar cliente: <strong>${tempoAviso}</strong></p>` : ""}<p class="muted">${isEntrega ? (servicoExclusivo(c) ? "Atencao: escala exclusiva so deve ser aceita se horario e valor foram combinados pelo suporte MotoJa. Abandono pode causar bloqueio." : "Atencao: confira retirada, entrega, quantidade de paradas e observacao antes de sair. Entrega aceita e abandonada pode causar bloqueio.") : "Atencao: depois de aceitar, clique em Avisar cliente e iniciar corrida com GPS. Esse botao envia seu nome, foto, acompanhamento ao vivo e pagamento ao cliente. Mantenha o app aberto durante o trajeto. Se o tempo zerar sem aviso, a corrida volta para pendentes."}</p><div class="actions"><button class="done" data-finalizar="${id}" ${finalizada || cancelada || !!c.conclusaoStatus || !avisado ? "disabled" : ""}>${cancelada ? "Cancelada" : finalizada ? "Finalizada" : servicoExclusivo(c) ? "Finalizar escala" : isEntrega ? (c.conclusaoStatus ? (c.conclusaoStatus === "contestada" ? "Em conferência pelo dono" : "Aguardando confirmação da empresa") : c.confirmacaoEmpresaVersao === 1 ? "Solicitar conclusão" : c.entregaNaNota ? "Finalizar lote" : "Finalizar entrega") : entregaAvulsa(c) ? "Finalizar entrega com codigo" : "Finalizar corrida"}</button>${isEntrega ? "" : `<button class="secondary" data-avisar="${id}" ${finalizada || cancelada || avisado ? "disabled" : ""}>${avisado ? "Cliente avisado - GPS ativo" : entregaAvulsa(c) ? "Avisar cliente e iniciar entrega com GPS" : "Avisar cliente e iniciar corrida com GPS"}</button>`}${isEntrega || finalizada || cancelada ? "" : `<button class="secondary" data-point="${id}" ${!avisado || c.pagamento?.status === "approved" || c.pagamento?.presencialManual?.codigo ? "disabled" : ""}>Informar aproximacao</button>`}${isEntrega || finalizada || cancelada || !c.pagamento?.point?.orderId ? "" : `<button class="secondary" data-point-status="${id}">Ver status aproximacao</button>`}${isEntrega && c.confirmacaoEmpresaVersao === 1 && c.retiradaLiberadaEm && !finalizada && !cancelada && c.conclusaoStatus !== "contestada" ? `<button class="secondary" data-problema-entrega="${id}">Informar problema ao dono</button>` : ""}<button class="secondary" data-cancelar="${id}" ${finalizada || cancelada || (isEntrega && c.confirmacaoEmpresaVersao === 1 && !!c.retiradaLiberadaEm) ? "disabled" : ""}>Cancelar ${nomeServico()}</button></div></article>`;
+        return `<article class="card"><div class="line">${cabecalho}<div class="value">${moeda(ganhoMotoboy(c.valor, c))}</div></div><div>${detalhes(c)}</div><p class="muted"><strong>${pagamento}</strong></p>${tempoAviso ? `<p class="muted">Tempo para avisar cliente: <strong>${tempoAviso}</strong></p>` : ""}<p class="muted">${isEntrega ? (servicoExclusivo(c) ? "Atencao: escala exclusiva so deve ser aceita se horario e valor foram combinados pelo suporte MotoJa. Abandono pode causar bloqueio." : "Atencao: confira retirada, entrega, quantidade de paradas e observacao antes de sair. Entrega aceita e abandonada pode causar bloqueio.") : "Atencao: depois de aceitar, clique em Avisar cliente e iniciar corrida com GPS. Esse botao envia seu nome, foto, acompanhamento ao vivo e pagamento ao cliente. Mantenha o app aberto durante o trajeto. Se o tempo zerar sem aviso, a corrida volta para pendentes."}</p><div class="actions">${finalizada || cancelada || servicoExclusivo(c) ? "" : `<button class="ok" data-abrir-gps="${id}">Abrir GPS</button>`}<button class="done" data-finalizar="${id}" ${finalizada || cancelada || !!c.conclusaoStatus || !avisado ? "disabled" : ""}>${cancelada ? "Cancelada" : finalizada ? "Finalizada" : servicoExclusivo(c) ? "Finalizar escala" : isEntrega ? (c.conclusaoStatus ? (c.conclusaoStatus === "contestada" ? "Em conferência pelo dono" : "Aguardando confirmação da empresa") : c.confirmacaoEmpresaVersao === 1 ? "Solicitar conclusão" : c.entregaNaNota ? "Finalizar lote" : "Finalizar entrega") : entregaAvulsa(c) ? "Finalizar entrega com codigo" : "Finalizar corrida"}</button>${isEntrega ? "" : `<button class="secondary" data-avisar="${id}" ${finalizada || cancelada || avisado ? "disabled" : ""}>${avisado ? "Cliente avisado - GPS ativo" : entregaAvulsa(c) ? "Avisar cliente e iniciar entrega com GPS" : "Avisar cliente e iniciar corrida com GPS"}</button>`}${isEntrega || finalizada || cancelada ? "" : `<button class="secondary" data-point="${id}" ${!avisado || c.pagamento?.status === "approved" || c.pagamento?.presencialManual?.codigo ? "disabled" : ""}>Informar aproximacao</button>`}${isEntrega || finalizada || cancelada || !c.pagamento?.point?.orderId ? "" : `<button class="secondary" data-point-status="${id}">Ver status aproximacao</button>`}${isEntrega && c.confirmacaoEmpresaVersao === 1 && c.retiradaLiberadaEm && !finalizada && !cancelada && c.conclusaoStatus !== "contestada" ? `<button class="secondary" data-problema-entrega="${id}">Informar problema ao dono</button>` : ""}<button class="secondary" data-cancelar="${id}" ${finalizada || cancelada || (isEntrega && c.confirmacaoEmpresaVersao === 1 && !!c.retiradaLiberadaEm) ? "disabled" : ""}>Cancelar ${nomeServico()}</button></div></article>`;
       }
       async function aceitarCorrida(id) {
         if (window.MotojaDriverAvailability?.canReceive() === false) throw new Error('Ative Disponível e confirme a conexão antes de aceitar um novo serviço.');
@@ -1984,13 +2267,20 @@
           )
           .slice(0, 30);
         if (!docs.length) {
+          sincronizarTelaMapa(docs);
           lista.innerHTML = `<div class="empty">${modoMinhas() ? `Nenhuma ${servico} em andamento.` : `Nenhuma ${servico} pendente agora.`}</div>`;
           return;
         }
+        const novos = [],
+          jobPorId = (id) => {
+            const d = docs.find((item) => item.id === id);
+            return d ? { ...d.data, id: d.id } : null;
+          };
         lista.innerHTML = docs
           .map((d) => {
             if (!modoMinhas() && !vistos.has(`${colecaoAtual()}-${d.id}`)) {
               nova = true;
+              novos.push(d.id);
               vistos.add(`${colecaoAtual()}-${d.id}`);
             }
             return !modoMinhas()
@@ -1999,6 +2289,22 @@
           })
           .join("");
         if (nova && audioLiberado) beep();
+        if (!modoMinhas() && window.MotoNav && !window.MotoNav.aberto()) {
+          const oferta = docs.find(
+            (d) =>
+              novos.includes(d.id) &&
+              d.data.status === "pendente" &&
+              !ofertasRecusadas.has(d.id) &&
+              !servicoExclusivo(d.data),
+          );
+          if (oferta) abrirOfertaMapa(jobPorId(oferta.id));
+        }
+        lista.querySelectorAll("[data-ver-mapa]").forEach(
+          (btn) => (btn.onclick = () => abrirOfertaMapa(jobPorId(btn.dataset.verMapa))),
+        );
+        lista.querySelectorAll("[data-abrir-gps]").forEach(
+          (btn) => (btn.onclick = () => abrirNavegacaoServico(jobPorId(btn.dataset.abrirGps))),
+        );
         lista.querySelectorAll("[data-aceitar]").forEach(
           (btn) =>
             (btn.onclick = async () => {
@@ -2009,7 +2315,16 @@
                 const aceite = await aceitarCorrida(btn.dataset.aceitar);
                 limparCache();
                 btn.textContent = `${servico[0].toUpperCase() + servico.slice(1)} aceita`;
-                if (aceitandoEntrega) {
+                const aceito = {
+                  ...(jobPorId(btn.dataset.aceitar) || {}),
+                  aceitaEm: { seconds: Math.floor(Date.now() / 1000) },
+                  ...(aceite?.job || {}),
+                  id: btn.dataset.aceitar,
+                  status: "aceita",
+                };
+                if (abrirNavegacaoServico(aceito)) {
+                  ouvir();
+                } else if (aceitandoEntrega) {
                   btn.closest(".card")?.remove();
                   if (!$('lista').querySelector('.card'))
                     $('lista').innerHTML = '<div class="empty">Entrega aceita. Nenhuma outra entrega pendente agora.</div>';
@@ -2322,6 +2637,7 @@
                       d.error ||
                       `Nao consegui finalizar pelo servidor.`,
                   );
+                if (lerNavAtiva()?.id === btn.dataset.finalizar) salvarNavAtiva(null);
                 btn.textContent = d.pendingApproval ? "Aguardando confirmação da empresa" : `${servico[0].toUpperCase() + servico.slice(1)} finalizada`;
                 limparCache();
                 ouvir();
@@ -2332,6 +2648,7 @@
               }
             }),
         );
+        sincronizarTelaMapa(docs);
       }
       async function ouvir(silencioso = false) {
         if (!motoboyCpf) return;
@@ -2339,6 +2656,7 @@
         if (!modoMinhas() && window.MotojaDriverAvailability?.canReceive() === false) {
           if (jobsRequestController) jobsRequestController.abort();
           requestSeq += 1;
+          if (window.MotoNav?.modo() === "oferta") window.MotoNav.fechar();
           atualizarAbas();
           $("lista").innerHTML = '<div class="empty">Ative <strong>Disponível</strong> no topo para ver novos serviços. Seus serviços aceitos continuam em Minhas corridas e Minhas entregas.</div>';
           return;
