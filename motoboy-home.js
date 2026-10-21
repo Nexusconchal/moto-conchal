@@ -84,6 +84,7 @@
           <span><b>Preferências</b><small data-home-pref-sub>Cidades das corridas</small></span>
           <i>›</i>
         </button>
+        <button type="button" class="mjhome-hint" data-home-servicos>Perdeu uma chamada? Veja em <b>Serviços</b></button>
       </div>
       <div class="mjhome-prefs" data-home-prefs hidden>
         <div class="mjhome-prefs-sheet" role="dialog" aria-label="Preferências">
@@ -395,6 +396,7 @@
       };
       $('[data-home-ativo]').onclick = () => opcoes?.abrirServicoAtivo?.();
       $('[data-home-pref]').onclick = abrirPreferencias;
+      $('[data-home-servicos]').onclick = () => document.getElementById('nav-servicos')?.click();
       $('[data-home-prefs-fechar]').onclick = fecharPreferencias;
       $('[data-home-prefs]').addEventListener('click', (event) => {
         if (event.target === event.currentTarget) fecharPreferencias();

@@ -539,3 +539,313 @@ body.mjhome-ativo #dicaAvisos {
   font-size: 15px;
   box-shadow: 0 0 0 5px rgba(255, 114, 0, 0.3), 0 4px 10px rgba(0, 0, 0, 0.35);
 }
+
+/* ---------- Telas do menu de baixo ---------- */
+/* O cabecalho com logo/foto/selo "Online" repetia o que o mapa ja mostra. */
+body.mjhome-ativo .top .brand,
+body.mjhome-ativo #online {
+  display: none !important;
+}
+body.mjhome-ativo .top:not(:has(#planoMotoboy:not([hidden]))) {
+  display: none;
+}
+body[data-tela="inicio"] #telaServicos,
+body[data-tela="inicio"] #lista,
+body[data-tela="inicio"] #telaPerfil,
+body[data-tela="servicos"] #motoHome,
+body[data-tela="servicos"] #telaPerfil,
+body[data-tela="ganhos"] #motoHome,
+body[data-tela="ganhos"] #telaServicos,
+body[data-tela="ganhos"] #telaPerfil,
+body[data-tela="perfil"] #motoHome,
+body[data-tela="perfil"] #telaServicos,
+body[data-tela="perfil"] #lista {
+  display: none !important;
+}
+.abas-legado[hidden] {
+  display: none !important;
+}
+.driver-bottom-nav button[data-badge] {
+  position: relative;
+}
+.driver-bottom-nav button[data-badge]::after {
+  content: attr(data-badge);
+  position: absolute;
+  top: 4px;
+  right: calc(50% - 22px);
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #ff5a4a;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 17px;
+}
+.mjhome-hint {
+  width: 100%;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: #9aa0ab;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 2px 0 6px;
+  cursor: pointer;
+  min-height: 0;
+}
+.mjhome-hint b {
+  color: #ff9d00;
+}
+
+/* ---------- Tela Servicos ---------- */
+.servicos-head {
+  display: grid;
+  gap: 12px;
+  padding-top: 6px;
+}
+.servicos-title h2 {
+  font-size: 26px;
+  line-height: 1.1;
+}
+.servicos-title p {
+  font-size: 12.5px;
+  color: #9aa0ab;
+  margin-top: 3px;
+}
+.servicos-seg {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 14px;
+  background: #181a21;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+}
+.servicos-seg button {
+  flex: 1;
+  min-height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #9aa0ab;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  box-shadow: none;
+  cursor: pointer;
+}
+.servicos-seg button.on {
+  background: #fff;
+  color: #111;
+}
+.servicos-seg span {
+  display: inline-block;
+  margin-left: 6px;
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: #ff7200;
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+}
+.servicos-seg span[hidden] {
+  display: none;
+}
+.servicos-chips {
+  display: flex;
+  gap: 8px;
+}
+.servicos-chips button {
+  min-height: 0;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: #111319;
+  color: #9aa0ab;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: none;
+  cursor: pointer;
+  width: auto;
+}
+.servicos-chips button.on {
+  border-color: rgba(255, 114, 0, 0.6);
+  background: rgba(255, 114, 0, 0.12);
+  color: #ff9d00;
+}
+
+/* ---------- Cards de servico ---------- */
+#lista > .job-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 20px;
+}
+#lista > .job-card.job-ativo {
+  border-color: rgba(255, 114, 0, 0.45);
+}
+.job-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+.job-tag {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: #ff9d00;
+}
+.job-entrega .job-tag {
+  color: #7cc4ff;
+}
+.job-price {
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: -0.5px;
+  line-height: 1.15;
+}
+.job-price small {
+  font-size: 12px;
+  font-weight: 600;
+  color: #9aa0ab;
+  letter-spacing: 0;
+  margin-left: 6px;
+}
+.job-timer,
+.job-selo {
+  flex: none;
+  padding: 5px 9px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 800;
+  white-space: nowrap;
+  background: rgba(255, 114, 0, 0.14);
+  color: #ffcf9a;
+}
+.job-timer.acabando {
+  background: rgba(255, 90, 74, 0.18);
+  color: #ffb4a8;
+}
+.job-selo.ok {
+  background: rgba(53, 201, 121, 0.15);
+  color: #bfffd2;
+}
+.job-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.job-meta span {
+  padding: 4px 9px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: #181a21;
+  color: #d6d9df;
+  font-size: 12px;
+}
+.job-stops {
+  position: relative;
+  padding-left: 20px;
+}
+.job-stops::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 9px;
+  bottom: 22px;
+  border-left: 2px dashed #3a3e49;
+}
+.job-st {
+  position: relative;
+  margin-bottom: 6px;
+}
+.job-st::before {
+  content: "";
+  position: absolute;
+  left: -19px;
+  top: 4px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #35c979;
+}
+.job-st.fim::before {
+  background: #ff7200;
+  border-radius: 3px;
+}
+.job-st b {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+}
+.job-st span {
+  display: block;
+  font-size: 12px;
+  color: #9aa0ab;
+}
+.job-steps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+.job-steps i {
+  height: 5px;
+  border-radius: 5px;
+  background: #2a2d36;
+}
+.job-steps i.on {
+  background: #35c979;
+}
+.job-steps-l {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin-top: -4px;
+  font-size: 11px;
+  color: #9aa0ab;
+}
+.job-steps-l span.on {
+  color: #35c979;
+  font-weight: 800;
+}
+.job-more {
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  padding-top: 8px;
+}
+.job-more summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+  color: #9aa0ab;
+  list-style: none;
+}
+.job-more summary::-webkit-details-marker {
+  display: none;
+}
+.job-more summary::after {
+  content: " ›";
+}
+.job-more[open] summary {
+  margin-bottom: 8px;
+}
+.job-more[open] summary::after {
+  content: " ⌄";
+}
+.job-more > .secondary {
+  margin-top: 10px;
+  width: 100%;
+}
+#lista > .job-card .actions {
+  margin-top: 0;
+}
+#lista > .job-card:not(.job-ativo) .actions {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 8px;
+}
