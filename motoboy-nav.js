@@ -549,6 +549,7 @@
     ocupado: () => !!tela?.ocupado,
     modo: () => tela?.modo || '',
     idAtual: () => tela?.cfg?.id || '',
-    tipo: () => tela?.cfg?.tipo || ''
+    tipo: () => tela?.cfg?.tipo || '',
+    carregarLeaflet
   };
 })();

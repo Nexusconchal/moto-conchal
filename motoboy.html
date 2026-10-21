@@ -22,6 +22,7 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="./motoboy-nav.css?v=1" />
+    <link rel="stylesheet" href="./motoboy-home.css?v=1" />
     <style>
       * {
         box-sizing: border-box;
@@ -981,29 +982,8 @@
         </p>
       </section>
       <section id="painel" class="hidden grid">
-        <div id="perfilMotoboy" class="card"></div>
-        <div class="status driver-rule">
-          Ordem certa: aceite somente o servico que voce vai fazer. Corrida e
-          entrega ficam separadas. Corrida nao avisada ou entrega aceita e
-          abandonada pode causar bloqueio.
-        </div>
+        <section id="motoHome" class="mjhome" data-estado="indisponivel" aria-label="Início"></section>
         <div class="driver-home-title"><h2>Seu trabalho</h2><span>Atualização automática</span></div>
-        <div class="driver-tools">
-        <button id="btn-mp" class="secondary" type="button">
-          Conectar Mercado Pago para receber ate 80%</button
-        ><button id="btn-push" class="secondary" type="button">
-          Entrar no grupo de avisos no Telegram</button
-        ><button id="btn-push-device" class="secondary" type="button">
-          Ativar notificacoes neste aparelho</button
-        ><button id="sair-conta" class="secondary" type="button">
-          Sair da conta
-        </button>
-        </div>
-        <p class="muted">
-          Para nao perder chamada, deixe as duas opcoes ativas: o Telegram avisa
-          corridas e entregas pelo grupo, e a notificacao do aparelho ajuda como
-          reforco. Se uma falhar, a outra te ajuda a ver o servico a tempo.
-        </p>
         <div class="driver-service-grid">
         <div class="driver-service-group"><p>Corridas de mototáxi</p>
         <div class="tabs">
@@ -1025,6 +1005,29 @@
         </div>
         <button id="aba-ganhos" class="secondary earnings-entry" type="button">Ver meus ganhos</button>
         <div id="lista" class="grid"></div>
+        <div class="driver-home-title"><h2>Perfil e conta</h2></div>
+        <div id="perfilMotoboy" class="card"></div>
+        <div class="status driver-rule">
+          Ordem certa: aceite somente o servico que voce vai fazer. Corrida e
+          entrega ficam separadas. Corrida nao avisada ou entrega aceita e
+          abandonada pode causar bloqueio.
+        </div>
+        <div class="driver-tools">
+        <button id="btn-mp" class="secondary" type="button">
+          Conectar Mercado Pago para receber ate 80%</button
+        ><button id="btn-push" class="secondary" type="button">
+          Entrar no grupo de avisos no Telegram</button
+        ><button id="btn-push-device" class="secondary" type="button">
+          Ativar notificacoes neste aparelho</button
+        ><button id="sair-conta" class="secondary" type="button">
+          Sair da conta
+        </button>
+        </div>
+        <p id="dicaAvisos" class="muted">
+          Para nao perder chamada, deixe as duas opcoes ativas: o Telegram avisa
+          corridas e entregas pelo grupo, e a notificacao do aparelho ajuda como
+          reforco. Se uma falhar, a outra te ajuda a ver o servico a tempo.
+        </p>
         <nav class="driver-bottom-nav" aria-label="Navegação principal">
           <button id="nav-inicio" class="active" type="button">Início</button>
           <button id="nav-servicos" type="button">Serviços</button>
@@ -1034,7 +1037,8 @@
       </section>
     </main>
     <script src="./driver-availability.js?v=226"></script>
-    <script src="./motoboy-nav.js?v=1" defer></script>
+    <script src="./motoboy-nav.js?v=2" defer></script>
+    <script src="./motoboy-home.js?v=1" defer></script>
     <script type="module">
       let cidadesAtivas = {
           conchal: true,
@@ -1075,6 +1079,7 @@
         if (aguai) aguai.checked = !!cidadesAtivas.aguai;
         if (engenheiroCoelho)
           engenheiroCoelho.checked = !!cidadesAtivas.engenheiro_coelho;
+        window.MotoHome?.atualizar();
       }
       function bloquearSeletorCidades(blocked) {
         ["cidade-aguai", "cidade-engenheiro-coelho"].forEach((id) => {
@@ -1143,6 +1148,7 @@
         } finally {
           renderCidadesAtivas();
           bloquearSeletorCidades(false);
+          window.MotoHome?.atualizar();
         }
       }
       setInterval(() => {
@@ -2198,7 +2204,7 @@
         return `<article class="card"><div class="line">${cabecalho}<div class="value">${moeda(ganhoMotoboy(c.valor, c))}</div></div><div>${detalhes(c)}</div><p class="muted"><strong>${pagamento}</strong></p>${tempoAviso ? `<p class="muted">Tempo para avisar cliente: <strong>${tempoAviso}</strong></p>` : ""}<p class="muted">${isEntrega ? (servicoExclusivo(c) ? "Atencao: escala exclusiva so deve ser aceita se horario e valor foram combinados pelo suporte MotoJa. Abandono pode causar bloqueio." : "Atencao: confira retirada, entrega, quantidade de paradas e observacao antes de sair. Entrega aceita e abandonada pode causar bloqueio.") : "Atencao: depois de aceitar, clique em Avisar cliente e iniciar corrida com GPS. Esse botao envia seu nome, foto, acompanhamento ao vivo e pagamento ao cliente. Mantenha o app aberto durante o trajeto. Se o tempo zerar sem aviso, a corrida volta para pendentes."}</p><div class="actions">${finalizada || cancelada || servicoExclusivo(c) ? "" : `<button class="ok" data-abrir-gps="${id}">Abrir GPS</button>`}<button class="done" data-finalizar="${id}" ${finalizada || cancelada || !!c.conclusaoStatus || !avisado ? "disabled" : ""}>${cancelada ? "Cancelada" : finalizada ? "Finalizada" : servicoExclusivo(c) ? "Finalizar escala" : isEntrega ? (c.conclusaoStatus ? (c.conclusaoStatus === "contestada" ? "Em conferência pelo dono" : "Aguardando confirmação da empresa") : c.confirmacaoEmpresaVersao === 1 ? "Solicitar conclusão" : c.entregaNaNota ? "Finalizar lote" : "Finalizar entrega") : entregaAvulsa(c) ? "Finalizar entrega com codigo" : "Finalizar corrida"}</button>${isEntrega ? "" : `<button class="secondary" data-avisar="${id}" ${finalizada || cancelada || avisado ? "disabled" : ""}>${avisado ? "Cliente avisado - GPS ativo" : entregaAvulsa(c) ? "Avisar cliente e iniciar entrega com GPS" : "Avisar cliente e iniciar corrida com GPS"}</button>`}${isEntrega || finalizada || cancelada ? "" : `<button class="secondary" data-point="${id}" ${!avisado || c.pagamento?.status === "approved" || c.pagamento?.presencialManual?.codigo ? "disabled" : ""}>Informar aproximacao</button>`}${isEntrega || finalizada || cancelada || !c.pagamento?.point?.orderId ? "" : `<button class="secondary" data-point-status="${id}">Ver status aproximacao</button>`}${isEntrega && c.confirmacaoEmpresaVersao === 1 && c.retiradaLiberadaEm && !finalizada && !cancelada && c.conclusaoStatus !== "contestada" ? `<button class="secondary" data-problema-entrega="${id}">Informar problema ao dono</button>` : ""}<button class="secondary" data-cancelar="${id}" ${finalizada || cancelada || (isEntrega && c.confirmacaoEmpresaVersao === 1 && !!c.retiradaLiberadaEm) ? "disabled" : ""}>Cancelar ${nomeServico()}</button></div></article>`;
       }
       async function aceitarCorrida(id) {
-        if (window.MotojaDriverAvailability?.canReceive() === false) throw new Error('Ative Disponível e confirme a conexão antes de aceitar um novo serviço.');
+        if (window.MotojaDriverAvailability?.canReceive() === false) throw new Error('Toque em Ficar disponível no Início e espere conectar antes de aceitar um novo serviço.');
         const kind = recursoAtual();
         const r = await fetchMotoboyComRetry(
           `${CONFIG.backend}/api/${kind}/${id}/accept`,
@@ -2658,7 +2664,7 @@
           requestSeq += 1;
           if (window.MotoNav?.modo() === "oferta") window.MotoNav.fechar();
           atualizarAbas();
-          $("lista").innerHTML = '<div class="empty">Ative <strong>Disponível</strong> no topo para ver novos serviços. Seus serviços aceitos continuam em Minhas corridas e Minhas entregas.</div>';
+          $("lista").innerHTML = '<div class="empty">Toque em <strong>Ficar disponível</strong> no mapa do Início para ver novos serviços. Seus serviços aceitos continuam em Minhas corridas e Minhas entregas.</div>';
           return;
         }
         if (silencioso && jobsRequestsInFlight > 0) return;
@@ -2748,7 +2754,7 @@
       $("nav-inicio").onclick = () => {
         modo = "pendentes";
         ouvir();
-        $("lista").scrollIntoView({ behavior: "smooth", block: "start" });
+        window.scrollTo({ top: 0, behavior: "smooth" });
       };
       $("nav-servicos").onclick = () => {
         modo = "entregas";
@@ -3065,6 +3071,27 @@
         const pushDevice = $("btn-push-device");
         if (pushDevice) pushDevice.onclick = ativarNotificacoes;
         ouvir();
+        window.MotoHome?.iniciar({
+          backend: CONFIG.backend,
+          getProof: driverProof,
+          nome: () => motoboy,
+          foto: () => motoboyFoto,
+          resumoCidades: () =>
+            [
+              "Conchal",
+              cidadesAtivas.aguai ? "Aguaí" : "",
+              cidadesAtivas.engenheiro_coelho ? "Eng. Coelho" : "",
+            ]
+              .filter(Boolean)
+              .join(", "),
+          abrirServicoAtivo: () => {
+            const nav = lerNavAtiva();
+            if (!nav?.id) return;
+            modo = nav.tipo === "entrega" ? "minhas-entregas" : "minhas";
+            navRestaurada = false;
+            ouvir();
+          },
+        });
       }
       async function preencherMotoboyDasEntradas() {
         motoboy = $("nome").value.trim();
