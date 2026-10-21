@@ -118,6 +118,12 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
   const configRef = db.collection('configuracoes').doc('atendimentoAutomatico');
   let cache, cacheUntil = 0, ticking = false, lastPrune = 0;
   const completedNotices = new Map(), outgoingEchoes = new Map();
+  // Ultimo aviso no grupo do WhatsApp, para o painel mostrar se esta chegando ou o motivo da falha.
+  let lastGroupNotice = null;
+  function recordGroupNotice(status, error = '') {
+    lastGroupNotice = { at: now(), status, error: String(error || '').slice(0, 200) };
+    if (status !== 'sent') console.error('support automation whatsapp group notice failed', lastGroupNotice.error || status);
+  }
   function remember(map, key, value, lifetime = 120000) {
     if (map.size >= 2000) { for (const [id, entry] of map) if (entry.until <= now()) map.delete(id); }
     if (map.size >= 2000) map.delete(map.keys().next().value);
@@ -279,11 +285,13 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
     // At most one attempt: an ambiguous network timeout must not spam a group.
     try {
       const sent = channel === 'whatsapp' ? await sendText(settings.driverGroupJid, text) : await sendTelegram(fresh, text);
+      if (channel === 'whatsapp') recordGroupNotice(sent.sent ? 'sent' : 'failed', sent.sent ? '' : sent.reason || 'envio_nao_confirmado');
       await marker.set({ status: sent.sent ? 'sent' : 'failed', completedAt: now() }, { merge: true });
       await lastMarker.set({ status: sent.sent ? 'sent' : 'failed', completedAt: now() }, { merge: true });
       remember(completedNotices, marker.id, sent.sent ? 'recent' : 'failed', expire);
       return { channel, status: sent.sent ? 'sent' : 'failed' };
-    } catch {
+    } catch (error) {
+      if (channel === 'whatsapp') recordGroupNotice('failed', error?.message || 'erro_desconhecido');
       await marker.set({ status: 'failed', completedAt: now() }, { merge: true });
       await lastMarker.set({ status: 'failed', completedAt: now() }, { merge: true });
       remember(completedNotices, marker.id, 'failed', expire);
@@ -320,5 +328,5 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
       }
     } finally { ticking = false; }
   }
-  return { config, saveConfig, handle, tick };
+  return { config, saveConfig, handle, tick, groupNoticeStatus: () => lastGroupNotice, recordGroupNotice };
 }

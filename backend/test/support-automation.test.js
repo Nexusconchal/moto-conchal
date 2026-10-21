@@ -358,3 +358,14 @@ test('retention clears expired metadata but preserves unresolved human tickets',
   assert.equal(h.records.has('supportAutomationTickets/open'), true);
   assert.equal(h.records.has('supportAutomationTickets/closed'), false);
 });
+
+test('owner sees the last WhatsApp group notice: sent, or failed with the reason', async () => {
+  const ok = harness(); ok.records.set('corridas/nova', { status: 'pendente', criadaEm: NOW - 10000, valor: 12 });
+  assert.equal(ok.service.groupNoticeStatus(), null);
+  await ok.service.tick();
+  assert.equal(ok.service.groupNoticeStatus().status, 'sent');
+  const down = harness(() => false, async () => null, { whatsapp: true }); down.records.set('corridas/nova', { status: 'pendente', criadaEm: NOW - 10000, valor: 12 });
+  await down.service.tick();
+  assert.equal(down.service.groupNoticeStatus().status, 'failed');
+  assert.equal(down.telegram.length, 0);
+});

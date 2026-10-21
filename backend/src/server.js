@@ -866,7 +866,8 @@ async function sendEvolutionText(number, text) {
   const response = await fetch(`${baseUrl}/message/sendText/${encodeURIComponent(instance)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', apikey: apiKey },
-    body: JSON.stringify({ number, text })
+    body: JSON.stringify({ number, text }),
+    signal: AbortSignal.timeout(15000)
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -12381,11 +12382,24 @@ app.post('/api/support/whatsapp/webhook', async (req, res) => {
   }
 });
 
+// Estado da conexao do WhatsApp do suporte na Evolution (open = conectado).
+async function supportWhatsappConnection() {
+  try {
+    const data = await supportEvolution(`/instance/connectionState/${supportInstancePath}`);
+    const state = String(data?.instance?.state || data?.state || '').toLowerCase();
+    return { state: state || 'desconhecido', connected: state === 'open' };
+  } catch (error) {
+    return { state: 'indisponivel', connected: false, error: String(error?.message || '').slice(0, 120) };
+  }
+}
+
 app.get('/api/admin/support-automation', authLimiter, assertOwner, async (_req, res, next) => {
   try {
     const settings = await supportAutomation.config(true);
     const tickets = await db.collection('supportAutomationTickets').where('status', '==', 'aguardando').get();
-    res.json({ enabled: !!settings.enabled, groupAlerts: !!settings.groupAlerts, groupName: settings.driverGroupName || '', phone: SUPPORT_PHONE,
+    const whatsapp = await supportWhatsappConnection();
+    res.json({ enabled: !!settings.enabled, groupAlerts: !!settings.groupAlerts, groupName: settings.driverGroupName || '', groupConfigured: !!settings.driverGroupJid, phone: SUPPORT_PHONE,
+      whatsapp, lastGroupNotice: supportAutomation.groupNoticeStatus(),
       gemini: { enabled: !!settings.geminiEnabled, configured: !!settings.geminiKeyEncrypted, model: settings.geminiModel || GEMINI_DEFAULT_MODEL, ...geminiSupport.status(), dailyLimit: 100, minuteLimit: 4 },
       openrouter: { enabled: !!settings.openrouterEnabled, configured: !!settings.openrouterKeyEncrypted, model: OPENROUTER_FREE_MODEL, ...openrouterSupport.status(), dailyLimit: 50, minuteLimit: 4 },
       tickets: tickets.docs.map(doc => ({ id: doc.id, telefone: decryptSecretSafe(doc.data().telefoneCriptografado), mensagem: decryptSecretSafe(doc.data().ultimaMensagemCriptografada), rideId: doc.data().rideId, requestedAt: doc.data().requestedAt })) });
@@ -12467,6 +12481,23 @@ app.post('/api/admin/support-automation/setup', authLimiter, assertOwner, async 
     return res.json({ ok: true, enabled: true, phone: SUPPORT_PHONE, groupName: group.subject });
   } catch {
     return res.status(503).json({ error: 'integracao_whatsapp_indisponivel', message: 'Não consegui confirmar a configuração. Confira a conexão da Evolution e tente novamente.' });
+  }
+});
+
+// Manda uma mensagem de teste no grupo dos motoboys para conferir se o WhatsApp esta entregando.
+app.post('/api/admin/support-automation/test-group', authLimiter, assertOwner, async (_req, res) => {
+  const settings = await supportAutomation.config(true).catch(() => ({}));
+  if (!settings.driverGroupJid) return res.status(409).json({ error: 'grupo_nao_configurado', message: 'O grupo dos motoboys ainda nao foi configurado. Toque em Ativar atendimento e avisos nos grupos.' });
+  try {
+    await supportEvolution(`/message/sendText/${supportInstancePath}`, 'POST', { number: settings.driverGroupJid, text: 'Teste Nexus MotoJá: os avisos de corridas e entregas estão chegando neste grupo.' });
+    supportAutomation.recordGroupNotice('sent');
+    return res.json({ ok: true, message: 'Mensagem de teste enviada no grupo.' });
+  } catch (error) {
+    supportAutomation.recordGroupNotice('failed', error?.message || 'erro_desconhecido');
+    const connection = await supportWhatsappConnection();
+    return res.status(503).json({ error: 'teste_grupo_falhou', message: connection.connected
+      ? `O WhatsApp esta conectado, mas o envio no grupo falhou (${String(error?.message || 'erro').slice(0, 80)}). Confira se o numero do suporte ainda esta no grupo e se pode enviar mensagens.`
+      : 'O WhatsApp do suporte esta desconectado da integracao. Leia o QR Code de novo na Evolution e depois toque em Enviar teste no grupo.' });
   }
 });
 

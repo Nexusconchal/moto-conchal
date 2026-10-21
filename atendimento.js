@@ -11,7 +11,15 @@
   }
   async function refresh() {
     const data = await api('');
-    el('status').textContent = `Atendimento: ${data.enabled ? 'ATIVO' : 'PAUSADO'}\nAvisos: ${data.groupAlerts ? 'ativos' : 'pausados'}\nGrupo WhatsApp: ${data.groupName || 'aguardando configuração'}`;
+    const wa = data.whatsapp || {};
+    const conexao = wa.connected ? 'CONECTADO' : wa.state === 'indisponivel' ? 'sem resposta da integração (Evolution fora do ar ou chave errada)' : 'DESCONECTADO — leia o QR Code de novo na Evolution';
+    const ultimo = data.lastGroupNotice;
+    const ultimoTexto = !ultimo ? 'nenhum desde a última reinicialização do servidor'
+      : `${ultimo.status === 'sent' ? 'enviado' : 'FALHOU'} em ${new Date(ultimo.at).toLocaleString('pt-BR')}${ultimo.status === 'sent' ? '' : ` (${ultimo.error || 'erro'})`}`;
+    const alertas = [];
+    if (!data.enabled || !data.groupAlerts) alertas.push('⚠️ Os avisos nos grupos estão pausados: toque em "Ativar atendimento e avisos nos grupos".');
+    if (!wa.connected) alertas.push('⚠️ Sem conexão do WhatsApp, os avisos não chegam no grupo (o Telegram continua).');
+    el('status').textContent = `Atendimento: ${data.enabled ? 'ATIVO' : 'PAUSADO'}\nAvisos: ${data.groupAlerts ? 'ativos' : 'pausados'}\nGrupo WhatsApp: ${data.groupName || 'aguardando configuração'}\nConexão do WhatsApp: ${conexao}\nÚltimo aviso no grupo: ${ultimoTexto}${alertas.length ? `\n\n${alertas.join('\n')}` : ''}`;
     const aiLabel = ai => !ai?.configured ? 'aguardando chave' : !ai.enabled ? 'pausada' : ai.reason === 'quota' ? 'cota temporariamente atingida; usando reserva' : ai.reason ? 'indisponível; usando reserva' : 'habilitada';
     el('ai-status').textContent = `Gemini: ${aiLabel(data.gemini)} • OpenRouter: ${aiLabel(data.openrouter)}`;
     if (data.gemini?.model) el('gemini-model').value = data.gemini.model;
@@ -40,6 +48,7 @@
   el('refresh').onclick = () => run(refresh);
   el('setup').onclick = () => run(async () => { el('status').textContent = 'Verificando WhatsApp e grupo…'; await api('/setup', 'POST'); await refresh(); });
   el('pause').onclick = () => run(async () => { await api('/pause', 'POST'); await refresh(); });
+  el('test-group').onclick = () => run(async () => { const result = await api('/test-group', 'POST'); await refresh(); el('error').textContent = result.message || 'Mensagem de teste enviada no grupo.'; });
   el('gemini-form').onsubmit = event => { event.preventDefault(); run(async () => { try { await api('/gemini', 'POST', { enabled: true, apiKey: el('gemini-key').value.trim(), model: el('gemini-model').value, freeTierConfirmed: el('gemini-free').checked }); await refresh(); } finally { el('gemini-key').value = ''; } }); };
   el('openrouter-form').onsubmit = event => { event.preventDefault(); run(async () => { try { await api('/openrouter', 'POST', { enabled: true, apiKey: el('openrouter-key').value.trim() }); await refresh(); } finally { el('openrouter-key').value = ''; } }); };
   el('gemini-pause').onclick = () => run(async () => { await api('/gemini', 'POST', { enabled: false }); await refresh(); });

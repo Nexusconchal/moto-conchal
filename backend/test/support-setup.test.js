@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import { chooseDriverGroup, brazilPhone, SUPPORT_PHONE } from '../src/support-automation.js';
 
 const source = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
-const route = source.slice(source.indexOf("app.post('/api/admin/support-automation/setup'"), source.indexOf("app.post('/api/admin/support-automation/pause'"));
+const route = source.slice(source.indexOf("app.post('/api/admin/support-automation/setup'"), source.indexOf("// Manda uma mensagem de teste no grupo dos motoboys"));
 async function run({ previous = null, owner = SUPPORT_PHONE, groups = [{ id: '123@g.us', subject: 'Nexus MotoJÁ - MOTORISTA' }], discardHeaders = false } = {}) {
   let handler, providerWebhook, status = 200, body;
   const config = {}, writes = [];
