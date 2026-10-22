@@ -3568,6 +3568,25 @@ async function getDriverWithMercadoPago(driverCpf) {
   return driver;
 }
 
+// App Android nativo (Play Store): a chamada usa o canal "chamadas", criado pelo app
+// com som proprio (res/raw/chamada) e prioridade maxima, para tocar com a tela bloqueada.
+// Os celulares que usam o web app ignoram este bloco e seguem com o webpush.
+function androidCallConfig(tag) {
+  return {
+    priority: 'high',
+    ttl: 120000,
+    notification: {
+      channelId: 'chamadas',
+      sound: 'chamada',
+      tag,
+      notificationPriority: 'PRIORITY_MAX',
+      visibility: 'PUBLIC',
+      defaultVibrateTimings: false,
+      vibrateTimings: ['0.6s', '0.3s', '0.6s', '0.3s', '0.6s']
+    }
+  };
+}
+
 function rideOfferPush(rideId, ride, tokens, repeticao = 0) {
   const city = rideOperatingCity(ride);
   return {
@@ -3583,6 +3602,7 @@ function rideOfferPush(rideId, ride, tokens, repeticao = 0) {
         link: appUrl('/motoboy.html')
       }
     },
+    android: androidCallConfig(`corrida_${rideId}`),
     data: {
       rideId,
       tipo: 'nova_corrida',
@@ -3757,6 +3777,7 @@ function deliveryOfferPush(deliveryId, delivery, tokens, title, repeticao = 0) {
     tokens,
     notification: { title, body },
     webpush: { headers: { Urgency: 'high', TTL: '120' }, fcmOptions: { link: appUrl('/motoboy.html?aba=entregas') } },
+    android: androidCallConfig(`entrega_${deliveryId}`),
     data: { deliveryId, tipo: 'nova_entrega', repeticao: String(repeticao) }
   };
 }
@@ -6039,6 +6060,7 @@ app.post('/api/drivers/:cpf/notification-test', authLimiter, async (req, res, ne
         tokens,
         notification: { title: 'Teste MotoJá', body: 'Se você viu isto com o celular bloqueado, os avisos estão chegando.' },
         webpush: { headers: { Urgency: 'high', TTL: '120' }, fcmOptions: { link: appUrl('/motoboy.html') } },
+        android: androidCallConfig('teste_aviso'),
         data: { tipo: 'teste_aviso' }
       }).catch(() => ({ successCount: 0, failureCount: tokens.length }));
       push = { sent: response.successCount, failed: response.failureCount, devices: tokens.length };
@@ -9990,6 +10012,7 @@ app.post('/api/drivers/:cpf/push-token', async (req, res, next) => {
       fcmTokens: {
         [token]: {
           ativo: true,
+          plataforma: req.body.plataforma === 'android_nativo' ? 'android_nativo' : 'web',
           userAgent: String(req.body.userAgent || '').slice(0, 300),
           atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
         }

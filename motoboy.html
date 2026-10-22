@@ -2996,7 +2996,50 @@
         const painel = document.getElementById("painel");
         if (motoboyCpf && telaAtual === "servicos" && modo !== "ganhos" && document.visibilityState === "visible" && painel && !painel.classList.contains("hidden")) ouvir(true);
       }, 60000);
+      // App Android da Play Store (Capacitor): usa a notificacao nativa do celular no
+      // canal "chamadas" (som proprio, toca com a tela bloqueada), no lugar do web push.
+      let pushNativoOuvindo = false, avisarRegistroNativo = false;
+      function pushNativo() {
+        const cap = window.Capacitor;
+        return cap?.isNativePlatform?.() && cap.Plugins?.PushNotifications ? cap.Plugins.PushNotifications : null;
+      }
+      async function ativarPushNativo(silencioso = false) {
+        const push = pushNativo();
+        if (!push) return false;
+        avisarRegistroNativo = !silencioso;
+        try {
+          await push.createChannel?.({ id: "chamadas", name: "Chamadas de corrida e entrega", description: "Toca quando chega corrida ou entrega", importance: 5, visibility: 1, sound: "chamada", vibration: true, lights: true }).catch(() => {});
+          let perm = await push.checkPermissions();
+          if (perm.receive !== "granted") perm = await push.requestPermissions();
+          if (perm.receive !== "granted") {
+            if (!silencioso) alert("Libere as notificações do app MotoJá nas configurações do Android para receber as chamadas.");
+            return true;
+          }
+          if (!pushNativoOuvindo) {
+            pushNativoOuvindo = true;
+            await push.addListener("registration", async ({ value }) => {
+              const r = await fetch(`${CONFIG.backend}/api/drivers/${motoboyCpf}/push-token`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ ...driverProof(), token: value, plataforma: "android_nativo", userAgent: navigator.userAgent }),
+              }).catch(() => null);
+              if (avisarRegistroNativo) alert(r?.ok ? "Notificações ativadas neste celular." : "Não consegui salvar a notificação. Tente de novo.");
+              avisarRegistroNativo = false;
+            });
+            await push.addListener("registrationError", () => {
+              if (avisarRegistroNativo) alert("O Android não liberou a notificação agora. Tente de novo.");
+            });
+            // Tocou na notificacao: abre o app ja buscando a chamada.
+            await push.addListener("pushNotificationActionPerformed", () => atualizarTrabalho());
+          }
+          await push.register();
+        } catch (e) {
+          if (!silencioso) alert("Não consegui ativar as notificações do app agora. Feche e abra o app de novo.");
+        }
+        return true;
+      }
       async function ativarNotificacoes() {
+        if (await ativarPushNativo(false)) return;
         try {
           const ua = navigator.userAgent.toLowerCase(),
             isIos = /iphone|ipad|ipod/.test(ua);
@@ -3232,6 +3275,8 @@
         window.MotojaDriverAvailability?.start({ backend: CONFIG.backend, getProof: driverProof, onChange: () => { limparCache(); atualizarTrabalho(); } });
         iniciarPlanosMotoboy();
         window.MotojaDriverExtras?.start({ backend: CONFIG.backend, getProof: driverProof });
+        // No app da Play Store, o celular ja se cadastra para as chamadas ao entrar.
+        ativarPushNativo(true);
         ocultarBoot();
         renderPerfilMotoboy();
         renderCidadesAtivas();

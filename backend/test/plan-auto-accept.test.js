@@ -81,12 +81,17 @@ test('app notification goes to every motoboy; the fixed one is told the delivery
   const telegramDms = [];
   h.context.telegramReadyDrivers = (docs) => docs;
   h.context.telegramOfferInBackground = (docs, text) => telegramDms.push([docs.length, text.split('\n')[0]]);
+  h.run('function androidCallConfig(', 'function rideOfferPush(');
   h.run('function deliveryOfferPush(', 'async function repeatDeliveryAlert(');
   h.fn('notifyDriversAboutDelivery');
 
   const result = await h.context.notifyDriversAboutDelivery('d', planDelivery());
   assert.equal(result.sent, 2);
   assert.deepEqual(JSON.parse(JSON.stringify(pushes.map((push) => [push.tokens, push.notification.title]))), [[['outro'], 'Nova entrega Nexus MotoJa'], [['fixo'], 'Entrega do plano ja e sua']]);
+  // App Android nativo: a chamada toca no canal "chamadas" com som proprio e prioridade alta.
+  assert.equal(pushes[0].android.priority, 'high');
+  assert.equal(pushes[0].android.notification.channelId, 'chamadas');
+  assert.equal(pushes[0].android.notification.sound, 'chamada');
   // No Telegram privado so o motoboy fixo recebe: a entrega do plano ja e dele.
   assert.deepEqual(JSON.parse(JSON.stringify(telegramDms)), [[1, '✅ Entrega do plano já é sua — Lachonete Stocco.']]);
 
