@@ -3692,6 +3692,62 @@
         corridaAcompanhadaId = "";
       }
 
+      // Motoboy atrasado: o botao "Cancelar motoboy" so aparece depois de 15 minutos
+      // do aceite sem ele chegar. Antes disso, so o aviso de quando ele vai aparecer.
+      function atualizarAtrasoMotoboy(pedido, dados) {
+        const box = $("atraso-motoboy-box");
+        if (!box) return;
+        const liberaEm = Number(dados.cancelarMotoboyEmMs || 0);
+        const estado = dados.motoboyChegou || !liberaEm ? "nada" : dados.podeCancelarMotoboy ? "pode" : `espera-${Math.max(1, Math.ceil((liberaEm - Date.now()) / 60000))}`;
+        if (box.dataset.estado === estado) return;
+        box.dataset.estado = estado;
+        if (estado === "nada") { box.innerHTML = ""; return; }
+        if (estado !== "pode") {
+          const hora = new Date(liberaEm).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+          const faltam = Math.max(1, Math.ceil((liberaEm - Date.now()) / 60000));
+          box.innerHTML = `<div class="small" style="margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.04);border:1px dashed rgba(255,255,255,.18);color:#aeb4c3;text-align:left">⏱️ O motoboy tem até <strong style="color:#fff">${hora}</strong> para chegar (faltam ${faltam} min). Se ele atrasar mais de 15 minutos, aparece aqui o botão <strong style="color:#fff">Cancelar motoboy</strong>.</div>`;
+          return;
+        }
+        box.innerHTML = `<div style="margin-top:10px;padding:12px 14px;border-radius:14px;background:rgba(255,82,82,.12);border:1px solid rgba(255,82,82,.45);text-align:left">
+          <strong style="color:#ff8a80">⏰ O motoboy passou de 15 minutos e ainda não chegou.</strong>
+          <div class="small" style="color:#cbd5e1;margin:4px 0 10px;text-align:left">Se preferir, cancele este motoboy. Você pode chamar outro sem pagar nada a mais.</div>
+          <div data-atraso-passo="1"><button type="button" data-atraso="abrir" style="width:100%;padding:12px;border-radius:12px;border:0;background:#ff5252;color:#fff;font-weight:900;font-size:1rem;cursor:pointer;font-family:inherit">Cancelar motoboy</button></div>
+          <div data-atraso-passo="2" style="display:none;gap:8px">
+            <button type="button" data-atraso="trocar" style="padding:12px;border-radius:12px;border:0;background:#25d366;color:#08210f;font-weight:900;cursor:pointer;font-family:inherit">Chamar outro motoboy</button>
+            <button type="button" data-atraso="cancelar" style="padding:12px;border-radius:12px;border:1px solid rgba(255,82,82,.6);background:transparent;color:#ff8a80;font-weight:900;cursor:pointer;font-family:inherit">Cancelar a corrida</button>
+            <button type="button" data-atraso="voltar" style="padding:8px;border:0;background:none;color:#aeb4c3;font-weight:800;cursor:pointer;font-family:inherit">Voltar, vou esperar</button>
+          </div>
+        </div>`;
+        box.onclick = async (event) => {
+          const botao = event.target.closest("[data-atraso]");
+          if (!botao) return;
+          const acao = botao.dataset.atraso;
+          const passo2 = box.querySelector('[data-atraso-passo="2"]');
+          if (acao === "abrir" || acao === "voltar") {
+            box.querySelector('[data-atraso-passo="1"]').style.display = acao === "abrir" ? "none" : "";
+            passo2.style.display = acao === "abrir" ? "grid" : "none";
+            return;
+          }
+          passo2.querySelectorAll("button").forEach((b) => (b.disabled = true));
+          botao.textContent = acao === "trocar" ? "Chamando outro motoboy..." : "Cancelando...";
+          try {
+            const r = await fetch(`${CONFIG.backend}/api/rides/${encodeURIComponent(pedido.id)}/late-cancel`, {
+              method: "POST",
+              headers: { "content-type": "application/json", ...cabecalhosCliente() },
+              body: JSON.stringify({ acao }),
+            });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(d.message || "Não consegui cancelar agora. Tente de novo.");
+            box.dataset.estado = "";
+            if (acao === "trocar") mostrarStatus("Pronto! Estamos chamando outro motoboy para você.");
+            verificarPedidoAtivo(true);
+          } catch (error) {
+            alert(error.message);
+            box.dataset.estado = "";
+            atualizarAtrasoMotoboy(pedido, dados);
+          }
+        };
+      }
       function mostrarCorridaAceita(pedido, dados) {
         modal.classList.add("open");
         modal.setAttribute("aria-hidden", "false");
@@ -3765,6 +3821,7 @@
             </div>
             <div id="gps-cliente-enderecos" style="font-size:12px;color:#94a3b8;margin:6px 0 10px;line-height:1.4"></div>
             <div id="gps-cliente-hora" class="small" style="margin-top:8px">Confira também seu WhatsApp para pagamento e contato.</div>
+            <div id="atraso-motoboy-box"></div>
           </div>`;
           resultadoBox.className = "result show";
         } else {
@@ -3779,6 +3836,7 @@
           }
         }
 
+        atualizarAtrasoMotoboy(pedido, dados);
         const location = dados.motoboyLocalizacao;
         const lat = Number(location?.latitude), lon = Number(location?.longitude);
         const mapEl = $("mapa-acompanhamento");
@@ -4060,7 +4118,7 @@
             mostrarPedidoExpirado(pedido);
             return;
           }
-          const base = Number(d.criadaEmMs || pedido.criadaEmMs || Date.now()),
+          const base = Number(d.buscaDesdeMs || d.criadaEmMs || pedido.criadaEmMs || Date.now()),
             restante = 10 * 60 * 1000 - (Date.now() - base);
           if (restante <= 0) {
             mostrarPedidoExpirado(pedido);

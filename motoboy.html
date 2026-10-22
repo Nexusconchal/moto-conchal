@@ -1533,7 +1533,7 @@
             aviso: !avisado
               ? { tipo: "alerta", texto: `Avise o cliente para liberar a ${avulsa ? "entrega" : "corrida"}${prazo ? ` · ${prazo}` : ""}. Ele recebe seu nome, foto e acompanha você ao vivo.` }
               : etapa === "buscar"
-                ? { texto: "Cliente avisado: ele acompanha sua chegada ao vivo." }
+                ? { texto: "Cliente avisado: ele acompanha sua chegada ao vivo. Chegue em até 15 min do aceite, senão ele pode cancelar você." }
                 : null,
             principal: !avisado
               ? {
@@ -1547,6 +1547,12 @@
                     cor: "verde",
                     acao: async () => {
                       salvarNavAtiva({ id: c.id, tipo: "corrida", etapa: "levar" });
+                      // Registra a chegada: o cliente deixa de ver o "Cancelar motoboy" por atraso.
+                      fetch(`${CONFIG.backend}/api/rides/${encodeURIComponent(c.id)}/arrived`, {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify(driverProof()),
+                      }).catch(() => {});
                       abrirNavegacaoServico(c);
                     },
                   }

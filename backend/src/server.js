@@ -12,6 +12,7 @@ import { createDriverAvailability, observeAvailabilityJob } from './driver-avail
 import { attachDriverAvailability } from './driver-availability-socket.js';
 import { createOfferAlerts } from './offer-alert.js';
 import { createDriverTelegram } from './driver-telegram.js';
+import { reachedPickup, lateCancelState, lateCancelBlocker } from './ride-late.js';
 import { parseRating, ratingBlocker, ratingSummary, driverRatingView, RATING_TAGS } from './ride-rating.js';
 import { validateLocation } from './tracking-policy.js';
 import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state.js';
@@ -4038,7 +4039,8 @@ async function cleanupRides() {
   const pending = await db.collection('corridas').where('status', '==', 'pendente').get();
   pending.forEach((doc) => {
     const data = doc.data();
-    const createdAt = timestampMs(data.criadaEm);
+    // Corrida que voltou a procurar motoboy ganha o prazo de novo a partir da reabertura.
+    const createdAt = Math.max(timestampMs(data.criadaEm), timestampMs(data.reabertaEm));
     if (createdAt && now - createdAt > RIDE_EXPIRE_MS) {
       batch.update(doc.ref, {
         status: 'expirada',
@@ -10005,6 +10007,11 @@ app.get('/api/rides/:rideId/status', async (req, res, next) => {
       chatUltimaEmMs: Number(ride.chatUltimaEmMs || 0),
       chatUltimoAutor: ride.chatUltimoAutor || '',
       finalizadaEmMs: timestampMs(ride.finalizadaEm),
+      // Procurando motoboy desde: a criacao ou a ultima vez que voltou a procurar.
+      buscaDesdeMs: Math.max(timestampMs(ride.criadaEm), timestampMs(ride.reabertaEm)),
+      motoboyChegou: !!ride.motoboyChegouEm,
+      cancelarMotoboyEmMs: lateCancelState(ride, timestampMs(ride.aceitaEm)).liberaEmMs,
+      podeCancelarMotoboy: lateCancelState(ride, timestampMs(ride.aceitaEm)).pode,
       avaliacaoNota: Number(ride.avaliacao?.nota || 0),
       podeAvaliar: !ratingBlocker(ride, timestampMs(ride.finalizadaEm)),
       origem: ride.origem || '',
@@ -10282,6 +10289,99 @@ app.post('/api/rides/:rideId/client-cancel', async (req, res, next) => {
     next(error);
   }
 });
+
+// Motoboy avisa pelo app que chegou ao local de embarque.
+app.post('/api/rides/:rideId/arrived', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+    const ref = db.collection('corridas').doc(String(req.params.rideId || ''));
+    const marked = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const ride = snap.data() || {};
+      if (!snap.exists || onlyDigits(ride.motoboyCpf) !== driverCpf || ride.status !== 'aceita') return false;
+      if (!ride.motoboyChegouEm) tx.update(ref, { motoboyChegouEm: admin.firestore.FieldValue.serverTimestamp(), motoboyChegouPor: 'motoboy', atualizadaEm: admin.firestore.FieldValue.serverTimestamp() });
+      return true;
+    });
+    if (!marked) return res.status(409).json({ error: 'corrida_nao_e_sua', message: 'Esta corrida nao esta mais com voce.' });
+    rideStatusCache.delete(ref.id);
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Cliente cancela o motoboy que passou de 15 minutos sem chegar: chama outro
+// (a corrida volta a tocar para todos) ou cancela a corrida.
+app.post('/api/rides/:rideId/late-cancel', createRideLimiter, async (req, res, next) => {
+  try {
+    const acao = req.body?.acao === 'cancelar' ? 'cancelar' : 'trocar';
+    const ref = db.collection('corridas').doc(String(req.params.rideId || ''));
+    const first = await ref.get();
+    if (!first.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
+    const firstRide = first.data() || {};
+    const access = { deviceHash: firstRide.clienteDeviceId ? hashSecret(firstRide.clienteDeviceId) : '', customerId: firstRide.customerId || '' };
+    if (!await canReadRideTracking(req, access)) return res.status(403).json({ error: 'cancelamento_nao_autorizado', message: 'Só quem pediu a corrida pode cancelar o motoboy.' });
+    let previous = null;
+    let updated = null;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const ride = snap.data() || {};
+      const acceptedAt = timestampMs(ride.aceitaEm);
+      const blocker = lateCancelBlocker(ride, acceptedAt);
+      if (blocker) throw blocker;
+      previous = ride;
+      const motoboy = cleanText(ride.motoboy || '', 80);
+      const historico = [...(Array.isArray(ride.reaberturas) ? ride.reaberturas : []), {
+        motoboy, motoboyCpf: ride.motoboyCpf || '', motoboyTelefone: ride.motoboyTelefone || '',
+        aceitaEmMs: acceptedAt, reabertaEmMs: Date.now(), motivo: 'cliente_cancelou_atraso'
+      }].slice(-10);
+      const changes = acao === 'cancelar'
+        ? { status: 'cancelada', canceladoPor: 'Cliente', motivoCancelamento: `Motoboy${motoboy ? ` ${motoboy}` : ''} passou de 15 minutos sem chegar`,
+          canceladoEm: admin.firestore.FieldValue.serverTimestamp(), rastreamentoAtivo: false, reaberturas: historico }
+        : { status: 'pendente', motoboy: '', motoboyCpf: '', motoboyCnh: '', motoboyTelefone: '', motoboyFoto: admin.firestore.FieldValue.delete(),
+          pagamento: admin.firestore.FieldValue.delete(), aceitaEm: null, clienteAvisadoEm: admin.firestore.FieldValue.delete(),
+          rastreamentoAtivo: false, motoboyLocalizacao: admin.firestore.FieldValue.delete(), localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
+          reabertaEm: admin.firestore.FieldValue.serverTimestamp(), motivoReabertura: `Cliente cancelou o motoboy ${motoboy || 'sem nome'}: passou de 15 minutos sem chegar`,
+          reaberturas: historico };
+      tx.update(ref, { ...changes, atualizadaEm: admin.firestore.FieldValue.serverTimestamp() });
+      tx.set(db.collection('motoboys').doc(onlyDigits(ride.motoboyCpf)), { cancelamentosPorAtraso: admin.firestore.FieldValue.increment(1), ultimoCancelamentoPorAtrasoEmMs: Date.now() }, { merge: true });
+      updated = { ...ride, status: changes.status, motoboy: '', motoboyCpf: '' };
+    });
+    rideStatusCache.delete(ref.id);
+    adminStateCache = null;
+    driverAvailability.job('rides', ref.id, acao === 'cancelar' ? 'cancelada' : 'pendente');
+    driverAvailabilitySocket.publishAll();
+    emitSupportOperationsRefresh();
+    notifyDriverLateCancel(previous, acao).catch((error) => console.error('late cancel driver push failed', ref.id, error));
+    if (acao === 'trocar') {
+      notifyDriversAboutRide(ref.id, updated).catch((error) => console.error('late cancel push failed', ref.id, error));
+      notifyTelegramAboutRide(ref.id, updated).catch((error) => console.error('late cancel telegram failed', ref.id, error));
+    }
+    return res.json({ ok: true, status: updated.status });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Avisa o motoboy que perdeu a corrida por atraso (push e Telegram particular).
+async function notifyDriverLateCancel(ride = {}, acao = 'trocar') {
+  const cpf = onlyDigits(ride.motoboyCpf);
+  if (cpf.length !== 11) return;
+  const driver = (await db.collection('motoboys').doc(cpf).get()).data() || {};
+  const text = `O cliente ${acao === 'cancelar' ? 'cancelou a corrida' : 'chamou outro motoboy'}: você aceitou e não chegou em 15 minutos. Aceite só a corrida que você consegue buscar logo.`;
+  const tokens = Object.entries(driver.fcmTokens || {}).filter(([, info]) => info?.ativo !== false).map(([token]) => token);
+  if (tokens.length) {
+    await admin.messaging().sendEachForMulticast({
+      tokens,
+      notification: { title: 'Corrida cancelada por atraso', body: text },
+      webpush: { headers: { Urgency: 'high', TTL: '600' }, fcmOptions: { link: appUrl('/motoboy.html') } },
+      data: { tipo: 'corrida_cancelada_atraso' }
+    }).catch(() => null);
+  }
+  if (driver.telegramChatId) await driverTelegram.sendTo(driver.telegramChatId, `⏰ ${text}`);
+}
 
 app.get('/api/companies/daily-plan/status', assertCompany, async (req, res, next) => {
   try {
@@ -11347,6 +11447,8 @@ async function saveTrackedLocation(ref, driverCpf, body, isDelivery) {
     if (result.ignored) return result;
     tx.update(ref, {
       motoboyLocalizacao: result.location,
+      // Mototaxi: o GPS perto da saida marca que o motoboy chegou (some o "Cancelar motoboy").
+      ...(!isDelivery && !job.motoboyChegouEm && reachedPickup(job, result.location) ? { motoboyChegouEm: admin.firestore.FieldValue.serverTimestamp(), motoboyChegouPor: 'gps' } : {}),
       localizacaoAtualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     });
