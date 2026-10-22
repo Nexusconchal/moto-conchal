@@ -1541,6 +1541,28 @@
         color: #fff;
         text-shadow: none;
       }
+      /* Faixa de confianca da tela inicial (avaliacao, chat e GPS). */
+      .home-trust {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.5rem;
+      }
+      .home-trust div {
+        padding: 0.65rem 0.4rem;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.04));
+        color: #e6e9ef;
+        text-align: center;
+        font-size: 0.72rem;
+        font-weight: 800;
+        line-height: 1.15;
+      }
+      .home-trust span {
+        display: block;
+        font-size: 1.25rem;
+        margin-bottom: 0.25rem;
+      }
       .home-mini-actions {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -1865,6 +1887,11 @@
             ><small>Celular, chave, documento... mesmo preço</small></span
           ><span class="cta-arrow">›</span>
         </button>
+        <div class="home-trust" aria-label="Segurança da MotoJá">
+          <div><span aria-hidden="true">⭐</span>Motoboys avaliados</div>
+          <div><span aria-hidden="true">💬</span>Chat no app</div>
+          <div><span aria-hidden="true">🛰️</span>GPS ao vivo</div>
+        </div>
         <div class="home-mini-actions">
           <button id="btn-lembretes" class="mini-action" type="button">
             <span class="mini-ico">!</span
@@ -1881,7 +1908,7 @@
           </button>
         </div>
         <p class="hint">
-          Calcula a distância e abre o WhatsApp com a mensagem pronta
+          Calcula a distância e você acompanha o motoboy pelo app até chegar
         </p>
       </section>
       <footer>2026 Nexus MotoJá - Conchal, Aguaí e Engenheiro Coelho, SP</footer>
