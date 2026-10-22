@@ -20,6 +20,12 @@
       description: "Notas de 1 a 5 estrelas, etiquetas e comentários que os clientes deixam para cada motoboy depois da corrida.",
       targets: ["avaliacoes-section"],
     },
+    referrals: {
+      title: "Indique e ganhe",
+      eyebrow: "Clientes",
+      description: "Cada amigo indicado que faz a primeira corrida vale 1 participação no sorteio de 1 corrida grátis do mês.",
+      targets: ["indicacoes-section"],
+    },
     deliveries: {
       title: "Entregas de empresas",
       eyebrow: "Operação",
@@ -80,8 +86,9 @@
     ["Empresas", "companies", "07", "Gestão"],
     ["Motoboys", "drivers", "08", ""],
     ["Avaliações", "ratings", "09", ""],
-    ["Equipe suporte", "support", "10", ""],
-    ["Funil", "funnel", "11", "Análise"],
+    ["Indicações", "referrals", "10", ""],
+    ["Equipe suporte", "support", "11", ""],
+    ["Funil", "funnel", "12", "Análise"],
   ];
 
   const DEFAULT_BACKEND = "https://motoboy-conchal.onrender.com";
@@ -289,6 +296,71 @@
     list.innerHTML = shown.length
       ? shown.slice(0, 200).map((r) => `<article class="${Number(r.nota) <= 3 ? "low" : ""}"><div><span>${planDate(r.criadoEmMs)}</span><strong class="owner-ratings-stars">${ratingStars(r.nota)}</strong><small>${Number(r.nota)} de 5</small></div><div><span>Motoboy</span><strong>${escapeHtml(r.motoboy || "-")}</strong><small>CPF ${formatCpf(r.motoboyCpf)}</small></div><div><span>Cliente</span><strong>${escapeHtml(r.clienteNome || "Cliente")}</strong><small>Corrida ${escapeHtml(String(r.rideId || r.id || "").slice(0, 10))}</small></div><div class="owner-ratings-text">${(r.tags || []).length ? `<em>${r.tags.map(escapeHtml).join(" · ")}</em>` : ""}${r.comentario ? `<p>“${escapeHtml(r.comentario)}”</p>` : (r.tags || []).length ? "" : `<small>Sem comentário</small>`}</div></article>`).join("")
       : `<div class="owner-support-empty">${ratings.length ? "Nenhuma avaliação com esse filtro." : "Ainda não chegou nenhuma avaliação. Elas aparecem aqui assim que os clientes avaliarem as corridas."}</div>`;
+  }
+
+  // Indique e ganhe: participacoes do mes por cliente e sorteio da corrida gratis.
+  function ensureReferralsSection(panel) {
+    if (document.getElementById("indicacoes-section")) return;
+    const section = document.createElement("section");
+    section.id = "indicacoes-section";
+    section.className = "box owner-ratings";
+    section.innerHTML = `
+      <div class="owner-plans-head"><div><h2>Indicações qualificadas</h2><p class="muted">Conta quando o amigo se cadastra pelo link de quem indicou e faz a primeira corrida finalizada. Cada amigo vale 1 participação no sorteio do mês.</p></div></div>
+      <div class="owner-plans-filter" role="group" aria-label="Mês"><button type="button" data-ref-mes="atual" aria-pressed="true">Este mês</button><button type="button" data-ref-mes="anterior" aria-pressed="false">Mês passado</button><button type="button" class="approve" data-ref-sortear>🎲 Sortear ganhador</button></div>
+      <div id="ownerReferralWinner"></div>
+      <h3 class="owner-ratings-title">Participações por cliente</h3>
+      <div id="ownerReferralRanking" class="owner-ratings-ranking"></div>
+      <h3 class="owner-ratings-title">Amigos que fizeram a primeira corrida</h3>
+      <div id="ownerReferralList" class="owner-ratings-ranking"></div>`;
+    panel.appendChild(section);
+    section.addEventListener("click", (event) => {
+      const mes = event.target.closest("[data-ref-mes]");
+      if (mes) { referralMonth = mes.dataset.refMes; referralWinner = null; renderReferralsSection(); return; }
+      if (event.target.closest("[data-ref-sortear]")) drawReferralWinner();
+    });
+  }
+
+  let referralMonth = "atual", referralWinner = null;
+  function referralMonthKey() {
+    const now = new Date();
+    const date = referralMonth === "anterior" ? new Date(now.getFullYear(), now.getMonth() - 1, 15) : now;
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  }
+  function referralRanking() {
+    const mes = referralMonthKey();
+    const list = (Array.isArray(carAdminState.indicacoes) ? carAdminState.indicacoes : []).filter((item) => item.mes === mes);
+    const byReferrer = new Map();
+    list.forEach((item) => {
+      const current = byReferrer.get(item.indicadorId) || { id: item.indicadorId, nome: item.indicadorNome || "Cliente", total: 0 };
+      current.total += 1;
+      byReferrer.set(item.indicadorId, current);
+    });
+    return { list, ranking: [...byReferrer.values()].sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome, "pt-BR")) };
+  }
+  function drawReferralWinner() {
+    const { ranking } = referralRanking();
+    const tickets = ranking.flatMap((person) => Array(person.total).fill(person));
+    if (!tickets.length) return alert("Ninguém tem participação neste mês ainda.");
+    const random = new Uint32Array(1);
+    crypto.getRandomValues(random);
+    referralWinner = tickets[random[0] % tickets.length];
+    renderReferralsSection();
+  }
+  function renderReferralsSection() {
+    const rankingRoot = document.getElementById("ownerReferralRanking");
+    if (!rankingRoot) return;
+    const { list, ranking } = referralRanking();
+    document.querySelectorAll("[data-ref-mes]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.refMes === referralMonth)));
+    const tickets = ranking.reduce((total, person) => total + person.total, 0);
+    document.getElementById("ownerReferralWinner").innerHTML = referralWinner
+      ? `<div class="owner-ratings-summary" style="grid-template-columns:1fr"><div><span>🎉 Ganhador sorteado (${tickets} participações)</span><strong>${escapeHtml(referralWinner.nome)}</strong><small>WhatsApp ${escapeHtml(formatPhone(referralWinner.id))} · ${referralWinner.total} participação(ões). Combine a corrida grátis com ele.</small></div></div>`
+      : "";
+    rankingRoot.innerHTML = ranking.length
+      ? ranking.map((person, index) => `<article><b>${index + 1}º</b><div><strong>${escapeHtml(person.nome)}</strong><small>${escapeHtml(formatPhone(person.id))}</small></div><div><strong>${person.total} participaç${person.total > 1 ? "ões" : "ão"}</strong><small>${Math.round((person.total / tickets) * 100)}% de chance</small></div></article>`).join("")
+      : `<div class="owner-support-empty">Nenhuma indicação qualificada neste mês ainda.</div>`;
+    document.getElementById("ownerReferralList").innerHTML = list.length
+      ? list.sort((a, b) => Number(b.qualificadaEmMs || 0) - Number(a.qualificadaEmMs || 0)).map((item) => `<article><b>✅</b><div><strong>${escapeHtml(item.indicadoNome || "Cliente")}</strong><small>final ${escapeHtml(item.indicadoFinal || "")} · ${planDate(item.qualificadaEmMs)}</small></div><div><strong>indicado por ${escapeHtml(item.indicadorNome || "Cliente")}</strong><small>${escapeHtml(formatPhone(item.indicadorId))}</small></div></article>`).join("")
+      : `<div class="owner-support-empty">Quando um amigo indicado fizer a primeira corrida, ele aparece aqui.</div>`;
   }
 
   let plansFilter = "ativos";
@@ -537,6 +609,7 @@
     if (name === "cars") renderCarSection();
     if (name === "plans") renderPlansSection();
     if (name === "ratings") renderRatingsSection();
+    if (name === "referrals") renderReferralsSection();
   }
 
   function buildNavigation(nav) {
@@ -570,6 +643,7 @@
     ensureCarSection(panel);
     ensurePlansSection(panel);
     ensureRatingsSection(panel);
+    ensureReferralsSection(panel);
 
     const originalChildren = [...panel.children];
     const globalFilters = originalChildren.find((element) => element.querySelector?.("#periodo"));
@@ -640,6 +714,7 @@
     renderCarSection();
     renderPlansSection();
     renderRatingsSection();
+    renderReferralsSection();
     if (Array.isArray(event.detail?.contasSuporte) && event.detail.contasSuporte.length) {
       renderSupportAccounts(event.detail.contasSuporte);
     } else if (getOwnerPassword()) {

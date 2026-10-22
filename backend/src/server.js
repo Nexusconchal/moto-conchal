@@ -12,6 +12,7 @@ import { createDriverAvailability, observeAvailabilityJob } from './driver-avail
 import { attachDriverAvailability } from './driver-availability-socket.js';
 import { createOfferAlerts } from './offer-alert.js';
 import { createDriverTelegram } from './driver-telegram.js';
+import { publicDriverCard, publicDriverId, sortPublicDrivers, referralCode, normalizeReferralCode, monthKey } from './customer-menu.js';
 import { reachedPickup, lateCancelState, lateCancelBlocker } from './ride-late.js';
 import { parseRating, ratingBlocker, ratingSummary, driverRatingView, RATING_TAGS } from './ride-rating.js';
 import { validateLocation } from './tracking-policy.js';
@@ -3043,6 +3044,10 @@ app.use('/api', (req, res, next) => {
     const originalJson = res.json;
     res.json = function (body) {
       if (observeAvailabilityJob(driverAvailability, req.originalUrl, res.statusCode, body, onlyDigits(req.body?.driverCpf))) driverAvailabilitySocket.publishAll();
+      const finishPath = req.originalUrl.split('?')[0];
+      const rideFinished = res.statusCode < 300 && body?.ok === true && (finishPath.match(/^\/api\/(?:admin\/)?rides\/([^/]+)\/(?:finish|force-finish)$/) || finishPath.match(/^\/api\/support\/operations\/corrida\/([^/]+)\/finish$/));
+      // Indique e ganhe: a primeira corrida finalizada do amigo vale a participacao.
+      if (rideFinished) qualifyReferralFromRide(rideFinished[1]).catch((error) => console.error('referral qualify failed', error?.message));
       const offerDone = res.statusCode < 300 && body?.ok === true && req.originalUrl.split('?')[0].match(/^\/api\/(?:admin\/|companies\/me\/)?(rides|deliveries)\/([^/]+)\/(?:accept|cancel|client-cancel|force-finish)$/);
       if (offerDone) offerAlerts.stop(offerDone[1], offerDone[2]);
       return originalJson.call(this, body);
@@ -5144,6 +5149,9 @@ app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
     const planosAtivados = await db.collection('planosAtivados').where('ativadoEmMs', '>=', Date.now() - 31 * 86400000).limit(300).get()
       .then((snapshot) => snapshot.docs.map((doc) => serializeFirestore({ id: doc.id, ...doc.data() })).sort((a, b) => Number(b.ativadoEmMs || 0) - Number(a.ativadoEmMs || 0)))
       .catch((error) => { console.error('plan activations load failed', error); return []; });
+    const indicacoes = await db.collection('indicacoes').where('qualificadaEmMs', '>=', Date.now() - 62 * 86400000).limit(1000).get()
+      .then((snapshot) => snapshot.docs.map((doc) => serializeFirestore({ id: doc.id, ...doc.data() })))
+      .catch((error) => { console.error('referrals load failed', error); return []; });
     const avaliacoes = await db.collection('avaliacoesMotoboy').orderBy('criadoEmMs', 'desc').limit(500).get()
       .then((snapshot) => snapshot.docs.map((doc) => serializeFirestore({ id: doc.id, ...doc.data() })))
       .catch((error) => { console.error('ratings load failed', error); return []; });
@@ -5155,7 +5163,7 @@ app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
     const contasSuporte = (contasSuporteSnap.docs || [])
       .map((doc) => publicSupportAccount(doc.data() || {}, doc.id, true))
       .sort((a, b) => timestampMs(b.cadastradaEm) - timestampMs(a.cadastradaEm));
-    const payload = { ok: true, corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil, contasSuporte, clientesCadastrados, planosAtivados, avaliacoes };
+    const payload = { ok: true, corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil, contasSuporte, clientesCadastrados, planosAtivados, avaliacoes, indicacoes };
     adminStateCache = { payload, expiresAt: Date.now() + ADMIN_STATE_CACHE_MS };
     return res.json(payload);
   } catch (error) {
@@ -6309,6 +6317,7 @@ app.post('/api/customers/register', authLimiter, async (req, res, next) => {
     const password = String(req.body.password || '');
     const deviceId = validDeviceId(req.body.deviceId);
     const verificationToken = String(req.body.verificationToken || '').trim();
+    const indicacao = normalizeReferralCode(req.body.indicacao);
     if (!nome || telefoneCliente.length < 10 || !validCpf(cpf) || !birth || !fotoCliente || password.length < 6 || !deviceId) {
       return res.status(400).json({ error: 'dados_cliente_invalidos', message: 'Preencha nome, CPF valido, nascimento, foto e senha com pelo menos 6 caracteres.' });
     }
@@ -6336,10 +6345,11 @@ app.post('/api/customers/register', authLimiter, async (req, res, next) => {
     };
     let registrationError = null;
     await db.runTransaction(async (tx) => {
-      const [freshOtpSnap, cpfSnap, customerSnap] = await Promise.all([
+      const [freshOtpSnap, cpfSnap, customerSnap, referralSnap] = await Promise.all([
         tx.get(otpRef),
         tx.get(cpfRef),
-        tx.get(customerRef)
+        tx.get(customerRef),
+        indicacao ? tx.get(db.collection('codigosIndicacao').doc(indicacao)) : Promise.resolve(null)
       ]);
       const freshOtp = freshOtpSnap.data() || {};
       if (!freshOtpSnap.exists || !freshOtp.verified || freshOtp.verificationExpiresAtMs < Date.now() || !safeEqual(hashSecret(verificationToken), freshOtp.verificationTokenHash || '')) {
@@ -6350,6 +6360,13 @@ app.post('/api/customers/register', authLimiter, async (req, res, next) => {
       if (cpfSnap.exists && cpfOwnerId !== telefoneCliente) {
         registrationError = { status: 409, code: 'cpf_ja_cadastrado', message: 'Este CPF já possui cadastro. Use a tela de login.' };
         return;
+      }
+      // Indique e ganhe: so vale para cadastro novo e nunca para o proprio cliente.
+      const referrerId = String(referralSnap?.data()?.customerId || '');
+      const firstSignup = !customerSnap.data()?.cadastradaEm;
+      if (referrerId && referrerId !== telefoneCliente && firstSignup && !customerSnap.data()?.indicadoPor) {
+        customerData.indicadoPor = referrerId;
+        customerData.indicadoEmMs = Date.now();
       }
       tx.set(customerRef, customerData, { merge: true });
       tx.set(cpfRef, {
@@ -6584,6 +6601,13 @@ app.get('/api/customers/me/rides', createRideLimiter, async (req, res, next) => 
           precoLabel: ride.precoLabel || '',
           motoboy: ride.motoboy || '',
           motoboyFoto: validDriverPhoto(ride.motoboyFoto) || '',
+          modalidade: ride.modalidade || 'corrida',
+          origemLat: Number(ride.origemLat || 0),
+          origemLon: Number(ride.origemLon || 0),
+          destinoLat: Number(ride.destinoLat || 0),
+          destinoLon: Number(ride.destinoLon || 0),
+          avaliacaoNota: Number(ride.avaliacao?.nota || 0),
+          podeAvaliar: !ratingBlocker(ride, timestampMs(ride.finalizadaEm)),
           criadaEm: ride.criadaEm || null,
           aceitaEm: ride.aceitaEm || null,
           finalizadaEm: ride.finalizadaEm || null
@@ -6592,6 +6616,126 @@ app.get('/api/customers/me/rides', createRideLimiter, async (req, res, next) => 
       .sort((a, b) => timestampMs(b.criadaEm) - timestampMs(a.criadaEm));
 
     return res.json({ ok: true, rides });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// ---------- Menu do cliente: Motoristas e Indique e ganhe ----------
+let publicDriversCache = null;
+async function publicDriversList() {
+  if (publicDriversCache && publicDriversCache.expiresAt > Date.now()) return publicDriversCache;
+  const snapshot = await db.collection('motoboys').where('status', '==', 'ativo').limit(300).get();
+  const photos = new Map();
+  const cards = snapshot.docs.map((doc) => {
+    const data = doc.data() || {};
+    const photo = validDriverPhoto(data.fotoMotoboy);
+    if (photo) photos.set(publicDriverId(doc.id), photo);
+    return publicDriverCard(doc.id, { ...data, fotoMotoboy: photo }, driverAvailability.state(doc.id));
+  });
+  publicDriversCache = { cards: sortPublicDrivers(cards), photos, expiresAt: Date.now() + 60 * 1000 };
+  return publicDriversCache;
+}
+
+// Lista "Nossos motoboys" do app do cliente (sem dados pessoais).
+app.get('/api/drivers/public', mapLimiter, async (_req, res, next) => {
+  try {
+    const list = await publicDriversList();
+    res.set('cache-control', 'public, max-age=60');
+    return res.json({ ok: true, motoboys: list.cards });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/drivers/public/:id/photo', mapLimiter, async (req, res, next) => {
+  try {
+    const photo = (await publicDriversList()).photos.get(String(req.params.id || ''));
+    const [, type, data] = String(photo || '').match(/^data:(image\/[a-z]+);base64,(.+)$/) || [];
+    if (!data) return res.status(404).end();
+    res.set('cache-control', 'public, max-age=3600');
+    res.set('cross-origin-resource-policy', 'cross-origin');
+    return res.type(type).send(Buffer.from(data, 'base64'));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Codigo de indicacao do cliente (criado na primeira vez, sem repetir entre clientes).
+async function customerReferralCode(customerRef, customer = {}) {
+  if (customer.codigoIndicacao) return customer.codigoIndicacao;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const code = referralCode(customerRef.id, attempt);
+    const codeRef = db.collection('codigosIndicacao').doc(code);
+    const claimed = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(codeRef);
+      if (snap.exists && snap.data()?.customerId !== customerRef.id) return false;
+      tx.set(codeRef, { customerId: customerRef.id, criadoEmMs: Date.now() });
+      tx.set(customerRef, { codigoIndicacao: code }, { merge: true });
+      return true;
+    });
+    if (claimed) return code;
+  }
+  throw Object.assign(new Error('Nao consegui criar seu codigo agora.'), { status: 503 });
+}
+
+// Amigo indicado fez a primeira corrida finalizada: vale 1 participacao no sorteio do mes.
+async function qualifyReferral(customerId) {
+  const customerRef = db.collection('clientes').doc(String(customerId || ''));
+  const customer = (await customerRef.get()).data() || {};
+  if (!customer.indicadoPor || customer.indicacaoQualificadaEmMs) return false;
+  const finished = await db.collection('corridas').where('telefoneCliente', '==', customerRef.id).where('status', '==', 'finalizada').limit(1).get();
+  if (finished.empty) return false;
+  const referrerRef = db.collection('clientes').doc(customer.indicadoPor);
+  return db.runTransaction(async (tx) => {
+    const [fresh, referrer] = await Promise.all([tx.get(customerRef), tx.get(referrerRef)]);
+    if (fresh.data()?.indicacaoQualificadaEmMs || !referrer.exists) return false;
+    const now = Date.now();
+    tx.set(customerRef, { indicacaoQualificadaEmMs: now }, { merge: true });
+    tx.set(referrerRef, { indicacoesQualificadas: admin.firestore.FieldValue.increment(1) }, { merge: true });
+    tx.set(db.collection('indicacoes').doc(customerRef.id), {
+      indicadorId: referrerRef.id, indicadorNome: cleanText(referrer.data()?.nome || 'Cliente', 80),
+      indicadoNome: cleanText(fresh.data()?.nome || 'Cliente', 80), indicadoFinal: customerRef.id.slice(-4),
+      qualificadaEmMs: now, mes: monthKey(now)
+    });
+    return true;
+  });
+}
+
+async function qualifyReferralFromRide(rideId) {
+  const ride = (await db.collection('corridas').doc(String(rideId || '')).get()).data() || {};
+  if (ride.status === 'finalizada' && ride.telefoneCliente) await qualifyReferral(onlyDigits(ride.telefoneCliente));
+}
+
+// Tela "Indique e ganhe": codigo, link e amigos indicados.
+app.get('/api/customers/me/referral', createRideLimiter, async (req, res, next) => {
+  try {
+    const header = String(req.header('authorization') || '');
+    const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+    if (!token) return res.status(401).json({ error: 'cliente_login_obrigatorio' });
+    const session = await findCustomerSession(token);
+    if (!session || !customerProfileComplete(session.customer)) return res.status(401).json({ error: 'sessao_cliente_invalida' });
+    const codigo = await customerReferralCode(session.customerSnap.ref, session.customer);
+    const invited = await db.collection('clientes').where('indicadoPor', '==', session.customerId).limit(50).get();
+    let checks = 0;
+    const amigos = [];
+    for (const doc of invited.docs) {
+      const data = doc.data() || {};
+      let qualificadaEmMs = Number(data.indicacaoQualificadaEmMs || 0);
+      if (!qualificadaEmMs && checks < 10) {
+        checks += 1;
+        if (await qualifyReferral(doc.id).catch(() => false)) qualificadaEmMs = Date.now();
+      }
+      amigos.push({ nome: String(data.nome || 'Amigo').split(/\s+/)[0], andou: !!qualificadaEmMs, desdeMs: Number(data.indicadoEmMs || 0), qualificadaEmMs });
+    }
+    amigos.sort((a, b) => b.desdeMs - a.desdeMs);
+    const mes = monthKey();
+    const base = process.env.APP_BASE_URL ? appUrl('/') : 'https://nexusmotoja.com.br/';
+    return res.json({
+      ok: true, codigo, link: `${base}?indicacao=${codigo}`, amigos, mes,
+      participacoesMes: amigos.filter((a) => a.andou && monthKey(a.qualificadaEmMs) === mes).length,
+      totalAndaram: amigos.filter((a) => a.andou).length
+    });
   } catch (error) {
     return next(error);
   }

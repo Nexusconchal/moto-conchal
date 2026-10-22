@@ -2874,7 +2874,9 @@
       function mensagemIndicacao() {
         return `Use o Nexus MotoJá em Conchal, Aguaí ou Engenheiro Coelho para pedir corrida rápido pelo celular. Meu link de indicação: ${linkIndicacao()}`;
       }
+      // Indique e ganhe com conta: codigo, link e amigos que ja andaram (cliente-menu.js).
       function indicarApp() {
+        if (window.MotojaClienteMenu) return window.MotojaClienteMenu.abrir("indique");
         const texto = mensagemIndicacao(),
           url = linkIndicacao();
         if (window.motoJaTrackFunil)
@@ -4277,13 +4279,15 @@
             ...authDraft,
             deviceId: clienteDeviceId(),
             origem: $("origem")?.value?.trim() || "",
+            indicacao: window.MotojaClienteMenu?.indicacaoPendente() || "",
           }, false);
+          window.MotojaClienteMenu?.limparIndicacao();
           localStorage.setItem(TOKEN_CLIENTE, data.token);
           aplicarCliente(data.customer || { ...authDraft, telefoneCliente: authDraft.telefoneCliente });
           clienteAutenticado = true;
           cadastroClienteObrigatorio = false;
           authStatus("Cadastro concluído!", true);
-          setTimeout(encerrarAuthCliente, 500);
+          setTimeout(() => { encerrarAuthCliente(); abrirTelaAposLogin(); }, 500);
         } catch (e) {
           authStatus(e.message);
         } finally {
@@ -4305,6 +4309,7 @@
           clienteAutenticado = true;
           cadastroClienteObrigatorio = false;
           encerrarAuthCliente();
+          abrirTelaAposLogin();
         } catch (e) {
           authStatus(e.message);
         } finally {
@@ -4408,16 +4413,14 @@
               perfil?.scrollIntoView({ behavior: "smooth", block: "start" });
             }
           }
-          if (a === "minhas")
-            mostrarHistoricoCliente().catch((err) =>
-              alert(err.message || "Não consegui abrir suas corridas."),
-            );
-          if (a === "motoristas") alert("Lista de motoboys em breve.");
+          if (a === "minhas") window.MotojaClienteMenu?.abrir("corridas");
+          if (a === "motoristas") window.MotojaClienteMenu?.abrir("motoristas");
           if (a === "indicar") indicarApp();
           if (a === "promocoes")
             location.href =
               "https://chat.whatsapp.com/InGnbbCtBlvGhjb56KlXVs?s=cl&p=i&mlu=4&ilr=4";
-          if (a === "ajuda" || a === "falar")
+          if (a === "ajuda") window.MotojaClienteMenu?.abrir("ajuda");
+          if (a === "falar")
             abrirWhatsApp("Olá, preciso de ajuda no app MotoJá.");
           if (a === "sair") {
             const token = localStorage.getItem(TOKEN_CLIENTE) || "";
@@ -4437,6 +4440,32 @@
         else alert("Sua conta está conectada e protegida neste aparelho.");
       });
       $("btn-indicar")?.addEventListener("click", indicarApp);
+      // Telas do menu (cliente-menu.js). Minhas corridas e Indique pedem conta:
+      // sem login, abre o login e depois volta para a tela pedida.
+      let telaAposLogin = "";
+      function abrirTelaAposLogin() {
+        const tela = telaAposLogin;
+        telaAposLogin = "";
+        if (tela) setTimeout(() => window.MotojaClienteMenu?.abrir(tela), 300);
+      }
+      window.MotojaClienteMenu?.configurar({
+        backend: CONFIG.backend,
+        token: () => localStorage.getItem(TOKEN_CLIENTE) || "",
+        authHeaders: cabecalhosCliente,
+        tabelas: TABELAS,
+        whatsapp: abrirWhatsApp,
+        pedirLogin: (motivo, tela) => {
+          telaAposLogin = tela || "";
+          abrirAuthCliente("login", false);
+          authStatus(motivo);
+        },
+        pedirDeNovo: (r = {}) => {
+          aplicarModoPedido(r.modalidade === "entrega_avulsa" ? "entrega" : "corrida");
+          if (r.origem && $("origem")) $("origem").value = r.origem;
+          if ((r.destino || r.destinoEncontrado) && $("destino")) $("destino").value = r.destino || r.destinoEncontrado;
+          abrirModal();
+        },
+      });
       $("btn-instalar").addEventListener("click", salvarNaTelaInicial);
       $("btn-lembretes")?.addEventListener("click", ativarLembretesCliente);
       $("btn-pedir").addEventListener("click", () => {
@@ -4908,5 +4937,6 @@
     <script src="./customer-availability.js?v=224" defer></script>
     <script src="./ride-chat.js?v=233" defer></script>
     <script src="./ride-rating.js?v=234" defer></script>
+    <script src="./cliente-menu.js?v=1"></script>
   </body>
 </html>
