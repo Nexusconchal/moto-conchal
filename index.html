@@ -3921,6 +3921,19 @@
           }
         }
       }
+      // Avaliacao do motoboy ao terminar a corrida (ride-rating.js), como na 99.
+      function cabecalhosCliente() {
+        return {
+          "x-customer-device": clienteDeviceId(),
+          ...(localStorage.getItem(TOKEN_CLIENTE) ? { authorization: `Bearer ${localStorage.getItem(TOKEN_CLIENTE)}` } : {}),
+        };
+      }
+      function abrirAvaliacaoMotoboy(rideId, d) {
+        window.MotojaRideRating?.open({ rideId, backend: CONFIG.backend, motoboy: d.motoboy, foto: d.motoboyFoto, auth: cabecalhosCliente });
+      }
+      window.addEventListener("load", () => {
+        setTimeout(() => window.MotojaRideRating?.resume({ backend: CONFIG.backend, auth: cabecalhosCliente }), 1200);
+      });
       async function verificarPedidoAtivo(forcar = false) {
         let pedido = null;
         try {
@@ -3948,6 +3961,7 @@
               pedidoTimer = setTimeout(() => verificarPedidoAtivo(true), pollMs);
               return;
             } else if (d.status === "finalizada") {
+              if (d.podeAvaliar && d.motoboy) abrirAvaliacaoMotoboy(pedido.id, d);
               resultadoBox.innerHTML = `<div style="text-align:left"><strong style="font-size:1.12rem">Corrida finalizada. Obrigado por usar a MotoJá!</strong><br><span class="small">Gostou do atendimento? Indique para um amigo e concorra a 1 corrida grátis.</span><div class="actions" style="margin-top:12px"><button id="btn-indicar-finalizada" class="btn-main" type="button">Indicar e concorrer</button><button id="btn-pedir-novamente-finalizada" class="btn-secondary" type="button">Pedir outra corrida</button></div></div>`;
               setTimeout(() => {
                 $("btn-indicar-finalizada") &&
@@ -4753,5 +4767,6 @@
     </script>
     <script src="./customer-availability.js?v=224" defer></script>
     <script src="./ride-chat.js?v=233" defer></script>
+    <script src="./ride-rating.js?v=234" defer></script>
   </body>
 </html>

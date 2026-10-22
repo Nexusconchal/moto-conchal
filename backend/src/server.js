@@ -11,6 +11,8 @@ import { Server as SocketIOServer } from 'socket.io';
 import { createDriverAvailability, observeAvailabilityJob } from './driver-availability.js';
 import { attachDriverAvailability } from './driver-availability-socket.js';
 import { createOfferAlerts } from './offer-alert.js';
+import { createDriverTelegram } from './driver-telegram.js';
+import { parseRating, ratingBlocker, ratingSummary, driverRatingView, RATING_TAGS } from './ride-rating.js';
 import { validateLocation } from './tracking-policy.js';
 import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state.js';
 import { createSupportAutomation, enrichSupportMessage, SUPPORT_PHONE, chooseDriverGroup, brazilPhone } from './support-automation.js';
@@ -1751,6 +1753,8 @@ function privateDriverJob(job = {}) {
   delete copy.motoboyFoto;
   delete copy.motoboyCnh;
   delete copy.crlvFoto;
+  // Como na 99: o motoboy ve a media e os comentarios, mas nao qual corrida deu cada nota.
+  delete copy.avaliacao;
   return copy;
 }
 
@@ -2878,6 +2882,9 @@ const offerAlerts = createOfferAlerts({
     return kind === 'deliveries' ? repeatDeliveryAlert(id, job, count) : repeatRideAlert(id, job, count);
   }
 });
+// Avisos de chamada no Telegram privado de cada motoboy (ver driver-telegram.js).
+const driverTelegram = createDriverTelegram({ db, token: process.env.TELEGRAM_BOT_TOKEN, username: process.env.TELEGRAM_BOT_USERNAME });
+const telegramWebhookSecret = () => hashSecret(`telegram-webhook:${process.env.TELEGRAM_BOT_TOKEN || ''}`).slice(0, 64);
 const app = express();
 const httpServer = createServer(app);
 app.set('trust proxy', 1);
@@ -3600,10 +3607,33 @@ async function repeatRideAlert(rideId, ride, count) {
   if (tokens.length) await admin.messaging().sendEachForMulticast(rideOfferPush(rideId, ride, tokens, count));
 }
 
+// Quem escolheu Disponivel e nao esta em servico recebe a chamada tambem no Telegram.
+function telegramReadyDrivers(docs, accepts = () => true) {
+  return docs.filter((doc) => {
+    const presence = driverAvailability.state(doc.id);
+    return doc.data()?.telegramChatId && presence.desired && !presence.busy && accepts(doc.data() || {});
+  });
+}
+
+function telegramOfferText(kind, job = {}) {
+  const value = money(job.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const link = process.env.APP_BASE_URL ? appUrl(kind === 'entrega' ? '/motoboy.html?aba=entregas' : '/motoboy.html') : `https://nexusmotoja.com.br/motoboy.html${kind === 'entrega' ? '?aba=entregas' : ''}`;
+  const lines = kind === 'entrega'
+    ? [`📦 NOVA ENTREGA MotoJá — ${value}`, `Empresa: ${job.empresa || '-'}`, job.entregaNaNota ? `Lote de ${job.paradas || 1} entregas` : `Bairro/destino: ${String(job.entrega || '-').slice(0, 80)}`]
+    : [`🏍️ NOVA CORRIDA MotoJá ${rideCityLabel(rideOperatingCity(job))} — ${value}`, `Saída: ${String(job.origem || '-').slice(0, 80)}`, `Destino: ${String(job.destino || '-').slice(0, 80)}`];
+  return [...lines, '', `Quem aceitar primeiro leva. Abra o app:\n${link}`].join('\n');
+}
+
+function telegramOfferInBackground(docs, text) {
+  if (!docs.length) return;
+  driverTelegram.notifyDrivers(docs, text).catch((error) => console.error('telegram dm failed', error?.message));
+}
+
 async function notifyDriversAboutRide(rideId, ride) {
   const drivers = await db.collection('motoboys').where('status', '==', 'ativo').get();
   const tokens = [];
   const city = rideOperatingCity(ride);
+  telegramOfferInBackground(telegramReadyDrivers(drivers.docs || [], (data) => driverRideCities(data)[city]), telegramOfferText('corrida', ride));
 
   drivers.forEach((doc) => {
     const data = doc.data();
@@ -3747,6 +3777,12 @@ async function notifyDriversAboutDelivery(deliveryId, delivery, { onlyReserved =
   };
   drivers.forEach((doc) => { if (!reserved || doc.id !== reservedCpf) collect(doc, tokens); });
   if (reservedDriver?.exists && reservedDriver.data()?.status !== 'bloqueado') collect(reservedDriver, reservedTokens);
+  // Telegram: entrega aberta vai para quem esta Disponivel; a do plano so para o dono dela.
+  if (reserved) {
+    if (reservedDriver?.exists && reservedDriver.data()?.status !== 'bloqueado') telegramOfferInBackground([reservedDriver], `✅ Entrega do plano já é sua — ${delivery.empresa || 'Empresa'}.\nAbra o app MotoJá para ver os detalhes.`);
+  } else {
+    telegramOfferInBackground(telegramReadyDrivers(drivers), telegramOfferText('entrega', delivery));
+  }
 
   const send = (list, title) => (list.length
     ? admin.messaging().sendEachForMulticast(deliveryOfferPush(deliveryId, delivery, list, title))
@@ -5106,6 +5142,9 @@ app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
     const planosAtivados = await db.collection('planosAtivados').where('ativadoEmMs', '>=', Date.now() - 31 * 86400000).limit(300).get()
       .then((snapshot) => snapshot.docs.map((doc) => serializeFirestore({ id: doc.id, ...doc.data() })).sort((a, b) => Number(b.ativadoEmMs || 0) - Number(a.ativadoEmMs || 0)))
       .catch((error) => { console.error('plan activations load failed', error); return []; });
+    const avaliacoes = await db.collection('avaliacoesMotoboy').orderBy('criadoEmMs', 'desc').limit(500).get()
+      .then((snapshot) => snapshot.docs.map((doc) => serializeFirestore({ id: doc.id, ...doc.data() })))
+      .catch((error) => { console.error('ratings load failed', error); return []; });
     const clientesCadastrados = await customerSignupCounts().catch((error) => {
       console.error('customer signup counts failed', error);
       return null;
@@ -5114,7 +5153,7 @@ app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
     const contasSuporte = (contasSuporteSnap.docs || [])
       .map((doc) => publicSupportAccount(doc.data() || {}, doc.id, true))
       .sort((a, b) => timestampMs(b.cadastradaEm) - timestampMs(a.cadastradaEm));
-    const payload = { ok: true, corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil, contasSuporte, clientesCadastrados, planosAtivados };
+    const payload = { ok: true, corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil, contasSuporte, clientesCadastrados, planosAtivados, avaliacoes };
     adminStateCache = { payload, expiresAt: Date.now() + ADMIN_STATE_CACHE_MS };
     return res.json(payload);
   } catch (error) {
@@ -5944,6 +5983,75 @@ app.post('/api/drivers/:cpf/telegram-link', async (req, res, next) => {
   } catch (error) {
     return next(error);
   }
+});
+
+// Vincula o Telegram privado do motoboy: devolve o link t.me/<robo>?start=<codigo>.
+app.post('/api/drivers/:cpf/telegram-dm-link', authLimiter, async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+    if (!process.env.TELEGRAM_BOT_TOKEN) return res.status(503).json({ error: 'telegram_nao_configurado', message: 'O robô do Telegram ainda não foi configurado no servidor.' });
+    const result = await driverTelegram.createLink(driverCpf);
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    if (error.message?.startsWith('telegram_') || error.status === 502) return res.status(503).json({ error: 'telegram_indisponivel', message: 'Não consegui falar com o Telegram agora. Tente de novo em instantes.' });
+    return next(error);
+  }
+});
+
+// Situacao dos avisos do motoboy (Telegram vinculado e aparelhos com push).
+app.post('/api/drivers/:cpf/notification-status', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+    const driver = (await db.collection('motoboys').doc(driverCpf).get()).data() || {};
+    const devices = Object.values(driver.fcmTokens || {}).filter((info) => info?.ativo !== false).length;
+    return res.json({ ok: true, telegram: { configured: !!process.env.TELEGRAM_BOT_TOKEN, linked: !!driver.telegramChatId }, push: { devices } });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Teste de aviso: manda um push para os aparelhos do motoboy e uma mensagem no Telegram dele.
+app.post('/api/drivers/:cpf/notification-test', authLimiter, async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+    // Le de novo do banco: o cache da prova pode ser de antes de vincular o Telegram.
+    const driver = (await db.collection('motoboys').doc(driverCpf).get()).data() || {};
+    const tokens = Object.entries(driver.fcmTokens || {}).filter(([, info]) => info?.ativo !== false).map(([token]) => token);
+    let push = { sent: 0, failed: 0, devices: tokens.length };
+    if (tokens.length) {
+      const response = await admin.messaging().sendEachForMulticast({
+        tokens,
+        notification: { title: 'Teste MotoJá', body: 'Se você viu isto com o celular bloqueado, os avisos estão chegando.' },
+        webpush: { headers: { Urgency: 'high', TTL: '120' }, fcmOptions: { link: appUrl('/motoboy.html') } },
+        data: { tipo: 'teste_aviso' }
+      }).catch(() => ({ successCount: 0, failureCount: tokens.length }));
+      push = { sent: response.successCount, failed: response.failureCount, devices: tokens.length };
+    }
+    const telegram = driver.telegramChatId
+      ? await driverTelegram.sendTo(driver.telegramChatId, '🔔 Teste MotoJá: se você ouviu este aviso, as chamadas vão chegar aqui no Telegram.')
+      : { sent: false, reason: 'sem_telegram' };
+    if (telegram.blocked) await db.collection('motoboys').doc(driverCpf).set({ telegramChatId: '' }, { merge: true });
+    return res.json({ ok: true, push, telegram: { linked: !!driver.telegramChatId && !telegram.blocked, sent: telegram.sent === true } });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Mensagens recebidas pelo robo do Telegram (vinculo /start <codigo> e /parar).
+app.post('/api/telegram/webhook', async (req, res) => {
+  if (!process.env.TELEGRAM_BOT_TOKEN || req.get('x-telegram-bot-api-secret-token') !== telegramWebhookSecret()) return res.status(401).json({ error: 'nao_autorizado' });
+  try {
+    await driverTelegram.handleUpdate(req.body || {});
+  } catch (error) {
+    console.error('telegram webhook failed', error?.message);
+  }
+  return res.json({ ok: true });
 });
 
 app.get('/api/companies/:phone/balance', assertCompany, async (req, res, next) => {
@@ -9896,6 +10004,9 @@ app.get('/api/rides/:rideId/status', async (req, res, next) => {
       valor: money(ride.valor),
       chatUltimaEmMs: Number(ride.chatUltimaEmMs || 0),
       chatUltimoAutor: ride.chatUltimoAutor || '',
+      finalizadaEmMs: timestampMs(ride.finalizadaEm),
+      avaliacaoNota: Number(ride.avaliacao?.nota || 0),
+      podeAvaliar: !ratingBlocker(ride, timestampMs(ride.finalizadaEm)),
       origem: ride.origem || '',
       origemLat: Number(ride.origemLat || 0),
       origemLon: Number(ride.origemLon || 0),
@@ -10017,6 +10128,63 @@ app.post('/api/rides/:rideId/chat/list', createRideLimiter, async (req, res, nex
       .sort((a, b) => a.criadoEmMs - b.criadoEmMs);
     return res.json({ ok: true, voce, aberto: ride.status === 'aceita', mensagens,
       outro: voce === 'cliente' ? { nome: ride.motoboy || 'Motoboy' } : { nome: ride.nome || 'Cliente' } });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Avaliacao do motoboy pelo cliente depois da corrida (uma por corrida, ate 7 dias).
+app.get('/api/ratings/tags', (_req, res) => res.json({ ok: true, tags: RATING_TAGS }));
+
+app.post('/api/rides/:rideId/rating', createRideLimiter, async (req, res, next) => {
+  try {
+    const rideRef = db.collection('corridas').doc(String(req.params.rideId || ''));
+    const first = await rideRef.get();
+    if (!first.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
+    const firstRide = first.data() || {};
+    const access = { deviceHash: firstRide.clienteDeviceId ? hashSecret(firstRide.clienteDeviceId) : '', customerId: firstRide.customerId || '' };
+    if (!await canReadRideTracking(req, access)) return res.status(403).json({ error: 'avaliacao_nao_autorizada', message: 'Só quem pediu a corrida pode avaliar.' });
+    const { nota, tags, comentario } = parseRating(req.body, maskChatText);
+    const criadoEmMs = Date.now();
+    let saved = null;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(rideRef);
+      const ride = snap.data() || {};
+      const blocker = ratingBlocker(ride, timestampMs(ride.finalizadaEm), criadoEmMs);
+      if (blocker) throw blocker;
+      const cpf = onlyDigits(ride.motoboyCpf);
+      const avaliacao = { nota, tags, comentario, criadoEmMs };
+      const inc = admin.firestore.FieldValue.increment;
+      tx.set(rideRef, { avaliacao }, { merge: true });
+      // Copia para o dono (com nome do cliente) e para o motoboy (sem dados do cliente).
+      tx.set(db.collection('avaliacoesMotoboy').doc(rideRef.id), {
+        ...avaliacao, rideId: rideRef.id, motoboyCpf: cpf, motoboy: ride.motoboy || '', clienteNome: cleanText(ride.nome || 'Cliente', 80),
+        cidadeOperacao: ride.cidadeOperacao || '', modalidade: ride.modalidade || 'corrida'
+      });
+      tx.set(db.collection('motoboys').doc(cpf).collection('avaliacoes').doc(rideRef.id), avaliacao);
+      tx.set(db.collection('motoboys').doc(cpf), { notaSoma: inc(nota), notaQtd: inc(1), notaDist: { [nota]: inc(1) }, notaUltimaEmMs: criadoEmMs }, { merge: true });
+      saved = avaliacao;
+    });
+    rideStatusCache.delete(rideRef.id);
+    adminStateCache = null;
+    return res.json({ ok: true, avaliacao: { nota: saved.nota } });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Motoboy ve a propria media e as ultimas avaliacoes (sem nome do cliente).
+app.post('/api/drivers/:cpf/ratings', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+    const driverRef = db.collection('motoboys').doc(driverCpf);
+    const [driverSnap, recent] = await Promise.all([
+      driverRef.get(),
+      driverRef.collection('avaliacoes').orderBy('criadoEmMs', 'desc').limit(30).get()
+    ]);
+    return res.json({ ok: true, ...ratingSummary(driverSnap.data() || {}), recentes: recent.docs.map((doc) => driverRatingView(doc.data() || {})) });
   } catch (error) {
     return next(error);
   }
@@ -12734,6 +12902,11 @@ app.use((error, _req, res, _next) => {
 
 httpServer.listen(PORT, () => {
   console.log(`MotoJa Conchal backend listening on ${PORT}`);
+  if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_WEBHOOK !== 'off') {
+    driverTelegram.setWebhook(`${BACKEND_BASE_URL}/api/telegram/webhook`, telegramWebhookSecret())
+      .then(() => console.log('telegram webhook ok'))
+      .catch((error) => console.error('telegram webhook failed', error?.message));
+  }
   restoreDriverAvailability()
     .then((count) => console.log('driver availability restored', count))
     .catch((error) => console.error('driver availability restore failed', error));

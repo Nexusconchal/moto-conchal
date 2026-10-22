@@ -14,6 +14,12 @@
       description: "Veja qual empresa ativou cada plano e escolha o motoboy que roda sozinho as entregas desse plano.",
       targets: ["planos-section"],
     },
+    ratings: {
+      title: "Avaliações dos clientes",
+      eyebrow: "Qualidade",
+      description: "Notas de 1 a 5 estrelas, etiquetas e comentários que os clientes deixam para cada motoboy depois da corrida.",
+      targets: ["avaliacoes-section"],
+    },
     deliveries: {
       title: "Entregas de empresas",
       eyebrow: "Operação",
@@ -73,8 +79,9 @@
     ["Depósitos", "deposits", "06", "Financeiro"],
     ["Empresas", "companies", "07", "Gestão"],
     ["Motoboys", "drivers", "08", ""],
-    ["Equipe suporte", "support", "09", ""],
-    ["Funil", "funnel", "10", "Análise"],
+    ["Avaliações", "ratings", "09", ""],
+    ["Equipe suporte", "support", "10", ""],
+    ["Funil", "funnel", "11", "Análise"],
   ];
 
   const DEFAULT_BACKEND = "https://motoboy-conchal.onrender.com";
@@ -208,6 +215,80 @@
       <div id="ownerPlansList" class="owner-plans-list"><div class="owner-support-empty">Aguardando dados do painel...</div></div>`;
     panel.appendChild(section);
     section.addEventListener("click", handlePlanAction);
+  }
+
+  // Avaliacoes dos clientes: o dono ve tudo (cliente, corrida, nota e comentario).
+  function ensureRatingsSection(panel) {
+    if (document.getElementById("avaliacoes-section")) return;
+    const section = document.createElement("section");
+    section.id = "avaliacoes-section";
+    section.className = "box owner-ratings";
+    section.innerHTML = `
+      <div class="owner-plans-head"><div><h2>Avaliações dos motoboys</h2><p class="muted">Depois de cada corrida o cliente pode dar de 1 a 5 estrelas, marcar etiquetas e deixar um comentário. O motoboy vê a média e os comentários sem o nome do cliente; aqui você vê tudo.</p></div></div>
+      <div id="ownerRatingsSummary" class="owner-ratings-summary"></div>
+      <h3 class="owner-ratings-title">Ranking por motoboy</h3>
+      <div id="ownerRatingsRanking" class="owner-ratings-ranking"></div>
+      <h3 class="owner-ratings-title">Últimas avaliações</h3>
+      <div class="owner-plans-filter" role="group" aria-label="Filtrar avaliações">
+        <button type="button" data-ratings-filter="todas" aria-pressed="true">Todas</button>
+        <button type="button" data-ratings-filter="baixas" aria-pressed="false">Notas 1 a 3</button>
+        <button type="button" data-ratings-filter="comentario" aria-pressed="false">Com comentário</button>
+        <select data-ratings-driver aria-label="Motoboy"><option value="">Todos os motoboys</option></select>
+      </div>
+      <div id="ownerRatingsList" class="owner-ratings-list"><div class="owner-support-empty">Aguardando dados do painel...</div></div>`;
+    panel.appendChild(section);
+    section.addEventListener("click", (event) => {
+      const filter = event.target.closest("[data-ratings-filter]");
+      if (!filter) return;
+      ratingsFilter = filter.dataset.ratingsFilter;
+      renderRatingsSection();
+    });
+    section.addEventListener("change", (event) => {
+      if (!event.target.matches("[data-ratings-driver]")) return;
+      ratingsDriver = event.target.value;
+      renderRatingsSection();
+    });
+  }
+
+  let ratingsFilter = "todas", ratingsDriver = "";
+  // Estrelas preenchidas na proporcao da nota (4,67 mostra quase 5 cheias).
+  const ratingStars = (nota) => `<span class="owner-stars" style="--p:${Math.max(0, Math.min(100, (Number(nota) || 0) * 20))}%" aria-label="${Number(nota || 0).toFixed(1)} de 5">★★★★★</span>`;
+  function renderRatingsSection() {
+    const list = document.getElementById("ownerRatingsList");
+    if (!list) return;
+    const ratings = Array.isArray(carAdminState.avaliacoes) ? carAdminState.avaliacoes : [];
+    const drivers = Array.isArray(carAdminState.motoboys) ? carAdminState.motoboys : [];
+    const now = Date.now();
+    const last30 = ratings.filter((r) => now - Number(r.criadoEmMs || 0) < 30 * 864e5);
+    const media30 = last30.length ? last30.reduce((t, r) => t + Number(r.nota || 0), 0) / last30.length : 0;
+    const baixas30 = last30.filter((r) => Number(r.nota) <= 3).length;
+    document.getElementById("ownerRatingsSummary").innerHTML = `
+      <div><span>Média (30 dias)</span><strong>${media30 ? media30.toFixed(2).replace(".", ",") : "-"}</strong><small>${media30 ? ratingStars(media30) : "sem avaliações"}</small></div>
+      <div><span>Avaliações (30 dias)</span><strong>${last30.length}</strong><small>de corridas finalizadas</small></div>
+      <div><span>Notas 1 a 3 (30 dias)</span><strong class="${baixas30 ? "owner-ratings-bad" : ""}">${baixas30}</strong><small>${baixas30 ? "confira os comentários" : "nenhuma reclamação"}</small></div>`;
+
+    const lowByDriver = {};
+    ratings.forEach((r) => { if (Number(r.nota) <= 3) lowByDriver[r.motoboyCpf] = (lowByDriver[r.motoboyCpf] || 0) + 1; });
+    const ranking = drivers
+      .filter((d) => Number(d.notaQtd || 0) > 0)
+      .map((d) => ({ cpf: String(d.id || d.cpf || ""), nome: d.nome || "Motoboy", total: Number(d.notaQtd || 0), media: Number(d.notaSoma || 0) / Number(d.notaQtd || 1) }))
+      .sort((a, b) => b.media - a.media || b.total - a.total);
+    document.getElementById("ownerRatingsRanking").innerHTML = ranking.length
+      ? ranking.map((d, i) => `<article class="${d.media < 4.5 ? "attention" : ""}"><b>${i + 1}º</b><div><strong>${escapeHtml(d.nome)}</strong><small>CPF ${formatCpf(d.cpf)}</small></div><div><strong class="owner-ratings-stars">${d.media.toFixed(2).replace(".", ",")} ${ratingStars(d.media)}</strong><small>${d.total} avaliaç${d.total === 1 ? "ão" : "ões"}${lowByDriver[d.cpf] ? ` · ${lowByDriver[d.cpf]} nota(s) baixa(s) recentes` : ""}</small></div></article>`).join("")
+      : `<div class="owner-support-empty">Nenhum motoboy avaliado ainda.</div>`;
+
+    const select = document.querySelector("[data-ratings-driver]");
+    if (select) {
+      const names = new Map(ratings.map((r) => [r.motoboyCpf, r.motoboy || formatCpf(r.motoboyCpf)]));
+      select.innerHTML = `<option value="">Todos os motoboys</option>${[...names].sort((a, b) => String(a[1]).localeCompare(String(b[1]), "pt-BR")).map(([cpf, nome]) => `<option value="${escapeHtml(cpf)}" ${cpf === ratingsDriver ? "selected" : ""}>${escapeHtml(nome)}</option>`).join("")}`;
+    }
+    document.querySelectorAll("[data-ratings-filter]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.ratingsFilter === ratingsFilter)));
+    const shown = ratings.filter((r) => (!ratingsDriver || r.motoboyCpf === ratingsDriver)
+      && (ratingsFilter !== "baixas" || Number(r.nota) <= 3)
+      && (ratingsFilter !== "comentario" || String(r.comentario || "").trim()));
+    list.innerHTML = shown.length
+      ? shown.slice(0, 200).map((r) => `<article class="${Number(r.nota) <= 3 ? "low" : ""}"><div><span>${planDate(r.criadoEmMs)}</span><strong class="owner-ratings-stars">${ratingStars(r.nota)}</strong><small>${Number(r.nota)} de 5</small></div><div><span>Motoboy</span><strong>${escapeHtml(r.motoboy || "-")}</strong><small>CPF ${formatCpf(r.motoboyCpf)}</small></div><div><span>Cliente</span><strong>${escapeHtml(r.clienteNome || "Cliente")}</strong><small>Corrida ${escapeHtml(String(r.rideId || r.id || "").slice(0, 10))}</small></div><div class="owner-ratings-text">${(r.tags || []).length ? `<em>${r.tags.map(escapeHtml).join(" · ")}</em>` : ""}${r.comentario ? `<p>“${escapeHtml(r.comentario)}”</p>` : (r.tags || []).length ? "" : `<small>Sem comentário</small>`}</div></article>`).join("")
+      : `<div class="owner-support-empty">${ratings.length ? "Nenhuma avaliação com esse filtro." : "Ainda não chegou nenhuma avaliação. Elas aparecem aqui assim que os clientes avaliarem as corridas."}</div>`;
   }
 
   let plansFilter = "ativos";
@@ -455,6 +536,7 @@
     if (name === "support") loadSupportAccounts();
     if (name === "cars") renderCarSection();
     if (name === "plans") renderPlansSection();
+    if (name === "ratings") renderRatingsSection();
   }
 
   function buildNavigation(nav) {
@@ -487,6 +569,7 @@
     ensureSupportSection(panel);
     ensureCarSection(panel);
     ensurePlansSection(panel);
+    ensureRatingsSection(panel);
 
     const originalChildren = [...panel.children];
     const globalFilters = originalChildren.find((element) => element.querySelector?.("#periodo"));
@@ -556,6 +639,7 @@
     carAdminState = event.detail || carAdminState;
     renderCarSection();
     renderPlansSection();
+    renderRatingsSection();
     if (Array.isArray(event.detail?.contasSuporte) && event.detail.contasSuporte.length) {
       renderSupportAccounts(event.detail.contasSuporte);
     } else if (getOwnerPassword()) {
