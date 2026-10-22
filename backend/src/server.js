@@ -3681,6 +3681,19 @@ async function notifyDriversAboutRide(rideId, ride) {
   };
 }
 
+// Horarios de Sao Paulo. O lembrete sai uma vez por dia em cada janela, mesmo que o servidor acorde atrasado.
+const CUSTOMER_REMINDER_SLOTS = [
+  { time: '06:40', body: 'Vai sair hoje? Chame sua MotoJa em poucos segundos.' },
+  { time: '11:30', body: 'Hora do almoco! Precisa ir ou buscar algo? Chame sua MotoJa.' },
+  { time: '16:50', body: 'Precisa de mototaxi em Conchal? A MotoJa esta online.' }
+];
+const CUSTOMER_REMINDER_WINDOW_MIN = 60;
+
+function minutesOfDay(time) {
+  const [hour, minute] = String(time).split(':').map(Number);
+  return hour * 60 + minute;
+}
+
 async function notifyCustomersRideReminder(slot) {
   const customers = await db.collection('clientes').limit(1000).get();
   const tokens = [];
@@ -3695,12 +3708,12 @@ async function notifyCustomersRideReminder(slot) {
 
   if (!tokens.length) return { sent: 0, failed: 0 };
 
-  const morning = slot === '06:40';
+  const reminder = CUSTOMER_REMINDER_SLOTS.find((item) => item.time === slot) || CUSTOMER_REMINDER_SLOTS[0];
   const response = await admin.messaging().sendEachForMulticast({
     tokens,
     notification: {
       title: 'MotoJa Conchal',
-      body: morning ? 'Vai sair hoje? Chame sua MotoJa em poucos segundos.' : 'Precisa de mototaxi em Conchal? A MotoJa esta online.'
+      body: reminder.body
     },
     webpush: {
       headers: {
@@ -3747,8 +3760,14 @@ function saoPauloDateTimeParts(date = new Date()) {
 }
 
 async function runCustomerReminderTick(date = new Date()) {
-  const { day, time } = saoPauloDateTimeParts(date);
-  if (time !== '06:40' && time !== '16:50') return;
+  const { day, time: now } = saoPauloDateTimeParts(date);
+  const nowMin = minutesOfDay(now);
+  const slot = CUSTOMER_REMINDER_SLOTS.find((item) => {
+    const start = minutesOfDay(item.time);
+    return nowMin >= start && nowMin < start + CUSTOMER_REMINDER_WINDOW_MIN;
+  });
+  if (!slot) return;
+  const time = slot.time;
 
   const markerRef = db.collection('sistema').doc('cliente_lembrete_' + day + '_' + time.replace(':', ''));
   let shouldSend = false;
@@ -4308,6 +4327,8 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 }
 
 app.get('/health', (_req, res) => {
+  // No plano free o Render dorme; um ping externo aqui acorda o servidor e confere os lembretes.
+  runCustomerReminderTick().catch((error) => console.error('customer reminder health tick failed', error));
   res.json({
     ok: true,
     service: 'motoja-conchal-backend',
@@ -6581,7 +6602,7 @@ app.post('/api/customers/push-token', createRideLimiter, async (req, res, next) 
         [token]: {
           ativo: true,
           tipo: 'cliente_lembrete',
-          horarios: ['06:40', '16:50'],
+          horarios: CUSTOMER_REMINDER_SLOTS.map((item) => item.time),
           userAgent: String(req.body.userAgent || '').slice(0, 300),
           atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
         }
@@ -6589,7 +6610,7 @@ app.post('/api/customers/push-token', createRideLimiter, async (req, res, next) 
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
 
-    res.json({ ok: true, horarios: ['06:40', '16:50'] });
+    res.json({ ok: true, horarios: CUSTOMER_REMINDER_SLOTS.map((item) => item.time) });
   } catch (error) {
     next(error);
   }
