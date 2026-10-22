@@ -76,3 +76,39 @@ test('signup keeps who referred only for a new account and never for yourself', 
   // A primeira corrida finalizada em qualquer caminho de finalizar dispara a qualificacao.
   assert.match(source, /qualifyReferralFromRide\(rideFinished\[1\]\)/);
 });
+
+test('the motoboy list needs an account and shows only who is available now', async () => {
+  const nodeCrypto = await import('node:crypto');
+  const h = (v) => nodeCrypto.createHash('sha256').update(String(v)).digest('hex');
+  const drivers = [
+    { id: '11111111111', data: { nome: 'Rafael Souza', status: 'ativo', fotoMotoboy: 'data:image/png;base64,iVBORw0KGgo=', motoModelo: 'CG 160' } },
+    { id: '22222222222', data: { nome: 'Eder Lacerda', status: 'ativo', fotoMotoboy: '', motoModelo: 'Biz' } }
+  ];
+  const routes = {};
+  const ctx = vm.createContext({ Date, Number, String, Map, Buffer, console, crypto: nodeCrypto.default,
+    db: { collection: () => ({ where: () => ({ limit: () => ({ get: async () => ({ docs: drivers.map((d) => ({ id: d.id, data: () => d.data })) }) }) }) }) },
+    validDriverPhoto: (v) => (String(v || '').startsWith('data:image/') ? v : ''), publicDriverId, publicDriverCard, sortPublicDrivers,
+    hashSecret: h, safeEqual: (a, b) => a === b, mapLimiter: 0,
+    driverAvailability: { state: (cpf) => ({ available: cpf === '11111111111' }) },
+    findCustomerSession: async (t) => (t === 'ok' ? { customer: { completo: true } } : null), customerProfileComplete: (c) => !!c.completo,
+    app: { get: (p, ...fns) => { routes[p] = fns.at(-1); } } });
+  vm.runInContext(slice('// ---------- Menu do cliente: Motoristas e Indique e ganhe ----------', '// Codigo de indicacao do cliente'), ctx);
+  const call = async (path, { token = '', params = {}, query = {} } = {}) => {
+    const out = { status: 200 }; let failure;
+    const res = { set() { return res; }, type() { return res; }, status(c) { out.status = c; return res; }, json(d) { out.data = d; return res; }, send(d) { out.body = d; return res; }, end() { return res; } };
+    await routes[path]({ params, query, header: (n) => (n === 'authorization' && token ? `Bearer ${token}` : '') }, res, (e) => { failure = e; });
+    if (failure) throw failure;
+    return out;
+  };
+  assert.equal((await call('/api/drivers/public')).status, 401);
+  const out = await call('/api/drivers/public', { token: 'ok' });
+  assert.equal(out.data.motoboys.length, 1);
+  assert.equal(out.data.motoboys[0].nome, 'Rafael S.');
+  const url = new URL(out.data.motoboys[0].foto, 'https://x');
+  const id = url.pathname.split('/')[4];
+  const photo = await call('/api/drivers/public/:id/photo', { params: { id }, query: Object.fromEntries(url.searchParams) });
+  assert.equal(photo.status, 200);
+  assert.ok(Buffer.isBuffer(photo.body));
+  const forged = await call('/api/drivers/public/:id/photo', { params: { id }, query: { e: url.searchParams.get('e'), s: 'x' } });
+  assert.equal(forged.status, 403);
+});

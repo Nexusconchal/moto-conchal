@@ -97,14 +97,15 @@
 
   // ---------- Motoristas ----------
   async function motoristas() {
-    const body = sheet("Nossos motoboys");
+    if (!exigeConta("Para ver os motoboys disponíveis, entre ou crie sua conta.", "motoristas")) return;
+    const body = sheet("Motoboys disponíveis");
     try {
-      const d = await api("/api/drivers/public");
+      const d = await api("/api/drivers/public", true);
       const lista = d.motoboys || [];
-      const online = lista.filter((m) => m.online).length;
-      body.innerHTML = `<p class="mjm-intro">Todos os motoboys da MotoJá são cadastrados com CNH e documento da moto, aprovados pela nossa equipe e avaliados pelos clientes a cada corrida.${online ? ` <strong style="color:#7ee2a8">${online} disponíve${online > 1 ? "is" : "l"} agora.</strong>` : ""}</p>
-        ${lista.length ? `<div class="mjm-drivers">${lista.map((m) => `<div class="mjm-driver">${m.online ? '<span class="online">● Disponível</span>' : ""}${m.temFoto ? `<img src="${esc(cfg.backend)}/api/drivers/public/${esc(m.id)}/photo" alt="" loading="lazy" onerror="this.outerHTML='<span class=&quot;sem-foto&quot;>MJ</span>'">` : '<span class="sem-foto">MJ</span>'}<strong>${esc(m.nome)}</strong>${m.moto ? `<small>🏍️ ${esc(m.moto)}</small>` : ""}${m.avaliacoes ? `<small>${estrelas(m.media)} ${String(m.media.toFixed(1)).replace(".", ",")} · ${m.avaliacoes} avaliaç${m.avaliacoes > 1 ? "ões" : "ão"}</small>` : '<span class="novo">Novo na MotoJá</span>'}</div>`).join("")}</div>` : '<div class="mjm-vazio">Nenhum motoboy ativo no momento.</div>'}`;
+      body.innerHTML = `<p class="mjm-intro">Estes motoboys estão <strong style="color:#7ee2a8">disponíveis agora</strong>. Todos são cadastrados com CNH e documento da moto, aprovados pela nossa equipe e avaliados pelos clientes a cada corrida.</p>
+        ${lista.length ? `<div class="mjm-drivers">${lista.map((m) => `<div class="mjm-driver"><span class="online">● Disponível</span>${m.foto ? `<img src="${esc(cfg.backend + m.foto)}" alt="" loading="lazy" onerror="this.outerHTML='<span class=&quot;sem-foto&quot;>MJ</span>'">` : '<span class="sem-foto">MJ</span>'}<strong>${esc(m.nome)}</strong>${m.moto ? `<small>🏍️ ${esc(m.moto)}</small>` : ""}${m.avaliacoes ? `<small>${estrelas(m.media)} ${String(m.media.toFixed(1)).replace(".", ",")} · ${m.avaliacoes} avaliaç${m.avaliacoes > 1 ? "ões" : "ão"}</small>` : '<span class="novo">Novo na MotoJá</span>'}</div>`).join("")}</div>` : '<div class="mjm-vazio">Nenhum motoboy disponível neste momento.<br>Assim que alguém ficar disponível, aparece aqui. Você também pode pedir a corrida: ela toca para todos.</div>'}`;
     } catch (e) {
+      if (e.login) { fechar(); return cfg.pedirLogin?.("Sua sessão expirou. Entre de novo para ver os motoboys.", "motoristas"); }
       body.innerHTML = `<div class="mjm-vazio">${esc(e.message)}</div>`;
     }
   }

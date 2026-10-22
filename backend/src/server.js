@@ -6622,27 +6622,44 @@ app.get('/api/customers/me/rides', createRideLimiter, async (req, res, next) => 
 });
 
 // ---------- Menu do cliente: Motoristas e Indique e ganhe ----------
+// Lista "Nossos motoboys": so para cliente com cadastro e so quem esta Disponivel
+// agora. A foto sai por um link que vale 10 minutos (sem expor CPF ou telefone).
+const PUBLIC_PHOTO_SECRET = crypto.randomBytes(24).toString('hex');
+const PUBLIC_PHOTO_TTL_MS = 10 * 60 * 1000;
 let publicDriversCache = null;
 async function publicDriversList() {
   if (publicDriversCache && publicDriversCache.expiresAt > Date.now()) return publicDriversCache;
   const snapshot = await db.collection('motoboys').where('status', '==', 'ativo').limit(300).get();
-  const photos = new Map();
-  const cards = snapshot.docs.map((doc) => {
+  const drivers = snapshot.docs.map((doc) => {
     const data = doc.data() || {};
-    const photo = validDriverPhoto(data.fotoMotoboy);
-    if (photo) photos.set(publicDriverId(doc.id), photo);
-    return publicDriverCard(doc.id, { ...data, fotoMotoboy: photo }, driverAvailability.state(doc.id));
+    return { cpf: doc.id, data: { ...data, fotoMotoboy: validDriverPhoto(data.fotoMotoboy) } };
   });
-  publicDriversCache = { cards: sortPublicDrivers(cards), photos, expiresAt: Date.now() + 60 * 1000 };
+  publicDriversCache = { drivers, byId: new Map(drivers.map((d) => [publicDriverId(d.cpf), d])), expiresAt: Date.now() + 60 * 1000 };
   return publicDriversCache;
 }
 
-// Lista "Nossos motoboys" do app do cliente (sem dados pessoais).
-app.get('/api/drivers/public', mapLimiter, async (_req, res, next) => {
+function publicPhotoSignature(id, expiresAtMs) {
+  return hashSecret(`${id}:${expiresAtMs}:${PUBLIC_PHOTO_SECRET}`).slice(0, 32);
+}
+
+async function requireCustomerSession(req) {
+  const header = String(req.header('authorization') || '');
+  const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+  const session = token ? await findCustomerSession(token) : null;
+  return session && customerProfileComplete(session.customer) ? session : null;
+}
+
+app.get('/api/drivers/public', mapLimiter, async (req, res, next) => {
   try {
+    if (!await requireCustomerSession(req)) return res.status(401).json({ error: 'cliente_login_obrigatorio', message: 'Entre na sua conta para ver os motoboys.' });
     const list = await publicDriversList();
-    res.set('cache-control', 'public, max-age=60');
-    return res.json({ ok: true, motoboys: list.cards });
+    const expiresAtMs = Date.now() + PUBLIC_PHOTO_TTL_MS;
+    const motoboys = sortPublicDrivers(list.drivers
+      .map((d) => publicDriverCard(d.cpf, d.data, driverAvailability.state(d.cpf)))
+      .filter((card) => card.online))
+      .map((card) => ({ ...card, foto: card.temFoto ? `/api/drivers/public/${card.id}/photo?e=${expiresAtMs}&s=${publicPhotoSignature(card.id, expiresAtMs)}` : '' }));
+    res.set('cache-control', 'no-store');
+    return res.json({ ok: true, motoboys });
   } catch (error) {
     return next(error);
   }
@@ -6650,10 +6667,13 @@ app.get('/api/drivers/public', mapLimiter, async (_req, res, next) => {
 
 app.get('/api/drivers/public/:id/photo', mapLimiter, async (req, res, next) => {
   try {
-    const photo = (await publicDriversList()).photos.get(String(req.params.id || ''));
-    const [, type, data] = String(photo || '').match(/^data:(image\/[a-z]+);base64,(.+)$/) || [];
+    const id = String(req.params.id || '');
+    const expiresAtMs = Number(req.query.e || 0);
+    if (!expiresAtMs || expiresAtMs < Date.now() || expiresAtMs > Date.now() + PUBLIC_PHOTO_TTL_MS || !safeEqual(String(req.query.s || ''), publicPhotoSignature(id, expiresAtMs))) return res.status(403).end();
+    const driver = (await publicDriversList()).byId.get(id);
+    const [, type, data] = String(driver?.data?.fotoMotoboy || '').match(/^data:(image\/[a-z]+);base64,(.+)$/) || [];
     if (!data) return res.status(404).end();
-    res.set('cache-control', 'public, max-age=3600');
+    res.set('cache-control', 'private, max-age=600');
     res.set('cross-origin-resource-policy', 'cross-origin');
     return res.type(type).send(Buffer.from(data, 'base64'));
   } catch (error) {
