@@ -1541,6 +1541,59 @@
         color: #fff;
         text-shadow: none;
       }
+      /* Corrida e entrega lado a lado, em blocos. */
+      .cta-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.6rem;
+      }
+      .cta-row .cta-gps {
+        position: relative;
+        width: auto;
+        margin: 0;
+        min-height: 104px;
+        padding: 0.75rem 0.8rem;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.45rem;
+        text-align: left;
+      }
+      .cta-row .cta-ico {
+        width: 42px;
+        height: 42px;
+        flex: 0 0 42px;
+        border-radius: 12px;
+      }
+      .cta-row .pin-shape {
+        transform: scale(0.72) rotate(-45deg);
+      }
+      .cta-row .cta-emoji {
+        font-size: 1.55rem;
+        line-height: 1;
+      }
+      .cta-row .cta-gps strong {
+        font-size: 1rem;
+        line-height: 1.1;
+      }
+      .cta-row .cta-gps small {
+        font-size: 0.68rem;
+        line-height: 1.2;
+      }
+      .cta-row .cta-arrow {
+        position: absolute;
+        top: 0.7rem;
+        right: 0.8rem;
+      }
+      @media (max-width: 340px) {
+        .cta-row .cta-gps strong {
+          font-size: 0.9rem;
+        }
+        .cta-row .cta-gps small {
+          font-size: 0.62rem;
+        }
+      }
       /* Faixa de confianca da tela inicial (avaliacao, chat e GPS). */
       .home-trust {
         display: grid;
@@ -1873,20 +1926,22 @@
         </div>
       </section>
       <section class="actions home-actions">
+        <div class="cta-row">
         <button id="btn-pedir" class="btn-main cta-gps" type="button">
           <span class="cta-ico"><span class="pin-shape"></span></span
           ><span
-            ><strong>Pedir Corrida pelo GPS</strong
-            ><small>Calcule o valor e chame um motoboy</small></span
+            ><strong>Pedir Corrida</strong
+            ><small>Calcule o valor pelo GPS</small></span
           ><span class="cta-arrow">›</span>
         </button>
         <button id="btn-entrega" class="btn-main cta-gps cta-entrega" type="button">
-          <span class="cta-ico"><span class="box-shape"></span></span
+          <span class="cta-ico cta-emoji" aria-hidden="true">📦</span
           ><span
             ><strong>Enviar Entrega</strong
-            ><small>Celular, chave, documento... mesmo preço</small></span
+            ><small>Mesmo preço da corrida</small></span
           ><span class="cta-arrow">›</span>
         </button>
+        </div>
         <div class="home-trust" aria-label="Segurança da MotoJá">
           <div><span aria-hidden="true">⭐</span>Motoboys avaliados</div>
           <div><span aria-hidden="true">💬</span>Chat no app</div>
