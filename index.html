@@ -3473,8 +3473,10 @@
             aberturas =
               Number(localStorage.getItem("motoJaAberturas") || 0) + 1;
           localStorage.setItem("motoJaAberturas", String(aberturas));
-          if (ja || aberturas < 2 || Notification.permission === "granted")
-            return;
+          const jaPermitido =
+            typeof Notification !== "undefined" &&
+            Notification.permission === "granted";
+          if (ja || aberturas < 2 || jaPermitido) return;
           localStorage.setItem(chave, "mostrado");
           setTimeout(() => {
             if (
@@ -3486,27 +3488,62 @@
           }, 1200);
         } catch (e) {}
       }
+      // App Android da Play Store (WebView): usa a notificacao nativa do celular,
+      // pela mesma interface PushNotifications que o painel do motoboy usa.
+      function pushNativoCliente() {
+        const cap = window.Capacitor;
+        return cap?.isNativePlatform?.() && cap.Plugins?.PushNotifications
+          ? cap.Plugins.PushNotifications
+          : null;
+      }
+      async function tokenPushNativoCliente(push) {
+        let perm = await push.checkPermissions();
+        if (perm.receive !== "granted") perm = await push.requestPermissions();
+        if (perm.receive !== "granted")
+          throw new Error(
+            "Libere as notificações do app MotoJá nas configurações do Android.",
+          );
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error("O Android não liberou a notificação agora. Tente de novo.")),
+            15000,
+          );
+          push.addListener("registration", ({ value }) => {
+            clearTimeout(timer);
+            resolve(value);
+          });
+          push.addListener("registrationError", () => {
+            clearTimeout(timer);
+            reject(new Error("O Android não liberou a notificação agora. Tente de novo."));
+          });
+          push.register();
+        });
+      }
       async function ativarLembretesCliente() {
         try {
-          const ua = navigator.userAgent.toLowerCase(),
-            isIos = /iphone|ipad|ipod/.test(ua),
-            isChrome = /crios|chrome/.test(ua);
-          if (isIos) {
-            alert(
-              "No iPhone as notificações web podem não funcionar bem. No Android pelo app da Play Store funciona melhor.",
-            );
-            return;
-          }
-          if (!isChrome && !/wv|android/.test(ua)) {
-            alert(
-              "Para ativar lembretes, use o app instalado ou Chrome no Android.",
-            );
-            return;
-          }
-          const firebase = await carregarFirebaseMessaging();
-          if (!messaging || !firebase) {
-            alert("Este celular não suporta notificações push agora.");
-            return;
+          const pushNativo = pushNativoCliente();
+          let firebase = null;
+          if (!pushNativo) {
+            const ua = navigator.userAgent.toLowerCase(),
+              isIos = /iphone|ipad|ipod/.test(ua),
+              isChrome = /crios|chrome/.test(ua);
+            if (isIos) {
+              alert(
+                "No iPhone as notificações web podem não funcionar bem. No Android pelo app da Play Store funciona melhor.",
+              );
+              return;
+            }
+            if (!isChrome && !/wv|android/.test(ua)) {
+              alert(
+                "Para ativar lembretes, use o app instalado ou Chrome no Android.",
+              );
+              return;
+            }
+            firebase = await carregarFirebaseMessaging();
+            if (!messaging || !firebase) {
+              alert("Este celular não suporta notificações push agora.");
+              return;
+            }
           }
           let d = {};
           try {
@@ -3526,28 +3563,33 @@
             abrirModal();
             return;
           }
-          const perm = await Notification.requestPermission();
-          if (perm !== "granted") {
-            alert("Permissão de notificação não liberada.");
-            return;
+          let token;
+          if (pushNativo) {
+            token = await tokenPushNativoCliente(pushNativo);
+          } else {
+            const perm = await Notification.requestPermission();
+            if (perm !== "granted") {
+              alert("Permissão de notificação não liberada.");
+              return;
+            }
+            const swScope = new URL("./", location.href).pathname;
+            await navigator.serviceWorker
+              .getRegistration(swScope)
+              .then(function (reg) {
+                return reg && reg.unregister ? reg.unregister() : false;
+              })
+              .catch(function () {});
+            const swReg = await navigator.serviceWorker.register(
+              `${swScope}firebase-messaging-sw.js?v=135`,
+              { scope: swScope, updateViaCache: "none" },
+            );
+            await swReg.update().catch(function () {});
+            token = await firebase.getToken(messaging, {
+              vapidKey:
+                "BBAc8wjH-aMr3NFRG7zglJxcLgkWk7osJR_FvZ_C3nA9nH8mlKc-pW4LPFPB_9NZfJhlxLyOyTXBeMnGN3CsWRY",
+              serviceWorkerRegistration: swReg,
+            });
           }
-          const swScope = new URL("./", location.href).pathname;
-          await navigator.serviceWorker
-            .getRegistration(swScope)
-            .then(function (reg) {
-              return reg && reg.unregister ? reg.unregister() : false;
-            })
-            .catch(function () {});
-          const swReg = await navigator.serviceWorker.register(
-            `${swScope}firebase-messaging-sw.js?v=135`,
-            { scope: swScope, updateViaCache: "none" },
-          );
-          await swReg.update().catch(function () {});
-          const token = await firebase.getToken(messaging, {
-            vapidKey:
-              "BBAc8wjH-aMr3NFRG7zglJxcLgkWk7osJR_FvZ_C3nA9nH8mlKc-pW4LPFPB_9NZfJhlxLyOyTXBeMnGN3CsWRY",
-            serviceWorkerRegistration: swReg,
-          });
           const r = await fetch(`${CONFIG.backend}/api/customers/push-token`, {
             method: "POST",
             headers: { "content-type": "application/json" },
