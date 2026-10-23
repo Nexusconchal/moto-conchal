@@ -26,18 +26,27 @@ function harness(isSystemOutgoing = () => false, generateReply = async () => nul
   return { service, records, sent, telegram, usage, advance: delta => { time += delta; }, beforeRead: callback => { beforeRead = callback; } };
 }
 
-test('Brazil numbers preserve national digits and reject a LID without phone mapping', () => {
+test('Brazil numbers preserve national digits and never turn a LID into a phone', () => {
   assert.equal(brazilPhone('(19) 99999-0000'), '5519999990000');
   assert.equal(brazilPhone('5519999990000'), '5519999990000');
-  assert.equal(parseSupportMessage(message({ remoteJid: '123456789123456@lid' }), 'support', NOW), null);
+  // WhatsApp JIDs of older mobiles come without the 9th digit; landlines stay as they are.
+  assert.equal(brazilPhone('551999990000'), '5519999990000');
+  assert.equal(brazilPhone('551938880000'), '551938880000');
+  const lid = parseSupportMessage(message({ remoteJid: '123456789123456@lid' }), 'support', NOW);
+  assert.equal(lid.phone, '');
+  assert.equal(lid.replyTo, '123456789123456@lid');
+  assert.equal(parseSupportMessage(message({ remoteJid: '123456789123456@lid', fromMe: true }), 'support', NOW), null);
   assert.equal(parseSupportMessage(message({ remoteJid: '123456789123456@lid', remoteJidAlt: '5519999990000@s.whatsapp.net' }), 'support', NOW).phone, '5519999990000');
 });
 
-test('ignore groups, broadcasts, unrelated instances and old message backlog', () => {
+test('ignore groups, broadcasts, unrelated instances, reactions and old message backlog', () => {
   for (const jid of ['123@g.us', 'status@broadcast', '123@newsletter']) assert.equal(parseSupportMessage(message({ remoteJid: jid }), 'support', NOW), null);
   assert.equal(parseSupportMessage(message(), 'other', NOW), null);
-  assert.equal(parseSupportMessage(message(), 'support', NOW + 300001), null);
+  assert.equal(parseSupportMessage(message(), 'support', NOW + 30 * 60000 + 1), null);
+  assert.equal(parseSupportMessage(message(), 'support', NOW + 10 * 60000).ageMs, 10 * 60000);
   const event = message(); event.event = 'messages.update'; assert.equal(parseSupportMessage(event, 'support', NOW), null);
+  const reaction = message(); reaction.data.message = { reactionMessage: { text: '👍' } }; assert.equal(parseSupportMessage(reaction, 'support', NOW), null);
+  const caption = message(); caption.data.message = { imageMessage: { caption: 'deu esse erro' } }; assert.equal(parseSupportMessage(caption, 'support', NOW).text, 'deu esse erro');
 });
 
 test('recognizes codes from customer screenshots', () => {
@@ -234,10 +243,86 @@ test('missing LID mapping is resolved only from the same provider message and JI
   assert.equal(parseSupportMessage(enriched, 'support', NOW).phone, '5519999990000');
   for (const key of [{ ...source.messages.records[0].key, id: 'other' }, { ...source.messages.records[0].key, remoteJid: '999@lid' }]) {
     const unsafe = await enrichSupportMessage(event, 'support', async () => ({ records: [{ key }] }));
-    assert.equal(parseSupportMessage(unsafe, 'support', NOW), null);
+    assert.equal(parseSupportMessage(unsafe, 'support', NOW).phone, '');
   }
   const failed = await enrichSupportMessage(event, 'support', async () => { throw Error('offline'); });
-  assert.equal(parseSupportMessage(failed, 'support', NOW), null);
+  assert.equal(parseSupportMessage(failed, 'support', NOW).phone, '');
+});
+
+test('a LID without phone mapping still gets an answer through the LID, without ride lookup', async () => {
+  const h = harness();
+  const event = message({ remoteJid: '123456789123456@lid' }); event.data.message.conversation = 'oii';
+  const before = h.usage.reads;
+  await h.service.handle(event);
+  assert.equal(h.sent.length, 1);
+  assert.equal(h.sent[0].phone, '123456789123456@lid');
+  assert.match(h.sent[0].text, /1 • Pedir corrida/);
+  assert.ok(h.usage.reads - before <= 3);
+});
+
+test('late messages from a sleeping server are answered with an apology', async () => {
+  const h = harness(); h.advance(10 * 60000);
+  const event = message(); event.data.message.conversation = 'oi';
+  await h.service.handle(event);
+  assert.match(h.sent[0].text, /^Desculpe a demora/);
+});
+
+test('a message sent while the bot is answering is queued and answered next, not dropped', async () => {
+  const records = new Map([['configuracoes/atendimentoAutomatico', { enabled: true }]]);
+  const ref = path => ({ path, id: path.split('/').at(-1), async get() { return { exists: records.has(path), data: () => records.get(path) }; }, async set(data, options) { records.set(path, options?.merge ? { ...records.get(path), ...data } : data); } });
+  const db = { collection: name => ({ doc: id => ref(`${name}/${id}`) }), runTransaction: callback => callback({ get: r => r.get(), set: (r, v, o) => r.set(v, o) }) };
+  const sent = [];
+  let releaseFirst, firstStarted;
+  const started = new Promise(resolve => { firstStarted = resolve; });
+  const gate = new Promise(resolve => { releaseFirst = resolve; });
+  const service = createSupportAutomation({ db, instance: 'support', encrypt: v => `e:${v}`, decrypt: v => v.slice(2), now: () => NOW, rideExpireMs: 300000, deliveryExpireMs: 900000,
+    sendText: async (to, text) => { sent.push(text); if (sent.length === 1) { firstStarted(); await gate; } return { sent: true, id: `r${sent.length}` }; } });
+  const first = message({}, 'burst1'); first.data.message.conversation = 'oi';
+  const second = message({}, 'burst2'); second.data.message.conversation = 'quero trabalhar como motoboy';
+  const firstRun = service.handle(first);
+  await started; // The first reply is being sent right now.
+  const secondRun = await service.handle(second);
+  assert.equal(secondRun.queued, true);
+  releaseFirst();
+  const result = await firstRun;
+  assert.equal(result.followUp, true);
+  assert.equal(sent.length, 2);
+  assert.match(sent[1], /cadastro de motoboy/);
+});
+
+test('understands common Brazilian ways of writing', () => {
+  for (const text of ['oii', 'oiee', 'Olá, boa noite', 'e aí, tudo bem?', 'boa tarde pessoal']) assert.equal(supportIntent(text), 'greeting', text);
+  for (const text of ['qro uma moto', 'tem motoboy aí?', 'preciso de um mototaxi', 'me leva no centro']) assert.equal(supportIntent(text), 'request', text);
+  for (const text of ['cadê o motoboy', 'o motoboy tá demorando', 'ninguém aceitou ainda']) assert.equal(supportIntent(text), 'status', text);
+  assert.equal(supportIntent('quero trabalhar com vocês'), 'driver');
+  assert.equal(supportIntent('7'), 'driver');
+  assert.equal(supportIntent('quero cancelar minha corrida'), 'cancel');
+  assert.equal(supportIntent('qual o horário de vocês?'), 'hours');
+  assert.equal(supportIntent('vcs atendem em aguaí?'), 'coverage');
+  assert.equal(supportIntent('obg'), 'thanks');
+});
+
+test('greeting uses the WhatsApp name and the time of day in Brazil', async () => {
+  const h = harness();
+  const event = message(); event.data.message.conversation = 'oi'; event.data.pushName = 'maria souza';
+  await h.service.handle(event);
+  assert.match(h.sent[0].text, /^(Bom dia|Boa tarde|Boa noite), Maria!/);
+});
+
+test('marks the message as read and shows typing before answering, ignoring failures', async () => {
+  const calls = [];
+  const records = new Map([['configuracoes/atendimentoAutomatico', { enabled: true }]]);
+  const ref = path => ({ path, id: path.split('/').at(-1), async get() { return { exists: records.has(path), data: () => records.get(path) }; }, async set(data, options) { records.set(path, options?.merge ? { ...records.get(path), ...data } : data); } });
+  const db = { collection: name => ({ doc: id => ref(`${name}/${id}`) }), runTransaction: callback => callback({ get: r => r.get(), set: (r, v, o) => r.set(v, o) }) };
+  const service = createSupportAutomation({ db, instance: 'support', encrypt: v => v, decrypt: v => v, now: () => NOW, rideExpireMs: 300000, deliveryExpireMs: 900000,
+    markRead: async event => { calls.push(`read:${event.id}`); throw Error('offline'); },
+    typing: async to => { calls.push(`typing:${to}`); throw Error('offline'); },
+    sendText: async to => { calls.push(`send:${to}`); return { sent: true, id: 'r1' }; } });
+  const event = message(); event.data.message.conversation = 'oi';
+  const result = await service.handle(event);
+  assert.equal(result.replied, true);
+  assert.deepEqual(calls.filter(call => !call.startsWith('read')), ['typing:5519999990000', 'send:5519999990000']);
+  assert.ok(calls.includes('read:message1'));
 });
 
 test('reopening a resolved ticket clears its previous expiration', async () => {

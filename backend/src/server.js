@@ -13058,6 +13058,13 @@ const supportAutomation = createSupportAutomation({
     const data = await supportEvolution(`/message/sendText/${supportInstancePath}`, 'POST', { number, text });
     return { sent: true, id: data.key?.id || data.messageId || '' };
   },
+  // Best effort: the customer sees the message read and "digitando..." before the answer.
+  async markRead(event) {
+    await supportEvolution(`/chat/markMessageAsRead/${supportInstancePath}`, 'POST', { readMessages: [{ remoteJid: event.jid, fromMe: false, id: event.id }] });
+  },
+  async typing(number) {
+    await supportEvolution(`/chat/sendPresence/${supportInstancePath}`, 'POST', { number, delay: 1200, presence: 'composing' });
+  },
   async sendTelegram(job, text) {
     const city = rideOperatingCity(job);
     const chat = city === 'aguai' ? process.env.TELEGRAM_CHAT_ID_AGUAI || process.env.TELEGRAM_CHAT_ID

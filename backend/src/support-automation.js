@@ -11,10 +11,16 @@ const DRIVER_APP = `${APP}motoboy.html`;
 
 export function brazilPhone(value) {
   const digits = String(value || '').replace(/\D/g, '');
-  const national = digits.startsWith('55') && digits.length > 11 ? digits.slice(2) : digits;
+  let national = digits.startsWith('55') && digits.length > 11 ? digits.slice(2) : digits;
+  // WhatsApp still identifies some older mobiles without the 9th digit (DDD + 8 digits);
+  // the app stores them with it, so the ride lookup and OTP echoes must match.
+  if (/^\d{2}[6-9]\d{7}$/.test(national)) national = `${national.slice(0, 2)}9${national.slice(2)}`;
   return /^\d{10,11}$/.test(national) ? `55${national}` : '';
 }
 
+// The free Render instances sleep; when they wake, WhatsApp delivers the backlog late.
+// Answer it (with an apology) instead of leaving the customer without a reply.
+const MAX_MESSAGE_AGE_MS = 30 * 60000;
 export function parseSupportMessage(body, instance, now = Date.now()) {
   if (body?.instance !== instance || !['messages.upsert', 'MESSAGES_UPSERT', 'send.message', 'SEND_MESSAGE'].includes(body?.event)) return null;
   const data = body.data;
@@ -22,15 +28,21 @@ export function parseSupportMessage(body, instance, now = Date.now()) {
   const jid = String(data.key.remoteJid || '');
   if (!/@(?:s\.whatsapp\.net|lid)$/.test(jid)) return null;
   const phoneJid = jid.endsWith('@lid') ? String(data.key.remoteJidAlt || data.key.senderPn || data.senderPn || '') : jid;
-  if (!phoneJid.endsWith('@s.whatsapp.net')) return null; // Never interpret a LID as a phone.
-  const phone = brazilPhone(phoneJid.split('@')[0]);
+  // Never interpret a LID as a phone. Without a mapping the customer still gets an answer
+  // through the LID itself, only without ride lookup.
+  const phone = phoneJid.endsWith('@s.whatsapp.net') ? brazilPhone(phoneJid.split('@')[0]) : '';
+  const fromMe = data.key.fromMe === true;
+  if (!phone && (fromMe || !jid.endsWith('@lid'))) return null;
   const time = Number(data.messageTimestamp?.low ?? data.messageTimestamp) * 1000;
-  if (!phone || !Number.isFinite(time) || now - time > 5 * 60000 || time > now + 60000) return null;
+  if (!Number.isFinite(time) || now - time > MAX_MESSAGE_AGE_MS || time > now + 60000) return null;
   const rawMessage = data.message || {};
-  const message = rawMessage.ephemeralMessage?.message || rawMessage.viewOnceMessage?.message || rawMessage;
-  const text = String(message.conversation || message.extendedTextMessage?.text || message.buttonsResponseMessage?.selectedButtonId || message.listResponseMessage?.singleSelectReply?.selectedRowId || '').slice(0, 2000);
-  if (!text && !message.audioMessage && !message.imageMessage && !message.locationMessage && !message.documentMessage) return null;
-  return { id: String(data.key.id).slice(0, 160), phone, fromMe: data.key.fromMe === true, text };
+  const unwrapped = rawMessage.ephemeralMessage?.message || rawMessage.viewOnceMessage?.message || rawMessage.viewOnceMessageV2?.message || rawMessage;
+  const message = unwrapped.documentWithCaptionMessage?.message || unwrapped;
+  if (message.reactionMessage || message.protocolMessage || message.stickerMessage) return null;
+  const text = String(message.conversation || message.extendedTextMessage?.text || message.imageMessage?.caption || message.videoMessage?.caption || message.documentMessage?.caption
+    || message.buttonsResponseMessage?.selectedButtonId || message.templateButtonReplyMessage?.selectedId || message.listResponseMessage?.singleSelectReply?.selectedRowId || '').slice(0, 2000);
+  if (!text && !message.audioMessage && !message.imageMessage && !message.videoMessage && !message.locationMessage && !message.documentMessage && !message.contactMessage) return null;
+  return { id: String(data.key.id).slice(0, 160), phone, jid, replyTo: phone || jid, fromMe, text, name: String(data.pushName || '').slice(0, 60), ageMs: Math.max(0, now - time) };
 }
 
 // Some Evolution webhook payloads omit the LID mapping present in stored messages.
@@ -57,30 +69,48 @@ export function requestedRideId(text) {
     || String(text).match(/(?:codigo(?: da corrida)?|corrida|pedido)\s*[:#]\s*([a-zA-Z0-9_-]{8,80})\b/i)?.[1] || '';
 }
 
-const MENU = '1 • Pedir corrida\n2 • Acompanhar corrida ou entrega\n3 • Endereço ou erro no app\n4 • Pagamento e troco\n5 • Falar com uma pessoa\n6 • Empresas: pedir entrega';
+const MENU = '1 • Pedir corrida\n2 • Acompanhar corrida ou entrega\n3 • Endereço ou erro no app\n4 • Pagamento e troco\n5 • Falar com uma pessoa\n6 • Empresas: pedir entrega\n7 • Quero trabalhar como motoboy';
 const FOOTER = '\n\nDigite MENU para ver as opções ou ATENDENTE para falar com uma pessoa.';
+const GREETING_WORDS = new Set(['oi', 'oie', 'ola', 'opa', 'eai', 'eae', 'e', 'ai', 'salve', 'bom', 'boa', 'dia', 'tarde', 'noite', 'tudo', 'td', 'bem', 'blz', 'beleza', 'como', 'vai', 'esta', 'ta', 'vc', 'voce', 'voces', 'vcs', 'gente', 'pessoal', 'amigo', 'amiga', 'moco', 'moca', 'senhor', 'senhora', 'ok', 'hello', 'hi']);
+// Customers write the same thing many ways ("oiii", "qro uma moto", "tem moto?"):
+// collapse repeated letters and match the common Brazilian spellings.
 export function supportIntent(text) {
-  const t = plain(text).trim();
-  if (/^(menu|inicio|voltar|0)$/.test(t)) return 'menu';
-  if (t === '5' || /\b(humano|pessoa|atendente|reclamacao|reclamar|acidente|emergencia|nao responde|nao tem troco)\b/.test(t)) return 'human';
+  const t = plain(text).trim().replace(/([a-z])\1{2,}/g, '$1');
+  const words = t.replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+  if (/^(menu|inicio|voltar|0)$/.test(words)) return 'menu';
+  if (t === '5' || /\b(humano|pessoa|atendente|reclamacao|reclamar|acidente|emergencia|nao responde|nao tem troco|falar com (alguem|o dono|voce))\b/.test(t)) return 'human';
   if (requestedRideId(text)) return 'status';
+  if (t === '7' || /\b(quero|queria|como|posso|da pra)\b.{0,25}\b(trabalhar|ser motoboy|ser motorista|rodar|me cadastrar como motoboy)|\b(vaga|vagas|cadastro de motoboy|cadastrar minha moto)\b/.test(words)) return 'driver';
+  if (/\bcancel/.test(words)) return 'cancel';
+  if (/\b(horario|que horas|aberto|funciona(m|ndo)? (agora|hoje|de madrugada|domingo|feriado)|24 ?h|madrugada)\b/.test(words)) return 'hours';
+  if (/\b(atende|atendem|atendimento em|funciona em|chega em|vai ate|tem em|cidades?)\b/.test(words) && !/\b(endereco|erro|mapa|gps)\b/.test(words)) return 'coverage';
   if (t === '3' || /endereco|localizacao|gps|cosmopolis|calcular|calcula|mapa|erro|nao consigo|nao conseguindo|nao funciona/.test(t)) return 'address';
   if (t === '4' || /pagamento|pagar|pix|dinheiro|troco|cartao|valor|preco|quanto/.test(t)) return 'payment';
-  if (t === '2' || requestedRideId(text) || /acompanhar|aguard|esper|aceit|demor|motorista|motoboy|confirmar/.test(t)) return 'status';
+  if (/\b(preciso|quero|qro|queria|tem|manda|mande|chama|arruma|consegue|pode)\b.{0,20}\b(moto|motos|motoboy|mototaxi|moto taxi|corrida|levar|me buscar)\b|\b(me leva|me levar|vir me buscar)\b/.test(words) && !/\b(cade|demor|ainda|aguard|esper|nao chegou)\b/.test(words)) return 'request';
+  if (t === '2' || /acompanhar|aguard|esper|aceit|demor|motorista|motoboy|confirmar|cade|nao chegou/.test(t)) return 'status';
   if (t === '6' || /entrega|empresa|comercio|lojista|restaurante/.test(t)) return 'delivery';
   if (t === '1' || /pedir|chamar|preciso|quero.*corrida|solicitar|como.*corrida/.test(t)) return 'request';
-  const greeting = t.replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
-  if (/^(oi|ola|opa|bom dia|boa tarde|boa noite|tudo bem)( tudo bem)?$/.test(greeting)) return 'greeting';
-  if (/^(obrigad[oa]|valeu|vlw|ok|certo|beleza)[!?.\s]*$/.test(t)) return 'thanks';
+  if (words && words.split(' ').length <= 6 && words.split(' ').every(word => GREETING_WORDS.has(word) || GREETING_WORDS.has(word.replace(/([a-z])\1+/g, '$1')))) return 'greeting';
+  if (/^(obrigad[oa]|obg|brigad[oa]|valeu|vlw|ok|okay|certo|beleza|blz|show|top|perfeito)( (mesmo|demais|viu))?[!?.\s]*$/.test(t)) return 'thanks';
   return 'other';
+}
+function greetingFor(now, name) {
+  const hour = Number(new Intl.DateTimeFormat('pt-BR', { hour: 'numeric', hour12: false, timeZone: 'America/Sao_Paulo' }).format(new Date(now))) % 24;
+  const period = hour < 5 ? 'Boa noite' : hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite';
+  const first = String(name || '').trim().split(/\s+/)[0].replace(/[^\p{L}'-]/gu, '').slice(0, 20);
+  return first.length >= 2 ? `${period}, ${first[0].toUpperCase()}${first.slice(1).toLowerCase()}!` : `${period}!`;
 }
 export function supportAnswer(text, ride, expireMs, now = Date.now(), context = {}) {
   const t = plain(text);
   const intent = supportIntent(text);
   if (intent === 'human') return { human: true, topic: 'human', text: 'Registrei seu pedido para uma pessoa do suporte. Qual é o problema? Pode escrever aqui; sua mensagem ficará junto do pedido. O retorno depende de alguém disponível.\n\nEnquanto aguarda, posso continuar ajudando com suas dúvidas. Quando uma pessoa responder, deixo a conversa com ela. Digite MENU para ver as opções.' };
   if (!String(text).trim()) return { text: 'Sou o atendimento automático da Nexus MotoJá. Ainda não interpreto áudio, imagem ou localização recebida aqui. Escreva sua dúvida ou o código da corrida. Para uma pessoa, escreva ATENDENTE.' };
-  if (intent === 'menu' || intent === 'greeting') return { topic: 'menu', text: `Olá! Sou o atendimento automático da Nexus MotoJá. Posso ajudar mesmo se você ainda não pediu uma corrida. O que você precisa?\n\n${MENU}\n\nPode responder com o número ou escrever sua dúvida. Digite ATENDENTE se quiser uma pessoa do suporte.\n\nApp: ${SHARED_APP}` };
+  if (intent === 'menu' || intent === 'greeting') return { topic: 'menu', text: `${greetingFor(now, context.name)} Sou o atendimento automático da Nexus MotoJá. Posso ajudar mesmo se você ainda não pediu uma corrida. O que você precisa?\n\n${MENU}\n\nPode responder com o número ou escrever sua dúvida. Digite ATENDENTE se quiser uma pessoa do suporte.\n\nApp: ${SHARED_APP}` };
   if (intent === 'thanks') return { topic: context.topic || 'menu', text: `Por nada! Se precisar de mais ajuda, é só escolher uma opção.\n\n${MENU}` };
+  if (intent === 'driver') return { topic: 'driver', text: `Que bom que quer trabalhar com a gente! O cadastro de motoboy é feito pelo app do motoboy: ${DRIVER_APP}\n\nPreencha seus dados e envie os documentos pedidos. Depois que o cadastro for aprovado, você já consegue ficar online e receber corridas pelo app.\n\nSe travar em alguma etapa do cadastro, escreva ATENDENTE e conte onde parou.${FOOTER}` };
+  if (intent === 'cancel') return { topic: 'status', text: `Para cancelar, abra a sua corrida no app e use a opção de cancelar na tela da corrida: ${APP}\n\nPor aqui eu não consigo cancelar. Se o motoboy já aceitou, avise ele também. Se não estiver conseguindo cancelar, escreva ATENDENTE e mande o código da corrida.${FOOTER}` };
+  if (intent === 'hours') return { topic: 'request', text: `Você pode fazer o pedido pelo app a qualquer momento: ${APP}\n\nA corrida é confirmada quando um motoboy disponível aceitar. Em horários de pouco movimento, como de madrugada, o aceite pode demorar mais.${FOOTER}` };
+  if (intent === 'coverage') return { topic: 'address', text: `Atendemos Conchal e região. O jeito mais rápido de saber se o seu endereço é atendido é colocar a saída e o destino no app: ${APP}\n\nSe a região for atendida, ele calcula o valor na hora. Se aparecer algum erro, me mande o texto do erro.${FOOTER}` };
   if (intent === 'delivery') return { topic: 'delivery', text: `Para pedir uma entrega, entre no app das empresas: ${APP}empresa.html\n\nInforme o endereço de entrega, calcule o pedido e confira o valor e o mapa antes de chamar o motoboy. O aceite deve ser acompanhado no app.\n\nO problema acontece ao entrar, calcular o endereço ou chamar o motoboy?${FOOTER}` };
   if (intent === 'request') return { topic: 'request', text: `Vamos lá! Abra ${APP}\n\n1. Informe o endereço de saída ou use sua localização.\n2. Coloque rua, número e cidade do destino.\n3. Calcule, confira o valor e o mapa e toque em “Chamar motoboy”.\n\nA corrida fica confirmada quando um motorista aceitar. Você está com dificuldade no endereço ou já pediu e está esperando?${FOOTER}` };
   if (intent === 'address' || (intent === 'other' && context.topic === 'address')) return { topic: 'address', text: `${context.topic === 'address' ? 'Obrigado pelo detalhe. ' : ''}O problema é no endereço de saída, no destino ou aparece alguma mensagem de erro?\n\nNo app, escreva rua, número e cidade. Confira o ponto no mapa antes de pedir. Se o GPS estiver errado, digite a saída manualmente. Para outra cidade, inclua o nome dela no destino.\n\nSe continuar falhando, envie o texto do erro e escreva ATENDENTE para o suporte verificar. Enviar o endereço aqui não cria uma corrida.${FOOTER}` };
@@ -114,10 +144,10 @@ export function pendingNotice(job, kind, stage, expireMs, now = Date.now()) {
 }
 
 // This assistant never creates bookings, changes fares or accepts a job.
-export function createSupportAutomation({ db, sendText, encrypt, decrypt = () => '', generateReply = async () => null, instance, rideExpireMs, deliveryExpireMs, sendTelegram, isSystemOutgoing = () => false, now = () => Date.now() }) {
+export function createSupportAutomation({ db, sendText, encrypt, decrypt = () => '', generateReply = async () => null, instance, rideExpireMs, deliveryExpireMs, sendTelegram, isSystemOutgoing = () => false, markRead = async () => {}, typing = async () => {}, now = () => Date.now() }) {
   const configRef = db.collection('configuracoes').doc('atendimentoAutomatico');
   let cache, cacheUntil = 0, ticking = false, lastPrune = 0;
-  const completedNotices = new Map(), outgoingEchoes = new Map();
+  const completedNotices = new Map(), outgoingEchoes = new Map(), queuedChats = new Set();
   // Ultimo aviso no grupo do WhatsApp, para o painel mostrar se esta chegando ou o motivo da falha.
   let lastGroupNotice = null;
   function recordGroupNotice(status, error = '') {
@@ -168,14 +198,20 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
     if (!event) return { ignored: true };
     const echo = outgoingEchoes.get(hash(`${event.phone}:${event.text}`));
     if (event.fromMe && (isSystemOutgoing(event) || echo?.until > now())) return { ignored: true };
+    return processEvent(event, settings);
+  }
+  async function processEvent(event, settings) {
     const intent = supportIntent(event.text);
     const wantsHuman = !event.fromMe && intent === 'human';
     const resumes = !event.fromMe && intent === 'menu';
-    const chatRef = db.collection('supportAutomationChats').doc(hash(event.phone));
+    // A LID without phone mapping still has its own conversation, keyed by the LID.
+    const contact = event.phone || event.jid;
+    const chatRef = db.collection('supportAutomationChats').doc(hash(contact));
+    const ticketRef = db.collection('supportAutomationTickets').doc(hash(contact));
     const messageRef = db.collection('supportAutomationEvents').doc(hash(`${instance}:${event.id}`));
-    let claim = false, context = {}, waitingHuman = false;
+    let claim = false, queued = false, context = {}, waitingHuman = false;
     await db.runTransaction(async tx => {
-      claim = false;
+      claim = false; queued = false;
       const [message, chat] = await Promise.all([tx.get(messageRef), tx.get(chatRef)]);
       if (message.exists) return;
       const state = chat.data() || {};
@@ -187,18 +223,33 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
       }
       waitingHuman = state.awaitingHuman === true || state.pauseReason === 'human';
       if (state.pausedUntil > now() && state.pauseReason !== 'human' && !resumes) return;
-      if ((!wantsHuman && !resumes && state.lastReplyAt > now() - 2000 && state.lastIncomingHash === hash(event.text)) || state.busyUntil > now()) return;
+      if (!wantsHuman && !resumes && state.lastReplyAt > now() - 2000 && state.lastIncomingHash === hash(event.text)) return;
+      if (state.busyUntil > now()) {
+        // Customers often send "oi" and the question right after. Keep what arrives while
+        // the first answer is being sent and answer it next, instead of dropping it.
+        if (event.text.trim()) {
+          let pending = '';
+          try { pending = state.pendingTextCriptografado ? decrypt(state.pendingTextCriptografado) : ''; } catch { pending = ''; }
+          tx.set(chatRef, { pendingTextCriptografado: encrypt(`${pending ? `${pending}\n` : ''}${event.text}`.slice(-2000)), pendingName: event.name || '' }, { merge: true });
+          queued = true;
+        }
+        return;
+      }
       tx.set(chatRef, { busyUntil: now() + 60000, ...(resumes || state.pauseReason === 'human' ? { pausedUntil: 0, pauseReason: '', ...(waitingHuman ? { awaitingHuman: true } : {}) } : {}), ...(resumes ? { aiContextCriptografado: '', aiContextUntil: 0 } : {}), expiresAt: new Date(now() + 7 * 86400000) }, { merge: true });
       claim = true;
     });
     if (!claim) {
-      if (waitingHuman && event.text.trim() && !['menu', 'greeting', 'thanks'].includes(intent)) await db.collection('supportAutomationTickets').doc(hash(event.phone)).set({ ultimaMensagemCriptografada: encrypt(event.text), updatedAt: now() }, { merge: true });
-      return { ignored: true };
+      if (queued) queuedChats.add(chatRef.id);
+      if (waitingHuman && event.text.trim() && !['menu', 'greeting', 'thanks'].includes(intent)) await ticketRef.set({ ultimaMensagemCriptografada: encrypt(event.text), updatedAt: now() }, { merge: true });
+      return { ignored: true, ...(queued ? { queued: true } : {}) };
     }
+    markRead(event).catch(() => {});
+    let result;
     try {
-      if (waitingHuman && event.text.trim() && !['menu', 'greeting', 'thanks'].includes(intent)) await db.collection('supportAutomationTickets').doc(hash(event.phone)).set({ ultimaMensagemCriptografada: encrypt(event.text), updatedAt: now() }, { merge: true });
+      context = { ...context, name: event.name || context.pendingName || '' };
+      if (waitingHuman && event.text.trim() && !['menu', 'greeting', 'thanks'].includes(intent)) await ticketRef.set({ ultimaMensagemCriptografada: encrypt(event.text), updatedAt: now() }, { merge: true });
       // Greetings and help must work even when the ride lookup is unavailable.
-      const ride = ['status', 'human', 'other'].includes(intent) ? await findRide(event.phone, event.text, context).catch(() => null) : null;
+      const ride = event.phone && ['status', 'human', 'other', 'cancel'].includes(intent) ? await findRide(event.phone, event.text, context).catch(() => null) : null;
       const jobKind = ride?.kind || 'corridas';
       const jobExpireMs = jobKind === 'entregas' ? deliveryExpireMs : rideExpireMs;
       let answer = supportAnswer(event.text, ride, jobExpireMs, now(), context);
@@ -227,7 +278,7 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
       }
       let aiState = { aiContextCriptografado: '', aiContextUntil: 0 };
       // Booking facts, media, explicit handoff and numeric menu choices stay deterministic.
-      if (event.text.trim() && !['status', 'human', 'menu', 'greeting', 'delivery'].includes(intent) && !/^[0-6]$/.test(event.text.trim())) {
+      if (event.text.trim() && !['status', 'human', 'menu', 'greeting', 'delivery', 'driver', 'cancel'].includes(intent) && !/^[0-7]$/.test(event.text.trim())) {
         let history = [];
         try { if (context.aiContextUntil > now() && context.aiContextCriptografado) history = JSON.parse(decrypt(context.aiContextCriptografado)); } catch { /* Ignore expired or unreadable history. */ }
         const generated = await generateReply({ text: event.text, history: Array.isArray(history) ? history : [], topic: context.topic || 'menu' }, settings).catch(() => null);
@@ -240,16 +291,32 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
       }
       // Record fingerprint before sending because the provider can echo before POST returns.
       answer.text = answer.text.replace(/https:\/\/nexusmotoja\.com\.br\/(?:empresa\.html)?(?:\?origem=suporte&v=202)?(?=\s|$)/g, url => url.includes('empresa.html') ? `${APP}empresa.html?origem=suporte&v=202` : SHARED_APP);
+      if (event.ageMs > 2 * 60000) answer.text = `Desculpe a demora para responder!\n\n${answer.text}`;
       remember(outgoingEchoes, hash(`${event.phone}:${answer.text}`), true);
       await chatRef.set({ ...aiState, outgoingHash: hash(answer.text), outgoingUntil: now() + 120000, lastIncomingHash: hash(event.text), topic: answer.topic || context.topic || 'menu', lastReplyAt: now(), ...(answer.human ? { awaitingHuman: true, pausedUntil: 0, pauseReason: '' } : {}) }, { merge: true });
-      if (answer.human) await db.collection('supportAutomationTickets').doc(hash(event.phone)).set({ telefoneCriptografado: encrypt(event.phone), ultimaMensagemCriptografada: encrypt(event.text), rideId: ride?.id || '', status: 'aguardando', requestedAt: now(), expiresAt: null }, { merge: true });
-      const sent = await sendText(event.phone, answer.text);
+      if (answer.human) await ticketRef.set({ telefoneCriptografado: encrypt(contact), ultimaMensagemCriptografada: encrypt(event.text), rideId: ride?.id || '', status: 'aguardando', requestedAt: now(), expiresAt: null }, { merge: true });
+      // "digitando..." like a person would, without blocking the answer if it fails.
+      await typing(event.replyTo).catch(() => {});
+      const sent = await sendText(event.replyTo, answer.text);
       await chatRef.set({ outgoingId: sent.id || '', busyUntil: 0 }, { merge: true });
-      return { replied: !!sent.sent, human: !!answer.human };
+      result = { replied: !!sent.sent, human: !!answer.human };
     } catch (error) {
       await chatRef.set({ busyUntil: 0 }, { merge: true });
       throw error;
     }
+    // Answer what the customer sent while the previous reply was going out.
+    if (!queuedChats.delete(chatRef.id)) return result;
+    const after = (await chatRef.get()).data() || {};
+    if (after.pendingTextCriptografado) {
+      let pendingText = '';
+      try { pendingText = decrypt(after.pendingTextCriptografado); } catch { pendingText = ''; }
+      await chatRef.set({ pendingTextCriptografado: '', pendingName: '' }, { merge: true });
+      if (pendingText.trim()) {
+        const next = await processEvent({ ...event, id: `${event.id}:seguinte`.slice(0, 160), text: pendingText, ageMs: 0 }, settings);
+        result = { ...result, followUp: !!next.replied };
+      }
+    }
+    return result;
   }
   async function notify(ref, kind, stage, channel, settings, snapshotData) {
     const initial = snapshotData ? { data: () => snapshotData, id: ref.id } : await ref.get();
