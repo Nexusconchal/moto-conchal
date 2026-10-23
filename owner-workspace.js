@@ -363,6 +363,28 @@
       : `<div class="owner-support-empty">Quando um amigo indicado fizer a primeira corrida, ele aparece aqui.</div>`;
   }
 
+  // Corridas canceladas pelo motoboy depois de esperar 10 min no local (cliente nao apareceu).
+  function renderWaitCancels() {
+    const section = document.getElementById("corridas-section");
+    if (!section) return;
+    let box = document.getElementById("ownerWaitCancels");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "ownerWaitCancels";
+      box.className = "owner-ratings";
+      section.insertBefore(box, section.children[1] || null);
+    }
+    const desde = Date.now() - 30 * 864e5;
+    const lista = (Array.isArray(carAdminState.corridas) ? carAdminState.corridas : [])
+      .filter((c) => c.cancelamentoEspera && Number(c.cancelamentoEspera.canceladoEmMs || 0) >= desde)
+      .sort((a, b) => Number(b.cancelamentoEspera.canceladoEmMs) - Number(a.cancelamentoEspera.canceladoEmMs));
+    box.innerHTML = `<h3 class="owner-ratings-title">⏱️ Canceladas pelo motoboy por espera (30 dias): ${lista.length}</h3>
+      ${lista.length ? `<div class="owner-ratings-list">${lista.slice(0, 50).map((c) => {
+        const e = c.cancelamentoEspera;
+        return `<article class="low"><div><span>${planDate(e.canceladoEmMs)}</span><strong>Esperou ${Number(e.esperouMin || 0)} min</strong><small>chegou ${planDate(e.chegouEmMs)} · ${e.chegadaPor === "gps" ? "pelo GPS" : "pelo botão"}</small></div><div><span>Motoboy</span><strong>${escapeHtml(c.motoboy || c.canceladoPor || "-")}</strong><small>CPF ${formatCpf(c.canceladoPorCpf || c.motoboyCpf || "")}</small></div><div><span>Cliente</span><strong>${escapeHtml(c.nome || "Cliente")}</strong><small>${escapeHtml(formatPhone(c.telefoneCliente || ""))}</small></div><div class="owner-ratings-text"><em>${escapeHtml(e.motivo || "-")}</em>${e.detalhe ? `<p>“${escapeHtml(e.detalhe)}”</p>` : ""}<small>aceitou ${planDate(e.aceitaEmMs)}</small></div></article>`;
+      }).join("")}</div>` : `<div class="owner-support-empty">Nenhuma corrida cancelada por espera do cliente nos últimos 30 dias.</div>`}`;
+  }
+
   let plansFilter = "ativos";
   function renderPlansSection() {
     const root = document.getElementById("ownerPlansList");
@@ -610,6 +632,7 @@
     if (name === "plans") renderPlansSection();
     if (name === "ratings") renderRatingsSection();
     if (name === "referrals") renderReferralsSection();
+    if (name === "rides") renderWaitCancels();
   }
 
   function buildNavigation(nav) {
@@ -715,6 +738,7 @@
     renderPlansSection();
     renderRatingsSection();
     renderReferralsSection();
+    renderWaitCancels();
     if (Array.isArray(event.detail?.contasSuporte) && event.detail.contasSuporte.length) {
       renderSupportAccounts(event.detail.contasSuporte);
     } else if (getOwnerPassword()) {

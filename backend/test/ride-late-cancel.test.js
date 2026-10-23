@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
-import { reachedPickup, lateCancelState, lateCancelBlocker, LATE_CANCEL_MS } from '../src/ride-late.js';
+import { reachedPickup, lateCancelState, lateCancelBlocker, LATE_CANCEL_MS, waitCancelBlocker, WAIT_CANCEL_REASONS } from '../src/ride-late.js';
 
 const source = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
 const hash = (v) => crypto.createHash('sha256').update(String(v)).digest('hex');
@@ -28,11 +28,11 @@ function harness(ride) {
   const snap = (path) => ({ id: path.split('/').at(-1), exists: records.has(path), data: () => records.get(path) });
   const db = { collection: (name) => ({ doc: (id) => ref(`${name}/${id}`) }),
     runTransaction: async (fn) => { const ops = []; const out = await fn({ get: (r) => r.get(), update: (r, d) => ops.push([r, d]), set: (r, d) => ops.push([r, d]) }); ops.forEach(([r, d]) => records.set(r.path, apply(records.get(r.path), d))); return out; } };
-  const calls = { push: [], telegram: [], driver: [], jobs: [] };
+  const calls = { push: [], telegram: [], driver: [], jobs: [], whatsapp: [] };
   const routes = {};
   const ctx = vm.createContext({ db, Date, Math, Number, String, Object, Array, console,
     admin: { firestore: { FieldValue: { serverTimestamp: () => Date.now(), delete: () => DELETE, increment: (n) => ({ inc: n }) } } },
-    lateCancelBlocker, cleanText: (v, n = 200) => String(v || '').trim().slice(0, n), onlyDigits: (v) => String(v || '').replace(/\D/g, ''),
+    lateCancelBlocker, waitCancelBlocker, clientWhatsappNumber: (r) => r.telefoneCliente || '', sendEvolutionText: async (n, t) => calls.whatsapp.push([n, t]), cleanText: (v, n = 200) => String(v || '').trim().slice(0, n), onlyDigits: (v) => String(v || '').replace(/\D/g, ''),
     hashSecret: hash, timestampMs: (v) => Number(v || 0), rideStatusCache: new Map(), adminStateCache: {}, createRideLimiter: 0,
     driverAvailability: { job: (...a) => calls.jobs.push(a) }, driverAvailabilitySocket: { publishAll() {} }, emitSupportOperationsRefresh() {},
     notifyDriversAboutRide: async (id, r) => calls.push.push([id, r.status]), notifyTelegramAboutRide: async (id) => calls.telegram.push(id),
@@ -121,4 +121,32 @@ test('late rules and GPS arrival', () => {
   assert.equal(reachedPickup({}, { latitude: 0, longitude: 0 }), false);
   // O GPS da corrida marca a chegada sozinho.
   assert.match(slice('async function saveTrackedLocation(', "app.post('/api/deliveries/:deliveryId/location'"), /reachedPickup\(job, result\.location\)/);
+});
+
+test('the motoboy cancels only after waiting 10 minutes at the pickup, with a reason the owner sees', async () => {
+  const proof = { driverCpf: DRIVER, driverCnh: 'ok' };
+  const notArrived = harness(accepted(20));
+  assert.equal((await notArrived.call('/api/rides/:rideId/wait-cancel', { body: { ...proof, motivo: 'Cliente não apareceu' } })).data.error, 'motoboy_nao_chegou');
+
+  const early = harness(accepted(12, { motoboyChegouEmMs: Date.now() - 6 * MIN }));
+  const wait = await early.call('/api/rides/:rideId/wait-cancel', { body: { ...proof, motivo: 'Cliente não apareceu' } });
+  assert.equal(wait.data.error, 'ainda_esperando');
+  assert.match(wait.data.message, /faltam 4 min/);
+
+  const h = harness(accepted(25, { motoboyChegouEmMs: Date.now() - 11 * MIN, motoboyChegouPor: 'gps', telefoneCliente: '19999990000' }));
+  assert.equal((await h.call('/api/rides/:rideId/wait-cancel', { body: { ...proof, motivo: 'inventado' } })).data.error, 'motivo_invalido');
+  assert.equal((await h.call('/api/rides/:rideId/wait-cancel', { body: { ...proof, motivo: 'Outro motivo', detalhe: 'x' } })).data.error, 'detalhe_obrigatorio');
+  assert.equal((await h.call('/api/rides/:rideId/wait-cancel', { body: { driverCpf: '22222222222', driverCnh: 'ok', motivo: 'Cliente não apareceu' } })).status, 409);
+  const ok = await h.call('/api/rides/:rideId/wait-cancel', { body: { ...proof, motivo: 'Cliente não responde no chat', detalhe: 'Liguei e ninguém atendeu' } });
+  assert.equal(ok.status, 200);
+  const ride = h.records.get('corridas/r1');
+  assert.equal(ride.status, 'cancelada');
+  assert.equal(ride.canceladoPorCpf, DRIVER);
+  assert.equal(ride.motivoCancelamento, 'Cliente não responde no chat: Liguei e ninguém atendeu (motoboy esperou 11 min no local)');
+  assert.equal(ride.cancelamentoEspera.esperouMin, 11);
+  assert.equal(ride.cancelamentoEspera.chegadaPor, 'gps');
+  assert.deepEqual(h.calls.jobs, [['rides', 'r1', 'cancelada']]);
+  assert.match(h.calls.whatsapp[0][1], /esperou 11 minutos/);
+  assert.deepEqual([...WAIT_CANCEL_REASONS].at(-1), 'Outro motivo');
+  assert.equal(waitCancelBlocker({ status: 'aceita' }, Date.now() - 10 * MIN, 'Cliente não apareceu'), null);
 });

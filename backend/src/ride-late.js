@@ -36,3 +36,36 @@ export function lateCancelBlocker(ride = {}, acceptedAtMs = 0, now = Date.now())
   if (state.pagoOnline) return fail('corrida_paga', 'Você já pagou esta corrida online. Fale com o suporte para trocar de motoboy e receber o valor de volta.');
   return null;
 }
+
+// Cliente nao apareceu: depois que o motoboy chega ao local de embarque, ele espera
+// 10 minutos; passado isso, pode cancelar informando o motivo (o dono ve no painel).
+export const WAIT_CANCEL_MS = 10 * 60 * 1000;
+export const WAIT_CANCEL_REASONS = [
+  'Cliente não apareceu',
+  'Cliente não responde no chat',
+  'Endereço errado ou não encontrado',
+  'Cliente desistiu da corrida',
+  'Outro motivo'
+];
+
+export function waitCancelState(ride = {}, arrivedAtMs = 0, now = Date.now()) {
+  if (ride.status !== 'aceita' || !arrivedAtMs) return { liberaEmMs: 0, pode: false };
+  const liberaEmMs = arrivedAtMs + WAIT_CANCEL_MS;
+  return { liberaEmMs, pode: now >= liberaEmMs };
+}
+
+// Confere o pedido de cancelamento por espera do motoboy (null = pode).
+export function waitCancelBlocker(ride = {}, arrivedAtMs = 0, motivo = '', detalhe = '', now = Date.now()) {
+  const fail = (code, message, status = 409) => Object.assign(new Error(message), { code, status });
+  if (ride.status !== 'aceita') return fail('corrida_nao_aceita', 'Esta corrida não está mais em andamento.');
+  if (!arrivedAtMs) return fail('motoboy_nao_chegou', 'Toque em "Cheguei no local" quando chegar. A espera de 10 minutos conta a partir daí.');
+  const state = waitCancelState(ride, arrivedAtMs, now);
+  if (!state.pode) {
+    const hora = new Date(state.liberaEmMs).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
+    const faltam = Math.max(1, Math.ceil((state.liberaEmMs - now) / 60000));
+    return fail('ainda_esperando', `Espere o cliente até ${hora} (faltam ${faltam} min). Depois disso você pode cancelar.`);
+  }
+  if (!WAIT_CANCEL_REASONS.includes(motivo)) return fail('motivo_invalido', 'Escolha o motivo do cancelamento.', 400);
+  if (motivo === 'Outro motivo' && String(detalhe).trim().length < 5) return fail('detalhe_obrigatorio', 'Escreva o motivo do cancelamento.', 400);
+  return null;
+}

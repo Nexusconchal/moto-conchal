@@ -13,7 +13,7 @@ import { attachDriverAvailability } from './driver-availability-socket.js';
 import { createOfferAlerts } from './offer-alert.js';
 import { createDriverTelegram } from './driver-telegram.js';
 import { publicDriverCard, publicDriverId, sortPublicDrivers, referralCode, normalizeReferralCode, monthKey } from './customer-menu.js';
-import { reachedPickup, lateCancelState, lateCancelBlocker } from './ride-late.js';
+import { reachedPickup, lateCancelState, lateCancelBlocker, waitCancelState, waitCancelBlocker } from './ride-late.js';
 import { parseRating, ratingBlocker, ratingSummary, driverRatingView, RATING_TAGS } from './ride-rating.js';
 import { validateLocation } from './tracking-policy.js';
 import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state.js';
@@ -10218,6 +10218,8 @@ app.get('/api/rides/:rideId/status', async (req, res, next) => {
       // Procurando motoboy desde: a criacao ou a ultima vez que voltou a procurar.
       buscaDesdeMs: Math.max(timestampMs(ride.criadaEm), timestampMs(ride.reabertaEm)),
       motoboyChegou: !!ride.motoboyChegouEm,
+      motoboyChegouEmMs: rideArrivalMs(ride),
+      esperaAteMs: waitCancelState(ride, rideArrivalMs(ride)).liberaEmMs,
       cancelarMotoboyEmMs: lateCancelState(ride, timestampMs(ride.aceitaEm)).liberaEmMs,
       podeCancelarMotoboy: lateCancelState(ride, timestampMs(ride.aceitaEm)).pode,
       avaliacaoNota: Number(ride.avaliacao?.nota || 0),
@@ -10509,12 +10511,13 @@ app.post('/api/rides/:rideId/arrived', async (req, res, next) => {
       const snap = await tx.get(ref);
       const ride = snap.data() || {};
       if (!snap.exists || onlyDigits(ride.motoboyCpf) !== driverCpf || ride.status !== 'aceita') return false;
-      if (!ride.motoboyChegouEm) tx.update(ref, { motoboyChegouEm: admin.firestore.FieldValue.serverTimestamp(), motoboyChegouPor: 'motoboy', atualizadaEm: admin.firestore.FieldValue.serverTimestamp() });
+      if (!ride.motoboyChegouEm) tx.update(ref, { motoboyChegouEm: admin.firestore.FieldValue.serverTimestamp(), motoboyChegouEmMs: Date.now(), motoboyChegouPor: 'motoboy', atualizadaEm: admin.firestore.FieldValue.serverTimestamp() });
       return true;
     });
     if (!marked) return res.status(409).json({ error: 'corrida_nao_e_sua', message: 'Esta corrida nao esta mais com voce.' });
     rideStatusCache.delete(ref.id);
-    return res.json({ ok: true });
+    const fresh = (await ref.get()).data() || {};
+    return res.json({ ok: true, chegouEmMs: rideArrivalMs(fresh) });
   } catch (error) {
     return next(error);
   }
@@ -10568,6 +10571,56 @@ app.post('/api/rides/:rideId/late-cancel', createRideLimiter, async (req, res, n
       notifyTelegramAboutRide(ref.id, updated).catch((error) => console.error('late cancel telegram failed', ref.id, error));
     }
     return res.json({ ok: true, status: updated.status });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+function rideArrivalMs(ride = {}) {
+  return Number(ride.motoboyChegouEmMs || 0) || timestampMs(ride.motoboyChegouEm);
+}
+
+// Motoboy chegou, esperou 10 minutos e o cliente nao apareceu: cancela com motivo.
+app.post('/api/rides/:rideId/wait-cancel', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+    const motivo = String(req.body.motivo || '');
+    const detalhe = cleanText(req.body.detalhe, 300);
+    const ref = db.collection('corridas').doc(String(req.params.rideId || ''));
+    let ride = null;
+    let esperouMin = 0;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const data = snap.data() || {};
+      if (!snap.exists || onlyDigits(data.motoboyCpf) !== driverCpf) throw Object.assign(new Error('Esta corrida nao esta mais com voce.'), { status: 409, code: 'corrida_nao_e_sua' });
+      const arrivedAt = rideArrivalMs(data);
+      const blocker = waitCancelBlocker(data, arrivedAt, motivo, detalhe);
+      if (blocker) throw blocker;
+      esperouMin = Math.floor((Date.now() - arrivedAt) / 60000);
+      ride = data;
+      tx.update(ref, {
+        status: 'cancelada',
+        rastreamentoAtivo: false,
+        motoboyLocalizacao: admin.firestore.FieldValue.delete(),
+        localizacaoAtualizadaEm: admin.firestore.FieldValue.delete(),
+        motivoCancelamento: `${motivo}${detalhe ? `: ${detalhe}` : ''} (motoboy esperou ${esperouMin} min no local)`,
+        canceladoPor: data.motoboy || '',
+        canceladoPorCpf: driverCpf,
+        canceladoEm: admin.firestore.FieldValue.serverTimestamp(),
+        cancelamentoEspera: { motivo, detalhe, esperouMin, chegouEmMs: arrivedAt, aceitaEmMs: timestampMs(data.aceitaEm), canceladoEmMs: Date.now(), chegadaPor: data.motoboyChegouPor || '' },
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    rideStatusCache.delete(ref.id);
+    adminStateCache = null;
+    driverAvailability.job('rides', ref.id, 'cancelada');
+    driverAvailabilitySocket.publishAll();
+    emitSupportOperationsRefresh();
+    const number = clientWhatsappNumber(ride);
+    if (number) sendEvolutionText(number, `Ola, ${ride.nome || 'cliente'}. O motoboy ${ride.motoboy || 'MotoJa'} chegou ao local de embarque, esperou ${esperouMin} minutos e cancelou a corrida.\n\nMotivo: ${motivo}${detalhe ? ` (${detalhe})` : ''}\n\nSe ainda precisar, peca uma nova corrida pelo app.`).catch((error) => console.error('wait cancel client whatsapp failed', ref.id, error));
+    return res.json({ ok: true });
   } catch (error) {
     return next(error);
   }
@@ -11656,7 +11709,7 @@ async function saveTrackedLocation(ref, driverCpf, body, isDelivery) {
     tx.update(ref, {
       motoboyLocalizacao: result.location,
       // Mototaxi: o GPS perto da saida marca que o motoboy chegou (some o "Cancelar motoboy").
-      ...(!isDelivery && !job.motoboyChegouEm && reachedPickup(job, result.location) ? { motoboyChegouEm: admin.firestore.FieldValue.serverTimestamp(), motoboyChegouPor: 'gps' } : {}),
+      ...(!isDelivery && !job.motoboyChegouEm && reachedPickup(job, result.location) ? { motoboyChegouEm: admin.firestore.FieldValue.serverTimestamp(), motoboyChegouEmMs: Date.now(), motoboyChegouPor: 'gps' } : {}),
       localizacaoAtualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     });

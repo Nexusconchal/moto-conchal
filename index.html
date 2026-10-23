@@ -3700,10 +3700,17 @@
         const box = $("atraso-motoboy-box");
         if (!box) return;
         const liberaEm = Number(dados.cancelarMotoboyEmMs || 0);
-        const estado = dados.motoboyChegou || !liberaEm ? "nada" : dados.podeCancelarMotoboy ? "pode" : `espera-${Math.max(1, Math.ceil((liberaEm - Date.now()) / 60000))}`;
+        const esperaAte = Number(dados.esperaAteMs || 0);
+        const estado = dados.motoboyChegou ? (esperaAte > Date.now() ? `chegou-${esperaAte}` : "nada") : !liberaEm ? "nada" : dados.podeCancelarMotoboy ? "pode" : `espera-${Math.max(1, Math.ceil((liberaEm - Date.now()) / 60000))}`;
         if (box.dataset.estado === estado) return;
         box.dataset.estado = estado;
         if (estado === "nada") { box.innerHTML = ""; return; }
+        // Motoboy no local: ele espera 10 minutos; depois disso pode cancelar a corrida.
+        if (estado.startsWith("chegou-")) {
+          const ate = new Date(esperaAte).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+          box.innerHTML = `<div style="margin-top:10px;padding:12px 14px;border-radius:14px;background:rgba(37,211,102,.12);border:1px solid rgba(37,211,102,.45);text-align:left"><strong style="color:#7ee2a8">🏍️ Seu motoboy chegou ao local de embarque!</strong><div class="small" style="color:#cbd5e1;margin-top:4px;text-align:left">Ele espera por você até <strong style="color:#fff">${ate}</strong>. Depois disso ele pode cancelar a corrida. Se for demorar, avise pelo chat.</div></div>`;
+          return;
+        }
         if (estado !== "pode") {
           const hora = new Date(liberaEm).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
           const faltam = Math.max(1, Math.ceil((liberaEm - Date.now()) / 60000));

@@ -1304,6 +1304,58 @@
           return null;
         }
       }
+      // Espera pelo cliente no local de embarque (10 min) antes de poder cancelar.
+      const ESPERA_CLIENTE_MS = 10 * 60 * 1000,
+        MOTIVOS_ESPERA = ["Cliente não apareceu", "Cliente não responde no chat", "Endereço errado ou não encontrado", "Cliente desistiu da corrida", "Outro motivo"];
+      function chegadaLocal(id) {
+        try { return Number(localStorage.getItem(`motoja:chegada:${id}`) || 0); } catch { return 0; }
+      }
+      function salvarChegadaLocal(id) {
+        try { if (!chegadaLocal(id)) localStorage.setItem(`motoja:chegada:${id}`, String(Date.now())); } catch {}
+      }
+      function escolherMotivoEspera() {
+        return new Promise((resolve) => {
+          const back = document.createElement("div");
+          back.style.cssText = "position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.65);display:flex;align-items:flex-end;justify-content:center";
+          back.innerHTML = `<div style="width:min(520px,100%);background:#11151f;color:#f3f5f8;border-radius:18px 18px 0 0;border:1px solid rgba(255,154,0,.35);padding:18px;display:grid;gap:10px;font-family:inherit">
+            <strong style="font-size:1.05rem">Por que você vai cancelar?</strong>
+            <span style="color:#9aa3b2;font-size:.82rem">O motivo vai para o dono da MotoJá e o cliente recebe um aviso.</span>
+            ${MOTIVOS_ESPERA.map((m) => `<label style="display:flex;gap:10px;align-items:center;padding:11px 12px;border-radius:12px;background:#1a2030;border:1px solid #394150"><input type="radio" name="motivo-espera" value="${m}"> ${m}</label>`).join("")}
+            <textarea maxlength="300" placeholder="Conte o que aconteceu (obrigatório em Outro motivo)" style="min-height:64px;padding:10px;border-radius:12px;border:1px solid #394150;background:#0c0f16;color:#fff;font:inherit"></textarea>
+            <div style="display:flex;gap:8px"><button type="button" data-voltar class="secondary" style="flex:1">Voltar</button><button type="button" data-confirmar style="flex:1;background:#ff5252;color:#fff">Cancelar corrida</button></div>
+          </div>`;
+          document.body.appendChild(back);
+          const fim = (valor) => { back.remove(); resolve(valor); };
+          back.querySelector("[data-voltar]").onclick = () => fim(null);
+          back.querySelector("[data-confirmar]").onclick = () => {
+            const motivo = back.querySelector('input[name="motivo-espera"]:checked')?.value || "";
+            const detalhe = back.querySelector("textarea").value.trim();
+            if (!motivo) return alert("Escolha o motivo.");
+            if (motivo === "Outro motivo" && detalhe.length < 5) return alert("Escreva o motivo do cancelamento.");
+            fim({ motivo, detalhe });
+          };
+        });
+      }
+      async function cancelarPorEspera(c, chegouEm) {
+        if (chegouEm && Date.now() < chegouEm + ESPERA_CLIENTE_MS) {
+          const ate = new Date(chegouEm + ESPERA_CLIENTE_MS).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+          throw new Error(`Espere o cliente até ${ate} (faltam ${Math.ceil((chegouEm + ESPERA_CLIENTE_MS - Date.now()) / 60000)} min). Depois disso você pode cancelar.`);
+        }
+        const escolha = await escolherMotivoEspera();
+        if (!escolha) return;
+        const r = await fetch(`${CONFIG.backend}/api/rides/${encodeURIComponent(c.id)}/wait-cancel`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ...driverProof(), ...escolha }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.message || "Não consegui cancelar agora. Tente de novo.");
+        salvarNavAtiva(null);
+        window.MotoNav?.fechar();
+        limparCache();
+        atualizarTrabalho();
+        alert("Corrida cancelada. O cliente foi avisado e o motivo foi para o dono.");
+      }
       function salvarNavAtiva(valor) {
         try {
           if (valor) localStorage.setItem(NAV_ATIVA, JSON.stringify(valor));
@@ -1516,7 +1568,10 @@
               };
         } else {
           const prazo = tempoAvisoRestante(c),
-            avulsa = entregaAvulsa(c);
+            avulsa = entregaAvulsa(c),
+            chegouEm = Number(c.motoboyChegouEmMs || 0) || chegadaLocal(c.id),
+            esperaAte = chegouEm ? chegouEm + ESPERA_CLIENTE_MS : 0,
+            hora = (ms) => new Date(ms).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
           cfg = {
             alvo: etapa === "buscar"
               ? { ...coleta, rotulo: avulsa ? "Retirar" : "Buscar passageiro" }
@@ -1533,8 +1588,14 @@
             aviso: !avisado
               ? { tipo: "alerta", texto: `Avise o cliente para liberar a ${avulsa ? "entrega" : "corrida"}${prazo ? ` · ${prazo}` : ""}. Ele recebe seu nome, foto e acompanha você ao vivo.` }
               : etapa === "buscar"
-                ? { texto: "Cliente avisado: ele acompanha sua chegada ao vivo. Chegue em até 15 min do aceite, senão ele pode cancelar você." }
-                : null,
+                ? { texto: "Cliente avisado: ele acompanha sua chegada ao vivo. Chegue em até 15 min do aceite. No local, toque em Cheguei no local: se o cliente não aparecer em 10 min, você pode cancelar." }
+                : esperaAte && Date.now() < esperaAte + 20 * 60 * 1000
+                  ? { texto: `⏱️ Esperando o cliente desde ${hora(chegouEm)}. Se ele não aparecer até ${hora(esperaAte)}, toque em "Cliente não apareceu".` }
+                  : null,
+            // Cliente nao apareceu: depois de 10 min no local, cancela com motivo (o dono ve).
+            secundarias: avisado && !avulsa && etapa !== "buscar" && (!chegouEm || Date.now() < chegouEm + 40 * 60 * 1000)
+              ? [{ texto: "⏱️ Cliente não apareceu", textoCarregando: "Cancelando...", acao: () => cancelarPorEspera(c, chegouEm) }]
+              : [],
             principal: !avisado
               ? {
                   texto: "Avisar cliente e iniciar GPS",
@@ -1547,7 +1608,9 @@
                     cor: "verde",
                     acao: async () => {
                       salvarNavAtiva({ id: c.id, tipo: "corrida", etapa: "levar" });
-                      // Registra a chegada: o cliente deixa de ver o "Cancelar motoboy" por atraso.
+                      salvarChegadaLocal(c.id);
+                      // Registra a chegada: o cliente deixa de ver o "Cancelar motoboy" por atraso
+                      // e comeca a contar a espera de 10 min.
                       fetch(`${CONFIG.backend}/api/rides/${encodeURIComponent(c.id)}/arrived`, {
                         method: "POST",
                         headers: { "content-type": "application/json" },
