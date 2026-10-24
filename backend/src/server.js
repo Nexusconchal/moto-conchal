@@ -27,7 +27,7 @@ import { deliveryReportQuantity, buildCompanyDeliveryReport } from './delivery-r
 import { companyProfileUpdate } from './company-profile.js';
 import { protectedDelivery, deliveryHeld, completionReason, assertCompanyDelivery } from './delivery-completion.js';
 import { safeDepositCheckout, assertDepositPayment, assertDepositCompany, depositPaymentAmounts, companyDepositView } from './company-deposit.js';
-import { createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
+import { createGeminiReceiptReader, createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
 import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
 
 const PORT = Number(process.env.PORT || 10000);
@@ -5891,6 +5891,29 @@ app.post('/api/drivers/:cpf/cities/status', async (req, res, next) => {
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
     const driver = await getDriverWithProof(driverCpf, req.body);
     return res.json({ ok: true, cidadesAtivas: driverRideCities(driver) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Leitura reserva do endereco na foto da nota: o celular do motoboy tenta primeiro.
+// Usa o Gemini so com a chave Free Tier ativa no painel e dentro do limite gratis; depois para.
+app.post('/api/drivers/:cpf/ler-nota', createRideLimiter, async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+    const match = String(req.body?.imagem || '').match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/);
+    if (!match || match[2].length > 2500000) return res.status(400).json({ error: 'foto_invalida', message: 'Foto inválida. Tire outra foto da nota ou digite o endereço.' });
+    const settings = await supportAutomation.config();
+    const naoLeu = 'Não consegui ler o endereço na foto. Tente de novo mais perto e com luz, ou digite o endereço.';
+    if (!settings.geminiEnabled || !settings.geminiFreeTierConfirmed || !settings.geminiKeyEncrypted) {
+      return res.status(503).json({ error: 'leitura_reserva_desligada', message: naoLeu });
+    }
+    const result = await receiptReader.read({ apiKey: decryptSecretSafe(settings.geminiKeyEncrypted), model: settings.geminiModel || GEMINI_DEFAULT_MODEL, image: { mimeType: match[1], data: match[2] } });
+    if (result.enderecos.length) return res.json({ ok: true, enderecos: result.enderecos });
+    const limite = result.reason === 'quota' || result.reason === 'local_limit';
+    return res.status(limite ? 429 : 422).json({ error: limite ? 'leitura_reserva_sem_limite' : 'endereco_nao_lido', message: limite ? 'A leitura reserva atingiu o limite grátis de hoje. Digite o endereço da nota.' : naoLeu });
   } catch (error) {
     return next(error);
   }
@@ -13129,6 +13152,7 @@ async function whatsappGroupFor(city, settings = {}) {
   return jid;
 }
 const geminiSupport = createGeminiSupport({ reserveBudget: () => reserveGeminiQuota(db) });
+const receiptReader = createGeminiReceiptReader({ reserveBudget: () => reserveSupportAiQuota(db, 'gemini-nota') });
 const openrouterSupport = createOpenRouterSupport({ reserveBudget: () => reserveSupportAiQuota(db, 'openrouter') });
 const supportAutomation = createSupportAutomation({
   db, instance: supportInstance, encrypt: encryptSecret, decrypt: decryptSecret,

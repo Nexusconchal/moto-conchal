@@ -21,7 +21,7 @@
       href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./motoboy-nav.css?v=2" />
+    <link rel="stylesheet" href="./motoboy-nav.css?v=3" />
     <link rel="stylesheet" href="./motoboy-home.css?v=3" />
     <style>
       * {
@@ -1071,7 +1071,7 @@
     <script src="./driver-availability.js?v=227"></script>
     <script src="./ride-chat.js?v=233"></script>
     <script src="./motoboy-avisos.js?v=1"></script>
-    <script src="./motoboy-nav.js?v=4" defer></script>
+    <script src="./motoboy-nav.js?v=5" defer></script>
     <script src="./motoboy-home.js?v=3" defer></script>
     <script type="module">
       let cidadesAtivas = {
@@ -1715,7 +1715,7 @@
                   },
           };
         }
-        window.MotoNav.abrirNavegacao({ id: c.id, backend: CONFIG.backend, tipo: entrega ? "entrega" : "corrida", etapa, ...cfg });
+        window.MotoNav.abrirNavegacao({ id: c.id, backend: CONFIG.backend, prova: driverProof(), tipo: entrega ? "entrega" : "corrida", etapa, ...cfg });
         return true;
       }
       // Mantem a tela de GPS/oferta em dia com a lista que acabou de chegar.

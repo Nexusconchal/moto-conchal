@@ -62,8 +62,10 @@ export function supportAiPrompt({ topic = 'menu', facts = '', name = '', text = 
 }
 
 // Atomic quotas survive restarts and multiple backend instances.
+// gemini-nota (foto da nota do motoboy) tem cota propria para nao gastar a do atendimento.
+const AI_DAILY_LIMITS = { gemini: 100, openrouter: 50, 'gemini-nota': 200 };
 export async function reserveSupportAiQuota(db, provider, now = Date.now()) {
-  if (!['gemini', 'openrouter'].includes(provider)) return false;
+  if (!AI_DAILY_LIMITS[provider]) return false;
   const ref = db.collection('supportAutomationUsage').doc(provider);
   const day = new Date(now).toISOString().slice(0, 10), minute = Math.floor(now / 60000);
   let reserved = false;
@@ -72,13 +74,56 @@ export async function reserveSupportAiQuota(db, provider, now = Date.now()) {
     const state = (await tx.get(ref)).data() || {};
     const daily = state.day === day ? Number(state.daily || 0) : 0;
     const perMinute = state.minute === minute ? Number(state.perMinute || 0) : 0;
-    if (daily >= (provider === 'openrouter' ? 50 : 100) || perMinute >= 4) return;
+    if (daily >= AI_DAILY_LIMITS[provider] || perMinute >= (provider === 'gemini-nota' ? 6 : 4)) return;
     tx.set(ref, { day, minute, daily: daily + 1, perMinute: perMinute + 1 });
     reserved = true;
   });
   return reserved;
 }
 export const reserveGeminiQuota = (db, now) => reserveSupportAiQuota(db, 'gemini', now);
+
+// Leitura reserva do endereco de entrega na foto da nota (o celular do motoboy le primeiro).
+// So roda com a chave Free Tier: quando o Google responde 429 (limite gratis), para e o motoboy digita.
+const RECEIPT_INSTRUCTIONS = 'Você lê a foto de uma nota ou cupom de pedido de entrega no Brasil. Devolva só o endereço de ENTREGA do cliente: rua ou avenida, número e bairro, e a cidade se estiver escrita, do jeito que está na nota. Ignore o endereço da loja, nomes, telefones, CPF, valores e itens. Se houver mais de um endereço de entrega possível, devolva até 3. Se não houver endereço legível, devolva a lista vazia.';
+
+export function validateReceiptAddresses(value) {
+  const list = Array.isArray(value?.enderecos) ? value.enderecos : [];
+  return [...new Set(list.map(item => String(item || '').replace(/\s+/g, ' ').trim())
+    .filter(item => item.length >= 5 && item.length <= 160 && /[a-zà-ú]{3}/i.test(item) && !/\d[\d\s.-]{7,}\d/.test(item)))].slice(0, 3);
+}
+
+export function createGeminiReceiptReader({ fetchImpl = fetch, now = () => Date.now(), reserveBudget = async () => true } = {}) {
+  let cooldownUntil = 0, reason = '';
+  async function read({ apiKey, model = GEMINI_DEFAULT_MODEL, image }) {
+    if (!apiKey || !GEMINI_MODELS.includes(model) || !image?.data || !/^image\/(?:jpeg|png|webp)$/.test(image.mimeType || '')) return { enderecos: [], reason: 'not_ready' };
+    if (cooldownUntil > now()) return { enderecos: [], reason };
+    if (!await reserveBudget()) return { enderecos: [], reason: 'local_limit' };
+    try {
+      const response = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST', headers: { 'x-goog-api-key': apiKey, 'content-type': 'application/json' }, signal: AbortSignal.timeout(15000),
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: RECEIPT_INSTRUCTIONS }] },
+          contents: [{ role: 'user', parts: [{ inlineData: { mimeType: image.mimeType, data: image.data } }, { text: 'Qual é o endereço de entrega desta nota?' }] }],
+          generationConfig: { temperature: 0, maxOutputTokens: 300, responseMimeType: 'application/json', responseSchema: { type: 'OBJECT', properties: { enderecos: { type: 'ARRAY', items: { type: 'STRING' } } }, required: ['enderecos'] } } })
+      });
+      if (!response.ok) {
+        reason = response.status === 429 ? 'quota' : 'unavailable';
+        cooldownUntil = now() + (response.status === 429 ? 30 * 60000 : 60000);
+        return { enderecos: [], reason }; // Never log provider error bodies or keys.
+      }
+      const data = await response.json();
+      const candidate = data.candidates?.[0];
+      if (candidate?.finishReason !== 'STOP' || data.promptFeedback?.blockReason) return { enderecos: [], reason: 'invalid_answer' };
+      const json = candidate.content?.parts?.filter(part => !part.thought && typeof part.text === 'string').map(part => part.text).join('');
+      const enderecos = validateReceiptAddresses(JSON.parse(json || '{}'));
+      cooldownUntil = 0; reason = '';
+      return { enderecos, reason: enderecos.length ? '' : 'not_found' };
+    } catch {
+      reason = 'unavailable'; cooldownUntil = now() + 60000;
+      return { enderecos: [], reason };
+    }
+  }
+  return { read };
+}
 
 export function createGeminiSupport({ fetchImpl = fetch, now = () => Date.now(), reserveBudget = async () => true } = {}) {
   let cooldownUntil = 0, reason = '', lastSuccessAt = 0;

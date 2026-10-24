@@ -542,11 +542,33 @@
     const response = await fetch(`${cfg.backend}/api/maps/geocode?${params}`);
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.message || 'Não consegui procurar o endereço agora.');
-    return (data.features || []).map((feature) => {
+    const achados = (data.features || []).map((feature) => {
       const props = feature.properties || {};
       const coords = feature.geometry?.coordinates || [];
       return { lat: Number(props.lat ?? coords[1]), lon: Number(props.lon ?? coords[0]), formatado: props.formatted || texto };
     }).filter(pontoValido).slice(0, 4);
+    // Sem resultado, o servidor manda as ruas parecidas do cadastro ("Rua X - Bairro").
+    const sugestoes = achados.length ? [] : (Array.isArray(data.suggestions) ? data.suggestions : []).map(String).filter(Boolean).slice(0, 3);
+    return { achados, sugestoes, mensagem: data.message || '' };
+  }
+
+  // "Rua X - Bairro" + numero digitado -> "Rua X, 120, Bairro" para buscar de novo.
+  function textoDaSugestao(sugestao, digitado) {
+    const [rua, bairro] = sugestao.split(' - ');
+    const semRua = digitado.replace(/^[^,\d]*/, '');
+    const numero = semRua.match(/\b(\d{1,5}[a-z]?)\b/i)?.[1] || '';
+    return [rua, numero, bairro].filter(Boolean).join(', ');
+  }
+
+  function carregarLeitorNota() {
+    if (window.MotoNota) return Promise.resolve(window.MotoNota);
+    return new Promise((ok, erro) => {
+      const script = document.createElement('script');
+      script.src = './motoboy-nota.js?v=1';
+      script.onload = () => (window.MotoNota ? ok(window.MotoNota) : erro(new Error('leitor')));
+      script.onerror = () => erro(new Error('leitor'));
+      document.head.appendChild(script);
+    });
   }
 
   function htmlParadasNav(cfg) {
@@ -588,6 +610,8 @@
       ${linhas}
       ${formAberto
         ? `<form class="mjnav-add" data-mjnav-add-form>
+            <button type="button" class="mjnav-mini mjnav-cam" data-mjnav-cam aria-label="Escanear o endereço da nota com a câmera">📷</button>
+            <input type="file" accept="image/*" capture="environment" data-mjnav-foto hidden>
             <input type="text" name="endereco" placeholder="Endereço da nota ${dados.lista.length + 1}: rua, número, bairro" autocomplete="off" enterkeyhint="search" maxlength="160">
             <button type="submit" class="mjnav-mini laranja">Buscar</button>
           </form>
@@ -657,11 +681,11 @@
     if (abrirForm) abrirForm.onclick = () => {
       paradaFormAberto = cfg.id;
       renderNav(cfg, tela?.rota || null);
-      ui().querySelector('[data-mjnav-add-form] input')?.focus();
+      ui().querySelector('[data-mjnav-add-form] input[name="endereco"]')?.focus();
     };
     const form = caixa.querySelector('[data-mjnav-add-form]');
     if (!form) return;
-    const input = form.querySelector('input');
+    const input = form.querySelector('input[name="endereco"]');
     const resultados = caixa.querySelector('[data-mjnav-resultados]');
     // Depois de adicionar um endereco, ja deixa o campo pronto para a proxima nota.
     if (paradaFocar === cfg.id) input.focus();
@@ -684,8 +708,7 @@
       if (dados.lista.length >= total) paradaFormAberto = '';
       atualizar(dados.lista.length < total || paradaFormAberto === cfg.id);
     };
-    form.onsubmit = async (event) => {
-      event.preventDefault();
+    const buscar = async () => {
       const texto = input.value.trim();
       if (texto.length < 4) {
         resultados.innerHTML = '<p class="mjnav-erro">Digite a rua e o número que estão na nota.</p>';
@@ -693,21 +716,87 @@
       }
       if (tela) tela.editando = true;
       resultados.innerHTML = '<p class="mjnav-busca">Procurando no mapa...</p>';
-      let achados = [];
+      let busca = { achados: [], sugestoes: [], mensagem: '' };
       let falha = '';
       try {
-        achados = await buscarEndereco(cfg, texto);
+        busca = await buscarEndereco(cfg, texto);
       } catch (error) {
         falha = error?.message || 'Não consegui procurar o endereço agora.';
       }
       if (tela?.cfg !== cfg || !resultados.isConnected) return;
-      resultados.innerHTML = `${achados.length ? '<p class="mjnav-busca">Toque no endereço certo:</p>' : `<p class="mjnav-erro">${esc(falha || 'Não achei esse endereço no mapa. Confira rua e número.')}</p>`}
+      const { achados, sugestoes } = busca;
+      // Rua escrita errada na nota: mostra as ruas parecidas para o motoboy escolher e ir conferir.
+      const aviso = achados.length
+        ? '<p class="mjnav-busca">Toque no endereço certo:</p>'
+        : sugestoes.length
+          ? '<p class="mjnav-erro">Não achei essa rua exata. Será alguma destas?</p>'
+          : `<p class="mjnav-erro">${esc(falha || busca.mensagem || 'Não achei esse endereço no mapa. Confira rua e número.')}</p>`;
+      resultados.innerHTML = `${aviso}
         ${achados.map((achado, index) => `<button type="button" class="mjnav-achado" data-mjnav-achado="${index}">📍 ${esc(achado.formatado)}<small>${esc(textoKm(distanciaAteMim(achado)))}${pontoValido(ultimaPosicao) ? ' de você' : ''}</small></button>`).join('')}
+        ${sugestoes.map((sugestao, index) => `<button type="button" class="mjnav-achado sugestao" data-mjnav-sugestao="${index}">🔎 ${esc(sugestao)}<small>toque para procurar esta rua</small></button>`).join('')}
         <button type="button" class="mjnav-achado sem" data-mjnav-sem-mapa>Adicionar só o texto, sem mapa</button>`;
       resultados.querySelectorAll('[data-mjnav-achado]').forEach((btn) => {
         btn.onclick = () => adicionar(texto, achados[Number(btn.dataset.mjnavAchado)]);
       });
+      resultados.querySelectorAll('[data-mjnav-sugestao]').forEach((btn) => {
+        btn.onclick = () => {
+          input.value = textoDaSugestao(sugestoes[Number(btn.dataset.mjnavSugestao)], texto);
+          buscar();
+        };
+      });
       resultados.querySelector('[data-mjnav-sem-mapa]').onclick = () => adicionar(texto, null);
+    };
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      buscar();
+    };
+
+    // 📷: le o endereco da foto da nota, preenche o campo e ja procura no mapa.
+    const foto = form.querySelector('[data-mjnav-foto]');
+    form.querySelector('[data-mjnav-cam]').onclick = () => {
+      if (tela) tela.editando = true;
+      foto.value = '';
+      foto.click();
+    };
+    foto.onchange = async () => {
+      const arquivo = foto.files?.[0];
+      if (!arquivo) {
+        if (tela) tela.editando = !!input.value.trim();
+        return;
+      }
+      if (tela) tela.editando = true;
+      const progresso = (texto) => { if (resultados.isConnected) resultados.innerHTML = `<p class="mjnav-busca">${texto}</p>`; };
+      progresso('📷 Lendo a nota no celular...');
+      let leitura = { enderecos: [], fonte: '', aviso: '' };
+      try {
+        const leitor = await carregarLeitorNota();
+        leitura = await leitor.lerEndereco(arquivo, {
+          backend: cfg.backend,
+          cpf: cfg.prova?.driverCpf,
+          prova: cfg.prova,
+          aoProgresso: (p) => progresso(`📷 Lendo a nota no celular... ${Math.round(p * 100)}%`),
+          aoReserva: () => progresso('📷 Não achei o endereço na foto. Tentando a leitura reserva...')
+        });
+      } catch (_) {
+        leitura.aviso = 'Não consegui abrir o leitor agora. Confira a internet ou digite o endereço.';
+      }
+      if (tela?.cfg !== cfg || !resultados.isConnected) return;
+      const usar = (texto) => {
+        input.value = texto;
+        buscar();
+      };
+      if (leitura.enderecos.length === 1) return usar(leitura.enderecos[0]);
+      if (leitura.enderecos.length > 1) {
+        resultados.innerHTML = `<p class="mjnav-busca">Achei mais de um endereço na nota. Qual é o da entrega?</p>
+          ${leitura.enderecos.map((e, index) => `<button type="button" class="mjnav-achado" data-mjnav-lido="${index}">🧾 ${esc(e)}</button>`).join('')}`;
+        resultados.querySelectorAll('[data-mjnav-lido]').forEach((btn) => {
+          btn.onclick = () => usar(leitura.enderecos[Number(btn.dataset.mjnavLido)]);
+        });
+        return;
+      }
+      if (tela) tela.editando = !!input.value.trim();
+      resultados.innerHTML = `<p class="mjnav-erro">${esc(leitura.aviso || 'Não consegui ler o endereço na foto. Tente de novo mais perto e com luz, ou digite.')}</p>`;
+      input.focus();
     };
   }
 

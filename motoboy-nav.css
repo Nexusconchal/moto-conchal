@@ -775,3 +775,13 @@ html.mjnav-aberto body {
   color: #9aa0ab;
   border-style: dashed;
 }
+.mjnav-cam {
+  background: #23262f;
+  color: #fff;
+  font-size: 18px;
+  padding: 8px 11px;
+  border: 1px solid #ff9d00;
+}
+.mjnav-achado.sugestao {
+  border-color: rgba(255, 157, 0, 0.45);
+}
