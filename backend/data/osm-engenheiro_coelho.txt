@@ -1,0 +1,136 @@
+Acesso Recanto dos Pássaros||-17714,-2174
+Alameda Angelim||-16039,-759
+Alameda Clausena||-15983,-695
+Alameda Ingá||-16212,-958
+Alameda Ipê Amarelo||-16241,-1056
+Alameda Jaborandi||-16097,-827
+Alameda Jatobá||-15921,-526
+Alameda Margarida||-15923,-629
+Alameda Mogno||-15771,-534
+Alameda Pitangueira||-15835,-591
+Alameda Primavera||-15708,-474
+Alameda Roseira||-16290,-1132
+Alameda Sapucaia||-16145,-904
+Alameda das Gaivotas||-17389,-1780
+Avenida Brasil||-16782,-1758
+Avenida Dois|Avenida 2|-15877,162
+Avenida Estados Unidos||-16652,-2068
+Avenida Falcão||-17513,-2202
+Avenida Francisco Ribeiro de Souza Filho||-16492,-4892
+Avenida Inglaterra||-16904,-2317
+Avenida Ipê Rosa||-15828,-592
+Avenida Ipê Roxo||-16231,-1057
+Avenida Jacarandá||-16025,-516
+Avenida Luiz Fávero||-15894,-5257
+Avenida Pau-Brasil||-16040,-772
+Avenida Pedro Forner||-16080,-5575
+Avenida Pedro Hereman||-15852,-5489
+Avenida Suíça||-17156,-1917
+Avenida Ângelo Forner||-16280,-5986
+Estrada Municipal Pastor Walter Boger|Estrada Unasp|-16524,-1056
+Rodovia Engenheiro João Tosello||-14296,92
+Rodovia Professor Zeferino Vaz|Rodovia General Milton Tavares de Souza|-14161,-3764
+Rua Aberlado Millares||-15487,-5073
+Rua Adolfo Nimptz||-15741,-5111
+Rua Albatroz||-17594,-2375
+Rua Alceu Caetano||-16044,-4359
+Rua Alcides Francischetti||-16355,-4555
+Rua Alemanha||-17209,-2167
+Rua Alexandre Bonin||-16311,-4721
+Rua Alfredo Correia Rocha||-15923,-4709
+Rua Alice Benedito Slornhardt|Rua Celina Cavalheiro Francischeti|-16311,-4721
+Rua Amadeu Jorge Teresani||-15892,-5071
+Rua Amaro Franco de Oliveira||-16355,-4555
+Rua Amália Sia Favero||-16293,-4329
+Rua Antônio Alves Cavalheiro||-15749,-5573
+Rua Antônio Batistela||-16056,-4829
+Rua Antônio Benedicto||-16281,-5730
+Rua Antônio Benin||-15449,-4852
+Rua Antônio Staiger||-15569,-5416
+Rua Arara||-17527,-2385
+Rua Austrália||-16744,-1828
+Rua Benedito Neves de Oliveira||-16443,-4840
+Rua Benedito da Cunha Guedes||-16450,-4639
+Rua Canadá||-17038,-2144
+Rua Carlos Eduardo Rocha Moreira||-14430,42
+Rua Catarina Fraveto Caetano||-15997,-5020
+Rua Chile||-16739,-2043
+Rua Cinco|Rua 5|-15946,113
+Rua Cristiano Barbosa de Oliveira||-16463,-4998
+Rua Curió||-17913,-2520
+Rua Cândido Mulla Arnaldo||-15902,-4348
+Rua Dez|Rua 10|-15877,263
+Rua Dinamarca||-17164,-2010
+Rua Diogo Martinez||-15363,-4963
+Rua Dionísio Berton||-16112,-5864
+Rua Dois|Rua 2|-16134,-168
+Rua Domingos Franco de Oliveira||-15781,-5862
+Rua Eloy Nabarretti||-15449,-4852
+Rua Elvira Martinati||-15894,-5257
+Rua Espanha||-16899,-2073
+Rua Eufrozino Gomes||-16035,-4469
+Rua Eurico G. Nimptz||-15973,-5238
+Rua Euzébio Batistela||-15974,-6049
+Rua Francisco A. Soares||-15699,-4904
+Rua Francisco Regiani||-14618,-208
+Rua Francisco da Cruz||-16423,-5029
+Rua Gentil Cardoso||-16333,-5100
+Rua Helena Hereman||-15955,-5490
+Rua Holanda||-17176,-2092
+Rua Hum||-16491,-4877
+Rua Idalina Nolli Marchiori||-14598,-200
+Rua Itália||-16800,-1988
+Rua Jair Roberto Mulla||-15857,-5162
+Rua José Antônio Batistela||-16044,-4359
+Rua José Bueno de Oliveira||-15859,-4308
+Rua José Correia de Oliveira||-16107,-4875
+Rua José F. Guimarães||-16078,-5269
+Rua José Gazoto Sobrinho||-16113,-5800
+Rua José Pereira||-16170,-4684
+Rua José de Lima||-16543,-5803
+Rua João Berton||-16100,-5490
+Rua João Oliverio de Moraes||-16170,-4684
+Rua João de Lima||-16006,-5248
+Rua Jucelino Alves de Souza||-15542,-4935
+Rua Juvenal Rosa da Silva||-16245,-4998
+Rua Júlio Cardoso de Moraes||-16062,-5656
+Rua Lauro Barbosa de Oliveira||-16423,-5029
+Rua Lino Rodrigues da Silva||-16477,-5169
+Rua Manoel Alves||-14454,222
+Rua Manoel Francisco dos Reis||-14756,-130
+Rua Maria Cezario Alvez||-14719,-475
+Rua Minas Gerais||-16011,-4789
+Rua Narciso Forner||-16116,-6049
+Rua Natal Marrafão||-16248,-5095
+Rua Nova Zelândia||-16861,-2195
+Rua Nove|Rua 9|-15768,319
+Rua Odécio Forner||-16211,-5574
+Rua Oito|Rua 8|-15824,419
+Rua Onze|Rua 11|-15963,322
+Rua Osmar da Cruz||-16269,-5925
+Rua Paulo Roberto da Silva Antiga Rua Três||-16127,-238
+Rua Pavão||-17674,-2269
+Rua Pedro Francisco Guimarães||-15946,-4389
+Rua Pelicano||-17657,-2401
+Rua Portugal||-16930,-2227
+Rua Quatro|Rua 4|-16043,-79
+Rua Quinze de Novembro|Rua 15 de Novembro|-15752,-5408
+Rua Rene Antônio Victor Hereman||-15752,-5729
+Rua Rosa Bonin Forner||-15741,-5111
+Rua Sebastião Lopes Primo||-16081,-4606
+Rua Secundino Guidotti||-16078,-5269
+Rua Seis|Rua 6|-15898,169
+Rua Sete de Setembro|Rua 7 de Setembro|-15851,-5656
+Rua Sete|Rua 7|-15823,223
+Rua Silvano Franco de Oliveira||-15835,-4629
+Rua Teophilo Haeck||-15979,-5340
+Rua Treze de Maio|Rua 13 de Maio|-16242,-5485
+Rua Uirapuru||-17583,-2284
+Rua Um|Rua 1|-16570,-5058
+Rua Valdemar Smole||-14349,7
+Rua Valdinei Moreira||-14534,-227
+Rua Victor Hereman||-15649,-5214
+Rua Vitorio Haeck||-15797,-4680
+Rua Wellington Pereira Simões||-14691,-159
+Rua Zacaroas B. de Oliveira|Rua Zacarias B de Oliveira|-15988,-5986
+Rua Águia||-17828,-2345
