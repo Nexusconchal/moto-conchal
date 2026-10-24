@@ -21,7 +21,7 @@
       href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./motoboy-nav.css?v=1" />
+    <link rel="stylesheet" href="./motoboy-nav.css?v=2" />
     <link rel="stylesheet" href="./motoboy-home.css?v=3" />
     <style>
       * {
@@ -1071,7 +1071,7 @@
     <script src="./driver-availability.js?v=227"></script>
     <script src="./ride-chat.js?v=233"></script>
     <script src="./motoboy-avisos.js?v=1"></script>
-    <script src="./motoboy-nav.js?v=3" defer></script>
+    <script src="./motoboy-nav.js?v=4" defer></script>
     <script src="./motoboy-home.js?v=3" defer></script>
     <script type="module">
       let cidadesAtivas = {
@@ -1447,6 +1447,25 @@
           )
           .catch(() => {});
       }
+      // Dica de cidade para achar no mapa os enderecos digitados das notas.
+      function cidadeDasNotas(c) {
+        if (c.regiaoEntrega === "martinho_prado") return "Martinho Prado, Mogi Guaçu";
+        if (c.cidadeOperacao === "aguai") return "Aguaí";
+        if (c.cidadeOperacao === "engenheiro_coelho") return "Engenheiro Coelho";
+        return "Conchal";
+      }
+      // Total cobrado, taxa do app e quanto o motoboy recebe (lote: por entrega).
+      function contaEntrega(c) {
+        const total = dinheiro(c.valor),
+          app = dinheiro(ganhoApp(c.valor, c)),
+          qtd = Math.max(1, Number(c.paradas || 1)),
+          lote = c.entregaNaNota === true && qtd > 1;
+        return [
+          { rotulo: lote ? `${qtd} entregas × ${moeda(total / qtd)}` : "Valor da entrega", valor: moeda(total) },
+          { rotulo: lote ? `Taxa do app (${qtd} × ${moeda(app / qtd)})` : "Taxa do app", valor: `− ${moeda(app)}`, classe: "app" },
+          { rotulo: "Você recebe", valor: moeda(ganhoMotoboy(c.valor, c)), classe: "total" },
+        ];
+      }
       function abrirOfertaMapa(c, { alarme = false } = {}) {
         if (!window.MotoNav || !c?.id || servicoExclusivo(c)) return false;
         fecharNotificacoesOferta((id) => id !== c.id);
@@ -1454,22 +1473,36 @@
           modoOferta = servicoEhEntrega(c) ? "entregas" : "pendentes",
           criadaMs = (c.criadaEm?.seconds || 0) * 1000,
           paradas = Number(c.paradas || 1),
-          cidade = c.cidadeOperacao === "aguai" ? "Aguaí" : c.cidadeOperacao === "engenheiro_coelho" ? "Eng. Coelho" : "Conchal";
+          loteNota = entrega && c.entregaNaNota === true,
+          cidade = c.cidadeOperacao === "aguai" ? "Aguaí" : c.cidadeOperacao === "engenheiro_coelho" ? "Eng. Coelho" : "Conchal",
+          pontos = pontosServico(c);
+        if (loteNota)
+          pontos.destino = {
+            lat: 0,
+            lon: 0,
+            titulo: `${paradas} ${paradas > 1 ? "entregas" : "entrega"} · endereços nas notas impressas`,
+            detalhe: "Depois de retirar, você adiciona os endereços no mapa.",
+          };
         window.MotoNav.abrirOferta({
           id: c.id,
           backend: CONFIG.backend,
           tipo: entrega ? "entrega" : "corrida",
           tag: entrega
-            ? `📦 MotoJá Entrega${c.tipoEntrega && c.tipoEntrega.length <= 14 ? ` · ${c.tipoEntrega}` : ""}`
+            ? `📦 MotoJá Entrega${loteNota ? " · Lote" : c.tipoEntrega && c.tipoEntrega.length <= 14 ? ` · ${c.tipoEntrega}` : ""} · ${cidade}`
             : `🏍️ MotoJá Corrida · ${cidade}`,
           topo: "Online",
           ganhoTexto: moeda(ganhoMotoboy(c.valor, c)),
           ganhoLegenda: "você recebe",
           kmViagemTexto: kmTexto(c.km),
-          extra: entrega
-            ? { valor: String(paradas), rotulo: paradas > 1 ? "paradas" : "parada" }
-            : { valor: moeda(c.valor), rotulo: "total da corrida" },
-          ...pontosServico(c),
+          conta: entrega ? contaEntrega(c) : null,
+          lote: loteNota ? { total: paradas } : null,
+          meio: loteNota ? { valor: String(paradas), rotulo: paradas > 1 ? "entregas" : "entrega" } : null,
+          extra: loteNota
+            ? { valor: moeda(ganhoMotoboy(c.valor, c) / Math.max(1, paradas)), rotulo: "por entrega" }
+            : entrega
+              ? { valor: String(paradas), rotulo: paradas > 1 ? "paradas" : "parada" }
+              : { valor: moeda(c.valor), rotulo: "total da corrida" },
+          ...pontos,
           observacao: c.observacao || c.descricao || "",
           expiraEmMs: criadaMs ? criadaMs + tempoLimiteMs(c) : 0,
           duracaoMs: tempoLimiteMs(c),
@@ -1601,10 +1634,16 @@
             : {
                 alvo: { ...destino, rotulo: "Entregar pedido" },
                 etapaTexto: c.conclusaoStatus ? "AGUARDANDO" : "INDO ENTREGAR",
-                cliente: { nome: c.recebedor || "Recebedor", linha: c.dadosNaNota ? "Dados do cliente na nota impressa" : destino.detalhe, telefone: c.telefoneRecebedor || telefoneCliente(c) },
+                // Lote pela nota: o motoboy digita os enderecos e escolhe a ordem no mapa.
+                paradas: c.entregaNaNota === true && !c.conclusaoStatus ? { total: Math.max(1, Number(c.paradas || 1)), cidade: cidadeDasNotas(c) } : null,
+                cliente: c.entregaNaNota === true
+                  ? { nome: c.empresa || "Empresa", linha: `Lote de ${Number(c.paradas || 1)} ${Number(c.paradas || 1) > 1 ? "entregas" : "entrega"} · clientes nas notas`, telefone: telefoneCliente(c) }
+                  : { nome: c.recebedor || "Recebedor", linha: c.dadosNaNota ? "Dados do cliente na nota impressa" : destino.detalhe, telefone: c.telefoneRecebedor || telefoneCliente(c) },
                 aviso: c.conclusaoStatus
                   ? { texto: c.conclusaoStatus === "contestada" ? "Problema registrado. O dono vai conferir o serviço." : "Conclusão solicitada. O ganho será registrado após a confirmação da empresa. Você pode aceitar outras chamadas." }
-                  : extras
+                  : c.entregaNaNota === true
+                    ? null
+                    : extras
                     ? { tipo: "alerta", texto: `Esta entrega tem mais ${extras} ${extras > 1 ? "paradas" : "parada"}. Veja os pontos no card da entrega.` }
                     : { texto: "GPS ativo: a empresa acompanha esta entrega." },
                 principal: {

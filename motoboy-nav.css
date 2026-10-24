@@ -535,9 +535,243 @@ html.mjnav-aberto body {
   background: #2a2f3c;
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
 }
+.mjnav-chip.nota {
+  background: #2a2f3c;
+  border: 1px dashed #ff9d00;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
 .mjnav-chip small {
   display: block;
   font-weight: 600;
   font-size: 10px;
   opacity: 0.9;
+}
+
+/* Conta da oferta: total, taxa do app e ganho do motoboy */
+.mjnav-conta {
+  background: #181a21;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 14px;
+  padding: 8px 12px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+.mjnav-conta > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+  color: #c9ccd3;
+}
+.mjnav-conta b {
+  color: #f4f5f7;
+  white-space: nowrap;
+}
+.mjnav-conta .app b {
+  color: #ff9d00;
+}
+.mjnav-conta .total {
+  border-top: 1px dashed #3a3e49;
+  margin-top: 4px;
+  padding-top: 6px;
+  font-weight: 800;
+}
+.mjnav-conta .total b {
+  color: #35c979;
+  font-size: 15px;
+}
+.mjnav-notas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.mjnav-notas i {
+  font-style: normal;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: #2a2d36;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 800;
+  color: #c9ccd3;
+}
+
+/* Lote pela nota: enderecos numerados na navegacao */
+.mjnav-pin.num {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #ff7200;
+  border: 3px solid #fff;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+  font-size: 13px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  font-family: Outfit, "Segoe UI", Roboto, Arial, sans-serif;
+}
+.mjnav-pin.num.ativa {
+  background: #35c979;
+  color: #06210f;
+  box-shadow: 0 0 0 7px rgba(53, 201, 121, 0.28);
+}
+.mjnav-pin.num.feita {
+  background: #3a3e49;
+}
+.mjnav-paradas {
+  margin-bottom: 10px;
+}
+.mjnav-paradas-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.mjnav-paradas-head b {
+  font-size: 15px;
+}
+.mjnav-paradas-head span {
+  font-size: 12px;
+  color: #9aa0ab;
+  white-space: nowrap;
+}
+.mjnav-parada {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #181a21;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 14px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+.mjnav-parada.ativa {
+  border-color: rgba(53, 201, 121, 0.7);
+  background: rgba(53, 201, 121, 0.08);
+}
+.mjnav-parada.feita {
+  opacity: 0.55;
+}
+.mjnav-num {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #ff7200;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+  font-size: 13px;
+  flex: none;
+}
+.mjnav-parada.ativa .mjnav-num {
+  background: #35c979;
+  color: #06210f;
+}
+.mjnav-parada.feita .mjnav-num {
+  background: #3a3e49;
+}
+.mjnav-parada-txt {
+  flex: 1;
+  min-width: 0;
+}
+.mjnav-parada-txt b {
+  display: block;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mjnav-parada-txt span {
+  font-size: 11.5px;
+  color: #9aa0ab;
+}
+.mjnav-parada-txt em {
+  font-style: normal;
+  color: #35c979;
+  font-weight: 800;
+}
+.mjnav-mini {
+  border: 0;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  background: #2a2d36;
+  color: #f4f5f7;
+  cursor: pointer;
+  flex: none;
+}
+.mjnav-mini.ok {
+  background: rgba(53, 201, 121, 0.18);
+  color: #35c979;
+}
+.mjnav-mini.x {
+  background: transparent;
+  color: #6f7582;
+  padding: 8px 4px;
+}
+.mjnav-mini.laranja {
+  background: #ff7200;
+  color: #fff;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+.mjnav-add {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0 6px;
+}
+.mjnav-add input {
+  flex: 1;
+  min-width: 0;
+  background: #0e1015;
+  border: 1px solid #ff9d00;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+  color: #f4f5f7;
+}
+.mjnav-add-btn {
+  width: 100%;
+  margin-top: 2px;
+}
+.mjnav-busca {
+  font-size: 12px;
+  color: #9aa0ab;
+  margin: 4px 0 6px;
+}
+.mjnav-achado {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: #181a21;
+  color: #f4f5f7;
+  border-radius: 12px;
+  padding: 9px 11px;
+  margin-bottom: 6px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.mjnav-achado small {
+  display: block;
+  font-size: 11px;
+  color: #9aa0ab;
+  font-weight: 600;
+  margin-top: 2px;
+}
+.mjnav-achado.sem {
+  text-align: center;
+  color: #9aa0ab;
+  border-style: dashed;
 }

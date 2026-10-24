@@ -224,6 +224,15 @@
     return camada;
   }
 
+  function iconeNumero(L, numero, estado) {
+    return L.divIcon({
+      className: 'mjnav-icon',
+      html: `<span class="mjnav-pin num ${estado || ''}">${estado === 'feita' ? '✓' : esc(numero)}</span>`,
+      iconSize: [30, 30],
+      iconAnchor: [15, 15]
+    });
+  }
+
   function iconePino(L, tipo) {
     const html = tipo === 'coleta'
       ? '<span class="mjnav-pin coleta"></span>'
@@ -336,10 +345,21 @@
   }
 
   function htmlParadas(cfg, tempoAteColeta) {
+    const total = Number(cfg.lote?.total || 0);
+    const numeros = total > 1 && total <= 30
+      ? `<div class="mjnav-notas">${Array.from({ length: total }, (_, i) => `<i>${i + 1}</i>`).join('')}</div>`
+      : '';
     return `<div class="mjnav-stops">
       <div class="mjnav-stop"><b>${esc(cfg.coleta?.titulo || '-')}</b><span>${esc(cfg.coleta?.detalhe || '')}${tempoAteColeta ? `${cfg.coleta?.detalhe ? ' · ' : ''}<em>${esc(tempoAteColeta)}</em> de você` : ''}</span></div>
-      <div class="mjnav-stop fim"><b>${esc(cfg.destino?.titulo || '-')}</b><span>${esc(cfg.destino?.detalhe || '')}</span></div>
+      <div class="mjnav-stop fim"><b>${esc(cfg.destino?.titulo || '-')}</b><span>${esc(cfg.destino?.detalhe || '')}</span>${numeros}</div>
     </div>`;
+  }
+
+  // Conta do servico: total cobrado, taxa do app e quanto o motoboy recebe.
+  function htmlConta(conta) {
+    if (!Array.isArray(conta) || !conta.length) return '';
+    return `<div class="mjnav-conta">${conta.map((linha) =>
+      `<div class="${esc(linha.classe || '')}"><span>${esc(linha.rotulo)}</span><b>${esc(linha.valor)}</b></div>`).join('')}</div>`;
   }
 
   function renderOferta(cfg, rotaColeta) {
@@ -359,9 +379,12 @@
           </div>
           ${cfg.expiraEmMs ? `<div class="mjnav-ring" data-mjnav-ring>${anelContagem(cfg.expiraEmMs - Date.now(), cfg.duracaoMs)}</div>` : ''}
         </div>
+        ${htmlConta(cfg.conta)}
         <div class="mjnav-stats">
           <div><b>${esc(ateColeta)}</b><span>${cfg.tipo === 'entrega' ? 'até a coleta' : 'até buscar'}</span></div>
-          <div><b>${esc(cfg.kmViagemTexto || '-')}</b><span>${cfg.tipo === 'entrega' ? 'da entrega' : 'da viagem'}</span></div>
+          ${cfg.meio
+            ? `<div><b>${esc(cfg.meio.valor)}</b><span>${esc(cfg.meio.rotulo)}</span></div>`
+            : `<div><b>${esc(cfg.kmViagemTexto || '-')}</b><span>${cfg.tipo === 'entrega' ? 'da entrega' : 'da viagem'}</span></div>`}
           <div><b>${esc(cfg.extra?.valor || '-')}</b><span>${esc(cfg.extra?.rotulo || '')}</span></div>
         </div>
         ${htmlParadas(cfg, tempoColeta)}
@@ -440,6 +463,9 @@
     if (rotaViagem) etiqueta(L, rotaViagem.geometria, `${esc(textoKm(rotaViagem.metros))}<small>${cfg.tipo === 'entrega' ? 'entrega' : 'viagem'}</small>`);
     if (pontoValido(cfg.coleta)) adicionar(L.marker([cfg.coleta.lat, cfg.coleta.lon], { icon: iconePino(L, cfg.tipo === 'entrega' ? 'pacote' : 'coleta') }));
     if (pontoValido(cfg.destino)) adicionar(L.marker([cfg.destino.lat, cfg.destino.lon], { icon: iconePino(L, 'destino') }));
+    else if (cfg.lote && pontoValido(cfg.coleta)) {
+      etiqueta(L, [[cfg.coleta.lat, cfg.coleta.lon]], `${esc(cfg.lote.total)} ${Number(cfg.lote.total) > 1 ? 'entregas' : 'entrega'}<small>endereços nas notas</small>`, 'nota');
+    }
     atualizarMarcadorMotoboy(L, eu);
     renderOferta(cfg, rotaColeta);
     if (!pontoValido(eu)) {
@@ -452,8 +478,246 @@
 
   // ---------- Navegacao (depois de aceitar) ----------
 
+  // ---------- Lote "endereco pela nota" ----------
+  // A empresa so informou quantas entregas sao; o motoboy digita o endereco
+  // de cada nota e ele vira um numero no mapa. Fica salvo neste celular.
+  const PARADAS_PREFIXO = 'mjnav-paradas:';
+  const PARADAS_VALIDADE_MS = 3 * 24 * 60 * 60 * 1000;
+  let paradaFormAberto = '';
+  let paradaFocar = '';
+
+  function lerParadas(id) {
+    try {
+      const dados = JSON.parse(localStorage.getItem(PARADAS_PREFIXO + id) || 'null');
+      if (dados && Array.isArray(dados.lista)) return dados;
+    } catch (_) {}
+    return { lista: [], ativa: '' };
+  }
+
+  function salvarParadas(id, dados) {
+    try {
+      localStorage.setItem(PARADAS_PREFIXO + id, JSON.stringify({ ...dados, em: Date.now() }));
+      for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+        const chave = localStorage.key(i);
+        if (!chave?.startsWith(PARADAS_PREFIXO) || chave === PARADAS_PREFIXO + id) continue;
+        const antigo = JSON.parse(localStorage.getItem(chave) || 'null');
+        if (!antigo?.em || Date.now() - antigo.em > PARADAS_VALIDADE_MS) localStorage.removeItem(chave);
+      }
+    } catch (_) {}
+  }
+
+  function distanciaAteMim(p) {
+    return pontoValido(ultimaPosicao) ? distanciaMetros(ultimaPosicao, p) : Infinity;
+  }
+
+  function paradaMaisPerta(pendentes) {
+    const comMapa = pendentes.filter(pontoValido);
+    if (!comMapa.length || !pontoValido(ultimaPosicao)) return comMapa[0] || pendentes[0] || null;
+    return comMapa.reduce((melhor, p) => (distanciaAteMim(p) < distanciaAteMim(melhor) ? p : melhor));
+  }
+
+  // O alvo da navegacao e a parada escolhida ou, sem escolha, a mais perto.
+  function aplicarAlvoParadas(cfg) {
+    if (!cfg.paradas) return;
+    const dados = lerParadas(cfg.id);
+    const pendentes = dados.lista.filter((p) => !p.entregue);
+    let ativa = pendentes.find((p) => p.id === dados.ativa);
+    if (!ativa) {
+      ativa = paradaMaisPerta(pendentes);
+      if ((ativa?.id || '') !== (dados.ativa || '')) salvarParadas(cfg.id, { ...dados, ativa: ativa?.id || '' });
+    }
+    cfg.alvo = ativa
+      ? { lat: ativa.lat, lon: ativa.lon, titulo: ativa.texto, busca: ativa.texto, rotulo: `Entrega ${dados.lista.indexOf(ativa) + 1}` }
+      : { lat: 0, lon: 0, titulo: dados.lista.length ? 'todas marcadas como entregues' : 'adicione os endereços abaixo', rotulo: 'Endereços das notas' };
+  }
+
+  async function buscarEndereco(cfg, texto) {
+    const dica = cfg.paradas?.cidade || '';
+    const params = new URLSearchParams({
+      text: dica && !texto.toLowerCase().includes(dica.split(',')[0].toLowerCase()) ? `${texto}, ${dica} - SP` : texto,
+      original: texto,
+      limit: '4'
+    });
+    if (pontoValido(ultimaPosicao)) params.set('bias', `proximity:${ultimaPosicao.lon.toFixed(5)},${ultimaPosicao.lat.toFixed(5)}`);
+    const response = await fetch(`${cfg.backend}/api/maps/geocode?${params}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || 'Não consegui procurar o endereço agora.');
+    return (data.features || []).map((feature) => {
+      const props = feature.properties || {};
+      const coords = feature.geometry?.coordinates || [];
+      return { lat: Number(props.lat ?? coords[1]), lon: Number(props.lon ?? coords[0]), formatado: props.formatted || texto };
+    }).filter(pontoValido).slice(0, 4);
+  }
+
+  function htmlParadasNav(cfg) {
+    if (!cfg.paradas) return '';
+    const dados = lerParadas(cfg.id);
+    const total = Number(cfg.paradas.total || 0);
+    const pendentes = dados.lista.filter((p) => !p.entregue);
+    const perto = paradaMaisPerta(pendentes);
+    const faltam = total - dados.lista.length;
+    const resumo = faltam > 0
+      ? `${dados.lista.length} de ${total} endereços · ${faltam === 1 ? 'falta 1' : `faltam ${faltam}`}`
+      : `${dados.lista.length - pendentes.length} de ${dados.lista.length} entregues`;
+    // Pendentes primeiro, da mais perto para a mais longe; entregues no fim.
+    const ordenadas = [...pendentes]
+      .sort((a, b) => (pontoValido(ultimaPosicao) ? distanciaAteMim(a) - distanciaAteMim(b) : 0) || 0)
+      .concat(dados.lista.filter((p) => p.entregue));
+    const linhas = ordenadas.map((p) => {
+      const numero = dados.lista.indexOf(p) + 1;
+      const ativa = !p.entregue && p.id === dados.ativa;
+      let info;
+      if (p.entregue) {
+        info = `Entregue${p.entregueEm ? ` ${new Date(p.entregueEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}`;
+      } else {
+        const dist = pontoValido(p) ? textoKm(distanciaAteMim(p)) : 'sem mapa';
+        const marcas = [p === perto && pendentes.length > 1 ? 'mais perto' : '', ativa ? 'indo agora' : ''].filter(Boolean).join(' · ');
+        info = `${esc(dist === '-' ? '' : dist)}${marcas ? `${dist === '-' ? '' : ' · '}<em>${marcas}</em>` : dist !== '-' && dist !== 'sem mapa' ? ' de você' : ''}`;
+      }
+      return `<div class="mjnav-parada${ativa ? ' ativa' : ''}${p.entregue ? ' feita' : ''}">
+        <span class="mjnav-num">${p.entregue ? '✓' : numero}</span>
+        <div class="mjnav-parada-txt"><b>${esc(p.texto)}</b><span>${p.entregue ? esc(info) : info}</span></div>
+        ${p.entregue
+          ? `<button type="button" class="mjnav-mini" data-mjnav-desfazer="${esc(p.id)}" aria-label="Desfazer entrega ${numero}">↺</button>`
+          : `${ativa ? '' : `<button type="button" class="mjnav-mini" data-mjnav-ir="${esc(p.id)}">Ir</button>`}<button type="button" class="mjnav-mini ok" data-mjnav-ok="${esc(p.id)}" aria-label="Marcar entrega ${numero} como entregue">${ativa ? '✓ Entregue' : '✓'}</button><button type="button" class="mjnav-mini x" data-mjnav-del="${esc(p.id)}" aria-label="Remover endereço ${numero}">✕</button>`}
+      </div>`;
+    }).join('');
+    const formAberto = faltam > 0 || paradaFormAberto === cfg.id;
+    return `<div class="mjnav-paradas">
+      <div class="mjnav-paradas-head"><b>📝 Endereços das notas</b><span>${esc(resumo)}</span></div>
+      ${linhas}
+      ${formAberto
+        ? `<form class="mjnav-add" data-mjnav-add-form>
+            <input type="text" name="endereco" placeholder="Endereço da nota ${dados.lista.length + 1}: rua, número, bairro" autocomplete="off" enterkeyhint="search" maxlength="160">
+            <button type="submit" class="mjnav-mini laranja">Buscar</button>
+          </form>
+          <div class="mjnav-resultados" data-mjnav-resultados></div>`
+        : '<button type="button" class="mjnav-act mjnav-add-btn" data-mjnav-add>+ Adicionar endereço</button>'}
+    </div>`;
+  }
+
+  function ligarParadas(cfg) {
+    const caixa = cfg.paradas && ui().querySelector('.mjnav-paradas');
+    if (!caixa) return;
+    const atualizar = (focar) => {
+      if (tela) tela.editando = false;
+      paradaFocar = focar ? cfg.id : '';
+      aplicarAlvoParadas(cfg);
+      renderNav(cfg, null);
+      if (window.L && tela?.cfg === cfg) {
+        atualizarRotaNav(window.L, cfg, true).then(() => {
+          paradaFocar = '';
+          if (tela?.cfg !== cfg) return;
+          // Mostra no mapa todos os numeros que faltam; o botao ◎ volta a seguir o GPS.
+          const pendentes = lerParadas(cfg.id).lista.filter((p) => !p.entregue && pontoValido(p));
+          if (pendentes.length > 1) {
+            seguirMotoboy = false;
+            root.querySelector('[data-mjnav-centralizar]')?.classList.add('show');
+            enquadrar([ultimaPosicao, ...pendentes], alturaRodape());
+          } else enquadrarNav(cfg);
+        });
+      }
+    };
+    const mudar = (id, fn) => {
+      const dados = lerParadas(cfg.id);
+      const parada = dados.lista.find((p) => p.id === id);
+      if (!parada) return;
+      fn(parada, dados);
+      salvarParadas(cfg.id, dados);
+      atualizar(false);
+    };
+    caixa.querySelectorAll('[data-mjnav-ir]').forEach((btn) => {
+      btn.onclick = () => mudar(btn.dataset.mjnavIr, (p, dados) => { dados.ativa = p.id; });
+    });
+    caixa.querySelectorAll('[data-mjnav-ok]').forEach((btn) => {
+      btn.onclick = () => mudar(btn.dataset.mjnavOk, (p, dados) => {
+        p.entregue = true;
+        p.entregueEm = Date.now();
+        if (dados.ativa === p.id) dados.ativa = '';
+      });
+    });
+    caixa.querySelectorAll('[data-mjnav-desfazer]').forEach((btn) => {
+      btn.onclick = () => mudar(btn.dataset.mjnavDesfazer, (p) => {
+        p.entregue = false;
+        p.entregueEm = 0;
+      });
+    });
+    caixa.querySelectorAll('[data-mjnav-del]').forEach((btn) => {
+      btn.onclick = () => {
+        const dados = lerParadas(cfg.id);
+        const parada = dados.lista.find((p) => p.id === btn.dataset.mjnavDel);
+        if (!parada || !confirm(`Remover o endereço "${parada.texto}"?`)) return;
+        dados.lista = dados.lista.filter((p) => p !== parada);
+        if (dados.ativa === parada.id) dados.ativa = '';
+        salvarParadas(cfg.id, dados);
+        atualizar(false);
+      };
+    });
+    const abrirForm = caixa.querySelector('[data-mjnav-add]');
+    if (abrirForm) abrirForm.onclick = () => {
+      paradaFormAberto = cfg.id;
+      renderNav(cfg, tela?.rota || null);
+      ui().querySelector('[data-mjnav-add-form] input')?.focus();
+    };
+    const form = caixa.querySelector('[data-mjnav-add-form]');
+    if (!form) return;
+    const input = form.querySelector('input');
+    const resultados = caixa.querySelector('[data-mjnav-resultados]');
+    // Depois de adicionar um endereco, ja deixa o campo pronto para a proxima nota.
+    if (paradaFocar === cfg.id) input.focus();
+    // Enquanto digita, o GPS e a lista nao redesenham a tela (perderia o texto).
+    input.oninput = () => {
+      if (tela) tela.editando = !!input.value.trim();
+    };
+    const adicionar = (texto, achado) => {
+      const dados = lerParadas(cfg.id);
+      dados.lista.push({
+        id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+        texto,
+        encontrado: achado?.formatado || '',
+        lat: achado ? achado.lat : 0,
+        lon: achado ? achado.lon : 0,
+        entregue: false
+      });
+      salvarParadas(cfg.id, dados);
+      const total = Number(cfg.paradas.total || 0);
+      if (dados.lista.length >= total) paradaFormAberto = '';
+      atualizar(dados.lista.length < total || paradaFormAberto === cfg.id);
+    };
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const texto = input.value.trim();
+      if (texto.length < 4) {
+        resultados.innerHTML = '<p class="mjnav-erro">Digite a rua e o número que estão na nota.</p>';
+        return;
+      }
+      if (tela) tela.editando = true;
+      resultados.innerHTML = '<p class="mjnav-busca">Procurando no mapa...</p>';
+      let achados = [];
+      let falha = '';
+      try {
+        achados = await buscarEndereco(cfg, texto);
+      } catch (error) {
+        falha = error?.message || 'Não consegui procurar o endereço agora.';
+      }
+      if (tela?.cfg !== cfg || !resultados.isConnected) return;
+      resultados.innerHTML = `${achados.length ? '<p class="mjnav-busca">Toque no endereço certo:</p>' : `<p class="mjnav-erro">${esc(falha || 'Não achei esse endereço no mapa. Confira rua e número.')}</p>`}
+        ${achados.map((achado, index) => `<button type="button" class="mjnav-achado" data-mjnav-achado="${index}">📍 ${esc(achado.formatado)}<small>${esc(textoKm(distanciaAteMim(achado)))}${pontoValido(ultimaPosicao) ? ' de você' : ''}</small></button>`).join('')}
+        <button type="button" class="mjnav-achado sem" data-mjnav-sem-mapa>Adicionar só o texto, sem mapa</button>`;
+      resultados.querySelectorAll('[data-mjnav-achado]').forEach((btn) => {
+        btn.onclick = () => adicionar(texto, achados[Number(btn.dataset.mjnavAchado)]);
+      });
+      resultados.querySelector('[data-mjnav-sem-mapa]').onclick = () => adicionar(texto, null);
+    };
+  }
+
   function linksNavegacao(alvo) {
-    if (!pontoValido(alvo)) return { waze: '', maps: '' };
+    if (!pontoValido(alvo)) {
+      // Endereco da nota que o mapa nao achou: abre a busca pelo texto.
+      if (!alvo?.busca) return { waze: '', maps: '' };
+      const q = encodeURIComponent(alvo.busca);
+      return { waze: `https://waze.com/ul?q=${q}&navigate=yes`, maps: `https://www.google.com/maps/search/?api=1&query=${q}` };
+    }
     return {
       waze: `https://waze.com/ul?ll=${alvo.lat},${alvo.lon}&navigate=yes`,
       maps: `https://www.google.com/maps/dir/?api=1&destination=${alvo.lat},${alvo.lon}&travelmode=driving`
@@ -491,6 +755,7 @@
             ${typeof cliente.chat === 'function' ? `<button type="button" class="mjnav-round" data-mjnav-chat aria-label="Chat com o cliente" style="position:relative">💬${cliente.chatNaoLido ? '<span class="mjchat-badge" style="position:absolute;top:2px;right:2px;margin:0"></span>' : ''}</button>` : fone ? `<a class="mjnav-round" href="https://api.whatsapp.com/send?phone=55${esc(fone)}" target="_blank" rel="noopener" aria-label="WhatsApp">💬</a><a class="mjnav-round" href="tel:${esc(fone)}" aria-label="Ligar">📞</a>` : ''}
           </div>
         </div>
+        ${htmlParadasNav(cfg)}
         <div class="mjnav-actions">
           ${(cfg.secundarias || []).map((acao, index) => `<button type="button" class="mjnav-act ${acao.destaque ? 'hl' : ''}" data-mjnav-sec="${index}" ${acao.desativado ? 'disabled' : ''}>${esc(acao.texto)}</button>`).join('')}
           ${links.waze ? `<a class="mjnav-act" href="${esc(links.waze)}" target="_blank" rel="noopener">🗺️ Waze</a><a class="mjnav-act" href="${esc(links.maps)}" target="_blank" rel="noopener">🧭 Google Maps</a>` : ''}
@@ -538,6 +803,7 @@
     };
     const principal = ui().querySelector('[data-mjnav-principal]');
     if (principal) principal.onclick = () => executar(principal, cfg.principal);
+    ligarParadas(cfg);
   }
 
   function enquadrarNav(cfg) {
@@ -559,7 +825,7 @@
 
   async function atualizarRotaNav(L, cfg, forcar) {
     const eu = ultimaPosicao;
-    const chave = `${cfg.id}:${cfg.etapa}`;
+    const chave = `${cfg.id}:${cfg.etapa}:${Number(cfg.alvo?.lat || 0).toFixed(5)},${Number(cfg.alvo?.lon || 0).toFixed(5)}`;
     const moveu = distanciaMetros(rotaNav.origem, eu);
     if (!forcar && rotaNav.chave === chave && moveu < REROTA_METROS && Date.now() - rotaNav.em < REROTA_MS) return;
     rotaNav = { chave, em: Date.now(), origem: eu };
@@ -570,16 +836,28 @@
     if (!atual || atual.modo !== 'nav' || atual.cfg.id !== cfg.id || atual.cfg.etapa !== cfg.etapa) return;
     limparCamadas();
     linha(L, rota?.geometria, '#35c979', false);
-    if (pontoValido(cfg.alvo)) adicionar(L.marker([cfg.alvo.lat, cfg.alvo.lon], { icon: iconePino(L, cfg.etapa === 'levar' ? 'destino' : cfg.tipo === 'entrega' ? 'pacote' : 'coleta') }));
+    if (cfg.paradas) {
+      const dados = lerParadas(cfg.id);
+      dados.lista.forEach((p, index) => {
+        if (!pontoValido(p)) return;
+        const estado = p.entregue ? 'feita' : p.id === dados.ativa ? 'ativa' : '';
+        adicionar(L.marker([p.lat, p.lon], { icon: iconeNumero(L, index + 1, estado), zIndexOffset: estado === 'ativa' ? 600 : 0 }));
+      });
+    } else if (pontoValido(cfg.alvo)) {
+      adicionar(L.marker([cfg.alvo.lat, cfg.alvo.lon], { icon: iconePino(L, cfg.etapa === 'levar' ? 'destino' : cfg.tipo === 'entrega' ? 'pacote' : 'coleta') }));
+    }
     atual.rota = rota;
-    // Nao redesenha os botoes no meio de uma acao (ex.: "Avisando cliente...").
-    if (!atual.ocupado) renderNav(atual.cfg, rota);
+    // Nao redesenha os botoes no meio de uma acao (ex.: "Avisando cliente...")
+    // nem enquanto o motoboy digita um endereco de nota.
+    if (!atual.ocupado && !atual.editando) renderNav(atual.cfg, rota);
   }
 
   async function abrirNavegacao(cfg) {
     pararAlarme();
     pararContagem();
-    const mesmaEtapa = tela?.modo === 'nav' && tela.cfg.id === cfg.id && tela.cfg.etapa === cfg.etapa;
+    aplicarAlvoParadas(cfg);
+    const mesmaEtapa = tela?.modo === 'nav' && tela.cfg.id === cfg.id && tela.cfg.etapa === cfg.etapa &&
+      Number(tela.cfg.alvo?.lat || 0) === Number(cfg.alvo?.lat || 0) && Number(tela.cfg.alvo?.lon || 0) === Number(cfg.alvo?.lon || 0);
     const rotaAnterior = mesmaEtapa ? tela.rota : null;
     tela = { modo: 'nav', cfg, rota: rotaAnterior };
     mostrar();
@@ -610,7 +888,7 @@
     abrirNavegacao,
     fechar,
     aberto: () => !!tela,
-    ocupado: () => !!tela?.ocupado,
+    ocupado: () => !!(tela?.ocupado || tela?.editando),
     modo: () => tela?.modo || '',
     idAtual: () => tela?.cfg?.id || '',
     tipo: () => tela?.cfg?.tipo || '',
