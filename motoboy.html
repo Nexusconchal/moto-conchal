@@ -717,6 +717,9 @@
         background: rgba(255, 114, 0, 0.06);
       }
       .access-code-note { color: #b9bbc4; font-size: 0.78rem; line-height: 1.4; }
+      .grupos-cidade { display: grid; gap: 8px; margin-top: 10px; }
+      .grupos-cidade[hidden] { display: none; }
+      .grupos-cidade button:disabled { opacity: 0.5; cursor: not-allowed; }
       .quick-login { padding: 14px; box-shadow: none; }
       .quick-login summary { color: #fff; }
       #painel { gap: 14px; }
@@ -932,10 +935,18 @@
         /></label>
         <p class="access-code-note">O código é fornecido no grupo oficial e serve para autorizar o cadastro de novos motoboys.</p>
         <button
+          id="btnGrupoCidade"
           class="ok"
           type="button"
-          onclick="location.href='https://chat.whatsapp.com/HNDcqL2PZEl3KScGrhnigd'"
+          aria-expanded="false"
+          aria-controls="gruposCidade"
         >Entrar no grupo e pedir o código</button>
+        <div id="gruposCidade" class="grupos-cidade" hidden>
+          <p class="access-code-note">Escolha o grupo da sua cidade:</p>
+          <button type="button" class="secondary" data-grupo-cidade="conchal">Conchal</button>
+          <button type="button" class="secondary" data-grupo-cidade="aguai">Aguaí</button>
+          <button type="button" class="secondary" data-grupo-cidade="engenheiro_coelho">Engenheiro Coelho</button>
+        </div>
         </div>
         <button id="entrar" type="button">
           Enviar cadastro
@@ -1257,6 +1268,29 @@
       });
       document.querySelectorAll("[data-step-back]").forEach((botao) => {
         botao.addEventListener("click", () => mostrarEtapaCadastro(botao.dataset.stepBack));
+      });
+      // Cada cidade tem o seu grupo oficial de motoboys, onde o codigo de acesso e passado.
+      // Cidade sem link ainda aparece como "em breve".
+      const GRUPOS_MOTOBOY_CIDADE = {
+        conchal: "https://chat.whatsapp.com/HNDcqL2PZEl3KScGrhnigd",
+        aguai: "",
+        engenheiro_coelho: "",
+      };
+      const btnGrupoCidade = document.getElementById("btnGrupoCidade"),
+        gruposCidade = document.getElementById("gruposCidade");
+      btnGrupoCidade?.addEventListener("click", () => {
+        const abrir = gruposCidade.hidden;
+        gruposCidade.hidden = !abrir;
+        btnGrupoCidade.setAttribute("aria-expanded", String(abrir));
+      });
+      gruposCidade?.querySelectorAll("[data-grupo-cidade]").forEach((botao) => {
+        const link = GRUPOS_MOTOBOY_CIDADE[botao.dataset.grupoCidade];
+        if (!link) {
+          botao.disabled = true;
+          botao.textContent += " (em breve)";
+          return;
+        }
+        botao.addEventListener("click", () => { location.href = link; });
       });
       async function fetchMotoboyComRetry(url, opcoes = {}, ms = 18000, tentativas = 2) {
         let ultimo;
