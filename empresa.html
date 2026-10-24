@@ -3089,7 +3089,7 @@
           .replace(/\bdos Paulo\b/gi, "dos Paulos");
       }
       function separarRuaNumeroMapa(base) {
-        const m = String(base || "").trim().replace(/[–—]|\s+-\s+/g, ",").match(/^(.+?)(?:,\s*|\s+)(?:n[ºo°.]*\s*)?(\d+[a-z]?)(?=\s*(?:[,;]|$|\b(?:jd\.?|jardim|bairro|vila|parque|centro|residencial|conjunto|desmembramento|chacara|chácaras?|distrito|polo|nucleo|núcleo|terra\s+nobre|santa\s+rita|noventa|conchal|sp|casa|apto|apartamento|bloco|fundos|ref|referencia)\b))/i);
+        const m = String(base || "").trim().replace(/[–—]|\s+-\s+/g, ",").match(/^(.+?)(?:,\s*|\s+)(?:n[ºo°.]*\s*)?(\d+[a-z]?)(?=\s*(?:[,;]|$|\b(?:jd\.?|jardim|bairro|vila|parque|centro|residencial|conjunto|desmembramento|chacara|chácaras?|distrito|polo|nucleo|núcleo|terra\s+nobre|santa\s+rita|noventa|conchal|agua[ií]?|martinho\s+prado|tujuguaba|iate|engenheiro\s+coelho|art?h?ur\s+nogueira|mogi\s+(?:mirim|gua[cç]u)|araras|americana|limeira|leme|pirassununga|rio\s+claro|campinas|cosm[oó]polis|estiva\s+gerbi|sp|casa|apto|apartamento|bloco|fundos|ref|referencia)\b))/i);
         if (!m || /^(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)$/i.test(m[1].trim())) return null;
         // "Rua dos Colleta, Esperanca 2": o numero pertence ao bairro, nao a casa.
         if (m[1].includes(",") && /[a-z]/i.test(m[1].split(",").pop())) return null;

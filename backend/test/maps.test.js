@@ -65,6 +65,15 @@ test('street city names do not move pickup to another city, and district remains
   assert.equal(context.dicaLocal('Rua Maria 100 Residencial'), '');
 });
 
+test('city typed right after the house number, without comma, is the destination city', () => {
+  assert.equal(context.dicaLocal('Rua Dorival pradela 140 Limeira'), 'limeira');
+  assert.equal(context.dicaLocal('Rua Barao de Jaguara 100 Campinas'), 'campinas');
+  assert.equal(context.dicaLocal('Rua Mogi Mirim 100 Conchal'), 'conchal');
+  const attempts = context.tentativasGeocode('Rua Dorival pradela 140 Limeira');
+  assert.equal(attempts[0].texto, 'Rua Dorival pradela, 140, Limeira, SP, Brasil');
+  assert.ok(attempts.every(item => item.esperado === 'limeira'));
+});
+
 test('passenger street search isolates house and ignores unpunctuated neighborhoods and references',()=>{
   for(const [text,first] of [
     ['rua idalina antunes orsola 256 jd dos palmeiras','rua idalina antunes orsola, 256, Conchal, SP, Brasil'],
