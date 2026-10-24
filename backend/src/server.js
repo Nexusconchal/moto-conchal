@@ -2756,14 +2756,18 @@ function deliveryPublicData(delivery) {
   };
 }
 
+// Grupo do Telegram de cada cidade. Sem o grupo da cidade configurado, o aviso nao sai:
+// mandar para o grupo de Conchal confundiria corrida de uma cidade com outra.
+function telegramGroupChat(city) {
+  if (city === 'aguai') return String(process.env.TELEGRAM_CHAT_ID_AGUAI || '').trim();
+  if (city === 'engenheiro_coelho') return String(process.env.TELEGRAM_CHAT_ID_ENGENHEIRO_COELHO || '').trim();
+  return String(process.env.TELEGRAM_CHAT_ID || '').trim();
+}
+
 async function notifyTelegramAboutRide(rideId, ride) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const city = rideOperatingCity(ride);
-  const chatId = city === 'aguai'
-    ? process.env.TELEGRAM_CHAT_ID_AGUAI || process.env.TELEGRAM_CHAT_ID
-    : city === 'engenheiro_coelho'
-      ? process.env.TELEGRAM_CHAT_ID_ENGENHEIRO_COELHO || process.env.TELEGRAM_CHAT_ID
-      : process.env.TELEGRAM_CHAT_ID;
+  const chatId = telegramGroupChat(city);
   if (!token || !chatId) return { sent: false, skipped: true };
 
   const value = money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -2818,7 +2822,7 @@ async function notifyTelegramAboutDelivery(deliveryId, delivery) {
     return auto.accepted ? auto.telegram : { sent: false, skipped: auto.reason };
   }
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
+  const chatId = telegramGroupChat(deliveryOperatingCity(delivery));
   if (!token || !chatId) return { sent: false, skipped: true };
 
   const value = money(delivery.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -3888,7 +3892,7 @@ function planDeliveryLines(delivery = {}) {
 
 async function notifyTelegramAboutPlanDelivery(deliveryId, delivery) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
+  const chatId = telegramGroupChat(deliveryOperatingCity(delivery));
   if (!token || !chatId) return { sent: false, skipped: true };
   const ganho = deliverySplit(delivery).driverAmount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const message = [
@@ -13096,6 +13100,30 @@ async function supportEvolution(path, method = 'GET', body) {
 
 const supportInstance = String(process.env.EVOLUTION_INSTANCE || '').trim();
 const supportInstancePath = encodeURIComponent(supportInstance);
+// Grupos de motoboys no WhatsApp por cidade. Conchal e o grupo configurado no painel;
+// Aguai e Engenheiro Coelho sao achados pelo convite (o numero do bot precisa estar neles).
+const WHATSAPP_CITY_GROUP_INVITES = {
+  aguai: String(process.env.WHATSAPP_INVITE_AGUAI || 'J158HwE8CqTBxl2sED0p9h').trim(),
+  engenheiro_coelho: String(process.env.WHATSAPP_INVITE_ENGENHEIRO_COELHO || 'CSWASGndxeDGNzulpsks2Y').trim()
+};
+const whatsappCityGroups = new Map();
+async function whatsappGroupFor(city, settings = {}) {
+  if (city === 'conchal') return settings.driverGroupJid || '';
+  const invite = WHATSAPP_CITY_GROUP_INVITES[city];
+  if (!invite) return '';
+  const cached = whatsappCityGroups.get(city);
+  if (cached && cached.until > Date.now()) return cached.jid;
+  let jid = '';
+  try {
+    const info = await supportEvolution(`/group/inviteInfo/${supportInstancePath}?inviteCode=${encodeURIComponent(invite)}`);
+    const id = String(info?.id || info?.groupJid || info?.jid || '');
+    jid = /^\d+(-\d+)?@g\.us$/.test(id) ? id : '';
+  } catch (error) {
+    console.error('whatsapp city group lookup failed', city, String(error?.message || '').slice(0, 120));
+  }
+  whatsappCityGroups.set(city, { jid, until: Date.now() + (jid ? 6 * 3600000 : 10 * 60000) });
+  return jid;
+}
 const geminiSupport = createGeminiSupport({ reserveBudget: () => reserveGeminiQuota(db) });
 const openrouterSupport = createOpenRouterSupport({ reserveBudget: () => reserveSupportAiQuota(db, 'openrouter') });
 const supportAutomation = createSupportAutomation({
@@ -13114,10 +13142,10 @@ const supportAutomation = createSupportAutomation({
   async typing(number) {
     await supportEvolution(`/chat/sendPresence/${supportInstancePath}`, 'POST', { number, delay: 1200, presence: 'composing' });
   },
-  async sendTelegram(job, text) {
-    const city = rideOperatingCity(job);
-    const chat = city === 'aguai' ? process.env.TELEGRAM_CHAT_ID_AGUAI || process.env.TELEGRAM_CHAT_ID
-      : city === 'engenheiro_coelho' ? process.env.TELEGRAM_CHAT_ID_ENGENHEIRO_COELHO || process.env.TELEGRAM_CHAT_ID : process.env.TELEGRAM_CHAT_ID;
+  // Reforcos e lembretes vao so para o grupo da cidade da corrida ou da entrega.
+  groupFor: (job, kind, settings) => whatsappGroupFor(kind === 'entregas' ? deliveryOperatingCity(job) : rideOperatingCity(job), settings),
+  async sendTelegram(job, text, kind) {
+    const chat = telegramGroupChat(kind === 'entregas' ? deliveryOperatingCity(job) : rideOperatingCity(job));
     if (!chat || !process.env.TELEGRAM_BOT_TOKEN) return { sent: false };
     const response = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: 'POST', headers: { 'content-type': 'application/json' },

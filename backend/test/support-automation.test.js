@@ -6,7 +6,7 @@ const NOW = 1800000000000;
 function message(overrides = {}, id = 'message1') {
   return { instance: 'support', event: 'messages.upsert', data: { key: { id, remoteJid: '5519999990000@s.whatsapp.net', fromMe: false, ...overrides }, messageTimestamp: NOW / 1000, message: { conversation: 'Minha corrida está aguardando' } } };
 }
-function harness(isSystemOutgoing = () => false, generateReply = async () => null, failures = {}) {
+function harness(isSystemOutgoing = () => false, generateReply = async () => null, failures = {}, extra = {}) {
   const records = new Map([['configuracoes/atendimentoAutomatico', { enabled: true, groupAlerts: true, driverGroupJid: '123@g.us' }]]);
   const sent = [], telegram = [];
   let time = NOW, lock = Promise.resolve(), beforeRead;
@@ -22,7 +22,7 @@ function harness(isSystemOutgoing = () => false, generateReply = async () => nul
     } }; return query;
   } });
   const db = { collection, batch() { const deletions = []; return { delete: ref => deletions.push(ref.path), commit: async () => { deletions.forEach(path => records.delete(path)); } }; }, runTransaction(callback) { const work = lock.then(() => callback({ get: ref => ref.get(), set: (ref, value, options) => ref.set(value, options) })); lock = work.catch(() => {}); return work; } };
-  const service = createSupportAutomation({ db, instance: 'support', isSystemOutgoing, generateReply, encrypt: value => `encrypted:${value}`, decrypt: value => value.slice('encrypted:'.length), now: () => time, rideExpireMs: 300000, deliveryExpireMs: 900000, sendText: async (phone, text) => { sent.push({ phone, text }); return { sent: !(failures.whatsapp && phone.endsWith('@g.us')), id: `reply${sent.length}` }; }, sendTelegram: async (job, text) => { telegram.push({ job, text }); return { sent: !failures.telegram }; } });
+  const service = createSupportAutomation({ db, instance: 'support', isSystemOutgoing, generateReply, encrypt: value => `encrypted:${value}`, decrypt: value => value.slice('encrypted:'.length), now: () => time, rideExpireMs: 300000, deliveryExpireMs: 900000, sendText: async (phone, text) => { sent.push({ phone, text }); return { sent: !(failures.whatsapp && phone.endsWith('@g.us')), id: `reply${sent.length}` }; }, sendTelegram: async (job, text, kind) => { telegram.push({ job, text, kind }); return { sent: !failures.telegram }; }, ...extra });
   return { service, records, sent, telegram, usage, advance: delta => { time += delta; }, beforeRead: callback => { beforeRead = callback; } };
 }
 
@@ -511,4 +511,27 @@ test('an AI reply claiming acceptance that the ride does not have falls back to 
   const reply = h.sent.find(item => item.phone === '5519999990000').text;
   assert.doesNotMatch(reply, /fica tranquila/);
   assert.match(reply, /Ainda não há motorista confirmado/);
+});
+
+test('group reminders go only to the drivers group of the job city', async () => {
+  const groups = { conchal: '111@g.us', aguai: '222@g.us' };
+  const h = harness(() => false, async () => null, {}, { groupFor: async job => groups[job.cidadeOperacao || 'conchal'] || '' });
+  h.records.set('corridas/c1', { status: 'pendente', criadaEm: NOW - 10000, cidadeOperacao: 'aguai', valor: 9 });
+  h.records.set('corridas/c2', { status: 'pendente', criadaEm: NOW - 10000, valor: 8 });
+  h.records.set('corridas/c3', { status: 'pendente', criadaEm: NOW - 10000, cidadeOperacao: 'engenheiro_coelho', valor: 7 });
+  await h.service.tick();
+  assert.equal(h.sent.filter(item => item.phone === '222@g.us').length, 1);
+  assert.match(h.sent.find(item => item.phone === '222@g.us').text, /c1/);
+  assert.equal(h.sent.filter(item => item.phone === '111@g.us').length, 1);
+  assert.match(h.sent.find(item => item.phone === '111@g.us').text, /c2/);
+  // Engenheiro Coelho has no group here: nothing goes to another city's group.
+  assert.ok(!h.sent.some(item => /c3/.test(item.text)));
+});
+
+test('the Telegram sender knows whether the job is a ride or a delivery', async () => {
+  const h = harness();
+  h.records.set('entregas/e1', { status: 'pendente', criadaEm: NOW - 130000, valor: 9 });
+  await h.service.tick();
+  assert.ok(h.telegram.length >= 1);
+  assert.ok(h.telegram.every(item => item.kind === 'entregas'));
 });

@@ -168,7 +168,7 @@ export function rideFacts(ride, phoneKnown, looked, expireMs, now = Date.now()) 
 }
 
 // This assistant never creates bookings, changes fares or accepts a job.
-export function createSupportAutomation({ db, sendText, encrypt, decrypt = () => '', generateReply = async () => null, instance, rideExpireMs, deliveryExpireMs, sendTelegram, isSystemOutgoing = () => false, markRead = async () => {}, typing = async () => {}, now = () => Date.now() }) {
+export function createSupportAutomation({ db, sendText, encrypt, decrypt = () => '', generateReply = async () => null, instance, rideExpireMs, deliveryExpireMs, sendTelegram, isSystemOutgoing = () => false, markRead = async () => {}, typing = async () => {}, groupFor = async (job, kind, settings) => settings.driverGroupJid || '', now = () => Date.now() }) {
   const configRef = db.collection('configuracoes').doc('atendimentoAutomatico');
   let cache, cacheUntil = 0, ticking = false, lastPrune = 0;
   const completedNotices = new Map(), outgoingEchoes = new Map(), queuedChats = new Set();
@@ -334,7 +334,7 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
       if (action === 'reforco_motoboys' && ride?.status === 'pendente' && settings.groupAlerts) {
         const ref = db.collection(jobKind).doc(ride.id);
         const results = [];
-        if (settings.driverGroupJid) results.push(await notify(ref, jobKind, 'customer', 'whatsapp', settings).catch(() => ({ channel: 'whatsapp', status: 'failed' })));
+        results.push(await notify(ref, jobKind, 'customer', 'whatsapp', settings).catch(() => ({ channel: 'whatsapp', status: 'failed' })));
         results.push(await notify(ref, jobKind, 'customer', 'telegram', settings).catch(() => ({ channel: 'telegram', status: 'failed' })));
         const current = await ref.get().catch(() => null);
         const freshRide = current?.exists ? { ...current.data(), kind: jobKind, id: current.id } : null;
@@ -394,6 +394,9 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
     const job = { ...initial.data(), id: initial.id };
     const expire = kind === 'corridas' ? rideExpireMs : deliveryExpireMs;
     if (!pendingNotice(job, kind, stage, expire, now())) return { channel, status: 'ignored' };
+    // Each city has its own drivers group; without one, nothing is sent (never another city's group).
+    const target = channel === 'whatsapp' ? await groupFor(job, kind, settings).catch(() => '') : '';
+    if (channel === 'whatsapp' && !target) return { channel, status: 'ignored' };
     const marker = db.collection('supportAutomationNotices').doc(hash(`${kind}:${job.id}:${ms(job.criadaEm)}:${stage}:${channel}`));
     const memo = completedNotices.get(marker.id);
     if (memo?.until > now()) return { channel, status: memo.value };
@@ -422,7 +425,7 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
     if (!text) return { channel, status: 'ignored' };
     // At most one attempt: an ambiguous network timeout must not spam a group.
     try {
-      const sent = channel === 'whatsapp' ? await sendText(settings.driverGroupJid, text) : await sendTelegram(fresh, text);
+      const sent = channel === 'whatsapp' ? await sendText(target, text) : await sendTelegram(fresh, text, kind);
       if (channel === 'whatsapp') recordGroupNotice(sent.sent ? 'sent' : 'failed', sent.sent ? '' : sent.reason || 'envio_nao_confirmado');
       await marker.set({ status: sent.sent ? 'sent' : 'failed', completedAt: now() }, { merge: true });
       await lastMarker.set({ status: sent.sent ? 'sent' : 'failed', completedAt: now() }, { merge: true });
@@ -446,10 +449,8 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
         const pending = await db.collection(kind).where('status', '==', 'pendente').get();
         for (const doc of pending.docs) {
           const reminders = kind === 'corridas' ? Array.from({ length: Math.max(0, Math.ceil(rideExpireMs / 120000) - 1) }, (_, index) => index === 0 ? 'reminder' : `reminder-${(index + 1) * 2}m`) : ['reminder'];
-          if (settings.driverGroupJid) {
-            await notify(doc.ref, kind, 'initial', 'whatsapp', settings, doc.data());
-            for (const stage of reminders) await notify(doc.ref, kind, stage, 'whatsapp', settings, doc.data());
-          }
+          await notify(doc.ref, kind, 'initial', 'whatsapp', settings, doc.data());
+          for (const stage of reminders) await notify(doc.ref, kind, stage, 'whatsapp', settings, doc.data());
           for (const stage of reminders) await notify(doc.ref, kind, stage, 'telegram', settings, doc.data());
         }
       }

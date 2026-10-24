@@ -3416,9 +3416,16 @@
           }
         };
         checarMercadoPago();
+        // Grupo de avisos do Telegram da cidade onde o GPS do motoboy esta.
+        const GRUPOS_TELEGRAM_CIDADE = {
+          conchal: "https://t.me/+M49aycYVf_kyZjUx",
+          aguai: "https://t.me/+-4wK_5c2Rks3OTMx",
+          engenheiro_coelho: "https://t.me/+hxfRgsNR1VcxYzVh",
+        };
         $("btn-push").onclick = () => {
           // Open directly in the click gesture; joining must not depend on an API request.
-          location.href = "https://t.me/+M49aycYVf_kyZjUx";
+          const cidade = Object.keys(GRUPOS_TELEGRAM_CIDADE).find((c) => cidadesAtivas[c]) || "conchal";
+          location.href = GRUPOS_TELEGRAM_CIDADE[cidade];
         };
         const sair = $("sair-conta");
         if (sair)
