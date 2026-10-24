@@ -1,4 +1,4 @@
-// Cadastro local de ruas de Conchal-SP.
+// Cadastro local de ruas das cidades atendidas (Conchal, Aguai e Engenheiro Coelho).
 //
 // Fonte principal: IBGE CNEFE (Censo 2022) - todos os enderecos do municipio com
 // numero, bairro, CEP e coordenada. Fonte complementar: OpenStreetMap (nomes com
@@ -8,6 +8,9 @@
 // O objetivo e nunca depender so do mapa externo para achar uma rua de Conchal:
 // o nome digitado (com erro de grafia, sem acento, abreviado) e comparado com a
 // lista oficial e o numero e posicionado com os enderecos reais do IBGE.
+// Os arquivos de todas as cidades usam a mesma origem de coordenadas (BASE_LAT/BASE_LON).
+// Ruas e lugares novos (loteamentos que ainda nao estao no IBGE nem no OSM) ficam em
+// backend/data/extra-<cidade>.txt, preenchido a mao com a coordenada do Google Maps.
 import { readFileSync } from 'node:fs';
 
 const BASE_LAT = -22.33;
@@ -43,9 +46,38 @@ const TITLES = new Set(['doutor', 'doutora', 'professor', 'professora', 'preside
 const BAIRRO_GENERIC = new Set(['jardim', 'vila', 'parque', 'conjunto', 'residencial', 'habitacional', 'bairro', 'chacara', 'chacaras',
   'distrito', 'loteamento', 'condominio', 'recanto', 'nucleo', 'deputado', 'prefeito', 'vereador']);
 const NOT_BAIRRO = /\b(casa|apto|apartamento|ap|bloco|bl|fundos|frente|ref|referencia|perto|proximo|prox|ao lado|esquina|portao|cep|tel|telefone|whats|zap|obs|cliente|entregar|entrega|pagamento|troco|pix|cartao|dinheiro)\b/;
-const OTHER_CITIES = /\b(martinho prado|mogi guacu|mogi mirim|aguai|engenheiro coelho|artur nogueira|arthur nogueira|araras|americana|limeira|leme|pirassununga|rio claro|campinas|cosmopolis|estiva gerbi|santo antonio de posse|holambra)\b/;
+const NEARBY_CITIES = ['martinho prado', 'mogi guacu', 'mogi mirim', 'artur nogueira', 'arthur nogueira', 'araras', 'americana', 'limeira', 'leme',
+  'pirassununga', 'rio claro', 'campinas', 'cosmopolis', 'estiva gerbi', 'santo antonio de posse', 'holambra'];
+
+// aliases: como a propria cidade aparece no texto digitado (e nos bairros do IBGE).
+// places: nomes que levam a busca para o cadastro desta cidade.
+// osmBox: o OSM de Conchal foi baixado por caixa e inclui Martinho Prado e Araras.
+export const GAZETTEER_CITIES = {
+  conchal: { name: 'Conchal', file: 'conchal', cep: '13835000', aliases: ['conchal'], places: ['conchal', 'tujuguaba', 'iate'],
+    osmBox: { minLat: -22.386, maxLat: -22.29, minLon: -47.187, maxLon: -47.15 } },
+  aguai: { name: 'Aguaí', file: 'aguai', cep: '13860000', aliases: ['aguai'], places: ['aguai'] },
+  engenheiro_coelho: { name: 'Engenheiro Coelho', file: 'engenheiro_coelho', cep: '13445000',
+    aliases: ['engenheiro coelho', 'eng coelho', 'engenhero coelho'], places: ['engenheiro coelho', 'eng coelho'] }
+};
 
 export const stripAccents = value => String(value || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+// Cidade do cadastro para um lugar digitado ("tujuguaba" -> conchal). Vazio vale Conchal.
+export function gazetteerCityKey(place = '') {
+  const text = stripAccents(place).replace(/[^a-z_ ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!text) return 'conchal';
+  return Object.keys(GAZETTEER_CITIES).find(key => key === text || GAZETTEER_CITIES[key].places.includes(text)) || null;
+}
+
+const otherCitiesCache = new Map();
+function otherCitiesPattern(cityKey) {
+  if (!otherCitiesCache.has(cityKey)) {
+    const own = GAZETTEER_CITIES[cityKey].places;
+    const others = [...NEARBY_CITIES, ...Object.values(GAZETTEER_CITIES).flatMap(city => city.places)].filter(place => !own.includes(place));
+    otherCitiesCache.set(cityKey, new RegExp(`\\b(${others.join('|')})\\b`));
+  }
+  return otherCitiesCache.get(cityKey);
+}
 
 function rawWords(value) {
   return stripAccents(value).replace(/[º°ª]/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
@@ -188,6 +220,23 @@ export function parseCnefe(text) {
   return streets;
 }
 
+// Linhas "rua|Nome|Bairro|lat,lon" e "lugar|Nome;apelido|Bairro|lat,lon" (coordenada comum, em graus).
+export function parseExtra(text) {
+  const streets = [];
+  const places = [];
+  for (const line of String(text || '').split(/\r?\n/)) {
+    if (!line.trim() || line.startsWith('#')) continue;
+    const [kind, names, bairro = '', point = ''] = line.split('|').map(part => part.trim());
+    const [lat, lon] = point.split(',').map(Number);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    const list = names.split(';').map(name => name.trim()).filter(Boolean);
+    if (!list.length) continue;
+    if (kind === 'rua') streets.push({ name: list[0], alt: list.slice(1), bairro, center: { lat, lon } });
+    else if (kind === 'lugar') places.push({ name: list[0], names: list, bairro, center: { lat, lon } });
+  }
+  return { streets, places };
+}
+
 export function parseOsm(text) {
   return text.split(/\r?\n/).filter(Boolean).map(line => {
     const [name, alt, point] = line.split('|');
@@ -197,14 +246,21 @@ export function parseOsm(text) {
 
 // Separa "Rua X, 120, Bairro" em rua, numero e dicas de bairro. Um numero junto
 // do nome do bairro ("Esperanca 2") nunca e tratado como numero da casa.
-export function parseAddressInput(value) {
+export function parseAddressInput(value, aliases = GAZETTEER_CITIES.conchal.aliases) {
   let text = String(value || '').replace(/\[[^\]]*\]\([^)]*\)/g, ' ').replace(/https?:\/\/\S+/gi, ' ');
   text = text.replace(/\b\d{5}-?\d{3}\b/g, ' ').replace(/\bcep\b/gi, ' ');
   const segments = text.split(/[,;\n|]+|\s[-–—]\s|\s\/\s/).map(part => part.trim()).filter(Boolean);
-  const placeOnly = /^(conchal|sp|s p|sao paulo|estado de sao paulo|brasil|brazil|conchal sp|conchal sao paulo|conchal sp brasil|sp brasil)$/;
+  const city = `(?:${aliases.join('|')})`;
+  const placeOnly = new RegExp(`^(?:${city}(?: sp| sao paulo)?(?: brasil)?|sp|s p|sao paulo|estado de sao paulo|brasil|brazil|sp brasil)$`);
+  // Tira o nome da cidade do fim do trecho ("Rua X 10 Aguaí - SP"); a comparacao ignora acentos.
+  const citySuffix = new RegExp(`\\s+${city}(?:\\s*[-/]?\\s*(?:sp|s\\.p\\.))?(?:\\s+brasil)?\\s*$`, 'i');
+  const withoutCity = part => {
+    const at = stripAccents(part).search(citySuffix);
+    return at >= 0 ? part.slice(0, at) : part;
+  };
   const cleaned = segments
     .filter(part => !placeOnly.test(rawWords(part).join(' ')))
-    .map(part => part.replace(/\s+conchal(?:\s*[-/]?\s*(?:sp|s\.p\.))?(?:\s+brasil)?\s*$/i, '').replace(/\s*[-/]\s*sp\s*$/i, '').replace(/\s+/g, ' ').trim())
+    .map(part => withoutCity(part.replace(/\s+/g, ' ')).replace(/\s*[-/]\s*sp\s*$/i, '').replace(/\s+/g, ' ').trim())
     .filter(Boolean);
   const isTyped = part => !!TYPE_WORDS[canonicalWord(rawWords(part)[0] || '')];
   let streetIndex = cleaned.findIndex(isTyped);
@@ -285,17 +341,30 @@ function numberFit(entry, number) {
   return gap <= 200 ? 0.5 : 0;
 }
 
-export function otherCityRequested(value) {
+export function otherCityRequested(value, cityKey = 'conchal') {
   // O nome da rua pode citar outra cidade (Rua Araras, Rua Mogi Mirim); so o resto do texto indica a cidade.
-  return parseAddressInput(value).otherParts.some(part => OTHER_CITIES.test(stripAccents(part)));
+  return parseAddressInput(value, GAZETTEER_CITIES[cityKey].aliases).otherParts.some(part => otherCitiesPattern(cityKey).test(stripAccents(part)));
 }
 
-export function createConchalGazetteer({ cnefeText, osmText } = {}) {
-  const cnefe = parseCnefe(cnefeText ?? readFileSync(new URL('../data/cnefe-conchal.txt', import.meta.url), 'utf8'));
-  const osm = parseOsm(osmText ?? readFileSync(new URL('../data/osm-conchal.txt', import.meta.url), 'utf8'))
-    // Somente o municipio de Conchal (cidade, Tujuguaba e Iate). Martinho Prado e Araras ficam de fora.
-    .filter(item => item.center.lat >= -22.386 && item.center.lat <= -22.29 && item.center.lon >= -47.187 && item.center.lon <= -47.15);
+function readData(name) {
+  try {
+    return readFileSync(new URL(`../data/${name}`, import.meta.url), 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return '';
+    throw error;
+  }
+}
 
+export function createGazetteer({ city: cityKey = 'conchal', cnefeText, osmText, extraText } = {}) {
+  const city = GAZETTEER_CITIES[cityKey];
+  const ownPlace = new RegExp(`^(?:${city.aliases.join('|')}|zona rural)$`);
+  const box = city.osmBox;
+  const cnefe = parseCnefe(cnefeText ?? readData(`cnefe-${city.file}.txt`));
+  const osm = parseOsm(osmText ?? readData(`osm-${city.file}.txt`))
+    // Somente o municipio (em Conchal: cidade, Tujuguaba e Iate; Martinho Prado e Araras ficam de fora).
+    .filter(item => !box || (item.center.lat >= box.minLat && item.center.lat <= box.maxLat && item.center.lon >= box.minLon && item.center.lon <= box.maxLon));
+
+  const extra = parseExtra(extraText ?? readData(`extra-${city.file}.txt`));
   const osmTokens = osm.map(item => ({ item, names: [item.name, ...item.alt].map(name => tokenize(name)) }));
   const bairroCache = new Map();
   const bairroInfo = name => {
@@ -313,7 +382,52 @@ export function createConchalGazetteer({ cnefeText, osmText } = {}) {
   }
   for (const candidate of osmTokens) {
     const known = entries.some(entry => entry.source !== 'osm' && distanceKm(entry.center, candidate.item.center) < 1.5 && candidate.names.some(tokens => streetNameScore(tokens, entry.names[0]) >= 0.85));
-    if (!known) entries.push({ name: candidate.item.name, display: candidate.item.name, bairro: '', cep: '13835000', center: candidate.item.center, points: [], source: 'osm', names: candidate.names, bairroInfo: bairroInfo('') });
+    if (!known) entries.push({ name: candidate.item.name, display: candidate.item.name, bairro: '', cep: city.cep, center: candidate.item.center, points: [], source: 'osm', names: candidate.names, bairroInfo: bairroInfo('') });
+  }
+
+  for (const street of extra.streets) {
+    entries.push({ name: street.name, display: street.name, bairro: street.bairro, cep: city.cep, center: street.center, points: [], source: 'manual',
+      names: [street.name, ...street.alt].map(name => tokenize(name)), bairroInfo: bairroInfo(street.bairro) });
+  }
+  // Nomes de lugar comparados como frase inteira dentro do texto digitado.
+  const places = extra.places.map(place => ({ ...place, phrases: place.names.map(name => rawWords(name).join(' ')) }))
+    .flatMap(place => place.phrases.map(phrase => ({ place, phrase })))
+    .sort((a, b) => b.phrase.length - a.phrase.length);
+
+  function findPlace(text) {
+    const typed = ` ${rawWords(text).join(' ')} `;
+    return places.find(item => typed.includes(` ${item.phrase} `))?.place || null;
+  }
+
+  function placeFeature(place) {
+    const cep = `${city.cep.slice(0, 5)}-${city.cep.slice(5)}`;
+    const line2 = [place.bairro, `${city.name} - SP`, cep].filter(Boolean).join(', ');
+    return {
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [place.center.lon, place.center.lat] },
+      properties: {
+        lat: place.center.lat,
+        lon: place.center.lon,
+        name: place.name,
+        suburb: place.bairro || undefined,
+        district: place.bairro || undefined,
+        city: city.name,
+        county: city.name,
+        state: 'São Paulo',
+        state_code: 'SP',
+        country: 'Brasil',
+        country_code: 'br',
+        postcode: cep,
+        result_type: 'amenity',
+        formatted: `${place.name} - ${line2}`,
+        address_line1: place.name,
+        address_line2: line2,
+        match_confirmed: true,
+        match_source: 'manual',
+        match_precision: 'lugar',
+        match_score: 1
+      }
+    };
   }
 
   function scoreEntries(streetText) {
@@ -325,11 +439,11 @@ export function createConchalGazetteer({ cnefeText, osmText } = {}) {
   }
 
   function toFeature(entry, point, parsed, score) {
-    const bairro = entry.bairro && !/^(conchal|zona rural)$/i.test(entry.bairro) ? titleCase(entry.bairro) : '';
+    const bairro = entry.bairro && !ownPlace.test(stripAccents(entry.bairro)) ? titleCase(entry.bairro) : '';
     const street = entry.display;
     const cep = entry.cep ? `${entry.cep.slice(0, 5)}-${entry.cep.slice(5)}` : '';
     const line1 = parsed.number ? `${street}, ${parsed.number}` : street;
-    const line2 = [bairro, 'Conchal - SP', cep].filter(Boolean).join(', ');
+    const line2 = [bairro, `${city.name} - SP`, cep].filter(Boolean).join(', ');
     return {
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [point.lon, point.lat] },
@@ -340,8 +454,8 @@ export function createConchalGazetteer({ cnefeText, osmText } = {}) {
         ...(parsed.number ? { housenumber: parsed.number } : {}),
         suburb: bairro || undefined,
         district: bairro || undefined,
-        city: 'Conchal',
-        county: 'Conchal',
+        city: city.name,
+        county: city.name,
         state: 'São Paulo',
         state_code: 'SP',
         country: 'Brasil',
@@ -359,11 +473,19 @@ export function createConchalGazetteer({ cnefeText, osmText } = {}) {
     };
   }
 
-  // Resolve um endereco de Conchal. Retorna { features, ambiguous, suggestions }.
-  function search(text, { limit = 1 } = {}) {
+  // Resolve um endereco da cidade. Retorna { features, ambiguous, suggestions }.
+  // Rua com nome conhecido vence; sem rua, um lugar cadastrado a mao ("condominio monte real").
+  function search(text, options = {}) {
+    const result = searchStreet(text, options);
+    if (result.features.length || !text) return result;
+    const place = findPlace(text);
+    return place && !otherCitiesPattern(cityKey).test(stripAccents(text)) ? { features: [placeFeature(place)], suggestions: [] } : result;
+  }
+
+  function searchStreet(text, { limit = 1 } = {}) {
     if (!text) return { features: [], suggestions: [] };
-    const parsed = parseAddressInput(text);
-    if (parsed.otherParts.some(part => OTHER_CITIES.test(stripAccents(part)))) return { features: [], suggestions: [] };
+    const parsed = parseAddressInput(text, city.aliases);
+    if (parsed.otherParts.some(part => otherCitiesPattern(cityKey).test(stripAccents(part)))) return { features: [], suggestions: [] };
     if (!parsed.street) return { features: [], suggestions: [] };
     const interpretations = [parsed];
     // "Rua X Esperanca 2" sem virgula: o fim pode ser o bairro.
@@ -405,7 +527,7 @@ export function createConchalGazetteer({ cnefeText, osmText } = {}) {
     // Mesmo nome em lugares distantes (ex.: "Rua Um" em bairros diferentes) sem bairro ou numero que decida.
     const far = sameStreet.find(item => item !== sameStreet[0] && item.final >= sameStreet[0].final - 0.03 && distanceKm(item.entry.center, chosen.center) > 1.5);
     if (far) {
-      return { features: [], ambiguous: true, suggestions: [...new Set(sameStreet.filter(item => item.final >= sameStreet[0].final - 0.03).map(item => `${item.entry.display} - ${titleCase(item.entry.bairro || 'Conchal')}`))].slice(0, 4) };
+      return { features: [], ambiguous: true, suggestions: [...new Set(sameStreet.filter(item => item.final >= sameStreet[0].final - 0.03).map(item => `${item.entry.display} - ${titleCase(item.entry.bairro || city.name)}`))].slice(0, 4) };
     }
     const point = interpolate(chosen, best.interpretation.number);
     const features = [toFeature(chosen, point, best.interpretation, best.top.score)];
@@ -415,11 +537,21 @@ export function createConchalGazetteer({ cnefeText, osmText } = {}) {
     return { features, suggestions };
   }
 
-  return { search, size: entries.length, entries };
+  return { search, size: entries.length, entries, city: cityKey, cityName: city.name };
 }
 
-let shared = null;
+export const createConchalGazetteer = options => createGazetteer({ ...options, city: 'conchal' });
+
+const shared = new Map();
+// Cadastro carregado uma vez por cidade; null quando a cidade nao tem arquivo.
+export function gazetteerFor(cityKey) {
+  if (!shared.has(cityKey)) {
+    const gazetteer = GAZETTEER_CITIES[cityKey] ? createGazetteer({ city: cityKey }) : null;
+    shared.set(cityKey, gazetteer && gazetteer.size ? gazetteer : null);
+  }
+  return shared.get(cityKey);
+}
+
 export function conchalGazetteer() {
-  if (!shared) shared = createConchalGazetteer();
-  return shared;
+  return gazetteerFor('conchal');
 }

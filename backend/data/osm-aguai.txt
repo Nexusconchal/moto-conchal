@@ -1,0 +1,367 @@
+Acesso ao Estádio Municipal||27053,18922
+Avenida Adolfo Simon||26514,19322
+Avenida Alberto Kendi Fukugatti||26246,17905
+Avenida Ana Milanez Vasconcelos||27179,17454
+Avenida Azevedo Marques||27505,18272
+Avenida Bela Vista||26197,18305
+Avenida Doutor Leonardo Guaranha||27473,17924
+Avenida Francisco Gonçalves||27814,18655
+Avenida José Francisco Selber||28346,18536
+Avenida Marginal||28947,18890
+Avenida Maria Nery Rabelo Mariquinha||28651,17461
+Avenida Miguel Biazzo||27199,19405
+Avenida Nova América||26517,19457
+Avenida Olinda Silveira Cruz Braga||27181,17773
+Avenida Orestes Duarte||27306,19761
+Avenida Presidente Castelo Branco||26672,18403
+Avenida Rui Barbosa||26505,18430
+Avenida Sandoval Azevedo||28117,19039
+Avenida do Aeroporto||24858,18747
+Calçadão Ceasinha||27209,17677
+Calçadão da Praça Bom Jesus||27208,18095
+Calçadão da Secretaria de Educação||27099,18495
+Caminho ao Cristo||27452,17302
+Entrada de Veículos||27247,17481
+Estrada Municipal Aguaí-Casa Branca||27814,16804
+Estrada Municipal||27732,20120
+Estrada do Tanque||24529,18153
+Local de caminhada||27384,17350
+Pasasgem de Linha 2||26679,18387
+Passagem Linha 3 do Trem Vila Rehder||26502,18450
+Passagem Linha 4||26267,18527
+Passagem de Linha 1||26867,18318
+Praça Edgar Goes Monteiro||26714,17950
+Praça Maria Beni||27499,17971
+Rodovia Deputado Ciro Albuquerque||29380,8422
+Rodovia Deputado Mario Beni||21751,15773
+Rodovia Dom Tomás Vaquero||30751,28460
+Rodovia Limite Perimetro||26165,17870
+Rodovia Professor Boanerges Nogueira de Lima||27338,13146
+Rodovia Vereador Rubens Leme Asprino||28034,22087
+Rua 1||28244,18691
+Rua 4||28374,18897
+Rua Acácio Alves Rezende|Rua 17|29136,17771
+Rua Adalto Batista Mariano||29075,17927
+Rua Adelino Miguel||27788,19958
+Rua Adelmo Sereni Neves||26711,19080
+Rua Ademar Célia||26511,18884
+Rua Albertina F. Valim||28211,17960
+Rua Alde Alencar||26666,18546
+Rua Alexandrino de Alencar||26676,17829
+Rua Alfredo Gnann||27825,20061
+Rua Alfredo Kühl||26920,18804
+Rua Alice Teixeira Rosa||24875,18630
+Rua Almirante Tamandaré||27208,18352
+Rua Amabille Vanucci Costa||26474,19374
+Rua Amélia Selver Milanez||27582,19650
+Rua Amércio Lotufo||28196,18523
+Rua Américo Vanucci||26967,18732
+Rua Ana C. Vallim||27451,19924
+Rua Ana Euclides S. Cruz||26936,17829
+Rua Ana Euclides Silveira Cruz||26978,17789
+Rua Ana Simon Alonso||28413,18248
+Rua Angustias Perez Jaime||27146,17192
+Rua Anteor Pereira|Rua 13|29029,17832
+Rua Antonieta Destro||26459,19487
+Rua Antônio Brunheroto||27738,15841
+Rua Antônio José Oliveira||28334,17893
+Rua Antônio Rodrigues Pinto||27698,17867
+Rua Antônio Serrate||27306,19761
+Rua Antônio Silvio Barbosa||26689,18839
+Rua Antônio Vasconcelos||26767,17315
+Rua Antônio Vicinanci||26529,19217
+Rua Antônio da Silva Pancieli||27903,20161
+Rua Antônio de Freitas||27494,19801
+Rua Aparecida A. Martucci||26836,18934
+Rua Aparecida Ferraira Pinola||24771,18560
+Rua Aparecida Valim Freitas||28346,17597
+Rua Aparecida Ángelo Franco||27425,19146
+Rua Aparecida Ângelo Franco||27160,19130
+Rua Aparecido Antônio de Souza||28464,18218
+Rua Argemiro Acaiaba||27441,18669
+Rua Armando Vazoni||28070,18645
+Rua Armando Veraldi||26575,19188
+Rua Assendelft|Rua 4|28311,18309
+Rua Augusto Araium||26542,19129
+Rua Augusto M. Cunha||26736,19520
+Rua Augusto Rehder||26535,18665
+Rua Augusto Simon||26534,17768
+Rua Augusto Sorengen||26708,18961
+Rua Augusto Ângelo Amaral||27474,19296
+Rua Avenida Um||27476,16051
+Rua Bartolomeu de Gusmão||27517,18771
+Rua Barão do Rio Branco||26864,17820
+Rua Beatriz C. Alonso||28666,17749
+Rua Beco Legaspe||27339,17939
+Rua Benedita D. Gandolei||27576,19503
+Rua Benedita P Landiva||28745,18429
+Rua Benedito Ferreira da Silva||28553,18625
+Rua Benedito G. Oliveira||26903,19473
+Rua Benedito Kuhl||28990,18415
+Rua Benedito Oliveira||28642,18319
+Rua Benedito Paula da Silva||27395,19657
+Rua Benedito Rabelo Carvalho||26939,16982
+Rua Benjamin Constant||27473,17865
+Rua Bertolino Dutra do Nascimento||24682,18690
+Rua Blas Castelo Corbelhe||27504,16098
+Rua Brazilino de Oliveira Valim||28455,17712
+Rua Bruno Bulgareli||27860,19047
+Rua B||25391,17297
+Rua Candinho Rocha||26911,19203
+Rua Capitão Silva Borges||27284,18579
+Rua Carlos Alberto M. de Moraes||27775,17725
+Rua Carlos Gomes||27113,18432
+Rua Carlos Rehder||26205,18658
+Rua Carlos de Campos||26503,18303
+Rua Carlota Rehder||26445,18573
+Rua Carmine Prefeto||26795,18978
+Rua Carolina Silveira||28011,18647
+Rua Clarice Motta Moro||26945,17489
+Rua Comissário Joaquim Rodrigues de Freitas||29463,17793
+Rua Consolação||27521,18917
+Rua Cozinha Piloto Almirante Barroso||26584,18057
+Rua D. Pedro II||26770,17592
+Rua Dom Pedro II||26774,18336
+Rua Domingos Destro Sobrinho||26686,19255
+Rua Dona Amelia||27546,17919
+Rua Dona Biloca||26768,17386
+Rua Dona Genoveva||26394,17981
+Rua Doutor José Dell A. C. Lyrio||26752,18923
+Rua Doutor Juiz Natal N. Vargas||26500,19054
+Rua Doutor Lázaro Legaspe||28464,18218
+Rua Doutor Ricardo M. Barbosa||27355,19855
+Rua Doutor Waldomiro Osório Valim||27148,18801
+Rua Doutores Paulo e Rodolfo Lanzone||26951,19039
+Rua Doze||28942,18414
+Rua Durval Reis||26703,19481
+Rua Edna Veraldi Barzina|Rua 5|28840,18054
+Rua Eduardo Alonso||28644,18189
+Rua Eduardo Pereira Rangel||27620,17727
+Rua Eleodoro Mateus de Moraes||27845,18565
+Rua Elias F. Rodrigues||27395,19657
+Rua Emilio Augusto Frederico Kuhl||29040,18415
+Rua Ercelinda de S. Noronha||29453,17732
+Rua Ercilia Cruz Ramos||27750,19445
+Rua Ercília Cruz Ramos||27529,19455
+Rua Ercílio Nello Bertachi||27845,18565
+Rua Ernani Franco||26944,17441
+Rua Esperidião Saturnino Pereira||27546,19909
+Rua Ester Braga||27351,19759
+Rua Etore Bonaretti||27686,19547
+Rua Ettore Bonaretti||27702,19867
+Rua Expedicionário José Phelippe Garcia||29375,17569
+Rua Expedicionário José Ramos||26945,17539
+Rua E||26188,17863
+Rua Fabrício Reis||26943,17346
+Rua Fernando Asprino||27815,20271
+Rua Fioravan Perine||28444,17868
+Rua Francisca Gonzales Casanova||27809,19682
+Rua Francisca Paula R Pinto||27736,20172
+Rua Francisco Alves||28141,18641
+Rua Francisco Antônio Poletti||27552,17657
+Rua Francisco Biazzo||27141,19516
+Rua Francisco Chagas||28346,17597
+Rua Francisco Guilherme||26950,17978
+Rua Francisco Lotufo||26287,18226
+Rua Francisco Martucci||27168,19765
+Rua Francisco Mattar||26556,18738
+Rua Francisco de Brito||28478,17906
+Rua Fábio de A. Mendes||28453,18465
+Rua General Carneiro||27340,18285
+Rua General Osório||26949,17902
+Rua Geni Biaganholi||26821,19348
+Rua Geraldo Araújo||24799,18624
+Rua Geraldo Sorg||27406,17798
+Rua Gilmar Vilanova Rodrigues||25752,17561
+Rua Gracinda da Costa||27530,16151
+Rua Gregório Defente||27532,19554
+Rua Heitor Paulo Silva||27876,20006
+Rua Helena Legaspe Costa||28788,18084
+Rua Henrique Alves dos Santos Barbosa||28124,18107
+Rua Henrique Castelo||26867,17102
+Rua Herculano de Brito||26943,17393
+Rua Hermínia R. Povoa||28297,18274
+Rua Hermínio Franciosi||28530,17763
+Rua Hugo Serini||28109,18016
+Rua Humberto Perina||24709,18436
+Rua H||25375,17300
+Rua Ibrahim Gonçalves Damasceno||28520,18199
+Rua Iracema Garcia||24742,18498
+Rua Itália S. Mosca||29269,17964
+Rua Ivo Patrocinio Perillo||28601,18627
+Rua Joaquim Castanheira||27520,19292
+Rua Joaquim Giraldi||28478,17906
+Rua Joaquim José||27110,18252
+Rua Joaquim Paula Cruz||26583,17905
+Rua Joaquim Simões||28286,17788
+Rua Joaquim de Souza||26797,19074
+Rua Josefina Benedita Franco Paulino||27556,16202
+Rua José Alves||27532,19554
+Rua José Antônio Rodrigues Ledo||28271,18411
+Rua José Bonifácio||27282,18504
+Rua José Coimbra||27402,19037
+Rua José Costa Duarte||27582,19599
+Rua José Cwey Magalhães||28542,18379
+Rua José Edgar Alonso||27526,19131
+Rua José F. Célia||26856,17173
+Rua José Franco Oliveira||26665,19130
+Rua José Franco de Oliveira||26821,19348
+Rua José Higino de Freitas||28458,17548
+Rua José Jacinto Martucci||29406,17623
+Rua José Janhel||26605,18518
+Rua José Legaspe||27622,17868
+Rua José Luiz Baldin||29280,18026
+Rua José Mariano Santos||24884,18800
+Rua José Marrichi||26770,17592
+Rua José Martucci||26335,18709
+Rua José Rodrigues Freitas||26289,18385
+Rua José Simões||29233,17664
+Rua José T. de Moraes||27620,19301
+Rua João Alfredo||27579,18769
+Rua João Antônio Vali Fukugati||28698,18624
+Rua João Azevedo Borges||28892,18416
+Rua João Barbosa||28317,18574
+Rua João Batista Célia||26939,17031
+Rua João Batista Miossi Miguel||29496,17488
+Rua João Biazzo||27140,19462
+Rua João Cassiano||27256,19712
+Rua João Celia||26445,18573
+Rua João Francisco Célia||29186,18415
+Rua João Gnam||28593,18220
+Rua João Martucci||28718,18199
+Rua João Mauch da Silva||28797,18417
+Rua João O. de Oliveira Filho||29475,17854
+Rua João Parizi Jeová||26782,19478
+Rua João Paulo B da Silva||26776,18506
+Rua João Pereira Rangel||24622,18407
+Rua João Teixeira||26408,18587
+Rua João de Oliveira||28510,18158
+Rua João Ângelo||27430,19308
+Rua Juca Pinto||27722,18841
+Rua Juiz Doutor Jacinto Elias Rocha Brito||26594,18855
+Rua Júlio Braido||27215,19813
+Rua Júlio Duarte||26493,18824
+Rua Legaspe||27340,17973
+Rua Leonardo Lotufo||27551,17548
+Rua Lolo Neto||27006,17755
+Rua Lourenço Giacomini||26964,18662
+Rua Luiz Osório dos Reis||28281,17933
+Rua Luiz P. de Vasconcelos||24946,18622
+Rua Major Braga||27109,18145
+Rua Major Jacinto Elias||27512,18573
+Rua Manoel Sanches||28438,18437
+Rua Manoela Pereira Parizi||28404,17572
+Rua Mané Gasolina|Rua 11|29195,18175
+Rua Marciano Garcia||27860,18978
+Rua Marco A. M. Nascimento||28281,18244
+Rua Marechal Deodoro||27621,17796
+Rua Marechal Floriano Peixoto||27284,18579
+Rua Margarida Maria Simões|Rua 9|29022,17957
+Rua Maria Aparecida Cesquim Perillo||28651,18625
+Rua Maria Inês Fraglione||28700,17874
+Rua Maria J. Paulo II||26947,17684
+Rua Maria Nery Rabelo|Rua 1|28958,18007
+Rua Maria Prefeto||26686,19255
+Rua Maria Sereni||26449,18972
+Rua Maria Tereza Moreira Neves||27883,20108
+Rua Maria Triestino Rizzo||26537,18679
+Rua Marieta Moro||26582,17830
+Rua Marino Martucci||26811,18667
+Rua Mario Valins||24853,18886
+Rua Mary Ischiama Ichitano||27873,19979
+Rua Matheus Biazzo||27141,19516
+Rua Matilde de Oliveira||27569,19303
+Rua Miguel Biazzo Miguelito||27797,19192
+Rua Miguel Oliveira||28451,18192
+Rua Miguel Ângelo||27229,19320
+Rua Militão Ernesto||27544,19848
+Rua Milton José César Rezende||26985,19132
+Rua Milton Legaspe Barbosa||24589,18345
+Rua Mário Moro||27488,19654
+Rua Nair Diniz dos Reis|Rua 2|28891,18245
+Rua Nazareno Fraglione||28946,18076
+Rua Neli Raquel G. Alves||26947,17732
+Rua Nenê Germano||28617,17868
+Rua Nestor M. de Moraes||28931,18236
+Rua Ney Braga||27526,19047
+Rua Nho dos Reis||26365,19187
+Rua Nicola Carina||28183,18373
+Rua Nicolau D Alma||26676,17753
+Rua Olinda Rosa Alonso||28229,17812
+Rua Olímpio Barbosa||27910,18564
+Rua Olímpio Pereira||26670,18908
+Rua Onofre Ferreira Silva||28647,17689
+Rua Orlando Barsotine||28357,18036
+Rua Orlando Leopoldino||28578,17914
+Rua Osvaldo Martins||27739,20224
+Rua Osvaldo Moro||26453,18978
+Rua Oswaldo Bordin||28892,18625
+Rua Osório Barbosa||26769,17523
+Rua Osório Duarte||27490,19705
+Rua Otaviano M. de Oliveira||28577,18321
+Rua Padre Geraldo Lourenço||26614,19257
+Rua Paschoalino Canela||28845,18415
+Rua Paulo Alonso Reis||27792,17968
+Rua Paulo de Campos||27790,19887
+Rua Pedro Augusto||26740,17159
+Rua Pedro Polett||28413,18248
+Rua Pedro Souza Fernandes||28767,18171
+Rua Pilade Zoldan||24742,18658
+Rua Pompílio Valim||26599,18587
+Rua Prefeito Calimerio de Oliveira Valim||24969,18810
+Rua Prefeito José Mamede "Juca"||27071,19134
+Rua Professor Caetano Célia||26887,18966
+Rua Professor Luiz C. Simon||27588,19129
+Rua Professor Marco A. Mendonça||28840,18054
+Rua Professor Maria Wilma Simon Neves||24799,18624
+Rua Professor Nicanor M. Lino||26768,17456
+Rua Professora Albertina Pelegrin||26581,17706
+Rua Rafael Martins Roca||28401,17898
+Rua Reinaldo Rodrigues||28418,18716
+Rua Renato Dias Lacerda||27440,19558
+Rua Ribeiro de Barros||27659,18912
+Rua Rita Rosa Arantes||24857,18594
+Rua Rodolfo Alonso||27256,19712
+Rua Rodolfo José Alonso||28361,18276
+Rua Rogélia Gallardo Alonso|Rua I|25762,17797
+Rua Rubem F. Braga||28275,18013
+Rua Saldanha da Gama||26502,18058
+Rua Salvador Dezena||27587,16247
+Rua Sandro C. Pedro||28752,17621
+Rua Santos Dumont||27441,18669
+Rua Sete de Setembro||27055,17977
+Rua Sinésio C. Reis||27314,19454
+Rua São Judas Tadeu||27378,19212
+Rua Sílvio Cheregati||28369,17895
+Rua Teresa Trebeschi||26659,18768
+Rua Teófilo Rodrigues||27215,19813
+Rua Treze de Maio|Rua 13 de Maio|27364,18777
+Rua Valins||27527,18050
+Rua Valter de Freitas Serrate|Rua 15|29131,17898
+Rua Valério Braido||28287,17620
+Rua Venerando Ribeiro do Valle||28593,18220
+Rua Vera Veraldi Camargo||24780,18739
+Rua Vereador Antônio José Célia||26517,19457
+Rua Vereador Antônio Póvoa||26901,19088
+Rua Vereador Antônio de Souza||26195,18463
+Rua Vereador Argemiro C. Alexandre||29269,17964
+Rua Vereador Benedito de Melo||27665,19054
+Rua Vereador Carlos Norberto Teixeira||28683,17813
+Rua Vereador José Afonso||26857,17245
+Rua Vereador José Alonso||26946,17635
+Rua Vereador José Bordim||27580,18845
+Rua Vereador José Costa Nogueira||28897,18023
+Rua Vereador João Silva||27000,18294
+Rua Vereador Nilo de Souza||26946,17586
+Rua Vereador Oscar Costa||29083,17802
+Rua Vereador Pedro Sorci||26703,19481
+Rua Vereador Ramiro Defende||29463,17793
+Rua Vereador Ulices Rangel||29511,18038
+Rua Vitor dos Santos|Rua 19|29191,17742
+Rua Walter Aparecido Aguiar||28942,18414
+Rua Wanderlei Lopes Garrido||28577,17658
+Rua Washington Luiz||26585,18224
+Rua Wilson Barbosa Braga|Estr. Municipal|28668,17969
+Rua XV de Novembro||27211,18507
+Rua da Rodoviaria||27268,17834
+Travessa Major Braga||27797,18244

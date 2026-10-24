@@ -2995,7 +2995,8 @@
       function localConfereDica(origem, resultado, esperadoTentativa = "") {
         const esperado =
           localEsperado(origem) || esperadoTentativa || "conchal";
-        return textoBusca(resultado).includes(esperado);
+        // "engenheiro_coelho" (chave da cidade) vira "engenheiro coelho" para comparar com o mapa.
+        return textoBusca(resultado).includes(esperado.replace(/_/g, " "));
       }
       function resultadoEnderecoConfiavel(entrada, props, formatado) {
         // Mesma palavra do nome da rua, tolerando letra dobrada (Pradela/Pradella),
@@ -3017,7 +3018,7 @@
           return diferencas + (x.length - i) + (y.length - j) <= 1;
         }
         // Rua conferida no cadastro oficial de Conchal (IBGE + OSM) pelo servidor.
-        if (props && props.match_confirmed === true && ["ibge-cnefe-2022", "osm"].includes(props.match_source)) return true;
+        if (props && props.match_confirmed === true && ["ibge-cnefe-2022", "osm", "manual"].includes(props.match_source)) return true;
         const normalizar = normalizarNomeRuaMapa;
         const texto = normalizar(entrada);
         if (["city", "county", "state", "country", "postcode", "district", "suburb"].includes(props.result_type)) return false;

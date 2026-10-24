@@ -1,19 +1,25 @@
-// Regenera o cadastro local de ruas de Conchal-SP usado pela busca de enderecos.
+// Regenera o cadastro local de ruas das cidades atendidas usado pela busca de enderecos.
 //
-//   npm run gazetteer:build
+//   npm run gazetteer:build                  (todas as cidades)
+//   npm run gazetteer:build -- aguai         (so uma cidade)
 //
 // Fontes:
-//   - IBGE CNEFE Censo 2022, municipio 3512209 (Conchal): todos os enderecos com
-//     numero, bairro, CEP e coordenada.
+//   - IBGE CNEFE Censo 2022 do municipio: todos os enderecos com numero, bairro,
+//     CEP e coordenada.
 //   - OpenStreetMap (Overpass): nomes com acento e ruas que o IBGE ainda nao tem.
 //
-// Gera backend/data/cnefe-conchal.txt e backend/data/osm-conchal.txt.
+// Gera backend/data/cnefe-<cidade>.txt e backend/data/osm-<cidade>.txt.
 import { writeFileSync } from 'node:fs';
 import { inflateRawSync } from 'node:zlib';
 
-const CNEFE_URL = 'https://ftp.ibge.gov.br/Cadastro_Nacional_de_Enderecos_para_Fins_Estatisticos/Censo_Demografico_2022/Arquivos_CNEFE/CSV/Municipio/35_SP/3512209_CONCHAL.zip';
-const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
-const OVERPASS_QUERY = '[out:json][timeout:90];way["highway"]["name"](-22.44,-47.30,-22.24,-47.08);out tags geom;';
+const CNEFE_BASE = 'https://ftp.ibge.gov.br/Cadastro_Nacional_de_Enderecos_para_Fins_Estatisticos/Censo_Demografico_2022/Arquivos_CNEFE/CSV/Municipio/35_SP/';
+const OVERPASS_URLS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+// Conchal usa uma caixa (o arquivo e filtrado ao carregar); as outras cidades usam o limite do municipio no OSM.
+const CITIES = {
+  conchal: { zip: '3512209_CONCHAL.zip', overpass: '[out:json][timeout:90];way["highway"]["name"](-22.44,-47.30,-22.24,-47.08);out tags geom;' },
+  aguai: { zip: '3500303_AGUAI.zip', overpass: '[out:json][timeout:90];area["IBGE:GEOCODIGO"="3500303"]->.a;way["highway"]["name"](area.a);out tags geom;' },
+  engenheiro_coelho: { zip: '3515152_ENGENHEIRO_COELHO.zip', overpass: '[out:json][timeout:90];area["IBGE:GEOCODIGO"="3515152"]->.a;way["highway"]["name"](area.a);out tags geom;' }
+};
 const BASE_LAT = -22.33;
 const BASE_LON = -47.16;
 const TOLERANCE_METERS = 20;
@@ -55,8 +61,8 @@ function simplify(points) {
   return keep;
 }
 
-async function buildCnefe() {
-  const response = await fetch(CNEFE_URL);
+async function buildCnefe(city) {
+  const response = await fetch(CNEFE_BASE + city.zip);
   if (!response.ok) throw new Error(`IBGE respondeu ${response.status}`);
   const csv = unzipFirstFile(Buffer.from(await response.arrayBuffer()));
   const [header, ...lines] = csv.split(/\r?\n/).filter(Boolean);
@@ -99,8 +105,13 @@ async function buildCnefe() {
   return `#bairros\n${bairros.join('\n')}\n#ruas\n${rows.join('\n')}`;
 }
 
-async function buildOsm() {
-  const response = await fetch(`${OVERPASS_URL}?data=${encodeURIComponent(OVERPASS_QUERY)}`);
+async function buildOsm(city) {
+  // O servidor principal do Overpass as vezes responde 502/504; tenta o espelho.
+  let response;
+  for (const url of OVERPASS_URLS) {
+    response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'motoja-gazetteer/1.0 (nexusmotoja.com.br)' }, body: `data=${encodeURIComponent(city.overpass)}` });
+    if (response.ok) break;
+  }
   if (!response.ok) throw new Error(`Overpass respondeu ${response.status}`);
   const data = await response.json();
   const byName = new Map();
@@ -122,13 +133,17 @@ async function buildOsm() {
   }).sort().join('\n');
 }
 
-const cnefe = await buildCnefe();
-writeFileSync(new URL('../data/cnefe-conchal.txt', import.meta.url), cnefe);
-console.log(`IBGE: ${cnefe.split('\n').length} linhas gravadas`);
-try {
-  const osm = await buildOsm();
-  writeFileSync(new URL('../data/osm-conchal.txt', import.meta.url), osm);
-  console.log(`OSM: ${osm.split('\n').length} ruas gravadas`);
-} catch (error) {
-  console.warn(`OSM nao atualizado (${error.message}); o arquivo anterior foi mantido.`);
+const wanted = process.argv.slice(2);
+for (const [key, city] of Object.entries(CITIES)) {
+  if (wanted.length && !wanted.includes(key)) continue;
+  const cnefe = await buildCnefe(city);
+  writeFileSync(new URL(`../data/cnefe-${key}.txt`, import.meta.url), cnefe);
+  console.log(`${key} IBGE: ${cnefe.split('\n').length} linhas gravadas`);
+  try {
+    const osm = await buildOsm(city);
+    writeFileSync(new URL(`../data/osm-${key}.txt`, import.meta.url), osm);
+    console.log(`${key} OSM: ${osm.split('\n').length} ruas gravadas`);
+  } catch (error) {
+    console.warn(`${key} OSM nao atualizado (${error.message}); o arquivo anterior foi mantido.`);
+  }
 }

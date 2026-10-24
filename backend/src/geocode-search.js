@@ -1,21 +1,21 @@
 import { addressFeatureMatches, mapSearchText, streetNumber } from './address-search.js';
-import { conchalGazetteer, otherCityRequested } from './conchal-gazetteer.js';
+import { GAZETTEER_CITIES, gazetteerCityKey, gazetteerFor, otherCityRequested } from './conchal-gazetteer.js';
 
-const LOCAL_PLACES = new Set(['', 'conchal', 'tujuguaba', 'iate']);
-const plain = value => String(value || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
-
-function defaultGazetteer() {
+function defaultGazetteer(cityKey) {
   try {
-    return conchalGazetteer();
+    return gazetteerFor(cityKey);
   } catch (error) {
-    console.error('Cadastro local de ruas de Conchal indisponivel:', error.message);
+    console.error(`Cadastro local de ruas de ${GAZETTEER_CITIES[cityKey].name} indisponivel:`, error.message);
     return null;
   }
 }
 
-// Busca primeiro no cadastro oficial de ruas de Conchal (IBGE + OSM) e so depois no Geoapify.
-export function lookupConchalAddress(gazetteer, text, city = 'Conchal') {
-  if (!gazetteer || !LOCAL_PLACES.has(plain(city)) || otherCityRequested(text)) return null;
+// Busca primeiro no cadastro oficial de ruas da cidade (IBGE + OSM) e so depois no Geoapify.
+// Conchal, Aguai e Engenheiro Coelho tem cadastro; as outras cidades vao direto ao Geoapify.
+export function lookupLocalAddress(gazetteer, text, city = 'Conchal') {
+  const cityKey = gazetteerCityKey(city);
+  if (!gazetteer || !cityKey || gazetteer.city && gazetteer.city !== cityKey || otherCityRequested(text, cityKey)) return null;
+  const cityName = GAZETTEER_CITIES[cityKey].name;
   const result = gazetteer.search(text);
   if (result.features.length) return { type: 'FeatureCollection', features: result.features, source: 'conchal-local' };
   if (result.ambiguous) {
@@ -25,20 +25,22 @@ export function lookupConchalAddress(gazetteer, text, city = 'Conchal') {
       source: 'conchal-local',
       ambiguous: true,
       suggestions: result.suggestions,
-      message: `Encontrei mais de uma rua parecida em Conchal: ${result.suggestions.join('; ')}. Digite o nome completo da rua e o bairro.`
+      message: `Encontrei mais de uma rua parecida em ${cityName}: ${result.suggestions.join('; ')}. Digite o nome completo da rua e o bairro.`
     };
   }
-  return { type: 'FeatureCollection', features: [], suggestions: result.suggestions };
+  return { type: 'FeatureCollection', features: [], suggestions: result.suggestions, cityName };
 }
+export const lookupConchalAddress = lookupLocalAddress;
 
 // Memory only: repeated searches do not consume Firebase reads or writes.
 export function createGeocodeSearch({ fetchImpl = fetch, maxEntries = 500, now = Date.now, gazetteer } = {}) {
   const cache = new Map();
   const pending = new Map();
-  let local = gazetteer;
-  const localGazetteer = () => {
-    if (local === undefined) local = defaultGazetteer();
-    return local;
+  // gazetteer (inclusive null) substitui o cadastro de todas as cidades; usado nos testes.
+  const localGazetteer = city => {
+    if (gazetteer !== undefined) return gazetteer;
+    const cityKey = gazetteerCityKey(city);
+    return cityKey ? defaultGazetteer(cityKey) : null;
   };
   return async function search({ text, original = '', apiKey, filter = '', bias = '', city = 'Conchal', limit = 5 }) {
     const query = mapSearchText(text);
@@ -53,7 +55,8 @@ export function createGeocodeSearch({ fetchImpl = fetch, maxEntries = 500, now =
     };
     const run = (async () => {
       // O texto original digitado preserva bairro e numero que o app pode ter reorganizado.
-      const localResult = (original && lookupConchalAddress(localGazetteer(), original, city)?.features.length ? lookupConchalAddress(localGazetteer(), original, city) : null) || lookupConchalAddress(localGazetteer(), text, city);
+      const fromOriginal = original ? lookupLocalAddress(localGazetteer(city), original, city) : null;
+      const localResult = (fromOriginal?.features.length ? fromOriginal : null) || lookupLocalAddress(localGazetteer(city), text, city);
       if (localResult && (localResult.features.length || localResult.ambiguous)) return remember(localResult, 6 * 60 * 60 * 1000);
 
       const common = { lang: 'pt', limit: String(limit), apiKey };
@@ -92,12 +95,13 @@ export function createGeocodeSearch({ fetchImpl = fetch, maxEntries = 500, now =
       const found = data.features.some(matches);
       if (!found && localResult) {
         const suggestions = localResult.suggestions || [];
+        const cityName = localResult.cityName || 'Conchal';
         data = {
           ...data,
           suggestions,
           message: suggestions.length
-            ? `Nao achei essa rua em Conchal. Voce quis dizer: ${suggestions.join('; ')}?`
-            : 'Nao achei essa rua em Conchal. Confira o nome da rua e digite rua, numero e bairro.'
+            ? `Nao achei essa rua em ${cityName}. Voce quis dizer: ${suggestions.join('; ')}?`
+            : `Nao achei essa rua em ${cityName}. Confira o nome da rua e digite rua, numero e bairro.`
         };
       }
       return remember(data, found ? 30 * 60 * 1000 : 60 * 1000);
