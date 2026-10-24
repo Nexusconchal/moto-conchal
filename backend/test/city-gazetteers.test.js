@@ -60,3 +60,21 @@ test('new streets and places typed by hand (Residencial Monte Real) are found in
   // Rua conhecida continua vencendo o lugar.
   assert.equal(found(conchal, 'Rua das Azaleias, 65, Residencial Monte Real').street, 'Rua das Azaleias');
 });
+
+test('Engenheiro Coelho EC road codes are part of the road name, not the house number', () => {
+  const props = found(coelho, 'Estrada Ec 400, 50');
+  assert.match(props.street, /Ec 400/);
+  assert.equal(props.housenumber, '50');
+  assert.ok(coelho.search('Estrada EC 100').suggestions.every(name => /Ec 100/.test(name)));
+});
+
+test('road numbers 100 and 110 are different roads', () => {
+  assert.match(found(coelho, 'Estrada Ec 100, Bode Branco').street, /Ec 100$/);
+  assert.match(found(coelho, 'Estrada Ec 110, Bode Branco').street, /Ec 110$/);
+});
+
+test('the exact neighborhood typed decides a rural road that crosses similar ones', () => {
+  assert.equal(found(aguai, 'Rodovia Sp 340, Barra Do Jaguari').suburb, 'Barra do Jaguari');
+  assert.equal(found(aguai, 'Rodovia Sp 340, Fazenda Barra Do Jaguari').suburb, 'Fazenda Barra do Jaguari');
+  assert.equal(aguai.search('Rodovia Sp 340').ambiguous, true);
+});

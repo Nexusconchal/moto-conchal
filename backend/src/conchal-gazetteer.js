@@ -92,6 +92,7 @@ function canonicalWord(word) {
 // Chave "fonetica" simples para tolerar erro de grafia comum: letras dobradas,
 // y/i, ph/f, gue/ge, z/s, h mudo e plural.
 export function phoneticKey(word) {
+  if (/^\d+$/.test(word)) return word; // "100" e "110" sao ruas diferentes (Estrada EC 100 x EC 110)
   let key = word
     .replace(/ph/g, 'f').replace(/th/g, 't').replace(/y/g, 'i').replace(/w/g, 'v').replace(/ck/g, 'k')
     .replace(/gu([ei])/g, 'g$1').replace(/qu([ei])/g, 'k$1').replace(/c([ei])/g, 's$1').replace(/z/g, 's').replace(/k/g, 'c')
@@ -279,7 +280,7 @@ export function parseAddressInput(value, aliases = GAZETTEER_CITIES.conchal.alia
     if (!match) continue;
     const nextIndex = index + (marked ? 2 : 1);
     if (!marked && /^(?:n[º°o.]*)?\d{1,5}[a-zA-Z]?$/i.test(words[nextIndex] || '')) continue; // "Av Joao Paulo 2 250"
-    if (/^(sp|chl|br|km|arr|rod)$/.test(stripAccents(words[index - 1] || '').replace(/[^a-z]/g, ''))) continue; // "Rodovia SP 191"
+    if (/^(sp|chl|br|km|arr|rod|ec)$/.test(stripAccents(words[index - 1] || '').replace(/[^a-z]/g, ''))) continue; // "Rodovia SP 191"
     const before = words.slice(0, index);
     const named = before.map(word => canonicalWord(rawWords(word)[0] || '')).filter(word => word && !TYPE_WORDS[word] && !STOPWORDS.has(word));
     if (!named.length) continue;
@@ -525,7 +526,9 @@ export function createGazetteer({ city: cityKey = 'conchal', cnefeText, osmText,
     const sameStreet = best.ranked.filter(item => nameKey(item.entry) === topKey);
     const chosen = sameStreet[0].entry;
     // Mesmo nome em lugares distantes (ex.: "Rua Um" em bairros diferentes) sem bairro ou numero que decida.
-    const far = sameStreet.find(item => item !== sameStreet[0] && item.final >= sameStreet[0].final - 0.03 && distanceKm(item.entry.center, chosen.center) > 1.5);
+    // Bairro digitado igual vence bairro so parecido ("Barra do Jaguari" x "Fazenda Barra do Jaguari").
+    const sameBairro = sameStreet[0].bairro > 0 ? item => item.bairro >= sameStreet[0].bairro - 0.01 : () => true;
+    const far = sameStreet.find(item => item !== sameStreet[0] && sameBairro(item) && item.final >= sameStreet[0].final - 0.03 && distanceKm(item.entry.center, chosen.center) > 1.5);
     if (far) {
       return { features: [], ambiguous: true, suggestions: [...new Set(sameStreet.filter(item => item.final >= sameStreet[0].final - 0.03).map(item => `${item.entry.display} - ${titleCase(item.entry.bairro || city.name)}`))].slice(0, 4) };
     }
