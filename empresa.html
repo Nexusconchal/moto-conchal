@@ -3055,10 +3055,11 @@
       }
       function rotaDistantePlausivel(km, ...textos) {
         // Tujuguaba e Iate ficam dentro de Conchal, a menos de 10 km do centro.
+        // Primeiro texto opcional { origem }: a cidade de onde sai a entrega nao conta como outra cidade.
+        const origem = textos[0] && typeof textos[0] === "object" ? textoBusca(textos.shift().origem) : "";
         const distante = textos.some((t) =>
-          /martinho\s*prado|engenheiro\s+coelho|artur\s+nogueira|arthur\s+nogueira|mogi\s+mirim|mogi\s+guacu|araras|americana|limeira|leme|pirassununga|rio\s+claro|campinas/.test(
-            textoBusca(t),
-          ),
+          [...textoBusca(t).matchAll(/martinho\s*prado|engenheiro\s+coelho|artur\s+nogueira|arthur\s+nogueira|mogi\s+mirim|mogi\s+guacu|araras|americana|limeira|leme|pirassununga|rio\s+claro|campinas/g)]
+            .some(([cidade]) => !origem.includes(cidade)),
         );
         if (distante && Number(km) > 0 && Number(km) < 10)
           throw new Error(
@@ -5412,7 +5413,7 @@
               ...extras.map((e) => `${e.digitado} ${e.mapa.texto || ""}`),
             ],
             km = await calcularRota(pontosRota);
-          rotaDistantePlausivel(km, ...pontosCobranca);
+          rotaDistantePlausivel(km, { origem: `${retiradaTxt} ${retirada.texto || ""}` }, ...pontosCobranca);
           const valor = precoEntrega(km, paradas, tipoEntrega, pontosCobranca),
             precoLabel = labelPreco(tipoEntrega, paradas, pontosCobranca),
             retiradaMapa = `https://www.google.com/maps?q=${retirada.lat},${retirada.lon}`;

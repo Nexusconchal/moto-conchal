@@ -465,7 +465,10 @@ function ensureResolvedAddressIsSpecific(input, resolved, label = 'Endereco') {
   }
 }
 
+// Primeiro texto opcional { origem }: a cidade de onde sai a corrida nao conta como outra cidade
+// (corrida dentro de Engenheiro Coelho e curta de verdade).
 function ensureDistantRouteIsPlausible(distanceKm, ...texts) {
+  const origin = texts[0] && typeof texts[0] === 'object' ? normalizeText(texts.shift().origem || '') : '';
   const distance = Number(distanceKm || 0);
   // Tujuguaba e Iate ficam dentro de Conchal, a menos de 10 km do centro.
   const distantPlaces = [
@@ -486,7 +489,7 @@ function ensureDistantRouteIsPlausible(distanceKm, ...texts) {
   ];
   const hasDistantPlace = texts.some((text) => {
     const normalized = normalizeText(text);
-    return distantPlaces.some((place) => normalized.includes(place));
+    return distantPlaces.some((place) => normalized.includes(place) && !origin.includes(place));
   });
   if (hasDistantPlace && Number.isFinite(distance) && distance > 0 && distance < 10) {
     const error = new Error('A rota para outra cidade ficou curta demais. Confira se o endereco encontrado esta correto antes de chamar o motoboy.');
@@ -1090,7 +1093,7 @@ async function dispatchCapturedOrder(companyId, company, orderRef, captured, con
     geocodeCapturedAddress(`${captured.address}${captured.neighborhood ? `, ${captured.neighborhood}` : ''}`)
   ]);
   const km = await calculateRouteDistanceKm([pickup, destination]);
-  ensureDistantRouteIsPlausible(km, captured.address, destination.text);
+  ensureDistantRouteIsPlausible(km, { origem: `${company.retirada || ''} ${pickup.text || ''}` }, captured.address, destination.text);
   const delivery = deliveryPublicData({
     clientRequestId: config.clientRequestId || `cap_${orderRef.id.slice(0, 60)}`,
     empresa: company.empresa || 'Empresa',
@@ -10167,7 +10170,7 @@ app.post('/api/rides', createRideLimiter, async (req, res, next) => {
     }
     ensureResolvedPlaceMatches(ride.destino, ride.destinoEncontrado || ride.destino, 'Destino da corrida');
     ensureResolvedAddressIsSpecific(ride.destino, ride.destinoEncontrado || ride.destino, 'Destino da corrida');
-    ensureDistantRouteIsPlausible(ride.km, ride.destino, ride.destinoEncontrado);
+    ensureDistantRouteIsPlausible(ride.km, { origem: `${ride.origemEncontrada || ride.origem || ''} ${ride.origemEnderecoGps || ''} ${String(ride.cidadeOperacao || '').replace(/_/g, ' ')}` }, ride.destino, ride.destinoEncontrado);
     if (money(ride.valor) !== expectedFare(ride.km)) {
       return res.status(400).json({ error: 'valor_nao_confere_com_tabela' });
     }
@@ -10957,6 +10960,7 @@ app.post('/api/deliveries', assertCompany, assertCompanyApproved, createRideLimi
       }
       ensureDistantRouteIsPlausible(
         delivery.km,
+        { origem: `${delivery.retirada || ''} ${delivery.retiradaEncontrada || ''} ${String(delivery.cidadeOperacao || '').replace(/_/g, ' ')}` },
         delivery.entrega,
         delivery.entregaEncontrada,
         ...pontosExtras.flatMap((point) => [point.digitado, point.encontrado])

@@ -123,3 +123,15 @@ test('street spelled with one L or one letter off (Dorival Pradela x Pradella, L
   assert.equal(sameStreetWord('pradela', 'pradella'), true);
   assert.equal(sameStreetWord('anthonio', 'antonio'), true);
 });
+
+test('a short ride inside Engenheiro Coelho is not taken for a ride to another city', () => {
+  const coelho = 'Rua Antonio Staiger, 1 - Engenheiro Coelho - SP';
+  assert.doesNotThrow(() => context.rotaDistantePlausivel(1.2, { origem: 'Rua Antonio Batistela, 36 - Engenheiro Coelho - SP Engenheiro Coelho' }, coelho, coelho));
+  assert.throws(() => context.rotaDistantePlausivel(1.2, { origem: 'Rua das Azaleias, 65 - Conchal Conchal' }, coelho, coelho), /curta demais/);
+  const backend = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  const ctx = vm.createContext({ normalizeText: value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() });
+  const start = backend.indexOf('function ensureDistantRouteIsPlausible(');
+  vm.runInContext(backend.slice(start, start + backend.slice(start).search(/\n(?:async )?function /)), ctx);
+  assert.doesNotThrow(() => ctx.ensureDistantRouteIsPlausible(1.2, { origem: 'Rua Antonio Batistela 36 engenheiro coelho' }, coelho));
+  assert.throws(() => ctx.ensureDistantRouteIsPlausible(1.2, { origem: 'Rua das Azaleias 65 conchal' }, coelho), /curta demais/);
+});
