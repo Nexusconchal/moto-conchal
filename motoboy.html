@@ -1040,8 +1040,14 @@
         <div class="driver-tools">
         <button id="btn-mp" class="secondary" type="button">
           Conectar Mercado Pago para receber ate 80%</button
-        ><button id="btn-push" class="secondary" type="button">
+        ><button id="btn-push" class="secondary" type="button" aria-expanded="false" aria-controls="gruposTelegram">
           Entrar no grupo de avisos no Telegram</button
+        ><div id="gruposTelegram" class="grupos-cidade" hidden>
+          <p class="access-code-note">Escolha o grupo da sua cidade:</p>
+          <button type="button" class="secondary" data-telegram-cidade="conchal">Conchal</button>
+          <button type="button" class="secondary" data-telegram-cidade="aguai">Aguaí</button>
+          <button type="button" class="secondary" data-telegram-cidade="engenheiro_coelho">Engenheiro Coelho</button>
+        </div
         ><button id="btn-push-device" class="secondary" type="button">
           Ativar notificacoes neste aparelho</button
         ><button id="sair-conta" class="secondary" type="button">
@@ -3422,11 +3428,22 @@
           aguai: "https://t.me/+-4wK_5c2Rks3OTMx",
           engenheiro_coelho: "https://t.me/+hxfRgsNR1VcxYzVh",
         };
+        // O motoboy escolhe o grupo da cidade dele; a cidade do GPS aparece marcada.
+        const gruposTelegram = $("gruposTelegram");
         $("btn-push").onclick = () => {
-          // Open directly in the click gesture; joining must not depend on an API request.
-          const cidade = Object.keys(GRUPOS_TELEGRAM_CIDADE).find((c) => cidadesAtivas[c]) || "conchal";
-          location.href = GRUPOS_TELEGRAM_CIDADE[cidade];
+          const abrir = gruposTelegram.hidden;
+          gruposTelegram.hidden = !abrir;
+          $("btn-push").setAttribute("aria-expanded", String(abrir));
+          gruposTelegram.querySelectorAll("[data-telegram-cidade]").forEach((botao) => {
+            const cidade = botao.dataset.telegramCidade;
+            botao.textContent = NOMES_CIDADES[cidade] === "Eng. Coelho" ? "Engenheiro Coelho" : NOMES_CIDADES[cidade];
+            if (cidadesAtivas[cidade] && cidadeGpsLabel) botao.textContent += " (sua cidade pelo GPS)";
+          });
         };
+        gruposTelegram.querySelectorAll("[data-telegram-cidade]").forEach((botao) => {
+          // Open directly in the click gesture; joining must not depend on an API request.
+          botao.onclick = () => { location.href = GRUPOS_TELEGRAM_CIDADE[botao.dataset.telegramCidade]; };
+        });
         const sair = $("sair-conta");
         if (sair)
           sair.onclick = () => {
