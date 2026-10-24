@@ -1260,7 +1260,8 @@ const RIDE_CITY_CENTERS = {
 const ESTIVA_GERBI_CENTER = { lat: -22.2708, lon: -46.9478 };
 
 function canonicalRideCity(value, fallback = 'conchal') {
-  const city = normalizeText(value);
+  // O valor salvo e "engenheiro_coelho": sem trocar o _ ele caia em Conchal.
+  const city = normalizeText(value).replace(/_/g, ' ');
   if (city.includes('engenheiro coelho') || /\beng\.?\s*coelho\b/.test(city)) return 'engenheiro_coelho';
   if (city.includes('aguai')) return 'aguai';
   if (city.includes('conchal')) return 'conchal';
@@ -1271,14 +1272,14 @@ function rideCityLabel(value) {
   return RIDE_CITY_CENTERS[canonicalRideCity(value)]?.label || 'Conchal';
 }
 
+// O motoboy recebe corridas e entregas so da cidade onde o GPS dele esta, marcada ao
+// ficar Disponivel. Quem ainda nao mandou a localizacao fica em Conchal, o mercado original.
 function driverRideCities(driver = {}) {
-  const saved = driver.cidadesAtivas && typeof driver.cidadesAtivas === 'object'
-    ? driver.cidadesAtivas
-    : {};
+  const city = canonicalRideCity(driver.cidadeGps, 'conchal');
   return {
-    conchal: true,
-    aguai: saved.aguai === true,
-    engenheiro_coelho: saved.engenheiro_coelho === true
+    conchal: city === 'conchal',
+    aguai: city === 'aguai',
+    engenheiro_coelho: city === 'engenheiro_coelho'
   };
 }
 
@@ -1321,6 +1322,21 @@ function inferNewRideOperatingCity(ride = {}, requested = '') {
   if (originText.includes('conchal')) return 'conchal';
 
   return canonicalRideCity(requested, 'conchal');
+}
+
+// Cidade atendida mais proxima de um ponto (ate 30 km); Estiva Gerbi fica com Conchal.
+function cityForPoint(point = {}) {
+  if (coordinateDistanceKm(point, ESTIVA_GERBI_CENTER) <= 8) return 'conchal';
+  const nearest = Object.entries(RIDE_CITY_CENTERS)
+    .map(([city, center]) => ({ city, km: coordinateDistanceKm(point, center) }))
+    .sort((a, b) => a.km - b.km)[0];
+  return nearest && nearest.km <= 30 ? nearest.city : '';
+}
+
+// Entregas antigas nao tinham cidade: vale o ponto de retirada, ou Conchal.
+function deliveryOperatingCity(delivery = {}) {
+  if (delivery.cidadeOperacao) return canonicalRideCity(delivery.cidadeOperacao, 'conchal');
+  return cityForPoint({ lat: Number(delivery.retiradaLat), lon: Number(delivery.retiradaLon) }) || 'conchal';
 }
 
 function normalizedPersonName(value) {
@@ -3803,7 +3819,8 @@ function deliveryOfferPush(deliveryId, delivery, tokens, title, repeticao = 0) {
 
 async function repeatDeliveryAlert(deliveryId, delivery, count) {
   if (onlyDigits(delivery.motoboyExclusivoCpf).length === 11) return;
-  const tokens = await availableDriverTokens();
+  const city = deliveryOperatingCity(delivery);
+  const tokens = await availableDriverTokens((data) => driverRideCities(data)[city]);
   if (tokens.length) await admin.messaging().sendEachForMulticast(deliveryOfferPush(deliveryId, delivery, tokens, 'Nova entrega Nexus MotoJa', count));
 }
 
@@ -3821,13 +3838,15 @@ async function notifyDriversAboutDelivery(deliveryId, delivery, { onlyReserved =
       if (info?.ativo !== false) list.push(token);
     });
   };
-  drivers.forEach((doc) => { if (!reserved || doc.id !== reservedCpf) collect(doc, tokens); });
+  const city = deliveryOperatingCity(delivery);
+  const inCity = (data) => driverRideCities(data)[city];
+  drivers.forEach((doc) => { if ((!reserved || doc.id !== reservedCpf) && inCity(doc.data() || {})) collect(doc, tokens); });
   if (reservedDriver?.exists && reservedDriver.data()?.status !== 'bloqueado') collect(reservedDriver, reservedTokens);
   // Telegram: entrega aberta vai para quem esta Disponivel; a do plano so para o dono dela.
   if (reserved) {
     if (reservedDriver?.exists && reservedDriver.data()?.status !== 'bloqueado') telegramOfferInBackground([reservedDriver], `✅ Entrega do plano já é sua — ${delivery.empresa || 'Empresa'}.\nAbra o app MotoJá para ver os detalhes.`);
   } else {
-    telegramOfferInBackground(telegramReadyDrivers(drivers), telegramOfferText('entrega', delivery));
+    telegramOfferInBackground(telegramReadyDrivers(drivers, inCity), telegramOfferText('entrega', delivery));
   }
 
   const send = (list, title) => (list.length
@@ -5870,25 +5889,43 @@ app.post('/api/drivers/:cpf/cities/status', async (req, res, next) => {
   }
 });
 
+// A cidade agora vem do GPS (location-city); a escolha manual antiga nao muda mais nada.
 app.post('/api/drivers/:cpf/cities', async (req, res, next) => {
   try {
     const driverCpf = onlyDigits(req.params.cpf);
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    const driver = await getDriverWithProof(driverCpf, req.body);
+    return res.json({ ok: true, cidadesAtivas: driverRideCities(driver) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Ao ficar Disponivel (e de tempos em tempos depois) o app manda o GPS do motoboy;
+// a cidade mais proxima passa a ser a unica de onde ele recebe e aceita servicos.
+app.post('/api/drivers/:cpf/location-city', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.params.cpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
     await getDriverWithProof(driverCpf, req.body);
-
-    const cidadesAtivas = {
-      conchal: true,
-      aguai: req.body?.cidadesAtivas?.aguai === true,
-      engenheiro_coelho: req.body?.cidadesAtivas?.engenheiro_coelho === true
-    };
-
+    const point = { lat: Number(req.body?.lat), lon: Number(req.body?.lon) };
+    if (!Number.isFinite(point.lat) || !Number.isFinite(point.lon) || Math.abs(point.lat) > 90 || Math.abs(point.lon) > 180 || (!point.lat && !point.lon)) {
+      return res.status(400).json({ error: 'localizacao_invalida', message: 'Nao recebi a sua localizacao. Libere o GPS e tente de novo.' });
+    }
+    const city = cityForPoint(point);
+    if (!city) {
+      return res.status(422).json({ error: 'fora_da_area', message: 'Voce esta fora da area atendida (Conchal, Aguai e Engenheiro Coelho). Fique Disponivel quando estiver em uma dessas cidades.' });
+    }
+    const cidadesAtivas = { conchal: city === 'conchal', aguai: city === 'aguai', engenheiro_coelho: city === 'engenheiro_coelho' };
     await db.collection('motoboys').doc(driverCpf).set({
+      cidadeGps: city,
+      cidadeGpsEm: admin.firestore.FieldValue.serverTimestamp(),
       cidadesAtivas,
       atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
     driverProofCache.clear();
     driverAvailability.cities(driverCpf, cidadesAtivas);
-    return res.json({ ok: true, cidadesAtivas });
+    return res.json({ ok: true, cidade: city, label: rideCityLabel(city), cidadesAtivas });
   } catch (error) {
     return next(error);
   }
@@ -5988,7 +6025,12 @@ app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
         .get();
       docs = kind === 'rides'
         ? snapshot.docs.filter((docSnap) => enabledCities[rideOperatingCity(docSnap.data())])
-        : snapshot.docs.filter((docSnap) => !deliveryReservedForOther(docSnap.data(), driverCpf));
+        : snapshot.docs.filter((docSnap) => {
+          const delivery = docSnap.data();
+          if (deliveryReservedForOther(delivery, driverCpf)) return false;
+          // A entrega do plano reservada para ele aparece em qualquer cidade.
+          return onlyDigits(delivery.motoboyExclusivoCpf) === driverCpf || enabledCities[deliveryOperatingCity(delivery)];
+        });
     }
     const jobs = sortJobs(docs.map((docSnap) => {
       const item = serializeFirestore({ id: docSnap.id, ...docSnap.data() });
@@ -11451,7 +11493,7 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
 
       const city = rideOperatingCity(ride);
       if (!driverRideCities(driver)[city]) {
-        const error = new Error(`Ative ${rideCityLabel(city)} no topo do app para aceitar esta corrida.`);
+        const error = new Error(`Esta corrida e de ${rideCityLabel(city)}. Voce recebe servicos da cidade onde o seu GPS esta.`);
         error.status = 403;
         error.code = 'cidade_desativada';
         throw error;
@@ -11786,6 +11828,13 @@ app.post('/api/deliveries/:deliveryId/accept', async (req, res, next) => {
         const error = new Error('Esta entrega e do plano de uma empresa e esta reservada para outro motoboy escolhido pelo dono.');
         error.status = 403;
         error.code = 'entrega_reservada_motoboy_plano';
+        throw error;
+      }
+      const deliveryCity = deliveryOperatingCity(delivery);
+      if (onlyDigits(delivery.motoboyExclusivoCpf) !== driverCpf && !driverRideCities(driver)[deliveryCity]) {
+        const error = new Error(`Esta entrega e de ${rideCityLabel(deliveryCity)}. Voce recebe servicos da cidade onde o seu GPS esta.`);
+        error.status = 403;
+        error.code = 'cidade_desativada';
         throw error;
       }
 

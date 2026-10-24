@@ -1062,7 +1062,7 @@
         </nav>
       </section>
     </main>
-    <script src="./driver-availability.js?v=226"></script>
+    <script src="./driver-availability.js?v=227"></script>
     <script src="./ride-chat.js?v=233"></script>
     <script src="./motoboy-avisos.js?v=1"></script>
     <script src="./motoboy-nav.js?v=3" defer></script>
@@ -1074,12 +1074,20 @@
           engenheiro_coelho: false,
         },
         cidadesCarregadasCpf = "";
+      // A cidade vem do GPS: so uma fica verde e o motoboy recebe servicos so dela.
+      let cidadeGpsLabel = "";
+      const NOMES_CIDADES = { conchal: "Conchal", aguai: "Aguaí", engenheiro_coelho: "Eng. Coelho" };
       function normalizarCidadesAtivas(value) {
-        return {
-          conchal: value?.conchal !== false,
+        const cidades = {
+          conchal: value?.conchal === true,
           aguai: value?.aguai === true,
           engenheiro_coelho: value?.engenheiro_coelho === true,
         };
+        if (!cidades.conchal && !cidades.aguai && !cidades.engenheiro_coelho) cidades.conchal = true;
+        return cidades;
+      }
+      function nomesCidadesAtivas() {
+        return Object.keys(NOMES_CIDADES).filter((cidade) => cidadesAtivas[cidade]).map((cidade) => NOMES_CIDADES[cidade]).join(", ");
       }
       function montarSeletorCidades() {
         if (document.getElementById("cidadeCorridas")) return;
@@ -1087,13 +1095,8 @@
         if (!perfil) return;
         perfil.insertAdjacentHTML(
           "afterend",
-          '<div id="cidadeCorridas" class="city-selector"><div class="city-selector-head"><strong>Receber corridas de</strong><span>Escolha as cidades</span></div><div class="city-options"><label class="city-option"><span>Conchal</span><input id="cidade-conchal" type="checkbox" checked disabled><span class="city-switch" aria-hidden="true"></span></label><label class="city-option"><span>Aguaí</span><input id="cidade-aguai" type="checkbox"><span class="city-switch" aria-hidden="true"></span></label><label class="city-option"><span>Eng. Coelho</span><input id="cidade-engenheiro-coelho" type="checkbox"><span class="city-switch" aria-hidden="true"></span></label></div></div>',
+          '<div id="cidadeCorridas" class="city-selector"><div class="city-selector-head"><strong>Sua cidade pelo GPS</strong><span id="cidadeGpsInfo">Fique Disponível para confirmar</span></div><div class="city-options"><label class="city-option"><span>Conchal</span><input id="cidade-conchal" type="checkbox" disabled><span class="city-switch" aria-hidden="true"></span></label><label class="city-option"><span>Aguaí</span><input id="cidade-aguai" type="checkbox" disabled><span class="city-switch" aria-hidden="true"></span></label><label class="city-option"><span>Eng. Coelho</span><input id="cidade-engenheiro-coelho" type="checkbox" disabled><span class="city-switch" aria-hidden="true"></span></label></div></div>',
         );
-        document.getElementById("cidade-conchal").onchange =
-          salvarCidadesAtivas;
-        document.getElementById("cidade-aguai").onchange = salvarCidadesAtivas;
-        document.getElementById("cidade-engenheiro-coelho").onchange =
-          salvarCidadesAtivas;
         renderCidadesAtivas();
       }
       function renderCidadesAtivas() {
@@ -1102,19 +1105,64 @@
           aguai = document.getElementById("cidade-aguai"),
           engenheiroCoelho = document.getElementById(
             "cidade-engenheiro-coelho",
-          );
-        if (conchal) conchal.checked = true;
+          ),
+          info = document.getElementById("cidadeGpsInfo");
+        if (conchal) conchal.checked = !!cidadesAtivas.conchal;
         if (aguai) aguai.checked = !!cidadesAtivas.aguai;
         if (engenheiroCoelho)
           engenheiroCoelho.checked = !!cidadesAtivas.engenheiro_coelho;
+        if (info) info.textContent = cidadeGpsLabel ? `Você está em ${nomesCidadesAtivas()}` : "Fique Disponível para confirmar";
         window.MotoHome?.atualizar();
       }
-      function bloquearSeletorCidades(blocked) {
-        ["cidade-aguai", "cidade-engenheiro-coelho"].forEach((id) => {
-          const input = document.getElementById(id);
-          if (input) input.disabled = blocked;
+      function posicaoAtual() {
+        return new Promise((resolve, reject) => {
+          if (!navigator.geolocation) return reject(new Error("sem_gps"));
+          navigator.geolocation.getCurrentPosition((p) => resolve(p.coords), reject, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
         });
       }
+      // Pede o GPS, o servidor diz a cidade e passa a mandar so servicos dela.
+      async function confirmarCidadePeloGps({ silencioso = false } = {}) {
+        let coords;
+        try {
+          coords = await posicaoAtual();
+        } catch (e) {
+          if (!silencioso)
+            alert(e?.code === 1
+              ? "Para ficar Disponível, permita o uso da sua localização. No celular: Configurações > Apps > MotoJá > Permissões > Localização > Permitir."
+              : "Não consegui pegar a sua localização. Ligue o GPS do celular e tente de novo.");
+          return false;
+        }
+        try {
+          const r = await fetch(`${CONFIG.backend}/api/drivers/${motoboyCpf}/location-city`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ...driverProof(), lat: coords.latitude, lon: coords.longitude }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            if (!silencioso) alert(d.message || "Não consegui confirmar a sua cidade. Tente de novo.");
+            return false;
+          }
+          const proximas = normalizarCidadesAtivas(d.cidadesAtivas),
+            mudou = JSON.stringify(proximas) !== JSON.stringify(cidadesAtivas);
+          cidadesAtivas = proximas;
+          cidadeGpsLabel = d.label || "";
+          cidadesCarregadasCpf = motoboyCpf;
+          renderCidadesAtivas();
+          if (mudou) {
+            limparCache();
+            ouvir(true);
+          }
+          return true;
+        } catch (e) {
+          if (!silencioso) alert("Sem conexão para confirmar a sua cidade. Tente de novo.");
+          return false;
+        }
+      }
+      // Enquanto Disponivel, confere a cidade de novo: se ele mudou de cidade, troca sozinho.
+      setInterval(() => {
+        if (motoboyCpf && window.MotojaDriverAvailability?.canReceive()) confirmarCidadePeloGps({ silencioso: true });
+      }, 5 * 60000);
       async function carregarCidadesAtivas() {
         if (!motoboyCpf || cidadesCarregadasCpf === motoboyCpf) return;
         montarSeletorCidades();
@@ -1138,45 +1186,6 @@
           renderCidadesAtivas();
         } catch (e) {
           console.error(e);
-        }
-      }
-      async function salvarCidadesAtivas() {
-        const anterior = { ...cidadesAtivas },
-          proximas = {
-            conchal: true,
-            aguai: !!document.getElementById("cidade-aguai")?.checked,
-            engenheiro_coelho: !!document.getElementById(
-              "cidade-engenheiro-coelho",
-            )?.checked,
-          };
-        bloquearSeletorCidades(true);
-        try {
-          const r = await fetch(
-            `${CONFIG.backend}/api/drivers/${motoboyCpf}/cities`,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({
-                ...driverProof(),
-                cidadesAtivas: proximas,
-              }),
-            },
-          );
-          const d = await r.json().catch(() => ({}));
-          if (!r.ok)
-            throw new Error(
-              d.message || d.error || "Nao consegui salvar as cidades.",
-            );
-          cidadesAtivas = normalizarCidadesAtivas(d.cidadesAtivas);
-          limparCache();
-          ouvir(true);
-        } catch (e) {
-          cidadesAtivas = anterior;
-          alert(e.message || "Nao consegui salvar as cidades.");
-        } finally {
-          renderCidadesAtivas();
-          bloquearSeletorCidades(false);
-          window.MotoHome?.atualizar();
         }
       }
       setInterval(() => {
@@ -3369,7 +3378,9 @@
         $("login").classList.add("hidden");
         $("painel").classList.remove("hidden");
         $("online").textContent = "Online";
-        window.MotojaDriverAvailability?.start({ backend: CONFIG.backend, getProof: driverProof, onChange: () => { limparCache(); atualizarTrabalho(); } });
+        window.MotojaDriverAvailability?.start({ backend: CONFIG.backend, getProof: driverProof, beforeAvailable: () => confirmarCidadePeloGps(), onChange: () => { limparCache(); atualizarTrabalho(); } });
+        // Quem abriu o app ja Disponivel confere a cidade em silencio (o GPS pode ter mudado).
+        setTimeout(() => { if (window.MotojaDriverAvailability?.canReceive()) confirmarCidadePeloGps({ silencioso: true }); }, 8000);
         iniciarPlanosMotoboy();
         window.MotojaDriverExtras?.start({ backend: CONFIG.backend, getProof: driverProof });
         // No app da Play Store, o celular ja se cadastra para as chamadas ao entrar.
@@ -3426,14 +3437,7 @@
           getProof: driverProof,
           nome: () => motoboy,
           foto: () => motoboyFoto,
-          resumoCidades: () =>
-            [
-              "Conchal",
-              cidadesAtivas.aguai ? "Aguaí" : "",
-              cidadesAtivas.engenheiro_coelho ? "Eng. Coelho" : "",
-            ]
-              .filter(Boolean)
-              .join(", "),
+          resumoCidades: () => nomesCidadesAtivas(),
           abrirServicoAtivo: () => {
             const nav = lerNavAtiva();
             if (!nav?.id) return;

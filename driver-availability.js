@@ -113,9 +113,19 @@
       preferenceKey = /^\d{11}$/.test(cpf) ? `motoja:availability:${cpf}` : '';
       state = { connected: false, desired: preference()?.desired === true, busy: false }; render();
       box()?.querySelectorAll('[data-available]').forEach(button => {
-        button.onclick = () => {
+        button.onclick = async () => {
           restorePending = false;
-          setAvailability(button.dataset.available === 'true');
+          const desired = button.dataset.available === 'true';
+          // Ficar Disponivel exige a localizacao: o app confirma a cidade antes de ligar.
+          if (desired && options.beforeAvailable) {
+            if (changing) return;
+            changing = true; render();
+            let allowed = false;
+            try { allowed = await options.beforeAvailable(); } catch { allowed = false; }
+            changing = false; render();
+            if (!allowed) return;
+          }
+          setAvailability(desired);
         };
       });
       connect(); timer = setInterval(heartbeat, 30000);
