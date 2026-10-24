@@ -1,10 +1,10 @@
-import { filterGeminiText, validateGeminiAnswer, SUPPORT_AI_INSTRUCTIONS } from './gemini-support.js';
+import { filterGeminiText, validateGeminiAnswer, SUPPORT_AI_INSTRUCTIONS, SUPPORT_AI_ACTIONS, supportAiPrompt } from './gemini-support.js';
 
 export const OPENROUTER_FREE_MODEL = 'openrouter/free';
 export function createOpenRouterSupport({ fetchImpl = fetch, now = () => Date.now(), reserveBudget = async () => true } = {}) {
   let cooldownUntil = 0, reason = '', lastSuccessAt = 0;
   function status() { return { reason: cooldownUntil > now() ? reason : '', cooldownUntil, lastSuccessAt }; }
-  async function generate({ apiKey, text, history = [], topic = 'menu' }) {
+  async function generate({ apiKey, text, history = [], topic = 'menu', facts = '', name = '' }) {
     const filtered = filterGeminiText(text);
     if (!apiKey || !filtered) return { answer: null, reason: 'not_ready' };
     if (cooldownUntil > now()) return { answer: null, reason };
@@ -16,10 +16,10 @@ export function createOpenRouterSupport({ fetchImpl = fetch, now = () => Date.no
     try {
       const response = await fetchImpl('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' }, signal: AbortSignal.timeout(12000),
-        body: JSON.stringify({ model: OPENROUTER_FREE_MODEL, temperature: 0.3, max_tokens: 500,
+        body: JSON.stringify({ model: OPENROUTER_FREE_MODEL, temperature: 0.5, max_tokens: 500,
           provider: { require_parameters: true, data_collection: 'deny', max_price: { prompt: 0, completion: 0 } },
-          messages: [{ role: 'system', content: SUPPORT_AI_INSTRUCTIONS }, ...turns.map(turn => ({ role: turn.role === 'model' ? 'assistant' : 'user', content: turn.text })), { role: 'user', content: `Assunto anterior: ${['request', 'delivery', 'address', 'payment', 'menu', 'other'].includes(topic) ? topic : 'menu'}. Dúvida: ${filtered}` }],
-          response_format: { type: 'json_schema', json_schema: { name: 'support_reply', strict: true, schema: { type: 'object', properties: { reply: { type: 'string' }, topic: { type: 'string', enum: ['request', 'delivery', 'address', 'payment', 'menu', 'other', 'human'] } }, required: ['reply', 'topic'], additionalProperties: false } } }
+          messages: [{ role: 'system', content: SUPPORT_AI_INSTRUCTIONS }, ...turns.map(turn => ({ role: turn.role === 'model' ? 'assistant' : 'user', content: turn.text })), { role: 'user', content: supportAiPrompt({ topic, facts, name, text: filtered }) }],
+          response_format: { type: 'json_schema', json_schema: { name: 'support_reply', strict: true, schema: { type: 'object', properties: { reply: { type: 'string' }, topic: { type: 'string', enum: ['request', 'delivery', 'address', 'payment', 'status', 'menu', 'other', 'human'] }, action: { type: 'string', enum: SUPPORT_AI_ACTIONS } }, required: ['reply', 'topic', 'action'], additionalProperties: false } } }
         })
       });
       if (!response.ok) {

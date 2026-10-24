@@ -454,3 +454,61 @@ test('owner sees the last WhatsApp group notice: sent, or failed with the reason
   assert.equal(down.service.groupNoticeStatus().status, 'failed');
   assert.equal(down.telegram.length, 0);
 });
+
+test('after ATENDENTE, a waiting complaint is noted for the team and answered with empathy, not a canned link', async () => {
+  const h = harness();
+  const human = message({}, 'atendente'); human.data.message.conversation = 'Atendente'; human.data.pushName = 'Ana Lima';
+  await h.service.handle(human);
+  const waiting = message({}, 'atraso'); waiting.data.message.conversation = 'Aguardando motoboy em atraso'; waiting.data.pushName = 'Ana Lima';
+  await h.service.handle(waiting);
+  const reply = h.sent.at(-1).text;
+  assert.match(reply, /Anotei sua mensagem no pedido/);
+  assert.match(reply, /sinto muito pela espera/);
+  assert.match(reply, /código da corrida/);
+  assert.doesNotMatch(reply, /App: https/);
+  const ticket = [...h.records.entries()].find(([path]) => path.startsWith('supportAutomationTickets/'))[1];
+  assert.equal(ticket.ultimaMensagemCriptografada, 'encrypted:Aguardando motoboy em atraso');
+});
+
+test('the AI gets the ride situation without personal data and can ask for a real group reinforcement', async () => {
+  const inputs = [];
+  const h = harness(() => false, async input => { inputs.push(input); return { answer: { text: 'Poxa, sinto muito pela espera! Vou dar um toque nos motoboys pra agilizar.', topic: 'status', action: 'reforco_motoboys' }, history: [] }; });
+  h.records.set('corridas/current', { status: 'pendente', criadaEm: NOW - 180000, telefoneCliente: '19999990000', origem: 'Rua privada, 123', valor: 12 });
+  const event = message(); event.data.message.conversation = 'tô esperando faz tempo, ninguém pegou?'; await h.service.handle(event);
+  assert.match(inputs[0].facts, /aguardando um motoboy aceitar/);
+  assert.doesNotMatch(inputs[0].facts, /Rua privada|19999990000|current/);
+  assert.ok(h.sent.find(item => item.phone === '123@g.us'));
+  const reply = h.sent.find(item => item.phone === '5519999990000').text;
+  assert.match(reply, /Vou dar um toque/);
+  assert.match(reply, /Enviei um reforço ao grupo dos motoboys/);
+});
+
+test('the AI can nudge the driver of the customer own accepted ride, once per ten minutes', async () => {
+  const h = harness(() => false, async () => ({ answer: { text: 'Entendo! Vou pedir pro motoboy te dar um retorno.', topic: 'status', action: 'avisar_motoboy_da_corrida' }, history: [] }));
+  h.records.set('corridas/abc12345-123456', { status: 'aceita', criadaEm: NOW - 600000, telefoneCliente: '19999990000', motoboyTelefone: '19988887777' });
+  const event = message(); event.data.message.conversation = 'o motoboy não chegou ainda'; await h.service.handle(event);
+  const nudge = h.sent.find(item => item.phone === '5519988887777');
+  assert.match(nudge.text, /está te aguardando/);
+  assert.doesNotMatch(nudge.text, /19999990000/);
+  assert.match(h.sent.find(item => item.phone === '5519999990000').text, /Dei um toque no motoboy/);
+  h.advance(60000); const again = message({}, 'again'); again.data.messageTimestamp += 60; again.data.message.conversation = 'e aí, nada?'; await h.service.handle(again);
+  assert.equal(h.sent.filter(item => item.phone === '5519988887777').length, 1);
+  assert.match(h.sent.at(-1).text, /já foi avisado há poucos minutos/);
+});
+
+test('AI actions are ignored when the ride is not the customer own or not in the right state', async () => {
+  const h = harness(() => false, async () => ({ answer: { text: 'Vou dar um toque nos motoboys.', topic: 'status', action: 'reforco_motoboys' }, history: [] }));
+  h.records.set('corridas/other', { status: 'pendente', criadaEm: NOW - 60000, telefoneCliente: '19911112222' });
+  const event = message(); event.data.message.conversation = 'está demorando'; await h.service.handle(event);
+  assert.equal(h.sent.filter(item => item.phone === '123@g.us').length, 0);
+  assert.equal(h.telegram.length, 0);
+});
+
+test('an AI reply claiming acceptance that the ride does not have falls back to the real status', async () => {
+  const h = harness(() => false, async () => ({ answer: { text: 'Sua corrida já foi aceita, fica tranquila!', topic: 'status', action: 'none' }, history: [] }));
+  h.records.set('corridas/current', { status: 'pendente', criadaEm: NOW - 60000, telefoneCliente: '19999990000' });
+  const event = message(); event.data.message.conversation = 'minha corrida foi aceita?'; await h.service.handle(event);
+  const reply = h.sent.find(item => item.phone === '5519999990000').text;
+  assert.doesNotMatch(reply, /fica tranquila/);
+  assert.match(reply, /Ainda não há motorista confirmado/);
+});

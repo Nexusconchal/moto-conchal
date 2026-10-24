@@ -70,7 +70,7 @@ export function requestedRideId(text) {
 }
 
 const MENU = '1 • Pedir corrida\n2 • Acompanhar corrida ou entrega\n3 • Endereço ou erro no app\n4 • Pagamento e troco\n5 • Falar com uma pessoa\n6 • Empresas: pedir entrega\n7 • Quero trabalhar como motoboy';
-const FOOTER = '\n\nDigite MENU para ver as opções ou ATENDENTE para falar com uma pessoa.';
+const FOOTER = '\n\nSe preferir falar com uma pessoa, é só escrever ATENDENTE.';
 const GREETING_WORDS = new Set(['oi', 'oie', 'ola', 'opa', 'eai', 'eae', 'e', 'ai', 'salve', 'bom', 'boa', 'dia', 'tarde', 'noite', 'tudo', 'td', 'bem', 'blz', 'beleza', 'como', 'vai', 'esta', 'ta', 'vc', 'voce', 'voces', 'vcs', 'gente', 'pessoal', 'amigo', 'amiga', 'moco', 'moca', 'senhor', 'senhora', 'ok', 'hello', 'hi']);
 // Customers write the same thing many ways ("oiii", "qro uma moto", "tem moto?"):
 // collapse repeated letters and match the common Brazilian spellings.
@@ -116,18 +116,20 @@ export function supportAnswer(text, ride, expireMs, now = Date.now(), context = 
   if (intent === 'address' || (intent === 'other' && context.topic === 'address')) return { topic: 'address', text: `${context.topic === 'address' ? 'Obrigado pelo detalhe. ' : ''}O problema é no endereço de saída, no destino ou aparece alguma mensagem de erro?\n\nNo app, escreva rua, número e cidade. Confira o ponto no mapa antes de pedir. Se o GPS estiver errado, digite a saída manualmente. Para outra cidade, inclua o nome dela no destino.\n\nSe continuar falhando, envie o texto do erro e escreva ATENDENTE para o suporte verificar. Enviar o endereço aqui não cria uma corrida.${FOOTER}` };
   if (intent === 'payment') return { topic: 'payment', text: `O preço é calculado no app antes de chamar. Confira as formas de pagamento disponíveis nele.\n\nSe for pagar em dinheiro e precisar de troco, informe para quanto nas observações e confirme com o motorista após o aceite. Não tenho como garantir que ele terá troco.\n\nSe houve cobrança indevida ou dificuldade com o pagamento, escreva ATENDENTE e explique o que aconteceu. Não envie senha, código de confirmação ou dados de cartão aqui.${FOOTER}` };
   let status = '';
+  const sorry = WAITING_COMPLAINT.test(t) ? empathy(context.name) : '';
   if (ride) {
     const expired = ride.status === 'pendente' && now - ms(ride.criadaEm) >= expireMs;
-    if (expired || ride.status === 'expirada') status = 'Sua solicitação expirou sem aceite. Abra o app e confira a opção de renovar ou pedir novamente. Não renovei nem criei outra corrida por aqui.';
-    else if (ride.status === 'pendente') status = 'Sua corrida está aguardando um motoboy aceitar. Ainda não há motorista confirmado. Os avisos são enviados aos grupos habilitados, mas não consigo garantir disponibilidade ou horário de chegada.';
-    else if (['aceita', 'em_andamento', 'iniciada'].includes(ride.status)) status = 'Sua corrida já foi aceita. Confira no app os dados do motoboy e a etapa do atendimento. Não tenho uma previsão de chegada confirmada.';
-    else if (ride.status === 'cancelada') status = 'Sua corrida está cancelada. Para uma nova solicitação, abra o app.';
-    else if (['finalizada', 'concluida'].includes(ride.status)) status = 'Sua corrida consta como finalizada. Para falar sobre o atendimento, escreva ATENDENTE.';
+    if (expired || ride.status === 'expirada') status = `${sorry}Sua solicitação expirou sem aceite: nenhum motoboy pegou a tempo. No app você pode renovar ou pedir de novo. Não renovei nem criei outra corrida por aqui.`;
+    else if (ride.status === 'pendente') status = `${sorry}Sua corrida está aguardando um motoboy aceitar. Ainda não há motorista confirmado. Os motoboys estão sendo avisados, mas não consigo garantir quem pega nem o horário de chegada.`;
+    else if (ACTIVE.includes(ride.status)) status = `${sorry}Sua corrida já foi aceita! No app você vê os dados do motoboy, acompanha onde ele está ao vivo e fala com ele pelo chat da corrida. Não tenho uma previsão de chegada confirmada.`;
+    else if (ride.status === 'cancelada') status = 'Sua corrida está cancelada. Se ainda precisar, é só pedir uma nova pelo app.';
+    else if (['finalizada', 'concluida'].includes(ride.status)) status = 'Sua corrida consta como finalizada. Se aconteceu algum problema nela, me conta ou escreva ATENDENTE.';
     else status = 'Encontrei sua solicitação. Confira a etapa atual no app ou escreva ATENDENTE.';
-  } else status = 'Não encontrei uma corrida recente vinculada a este WhatsApp. Use no app o mesmo número desta conversa. Se já pediu, envie o código da corrida; se precisar de ajuda, escreva ATENDENTE.';
+  } else status = `${sorry}Não encontrei uma corrida recente pelo número deste WhatsApp. Às vezes o pedido foi feito com outro número. Me manda o código da corrida (aparece no app, na tela da corrida) que eu confiro agora pra você.`;
   if (intent === 'other' && !ride) return { topic: 'menu', text: `Posso te ajudar a pedir ou acompanhar uma corrida, resolver endereço e tirar dúvidas de pagamento. Qual dessas opções combina com o que você precisa?\n\n${MENU}\n\nApp: ${APP}` };
   if (ride?.kind === 'entregas') status = status.replace(/Sua corrida/g, 'Sua entrega').replace(/corrida/g, 'entrega').replace(/motorista/g, 'motoboy');
-  return { topic: ride?.kind === 'entregas' ? 'delivery' : 'status', text: `${status}\n\nApp: ${ride?.kind === 'entregas' ? `${APP}empresa.html` : APP}${FOOTER}` };
+  // The app link only helps when there is a ride to open; otherwise it is just a big card.
+  return { topic: ride?.kind === 'entregas' ? 'delivery' : 'status', text: `${status}${ride ? `\n\nApp: ${ride.kind === 'entregas' ? `${APP}empresa.html` : APP}` : ''}${FOOTER}` };
 }
 
 export function chooseDriverGroup(groups) {
@@ -141,6 +143,28 @@ export function pendingNotice(job, kind, stage, expireMs, now = Date.now()) {
   if (job.status !== 'pendente' || !ms(job.criadaEm) || age < reminderMinutes * 60000 || (stage === 'initial' && age >= 120000) || age >= expireMs) return '';
   const value = Number(job.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   return `${stage === 'customer' ? 'ATENÇÃO, MOTOBOYS: cliente pediu ajuda porque está aguardando aceite' : reminderMinutes ? `ATENÇÃO, MOTOBOYS: solicitação aguardando há pelo menos ${reminderMinutes} minutos` : 'NOVA SOLICITAÇÃO NEXUS MOTOJÁ'}\n${kind === 'corridas' ? 'Corrida' : 'Entrega'} disponível: ${value}.\nQuem estiver disponível, confira e aceite no app:\n${DRIVER_APP}\nCódigo: ${job.id}\nA disponibilidade deve ser conferida no app. Não confirme pelo grupo.`;
+}
+
+const ACTIVE = ['aceita', 'iniciada', 'em_andamento'];
+const WAITING_COMPLAINT = /demor|atras|aguard|esper|nao chegou|cade|ninguem|nao aceit|nao veio|nao aparec|nao responde/;
+function empathy(name) {
+  const first = String(name || '').trim().split(/\s+/)[0].replace(/[^\p{L}'-]/gu, '').slice(0, 20);
+  return `Poxa${first.length >= 2 ? `, ${first[0].toUpperCase()}${first.slice(1).toLowerCase()}` : ''}, sinto muito pela espera! `;
+}
+// What the AI may know about the ride: written by the system, no phone, address, code or names.
+export function rideFacts(ride, phoneKnown, looked, expireMs, now = Date.now()) {
+  if (!looked) return 'não consultada (o cliente não falou de um pedido)';
+  if (!phoneKnown) return 'não foi possível identificar o número deste WhatsApp; para consultar é preciso o código da corrida que aparece no app';
+  if (!ride) return 'nenhuma corrida ou entrega recente encontrada pelo número deste WhatsApp (pode ter sido pedida com outro número)';
+  const kind = ride.kind === 'entregas' ? 'entrega' : 'corrida';
+  const minutes = Math.max(0, Math.round((now - ms(ride.criadaEm)) / 60000));
+  const expired = ride.status === 'expirada' || (ride.status === 'pendente' && now - ms(ride.criadaEm) >= expireMs);
+  const label = expired ? 'expirou sem nenhum motoboy aceitar (o cliente pode renovar ou pedir de novo no app)'
+    : ride.status === 'pendente' ? 'aguardando um motoboy aceitar; ainda não há motoboy confirmado'
+    : ACTIVE.includes(ride.status) ? 'já aceita por um motoboy; o cliente acompanha a localização ao vivo e fala com ele pelo chat da corrida no app'
+    : ride.status === 'cancelada' ? 'cancelada'
+    : ['finalizada', 'concluida'].includes(ride.status) ? 'finalizada' : 'em andamento (etapa não identificada)';
+  return `${kind} ${label}; pedida há cerca de ${minutes} minutos.`;
 }
 
 // This assistant never creates bookings, changes fares or accepts a job.
@@ -167,6 +191,36 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
   }
   async function saveConfig(data) {
     await configRef.set(data, { merge: true }); cacheUntil = 0;
+  }
+  // The human queue keeps the last few messages, so the person who picks it up sees the story.
+  async function appendTicket(ticketRef, text) {
+    const current = (await ticketRef.get()).data() || {};
+    let previous = '';
+    try { previous = current.ultimaMensagemCriptografada ? decrypt(current.ultimaMensagemCriptografada) : ''; } catch { previous = ''; }
+    if (previous.length < 30 && supportIntent(previous) === 'human') previous = ''; // Just the word ATENDENTE.
+    await ticketRef.set({ ultimaMensagemCriptografada: encrypt(`${previous ? `${previous}\n` : ''}${text}`.slice(-1000)), updatedAt: now() }, { merge: true });
+  }
+  // Private nudge to the driver who accepted the customer's own ride, at most once per 10 minutes.
+  async function nudgeDriver(ride, kind) {
+    const phone = brazilPhone(ride.motoboyTelefone);
+    if (!phone) return 'failed';
+    const marker = db.collection('supportAutomationNotices').doc(hash(`${kind}:${ride.id}:avisar_motoboy`));
+    let claim = false, recent = false;
+    await db.runTransaction(async tx => {
+      claim = false; recent = false;
+      const previous = (await tx.get(marker)).data();
+      if (previous && ms(previous.createdAt) > now() - 10 * 60000) { recent = true; return; }
+      tx.set(marker, { createdAt: now(), expiresAt: new Date(now() + 86400000), status: 'claimed' });
+      claim = true;
+    });
+    if (recent) return 'recent';
+    if (!claim) return 'failed';
+    const text = `Nexus MotoJá: o cliente da ${kind === 'entregas' ? 'entrega' : 'corrida'} ${ride.id} está te aguardando e perguntou sobre a chegada. Confira o chat da ${kind === 'entregas' ? 'entrega' : 'corrida'} no app e dê um retorno para ele por lá. Obrigado!`;
+    // Our own message comes back as an echo; it must not pause the bot as a manual reply.
+    remember(outgoingEchoes, hash(`${phone}:${text}`), true);
+    const sent = await sendText(phone, text);
+    await marker.set({ status: sent.sent ? 'sent' : 'failed', completedAt: now() }, { merge: true });
+    return sent.sent ? 'sent' : 'failed';
   }
   async function findRide(phone, text, context = {}) {
     const id = requestedRideId(text);
@@ -247,55 +301,72 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
     let result;
     try {
       context = { ...context, name: event.name || context.pendingName || '' };
-      if (waitingHuman && event.text.trim() && !['menu', 'greeting', 'thanks'].includes(intent)) await ticketRef.set({ ultimaMensagemCriptografada: encrypt(event.text), updatedAt: now() }, { merge: true });
+      const noted = waitingHuman && event.text.trim() && !['menu', 'greeting', 'thanks'].includes(intent);
+      if (noted) await appendTicket(ticketRef, event.text);
       // Greetings and help must work even when the ride lookup is unavailable.
-      const ride = event.phone && ['status', 'human', 'other', 'cancel'].includes(intent) ? await findRide(event.phone, event.text, context).catch(() => null) : null;
+      const ride = event.phone && ['status', 'human', 'other', 'cancel', 'payment'].includes(intent) ? await findRide(event.phone, event.text, context).catch(() => null) : null;
       const jobKind = ride?.kind || 'corridas';
       const jobExpireMs = jobKind === 'entregas' ? deliveryExpireMs : rideExpireMs;
+      const complaint = WAITING_COMPLAINT.test(plain(event.text));
       let answer = supportAnswer(event.text, ride, jobExpireMs, now(), context);
-      // Customer complaints can request a real group notice, never an AI action.
-      // Ownership is checked by findRide and notify rechecks the live job before sending.
-      if (intent === 'status' && ride?.status === 'pendente' && /demor|aguard|esper|nao.*aceit|ninguem.*aceit/.test(plain(event.text)) && settings.groupAlerts) {
+      let action = 'none', aiState = { aiContextCriptografado: '', aiContextUntil: 0 }, fromAi = false;
+      // The AI talks with the customer like a person, now knowing the ride situation (no phone,
+      // address or code). Menu choices and an explicit ATENDENTE stay deterministic.
+      if (event.text.trim() && !['human', 'menu', 'greeting'].includes(intent) && !/^[0-7]$/.test(event.text.trim())) {
+        let history = [];
+        try { if (context.aiContextUntil > now() && context.aiContextCriptografado) history = JSON.parse(decrypt(context.aiContextCriptografado)); } catch { /* Ignore expired or unreadable history. */ }
+        const facts = rideFacts(ride, !!event.phone, ['status', 'other', 'cancel', 'payment'].includes(intent), jobExpireMs, now());
+        const generated = await generateReply({ text: event.text, history: Array.isArray(history) ? history : [], topic: context.topic || 'menu', facts, name: context.name }, settings).catch(() => null);
+        if (generated?.answer?.human) { answer = supportAnswer('ATENDENTE', ride, rideExpireMs, now(), context); action = 'atendente'; }
+        // A reply saying the ride was accepted must match the real ride state.
+        else if (generated?.answer?.text && !(/\b(foi|esta|ja esta|ja foi) aceit|motoboy (ja )?aceitou|alguem (ja )?aceitou/.test(plain(generated.answer.text)) && !ACTIVE.includes(ride?.status))) {
+          const first =!context.lastReplyAt || context.lastReplyAt < now() - 30 * 60000;
+          answer = { topic: generated.answer.topic, text: (first ? 'Aqui é o atendimento automático da Nexus MotoJá.\n\n' : '') + generated.answer.text + (first ? FOOTER : '') };
+          action = generated.answer.action || 'none';
+          aiState = { aiContextCriptografado: encrypt(JSON.stringify(generated.history || [])), aiContextUntil: now() + 30 * 60000 };
+          fromAi = true;
+        }
+      }
+      // Without AI, a waiting complaint still triggers the same help a person would give.
+      if (!fromAi && action === 'none' && complaint && ride) action = ride.status === 'pendente' ? 'reforco_motoboys' : ACTIVE.includes(ride.status) ? 'avisar_motoboy_da_corrida' : 'none';
+      // Every action is checked here: owned ride (findRide), live state and rate limits.
+      const notes = [];
+      if (action === 'reforco_motoboys' && ride?.status === 'pendente' && settings.groupAlerts) {
         const ref = db.collection(jobKind).doc(ride.id);
         const results = [];
         if (settings.driverGroupJid) results.push(await notify(ref, jobKind, 'customer', 'whatsapp', settings).catch(() => ({ channel: 'whatsapp', status: 'failed' })));
         results.push(await notify(ref, jobKind, 'customer', 'telegram', settings).catch(() => ({ channel: 'telegram', status: 'failed' })));
         const current = await ref.get().catch(() => null);
         const freshRide = current?.exists ? { ...current.data(), kind: jobKind, id: current.id } : null;
-        answer = current ? supportAnswer(event.text, freshRide, jobExpireMs, now(), context) : { topic: 'status', text: `Não consegui confirmar a etapa atual do pedido agora. Confira pelo app ou escreva ATENDENTE para uma pessoa verificar.${FOOTER}` };
         const stillPending = freshRide?.status === 'pendente' && now() - ms(freshRide.criadaEm) < jobExpireMs;
-        if (stillPending) {
-          const labels = { whatsapp: 'grupo dos motoboys no WhatsApp', telegram: 'Telegram' };
-          const sent = results.filter(result => result.status === 'sent').map(result => labels[result.channel]);
-          const recent = results.filter(result => result.status === 'recent').map(result => labels[result.channel]);
-          const failed = results.some(result => result.status === 'failed');
-          const detail = sent.length ? `Enviei um reforço ao ${sent.join(' e ao ')}. ` : '';
-          const previous = recent.length ? `Já há um aviso recente no ${recent.join(' e no ')}. ` : '';
-          const failure = failed ? 'Não consegui confirmar o envio em todos os grupos. ' : '';
-          answer.topic = jobKind === 'entregas' ? 'delivery' : 'status';
-          answer.text = `Sua ${jobKind === 'entregas' ? 'entrega' : 'corrida'} ainda está aguardando aceite. ${detail}${previous}${failure}Não consigo garantir um motoboy ou horário de chegada. Você pode acompanhar pelo app ou escrever ATENDENTE para uma pessoa verificar.${FOOTER}`;
-        }
+        const labels = { whatsapp: 'grupo dos motoboys no WhatsApp', telegram: 'Telegram' };
+        const sent = results.filter(result => result.status === 'sent').map(result => labels[result.channel]);
+        const recent = results.filter(result => result.status === 'recent').map(result => labels[result.channel]);
+        const failed = results.some(result => result.status === 'failed');
+        const detail = `${sent.length ? `Enviei um reforço ao ${sent.join(' e ao ')}. ` : ''}${recent.length ? `Já há um aviso recente no ${recent.join(' e no ')}. ` : ''}${failed ? 'Não consegui confirmar o envio em todos os grupos. ' : ''}`.trim();
+        if (!current) notes.push('Não consegui confirmar a etapa atual do pedido agora. Confira pelo app ou escreva ATENDENTE para uma pessoa verificar.');
+        else if (!stillPending) {
+          if (fromAi) notes.push(ACTIVE.includes(freshRide?.status) ? `Boa notícia: sua ${jobKind === 'entregas' ? 'entrega' : 'corrida'} acabou de ser aceita! Confira os dados do motoboy no app.` : 'Acabei de conferir e a etapa do pedido mudou. Confira no app.');
+          else answer = supportAnswer(event.text, freshRide, jobExpireMs, now(), context);
+        } else if (fromAi) notes.push(detail || 'Vou deixar o pedido em destaque para os motoboys.');
+        else answer = { topic: jobKind === 'entregas' ? 'delivery' : 'status', text: `${empathy(context.name)}Sua ${jobKind === 'entregas' ? 'entrega' : 'corrida'} ainda está aguardando aceite. ${detail ? `${detail} ` : ''}Não consigo garantir um motoboy ou horário de chegada, mas assim que alguém aceitar você vê no app.${FOOTER}` };
+      } else if (action === 'avisar_motoboy_da_corrida' && ride && ACTIVE.includes(ride.status)) {
+        const result = await nudgeDriver(ride, jobKind).catch(() => 'failed');
+        notes.push(result === 'sent' ? 'Dei um toque no motoboy da sua corrida avisando que você está esperando. Pelo app você acompanha onde ele está e fala com ele no chat da corrida.'
+          : result === 'recent' ? 'O motoboy já foi avisado há poucos minutos. Pelo app você acompanha onde ele está e fala com ele no chat da corrida.'
+          : 'Não consegui avisar o motoboy agora. Fale com ele pelo chat da corrida no app ou escreva ATENDENTE.');
+      } else if (action === 'atendente' && !answer.human) {
+        answer.human = true;
+        notes.push('Passei sua conversa para uma pessoa da equipe. O retorno depende de alguém disponível, mas sigo por aqui com você enquanto isso.');
       }
-      let aiState = { aiContextCriptografado: '', aiContextUntil: 0 };
-      // Booking facts, media, explicit handoff and numeric menu choices stay deterministic.
-      if (event.text.trim() && !['status', 'human', 'menu', 'greeting', 'delivery', 'driver', 'cancel'].includes(intent) && !/^[0-7]$/.test(event.text.trim())) {
-        let history = [];
-        try { if (context.aiContextUntil > now() && context.aiContextCriptografado) history = JSON.parse(decrypt(context.aiContextCriptografado)); } catch { /* Ignore expired or unreadable history. */ }
-        const generated = await generateReply({ text: event.text, history: Array.isArray(history) ? history : [], topic: context.topic || 'menu' }, settings).catch(() => null);
-        if (generated?.answer?.human) answer = supportAnswer('ATENDENTE', ride, rideExpireMs, now(), context);
-        else if (generated?.answer?.text) {
-          const introduction = !context.lastReplyAt || context.lastReplyAt < now() - 30 * 60000 ? 'Sou o atendimento automático da Nexus MotoJá.\n\n' : '';
-          answer = { topic: generated.answer.topic, text: introduction + generated.answer.text + FOOTER };
-          aiState = { aiContextCriptografado: encrypt(JSON.stringify(generated.history || [])), aiContextUntil: now() + 30 * 60000 };
-        }
-      }
+      if (noted) notes.unshift('Anotei sua mensagem no pedido de atendimento, para a equipe ver.');
+      if (notes.length) answer.text = fromAi || !answer.text ? `${answer.text}\n\n${notes.join('\n\n')}` : `${notes.join('\n\n')}\n\n${answer.text}`;
       // Record fingerprint before sending because the provider can echo before POST returns.
       answer.text = answer.text.replace(/https:\/\/nexusmotoja\.com\.br\/(?:empresa\.html)?(?:\?origem=suporte&v=202)?(?=\s|$)/g, url => url.includes('empresa.html') ? `${APP}empresa.html?origem=suporte&v=202` : SHARED_APP);
       if (event.ageMs > 2 * 60000) answer.text = `Desculpe a demora para responder!\n\n${answer.text}`;
       remember(outgoingEchoes, hash(`${event.phone}:${answer.text}`), true);
       await chatRef.set({ ...aiState, outgoingHash: hash(answer.text), outgoingUntil: now() + 120000, lastIncomingHash: hash(event.text), topic: answer.topic || context.topic || 'menu', lastReplyAt: now(), ...(answer.human ? { awaitingHuman: true, pausedUntil: 0, pauseReason: '' } : {}) }, { merge: true });
-      if (answer.human) await ticketRef.set({ telefoneCriptografado: encrypt(contact), ultimaMensagemCriptografada: encrypt(event.text), rideId: ride?.id || '', status: 'aguardando', requestedAt: now(), expiresAt: null }, { merge: true });
-      // "digitando..." like a person would, without blocking the answer if it fails.
+      if (answer.human) await ticketRef.set({ telefoneCriptografado: encrypt(contact), ultimaMensagemCriptografada: encrypt(event.text), rideId: ride?.id || '', status: 'aguardando', requestedAt: now(), expiresAt: null }, { merge: true });      // "digitando..." like a person would, without blocking the answer if it fails.
       await typing(event.replyTo).catch(() => {});
       const sent = await sendText(event.replyTo, answer.text);
       await chatRef.set({ outgoingId: sent.id || '', busyUntil: 0 }, { merge: true });
