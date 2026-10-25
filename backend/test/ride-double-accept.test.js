@@ -41,7 +41,7 @@ test('notify-client only marks the ride for the motoboy who still owns it', asyn
   const records = new Map([['corridas/r1', { status: 'pendente', motoboyCpf: '', telefoneCliente: '19999990000' }]]);
   const routes = {};
   const ctx = vm.createContext({ db: makeDb(records), admin: { firestore: { FieldValue: fv } }, onlyDigits: v => String(v || '').replace(/\D/g, ''),
-    getDriverWithProof: async () => ({}), BACKEND_BASE_URL: '', isStandaloneDelivery: () => false, money: Number, ridePaymentInstructions: () => '',
+    getDriverWithProof: async () => ({}), BACKEND_BASE_URL: '', rideTrackingUrl: (id) => `https://nexusmotoja.com.br/acompanhar.html?c=${id}&t=chave`, isStandaloneDelivery: () => false, money: Number, ridePaymentInstructions: () => '',
     whatsappLink: (phone) => `https://wa.me/55${phone}`, sendEvolutionText: async () => ({}), console, setTimeout, Promise,
     app: { post: (path, ...h) => { routes[path] = h.at(-1); } } });
   vm.runInContext(slice("app.post('/api/rides/:rideId/notify-client'", "\napp.post("), ctx);

@@ -15,6 +15,9 @@ function setup(delivery = planDelivery(), driver = { nome: 'Joao Pedro', telefon
   Object.assign(h.context, {
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return { unref() {} }; }, clearTimeout: () => {},
     escapeTelegram: (value) => String(value), AbortSignal: { timeout: () => undefined },
+    deliveryOperatingCity: () => 'conchal',
+    telegramGroupChat: () => 'group', whatsappGroupFor: (_city, settings) => settings?.driverGroupJid || '',
+    driverRideCities: () => ({ conchal: true, aguai: false, engenheiro_coelho: false }),
     process: { env: { TELEGRAM_BOT_TOKEN: 'test-token', TELEGRAM_CHAT_ID: 'group' } },
     fetch: async (_url, options) => { sent.telegram.push(JSON.parse(options.body).text); return { ok: true, json: async () => ({ result: { message_id: 1 } }) }; },
     sendEvolutionText: async (number, text) => { sent.whatsapp.push({ number, text }); return { sent: true }; },

@@ -58,7 +58,7 @@ test('reopening keeps who accepted, keeps the link the client already got and wa
 });
 
 function noticeHarness(records, evolution) {
-  const ctx = vm.createContext({ db: makeDb(records), onlyDigits, money: Number, BACKEND_BASE_URL: 'https://api', isStandaloneDelivery: () => false,
+  const ctx = vm.createContext({ db: makeDb(records), onlyDigits, money: Number, BACKEND_BASE_URL: 'https://api', rideTrackingUrl: (id) => `https://nexusmotoja.com.br/acompanhar.html?c=${id}&t=chave`, isStandaloneDelivery: () => false,
     ridePaymentInstructions: ride => `Pague: ${ride.pagamento.initPoint}`, sendEvolutionText: evolution, setTimeout, Promise, Date, String });
   vm.runInContext([
     slice('function clientWhatsappNumber(', '\n}\n') + '\n}',
@@ -74,7 +74,7 @@ test('on accept the client gets the motoboy and the payment link by WhatsApp, an
   const ctx = noticeHarness(records, async (number, text) => { msgs.push([number, text]); return { sent: true }; });
   await ctx.notifyClientRideAccepted({ path: 'corridas/r1', id: 'r1' }, { nome: 'Ana', motoboy: 'Laerte', motoboyCpf: '11111111111', telefoneCliente: '(19) 99999-0000', valor: 12, pagamento: { initPoint: 'https://mp/link' } });
   assert.equal(msgs[0][0], '5519999990000');
-  assert.match(msgs[0][1], /Laerte/); assert.match(msgs[0][1], /https:\/\/mp\/link/); assert.match(msgs[0][1], /https:\/\/api\/corrida\/r1/);
+  assert.match(msgs[0][1], /Laerte/); assert.match(msgs[0][1], /https:\/\/mp\/link/); assert.match(msgs[0][1], /https:\/\/nexusmotoja\.com\.br\/acompanhar\.html\?c=r1&t=chave/);
   assert.equal(records.get('corridas/r1').clienteAvisoAutomatico.enviado, true);
 });
 

@@ -4044,6 +4044,18 @@ async function runPlanAutoFinishTick(now = Date.now()) {
   return due.docs.length;
 }
 
+// Link de acompanhamento que vai no WhatsApp do cliente: abre no site da MotoJa
+// (nao no endereco do servidor) e leva uma chave da corrida, porque quem abre pelo
+// WhatsApp nao esta no mesmo aparelho/conta que pediu.
+function rideLinkToken(rideId) {
+  return hashSecret(`acompanhar:${rideId}:${process.env.DATA_ENCRYPTION_KEY || ownerPasswordValue() || BACKEND_BASE_URL}`).slice(0, 32);
+}
+
+function rideTrackingUrl(rideId) {
+  const base = process.env.APP_BASE_URL ? appUrl('/acompanhar.html') : 'https://nexusmotoja.com.br/acompanhar.html';
+  return `${base}?c=${encodeURIComponent(rideId)}&t=${rideLinkToken(rideId)}`;
+}
+
 function clientWhatsappNumber(ride = {}) {
   const phone = onlyDigits(ride.telefoneCliente);
   return phone.length === 10 || phone.length === 11 ? `55${phone}` : '';
@@ -4053,7 +4065,7 @@ function clientWhatsappNumber(ride = {}) {
 // de pagamento mesmo que o motoboy nao aperte "Avisar cliente".
 function rideAcceptedClientMessage(rideId, ride = {}) {
   const valor = money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-  const driverUrl = BACKEND_BASE_URL ? `${BACKEND_BASE_URL}/corrida/${rideId}` : '';
+  const driverUrl = rideTrackingUrl(rideId);
   const standalone = isStandaloneDelivery(ride);
   const rota = standalone
     ? `Buscar em: ${ride.origem || '-'}\nEntregar em: ${ride.destino || '-'}\nQuem recebe: ${ride.nomeRecebedor || '-'}`
@@ -4610,6 +4622,7 @@ app.get('/corrida/:rideId', async (req, res, next) => {
   try {
     const snap = await db.collection('corridas').doc(String(req.params.rideId || '')).get();
     if (!snap.exists) return res.status(404).send('Corrida nao encontrada.');
+    if (safeEqual(String(req.query.t || ''), rideLinkToken(snap.id))) return res.redirect(302, rideTrackingUrl(snap.id));
     const nonce = crypto.randomBytes(16).toString('base64');
     res.set('content-security-policy', `default-src 'self'; script-src 'self' 'nonce-${nonce}' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: https://*.tile.openstreetmap.org https:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'`);
     return res.type('html').send(rideTrackingHtml(snap.id, snap.data() || {}, nonce));
@@ -8793,6 +8806,11 @@ async function refresh() {
   try {
     const res = await fetch('/api/rides/' + encodeURIComponent(rideId) + '/status', { cache: 'no-store' });
     const d = await res.json().catch(() => ({}));
+    if (res.status === 403) {
+      statusTxt.textContent = 'Este link antigo nao mostra mais o GPS. Abra o app MotoJa para acompanhar sua corrida.';
+      clearInterval(refreshTimer);
+      return;
+    }
     if (!res.ok) return;
 
     if (d.status === 'finalizada') {
@@ -10405,6 +10423,9 @@ const rideStatusCache = new Map();
 const RIDE_STATUS_CACHE_MS = 2200;
 
 async function canReadRideTracking(req, access) {
+  // Link de acompanhamento do WhatsApp (so para ver o status, nunca chat ou nota).
+  const link = String(req.header('x-ride-link') || '');
+  if (link && access.rideId && safeEqual(link, rideLinkToken(access.rideId))) return true;
   const deviceId = validDeviceId(req.header('x-customer-device'));
   if (deviceId && access.deviceHash && hashSecret(deviceId) === access.deviceHash) return true;
   const header = String(req.header('authorization') || '');
@@ -10425,7 +10446,7 @@ app.get('/api/rides/:rideId/status', async (req, res, next) => {
     const doc = await db.collection('corridas').doc(rideId).get();
     if (!doc.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
     const ride = doc.data() || {};
-    const access = { deviceHash: ride.clienteDeviceId ? hashSecret(ride.clienteDeviceId) : '', customerId: ride.customerId || '' };
+    const access = { deviceHash: ride.clienteDeviceId ? hashSecret(ride.clienteDeviceId) : '', customerId: ride.customerId || '', rideId: doc.id };
     if (!await canReadRideTracking(req, access)) return res.status(403).json({ error: 'acompanhamento_nao_autorizado' });
     res.set('cache-control', 'no-store');
     const payload = {
@@ -12097,7 +12118,7 @@ app.post('/api/rides/:rideId/notify-client', async (req, res, next) => {
       return res.status(409).json({ error: 'corrida_nao_pertence_ao_motoboy', message: 'Esta corrida nao esta mais com voce: o tempo para avisar o cliente acabou ou ela foi cancelada.' });
     }
 
-    const driverUrl = BACKEND_BASE_URL ? `${BACKEND_BASE_URL}/corrida/${req.params.rideId}` : '';
+    const driverUrl = rideTrackingUrl(req.params.rideId);
     const standalone = isStandaloneDelivery(ride);
     let recipientNotice = null;
     if (standalone && !ride.clienteAvisadoEm && ride.telefoneRecebedor && ride.codigoEntrega) {
