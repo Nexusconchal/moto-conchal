@@ -1,5 +1,6 @@
 // Chat da corrida dentro do app (cliente <-> motoboy), sem trocar WhatsApp.
 // Uso: MotojaRideChat.open({ rideId, backend, titulo, auth: () => ({ headers, body }) })
+// Entrega (loja <-> motoboy): passe caminho: "/api/deliveries/<id>/chat".
 (function () {
   "use strict";
   const POLL_MS = 4000;
@@ -64,12 +65,13 @@
     state.root.querySelector("form button").disabled = closed || state.sending;
     state.root.querySelector(".mjchat-aviso").textContent = closed
       ? `A ${state.servico} terminou. O chat fica só para leitura.`
-      : "Por segurança, números de telefone e links são escondidos. Combine tudo pelo app.";
+      : state.caminho ? "Links são escondidos. Combine tudo pelo app." : "Por segurança, números de telefone e links são escondidos. Combine tudo pelo app.";
   }
 
   async function request(path, extraBody = {}) {
     const auth = state.auth() || {};
-    const response = await fetch(`${state.backend}/api/rides/${encodeURIComponent(state.rideId)}/chat/${path}`, {
+    const base = state.caminho || `/api/rides/${encodeURIComponent(state.rideId)}/chat`;
+    const response = await fetch(`${state.backend}${base}/${path}`, {
       method: "POST",
       headers: { "content-type": "application/json", ...(auth.headers || {}) },
       body: JSON.stringify({ ...(auth.body || {}), ...extraBody }),
@@ -144,7 +146,7 @@
       <form><textarea maxlength="500" rows="1" placeholder="Escreva uma mensagem"></textarea><button type="submit">Enviar</button></form>
     </div>`;
     document.body.appendChild(root);
-    state = { root, rideId: options.rideId, backend: options.backend, auth: options.auth, voce: options.voce || "", servico: options.servico || "corrida",
+    state = { root, rideId: options.rideId, caminho: options.caminho || "", backend: options.backend, auth: options.auth, voce: options.voce || "", servico: options.servico || "corrida",
       tituloFixo: !!options.titulo, messages: [], aberto: true, sending: false, firstRender: true, timer: 0, onClose: options.onClose };
     root.addEventListener("click", (event) => {
       if (event.target === root || event.target.closest("[data-mjchat-fechar]")) close();

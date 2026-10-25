@@ -492,6 +492,20 @@
         display: grid;
         gap: 8px;
       }
+      /* Lote pela nota: andamento, chat e alerta do motoboy */
+      .mj-lote { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid #35424b; border-radius: 8px; }
+      .mj-lote ol { margin: 0; padding-left: 4px; list-style: none; display: grid; gap: 4px; font-size: 0.85rem; }
+      .mj-lote li small { color: #9fb0bb; margin-left: 4px; }
+      .mj-lote li.problema { color: #ffd27a; }
+      .mj-lote button { justify-self: start; }
+      .mj-chat-alerta { position: fixed; top: 16px; right: 16px; z-index: 9999; width: min(360px, calc(100vw - 32px)); display: grid; gap: 6px;
+        padding: 14px 16px; border-radius: 14px; background: #2a1e08; color: #fff; border: 2px solid #ff9a00; box-shadow: 0 12px 40px rgba(0,0,0,.45);
+        animation: mjChatPulse 1s ease-in-out 3; }
+      .mj-chat-alerta span { color: #ffe2b0; font-size: 0.9rem; overflow-wrap: anywhere; }
+      .mj-chat-alerta div { display: flex; gap: 8px; }
+      .mj-chat-alerta button { flex: 1; }
+      .mj-chat-alerta [data-chat-responder] { background: #ff9a00; color: #111; font-weight: 800; }
+      @keyframes mjChatPulse { 50% { transform: scale(1.03); } }
       .tracking-delivery {
         min-height: 0;
         border-radius: 14px;
@@ -3018,7 +3032,7 @@
           return diferencas + (x.length - i) + (y.length - j) <= 1;
         }
         // Rua conferida no cadastro oficial de Conchal (IBGE + OSM) pelo servidor.
-        if (props && props.match_confirmed === true && ["ibge-cnefe-2022", "osm", "manual"].includes(props.match_source)) return true;
+        if (props && props.match_confirmed === true && ["ibge-cnefe-2022", "osm", "manual", "aprendido"].includes(props.match_source)) return true;
         const normalizar = normalizarNomeRuaMapa;
         const texto = normalizar(entrada);
         if (["city", "county", "state", "country", "postcode", "district", "suburb"].includes(props.result_type)) return false;
@@ -5633,7 +5647,8 @@
           }
         };
     </script>
-    <script src="./empresa-tracking.js?v=211" defer></script>
+    <script src="./ride-chat.js?v=234" defer></script>
+    <script src="./empresa-tracking.js?v=212" defer></script>
     <script src="./empresa-pedidos.js?v=135" defer></script>
     <script>
       (() => {

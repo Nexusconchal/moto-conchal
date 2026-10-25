@@ -46,6 +46,124 @@
     }[char]));
   }
 
+  // ---------- Lote pela nota: andamento e chat com o motoboy (com som) ----------
+  const PROBLEMAS = { ninguem_atende: 'Ninguém atende', endereco_nao_existe: 'Endereço não encontrado', cliente_recusou: 'Cliente recusou', outro: 'Outro problema' };
+  const alertados = new Map();
+  let audioCtx = null;
+  let tituloOriginal = '';
+  let tituloTimer = null;
+
+  // O navegador so deixa tocar som depois de um clique na pagina.
+  function liberarSom() {
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    } catch (_) {}
+  }
+  ['click', 'keydown', 'touchstart'].forEach((evento) => window.addEventListener(evento, liberarSom, { passive: true }));
+
+  function tocarAlerta() {
+    liberarSom();
+    if (!audioCtx) return;
+    const inicio = audioCtx.currentTime + 0.05;
+    [0, 0.28, 0.56, 1.2, 1.48, 1.76].forEach((t, i) => {
+      const osc = audioCtx.createOscillator();
+      const ganho = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = i % 3 === 2 ? 1175 : 880;
+      ganho.gain.setValueAtTime(0.0001, inicio + t);
+      ganho.gain.exponentialRampToValueAtTime(0.35, inicio + t + 0.02);
+      ganho.gain.exponentialRampToValueAtTime(0.0001, inicio + t + 0.22);
+      osc.connect(ganho).connect(audioCtx.destination);
+      osc.start(inicio + t);
+      osc.stop(inicio + t + 0.25);
+    });
+  }
+
+  function piscarTitulo(texto) {
+    if (!tituloOriginal) tituloOriginal = document.title;
+    clearInterval(tituloTimer);
+    let alterna = false;
+    tituloTimer = setInterval(() => {
+      alterna = !alterna;
+      document.title = alterna ? texto : tituloOriginal;
+    }, 1000);
+  }
+
+  function pararTitulo() {
+    clearInterval(tituloTimer);
+    tituloTimer = null;
+    if (tituloOriginal) document.title = tituloOriginal;
+  }
+
+  function abrirChat(deliveryId) {
+    const delivery = deliveries.get(deliveryId);
+    if (!window.MotojaRideChat || !deliveryId) return;
+    document.querySelector(`[data-chat-alerta="${CSS.escape(deliveryId)}"]`)?.remove();
+    pararTitulo();
+    window.MotojaRideChat.open({
+      rideId: deliveryId,
+      caminho: `/api/deliveries/${encodeURIComponent(deliveryId)}/chat`,
+      backend: BACKEND,
+      titulo: delivery?.motoboy || 'Motoboy',
+      subtitulo: 'Motoboy da entrega · conversa pelo app',
+      voce: 'empresa',
+      servico: 'entrega',
+      auth: () => ({ headers: { authorization: `Bearer ${token()}` } }),
+      rapidas: ['Vou ligar para o cliente', 'O cliente pediu para deixar na portaria', 'Pode voltar com o pedido para a loja', 'Confira o número na nota, por favor'],
+      onClose: () => render()
+    });
+  }
+
+  // Mensagem nova do motoboy: toca, pisca o titulo e mostra um aviso com "Responder".
+  function alertarMensagem(deliveryId, texto, criadoEmMs, nome) {
+    if (!deliveryId || (alertados.get(deliveryId) || 0) >= criadoEmMs) return;
+    alertados.set(deliveryId, criadoEmMs);
+    tocarAlerta();
+    piscarTitulo('💬 Motoboy chamando!');
+    document.querySelector(`[data-chat-alerta="${CSS.escape(deliveryId)}"]`)?.remove();
+    const aviso = document.createElement('div');
+    aviso.className = 'mj-chat-alerta';
+    aviso.dataset.chatAlerta = deliveryId;
+    aviso.setAttribute('role', 'alert');
+    aviso.innerHTML = `<b>💬 ${escapeHtml(nome || 'Motoboy')}</b><span>${escapeHtml(texto || 'Mensagem nova do motoboy')}</span>
+      <div><button type="button" data-chat-responder>Responder</button><button type="button" data-chat-depois>Depois</button></div>`;
+    aviso.querySelector('[data-chat-responder]').onclick = () => abrirChat(deliveryId);
+    aviso.querySelector('[data-chat-depois]').onclick = () => { aviso.remove(); pararTitulo(); };
+    document.body.appendChild(aviso);
+    try {
+      if ('Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
+        new Notification(`💬 ${nome || 'Motoboy'}`, { body: texto || 'Mensagem nova do motoboy', tag: `chat-${deliveryId}` });
+      }
+    } catch (_) {}
+  }
+
+  // Sem o socket (internet oscilando), o alerta tambem sai pela atualizacao periodica.
+  function conferirMensagensNovas() {
+    deliveries.forEach((delivery) => {
+      if (delivery.chatUltimoAutor !== 'motoboy' || !window.MotojaRideChat?.hasUnread(delivery.id, delivery.chatUltimaEmMs, 'motoboy', 'empresa')) return;
+      if (!alertados.has(delivery.id) && Date.now() - Number(delivery.chatUltimaEmMs) > 30 * 60 * 1000) return;
+      alertarMensagem(delivery.id, 'Mensagem nova do motoboy', Number(delivery.chatUltimaEmMs), delivery.motoboy);
+    });
+  }
+
+  function htmlLote(delivery) {
+    if (delivery.entregaNaNota !== true) return '';
+    const resumo = delivery.paradasNotaResumo;
+    const paradas = Array.isArray(delivery.paradasNota) ? delivery.paradasNota : [];
+    const naoLido = window.MotojaRideChat?.hasUnread(delivery.id, delivery.chatUltimaEmMs, delivery.chatUltimoAutor, 'empresa');
+    const linhas = paradas.map((p, i) => {
+      const estado = p.status === 'entregue' ? `✅ entregue${p.entregueEm ? ` às ${new Date(p.entregueEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}`
+        : p.status === 'nao_encontrado' ? `⚠️ ${PROBLEMAS[p.problema] || 'problema'}` : '⏳ a caminho';
+      return `<li class="${p.status === 'nao_encontrado' ? 'problema' : ''}"><b>${i + 1}.</b> ${escapeHtml(p.texto)} <small>${escapeHtml(estado)}</small></li>`;
+    }).join('');
+    return `<div class="mj-lote">
+      <strong>${resumo ? `${resumo.entregues} de ${resumo.total} entregues${resumo.problemas ? ` · ${resumo.problemas} com problema` : ''}` : `Lote de ${Math.max(1, Number(delivery.paradas || 1))} entregas`}</strong>
+      ${linhas ? `<ol>${linhas}</ol>` : '<p class="muted">O motoboy ainda não adicionou os endereços das notas.</p>'}
+      ${['aceita', 'retirada'].includes(delivery.status) && delivery.motoboy ? `<button type="button" data-chat-entrega="${escapeHtml(delivery.id)}">💬 Chat com o motoboy${naoLido ? ' <span class="mjchat-badge"></span>' : ''}</button>` : ''}
+    </div>`;
+  }
+
   function statusLabel(status) {
     if (status === 'retirada') return 'Pedido retirado - em trajeto';
     if (status === 'aceita') return 'Motoboy aceitou - a caminho da retirada';
@@ -299,7 +417,7 @@
       return `<div class="company-confirmation-card"><button type="button" class="tracking-delivery${delivery.id === selectedId ? ' active' : ''}" data-tracking-delivery="${escapeHtml(delivery.id)}">
         <span><strong>${escapeHtml(delivery.recebedor || delivery.empresa || 'Entrega')}</strong><small>${escapeHtml(delivery.entrega || delivery.entregaEncontrada || '-')}</small></span>
         <span><b>${escapeHtml(delivery.motoboy || 'Aguardando motoboy')}</b><small>${escapeHtml(statusLabel(delivery.status))}${location ? ` - GPS ${relativeTime(location.serverTimestampMs || location.clientTimestamp)}` : ''}</small></span>
-      </button>${delivery.confirmacaoEmpresaVersao === 1 ? `
+      </button>${htmlLote(delivery)}${delivery.confirmacaoEmpresaVersao === 1 ? `
         <div class="company-confirmation-actions" style="padding:12px;display:grid;gap:10px;border:1px solid #35424b;border-radius:8px">
           <strong>${Math.max(1,Number(delivery.paradas || 1))} entrega(s) · ${Number(delivery.valor || 0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</strong>
           ${delivery.conclusaoStatus === 'contestada' ? `<p>Problema registrado. Valor reservado para análise do dono.</p><p>${escapeHtml(delivery.contestacaoMotivo || '')}</p>`
@@ -313,6 +431,9 @@
         selectedId = button.dataset.trackingDelivery;
         render();
       });
+    });
+    list.querySelectorAll('[data-chat-entrega]').forEach((button) => {
+      button.onclick = () => abrirChat(button.dataset.chatEntrega);
     });
     list.querySelectorAll('[data-company-confirm]').forEach(button => button.onclick = async () => {
       const action = button.dataset.companyConfirm;
@@ -375,6 +496,7 @@
       }
       lastRefreshAt = Date.now();
       render();
+      conferirMensagensNovas();
       await connectSocket(sessionToken);
     } catch (error) {
       const status = document.getElementById('mapaEntregaStatus');
@@ -423,9 +545,19 @@
         rastreamentoAtivo: event.rastreamentoAtivo,
         motoboy: event.motoboy || current.motoboy,
         motoboyLocalizacao: event.location || current.motoboyLocalizacao,
+        ...(event.paradasNota !== undefined ? { paradasNota: event.paradasNota, paradasNotaResumo: event.paradasNotaResumo } : {}),
         _eventAt: Date.now()
       });
       render();
+    });
+    socket.on('delivery:chat', (event) => {
+      const id = event?.deliveryId;
+      const mensagem = event?.mensagem;
+      if (!id || !mensagem) return;
+      const current = deliveries.get(id);
+      if (current) deliveries.set(id, { ...current, chatUltimaEmMs: mensagem.criadoEmMs, chatUltimoAutor: mensagem.autor });
+      render();
+      if (mensagem.autor === 'motoboy') alertarMensagem(id, mensagem.texto, Number(mensagem.criadoEmMs) || Date.now(), event.motoboy);
     });
   }
 

@@ -143,7 +143,7 @@
     if (!navigator.geolocation) return Promise.resolve(ultimaPosicao);
     return new Promise((resolve) => {
       navigator.geolocation.getCurrentPosition((pos) => {
-        ultimaPosicao = { lat: pos.coords.latitude, lon: pos.coords.longitude, heading: pos.coords.heading, em: Date.now() };
+        ultimaPosicao = { lat: pos.coords.latitude, lon: pos.coords.longitude, heading: pos.coords.heading, precisao: pos.coords.accuracy, em: Date.now() };
         resolve(ultimaPosicao);
       }, () => resolve(ultimaPosicao), { enableHighAccuracy: true, maximumAge: 15000, timeout: 12000 });
     });
@@ -296,7 +296,7 @@
     if (!navigator.geolocation) return;
     watchId = navigator.geolocation.watchPosition((pos) => {
       if (!Number.isFinite(pos.coords.accuracy) || pos.coords.accuracy > 150) return;
-      ultimaPosicao = { lat: pos.coords.latitude, lon: pos.coords.longitude, heading: pos.coords.heading, em: Date.now() };
+      ultimaPosicao = { lat: pos.coords.latitude, lon: pos.coords.longitude, heading: pos.coords.heading, precisao: pos.coords.accuracy, em: Date.now() };
       aoMover(ultimaPosicao);
     }, () => {}, { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 });
   }
@@ -506,8 +506,76 @@
     } catch (_) {}
   }
 
+  const MOTIVOS_PROBLEMA = {
+    ninguem_atende: 'Ninguém atende',
+    endereco_nao_existe: 'Não achei o endereço',
+    cliente_recusou: 'Cliente recusou',
+    outro: 'Outro problema'
+  };
+  let paradaProblema = '';
+
+  // Celular trocado ou app reinstalado: a lista volta do servidor.
+  function restaurarDoServidor(cfg) {
+    const salvas = cfg.paradas?.salvas;
+    if (!Array.isArray(salvas) || !salvas.length || lerParadas(cfg.id).lista.length) return;
+    salvarParadas(cfg.id, {
+      ativa: '',
+      lista: salvas.map((p) => ({
+        id: p.id, texto: p.texto, encontrado: p.encontrado || '', lat: Number(p.lat) || 0, lon: Number(p.lon) || 0,
+        entregue: p.status === 'entregue', entregueEm: Number(p.entregueEm) || 0, problema: p.status === 'nao_encontrado' ? p.problema || 'outro' : ''
+      }))
+    });
+  }
+
+  // Manda a lista para o servidor (a loja acompanha e o app aprende os enderecos).
+  const sincronizacoes = new Map();
+  function sincronizarParadas(cfg) {
+    if (!cfg.backend || !cfg.prova?.driverCpf) return;
+    clearTimeout(sincronizacoes.get(cfg.id));
+    sincronizacoes.set(cfg.id, setTimeout(() => {
+      sincronizacoes.delete(cfg.id);
+      const dados = lerParadas(cfg.id);
+      const paradas = dados.lista.map((p) => ({
+        id: p.id, texto: p.texto, encontrado: p.encontrado, lat: p.lat, lon: p.lon, entregueEm: p.entregueEm || 0,
+        status: p.entregue ? 'entregue' : p.problema ? 'nao_encontrado' : 'pendente', problema: p.problema || '', gpsEntrega: p.gpsEntrega || null
+      }));
+      fetch(`${cfg.backend}/api/deliveries/${encodeURIComponent(cfg.id)}/notas`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...cfg.prova, paradas })
+      }).catch(() => {});
+    }, 1200));
+  }
+
+  // Distancia pela rua ate cada parada (servidor consulta o OSRM); sem resposta, linha reta.
+  const distRua = { chave: '', origem: null, em: 0, metros: new Map() };
   function distanciaAteMim(p) {
-    return pontoValido(ultimaPosicao) ? distanciaMetros(ultimaPosicao, p) : Infinity;
+    if (!pontoValido(ultimaPosicao)) return Infinity;
+    const rua = distRua.metros.get(p.id);
+    return Number.isFinite(rua) ? rua : distanciaMetros(ultimaPosicao, p);
+  }
+
+  async function atualizarDistanciasRua(cfg) {
+    const pendentes = lerParadas(cfg.id).lista.filter((p) => !p.entregue && !p.problema && pontoValido(p));
+    if (!pontoValido(ultimaPosicao) || pendentes.length < 2) return false;
+    const chave = pendentes.map((p) => p.id).join(',');
+    const moveu = distRua.origem ? distanciaMetros(distRua.origem, ultimaPosicao) : Infinity;
+    if (chave === distRua.chave && moveu < 150 && Date.now() - distRua.em < 90000) return false;
+    const origem = { lat: ultimaPosicao.lat, lon: ultimaPosicao.lon };
+    Object.assign(distRua, { chave, origem, em: Date.now() });
+    try {
+      const response = await fetch(`${cfg.backend}/api/maps/distances`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ origem, destinos: pendentes.map((p) => ({ lat: p.lat, lon: p.lon })) })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !Array.isArray(data.distancias)) return false;
+      distRua.metros = new Map(pendentes.map((p, i) => [p.id, Number.isFinite(data.distancias[i]) ? data.distancias[i] : NaN]));
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   function paradaMaisPerta(pendentes) {
@@ -516,19 +584,23 @@
     return comMapa.reduce((melhor, p) => (distanciaAteMim(p) < distanciaAteMim(melhor) ? p : melhor));
   }
 
-  // O alvo da navegacao e a parada escolhida ou, sem escolha, a mais perto.
+  // O alvo da navegacao e a parada escolhida ("Ir") ou, sem escolha, a mais perto pela rua.
+  // Entrega com problema (cliente nao achado) sai da fila ate a loja responder.
   function aplicarAlvoParadas(cfg) {
     if (!cfg.paradas) return;
+    restaurarDoServidor(cfg);
     const dados = lerParadas(cfg.id);
-    const pendentes = dados.lista.filter((p) => !p.entregue);
+    const pendentes = dados.lista.filter((p) => !p.entregue && !p.problema);
     let ativa = pendentes.find((p) => p.id === dados.ativa);
-    if (!ativa) {
-      ativa = paradaMaisPerta(pendentes);
-      if ((ativa?.id || '') !== (dados.ativa || '')) salvarParadas(cfg.id, { ...dados, ativa: ativa?.id || '' });
+    const perto = paradaMaisPerta(pendentes);
+    if (!ativa || (!dados.ativaManual && perto && perto !== ativa)) {
+      ativa = perto;
+      if ((ativa?.id || '') !== (dados.ativa || '')) salvarParadas(cfg.id, { ...dados, ativa: ativa?.id || '', ativaManual: false });
     }
+    const comProblema = dados.lista.filter((p) => !p.entregue && p.problema).length;
     cfg.alvo = ativa
       ? { lat: ativa.lat, lon: ativa.lon, titulo: ativa.texto, busca: ativa.texto, rotulo: `Entrega ${dados.lista.indexOf(ativa) + 1}` }
-      : { lat: 0, lon: 0, titulo: dados.lista.length ? 'todas marcadas como entregues' : 'adicione os endereços abaixo', rotulo: 'Endereços das notas' };
+      : { lat: 0, lon: 0, titulo: comProblema ? `${comProblema} com problema · fale com a loja` : dados.lista.length ? 'todas marcadas como entregues' : 'adicione os endereços abaixo', rotulo: 'Endereços das notas' };
   }
 
   async function buscarEndereco(cfg, texto) {
@@ -575,34 +647,50 @@
     if (!cfg.paradas) return '';
     const dados = lerParadas(cfg.id);
     const total = Number(cfg.paradas.total || 0);
-    const pendentes = dados.lista.filter((p) => !p.entregue);
+    const pendentes = dados.lista.filter((p) => !p.entregue && !p.problema);
+    const comProblema = dados.lista.filter((p) => !p.entregue && p.problema);
     const perto = paradaMaisPerta(pendentes);
     const faltam = total - dados.lista.length;
+    const entregues = dados.lista.filter((p) => p.entregue).length;
     const resumo = faltam > 0
       ? `${dados.lista.length} de ${total} endereços · ${faltam === 1 ? 'falta 1' : `faltam ${faltam}`}`
-      : `${dados.lista.length - pendentes.length} de ${dados.lista.length} entregues`;
-    // Pendentes primeiro, da mais perto para a mais longe; entregues no fim.
+      : `${entregues} de ${dados.lista.length} entregues${comProblema.length ? ` · ${comProblema.length} com problema` : ''}`;
+    // Pendentes da mais perto (pela rua) para a mais longe; depois as com problema; entregues no fim.
     const ordenadas = [...pendentes]
       .sort((a, b) => (pontoValido(ultimaPosicao) ? distanciaAteMim(a) - distanciaAteMim(b) : 0) || 0)
-      .concat(dados.lista.filter((p) => p.entregue));
+      .concat(comProblema, dados.lista.filter((p) => p.entregue));
     const linhas = ordenadas.map((p) => {
       const numero = dados.lista.indexOf(p) + 1;
-      const ativa = !p.entregue && p.id === dados.ativa;
+      const ativa = !p.entregue && !p.problema && p.id === dados.ativa;
       let info;
       if (p.entregue) {
-        info = `Entregue${p.entregueEm ? ` ${new Date(p.entregueEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}`;
+        info = esc(`Entregue${p.entregueEm ? ` ${new Date(p.entregueEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}`);
+      } else if (p.problema) {
+        info = `<em class="mjnav-problema-tag">⚠️ ${esc(MOTIVOS_PROBLEMA[p.problema] || 'Problema')} · loja avisada</em>`;
       } else {
         const dist = pontoValido(p) ? textoKm(distanciaAteMim(p)) : 'sem mapa';
+        const pelaRua = Number.isFinite(distRua.metros.get(p.id)) ? ' pela rua' : '';
         const marcas = [p === perto && pendentes.length > 1 ? 'mais perto' : '', ativa ? 'indo agora' : ''].filter(Boolean).join(' · ');
-        info = `${esc(dist === '-' ? '' : dist)}${marcas ? `${dist === '-' ? '' : ' · '}<em>${marcas}</em>` : dist !== '-' && dist !== 'sem mapa' ? ' de você' : ''}`;
+        info = `${esc(dist === '-' ? '' : dist)}${dist !== '-' && dist !== 'sem mapa' ? `${pelaRua}` : ''}${marcas ? `${dist === '-' ? '' : ' · '}<em>${marcas}</em>` : dist !== '-' && dist !== 'sem mapa' ? ' de você' : ''}`;
       }
-      return `<div class="mjnav-parada${ativa ? ' ativa' : ''}${p.entregue ? ' feita' : ''}">
+      const botoes = p.entregue
+        ? `<button type="button" class="mjnav-mini" data-mjnav-desfazer="${esc(p.id)}" aria-label="Desfazer entrega ${numero}">↺</button>`
+        : p.problema
+          ? `<button type="button" class="mjnav-mini" data-mjnav-voltar="${esc(p.id)}" aria-label="Voltar a entrega ${numero} para a fila">↺ Fila</button><button type="button" class="mjnav-mini ok" data-mjnav-ok="${esc(p.id)}" aria-label="Marcar entrega ${numero} como entregue">✓</button>`
+          : `${ativa ? '' : `<button type="button" class="mjnav-mini" data-mjnav-ir="${esc(p.id)}">Ir</button>`}<button type="button" class="mjnav-mini ok" data-mjnav-ok="${esc(p.id)}" aria-label="Marcar entrega ${numero} como entregue">${ativa ? '✓ Entregue' : '✓'}</button><button type="button" class="mjnav-mini aviso" data-mjnav-problema="${esc(p.id)}" aria-label="Não encontrei o cliente da entrega ${numero}">⚠️</button><button type="button" class="mjnav-mini x" data-mjnav-del="${esc(p.id)}" aria-label="Remover endereço ${numero}">✕</button>`;
+      const painel = paradaProblema === p.id && !p.entregue
+        ? `<div class="mjnav-problema" data-mjnav-problema-painel="${esc(p.id)}">
+            <b>Qual o problema na entrega ${numero}?</b>
+            <div class="mjnav-motivos">${Object.entries(MOTIVOS_PROBLEMA).map(([chave, texto]) => `<button type="button" class="mjnav-mini" data-mjnav-motivo="${chave}">${esc(texto)}</button>`).join('')}</div>
+            <input type="text" data-mjnav-problema-obs maxlength="200" placeholder="Detalhe para a loja (opcional)">
+            <div class="mjnav-motivos"><button type="button" class="mjnav-mini laranja" data-mjnav-problema-enviar disabled>Avisar a loja</button><button type="button" class="mjnav-mini" data-mjnav-problema-cancelar>Cancelar</button></div>
+          </div>`
+        : '';
+      return `<div class="mjnav-parada${ativa ? ' ativa' : ''}${p.entregue ? ' feita' : ''}${p.problema ? ' problema' : ''}">
         <span class="mjnav-num">${p.entregue ? '✓' : numero}</span>
-        <div class="mjnav-parada-txt"><b>${esc(p.texto)}</b><span>${p.entregue ? esc(info) : info}</span></div>
-        ${p.entregue
-          ? `<button type="button" class="mjnav-mini" data-mjnav-desfazer="${esc(p.id)}" aria-label="Desfazer entrega ${numero}">↺</button>`
-          : `${ativa ? '' : `<button type="button" class="mjnav-mini" data-mjnav-ir="${esc(p.id)}">Ir</button>`}<button type="button" class="mjnav-mini ok" data-mjnav-ok="${esc(p.id)}" aria-label="Marcar entrega ${numero} como entregue">${ativa ? '✓ Entregue' : '✓'}</button><button type="button" class="mjnav-mini x" data-mjnav-del="${esc(p.id)}" aria-label="Remover endereço ${numero}">✕</button>`}
-      </div>`;
+        <div class="mjnav-parada-txt"><b>${esc(p.texto)}</b><span>${info}</span></div>
+        ${botoes}
+      </div>${painel}`;
     }).join('');
     const formAberto = faltam > 0 || paradaFormAberto === cfg.id;
     return `<div class="mjnav-paradas">
@@ -626,6 +714,7 @@
     const atualizar = (focar) => {
       if (tela) tela.editando = false;
       paradaFocar = focar ? cfg.id : '';
+      sincronizarParadas(cfg);
       aplicarAlvoParadas(cfg);
       renderNav(cfg, null);
       if (window.L && tela?.cfg === cfg) {
@@ -651,12 +740,16 @@
       atualizar(false);
     };
     caixa.querySelectorAll('[data-mjnav-ir]').forEach((btn) => {
-      btn.onclick = () => mudar(btn.dataset.mjnavIr, (p, dados) => { dados.ativa = p.id; });
+      btn.onclick = () => mudar(btn.dataset.mjnavIr, (p, dados) => { dados.ativa = p.id; dados.ativaManual = true; });
     });
     caixa.querySelectorAll('[data-mjnav-ok]').forEach((btn) => {
       btn.onclick = () => mudar(btn.dataset.mjnavOk, (p, dados) => {
         p.entregue = true;
         p.entregueEm = Date.now();
+        p.problema = '';
+        // Onde o motoboy estava ao entregar: ensina o app onde esse endereco fica.
+        const gpsRecente = pontoValido(ultimaPosicao) && Date.now() - Number(ultimaPosicao.em || 0) < 60000;
+        p.gpsEntrega = gpsRecente ? { lat: ultimaPosicao.lat, lon: ultimaPosicao.lon, precisao: Math.round(Number(ultimaPosicao.precisao) || 9999), em: Date.now() } : null;
         if (dados.ativa === p.id) dados.ativa = '';
       });
     });
@@ -664,8 +757,68 @@
       btn.onclick = () => mudar(btn.dataset.mjnavDesfazer, (p) => {
         p.entregue = false;
         p.entregueEm = 0;
+        p.gpsEntrega = null;
       });
     });
+    caixa.querySelectorAll('[data-mjnav-voltar]').forEach((btn) => {
+      btn.onclick = () => mudar(btn.dataset.mjnavVoltar, (p) => { p.problema = ''; });
+    });
+    // ⚠️ Nao encontrei o cliente: escolhe o motivo, avisa a loja pelo chat (toca na empresa)
+    // e a entrega vai para o fim da fila.
+    caixa.querySelectorAll('[data-mjnav-problema]').forEach((btn) => {
+      btn.onclick = () => {
+        paradaProblema = btn.dataset.mjnavProblema;
+        if (tela) tela.editando = true;
+        renderNav(cfg, tela?.rota || null);
+      };
+    });
+    const painel = caixa.querySelector('[data-mjnav-problema-painel]');
+    if (painel) {
+      let motivo = '';
+      const enviar = painel.querySelector('[data-mjnav-problema-enviar]');
+      painel.querySelectorAll('[data-mjnav-motivo]').forEach((btn) => {
+        btn.onclick = () => {
+          motivo = btn.dataset.mjnavMotivo;
+          painel.querySelectorAll('[data-mjnav-motivo]').forEach((b) => b.classList.toggle('laranja', b === btn));
+          enviar.disabled = false;
+        };
+      });
+      painel.querySelector('[data-mjnav-problema-cancelar]').onclick = () => {
+        paradaProblema = '';
+        atualizar(false);
+      };
+      enviar.onclick = async () => {
+        const id = painel.dataset.mjnavProblemaPainel;
+        const obs = painel.querySelector('[data-mjnav-problema-obs]').value.trim();
+        const dados = lerParadas(cfg.id);
+        const parada = dados.lista.find((p) => p.id === id);
+        if (!parada || !motivo) return;
+        enviar.disabled = true;
+        enviar.textContent = 'Avisando...';
+        const numero = dados.lista.indexOf(parada) + 1;
+        const texto = `⚠️ Entrega ${numero} (${parada.texto}): ${MOTIVOS_PROBLEMA[motivo]}.${obs ? ` ${obs.replace(/[.!?\s]*$/, '.')}` : ''} Pode me ajudar?`;
+        try {
+          const response = await fetch(`${cfg.backend}/api/deliveries/${encodeURIComponent(cfg.id)}/chat/send`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ ...cfg.prova, texto })
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.message || 'Não consegui avisar a loja agora.');
+        } catch (error) {
+          enviar.disabled = false;
+          enviar.textContent = 'Avisar a loja';
+          alert(`${error.message || 'Não consegui avisar a loja agora.'} Tente de novo ou ligue para a loja.`);
+          return;
+        }
+        paradaProblema = '';
+        mudar(id, (p, d) => {
+          p.problema = motivo;
+          if (d.ativa === p.id) { d.ativa = ''; d.ativaManual = false; }
+        });
+        cfg.cliente?.chat?.();
+      };
+    }
     caixa.querySelectorAll('[data-mjnav-del]').forEach((btn) => {
       btn.onclick = () => {
         const dados = lerParadas(cfg.id);
@@ -841,7 +994,7 @@
           ${avatar}
           <div><b>${esc(cliente.nome || '-')}</b><span>${esc(cliente.linha || '')}</span></div>
           <div class="mjnav-client-icons">
-            ${typeof cliente.chat === 'function' ? `<button type="button" class="mjnav-round" data-mjnav-chat aria-label="Chat com o cliente" style="position:relative">💬${cliente.chatNaoLido ? '<span class="mjchat-badge" style="position:absolute;top:2px;right:2px;margin:0"></span>' : ''}</button>` : fone ? `<a class="mjnav-round" href="https://api.whatsapp.com/send?phone=55${esc(fone)}" target="_blank" rel="noopener" aria-label="WhatsApp">💬</a><a class="mjnav-round" href="tel:${esc(fone)}" aria-label="Ligar">📞</a>` : ''}
+            ${typeof cliente.chat === 'function' ? `<button type="button" class="mjnav-round" data-mjnav-chat aria-label="${cfg.paradas ? 'Chat com a loja' : 'Chat com o cliente'}" style="position:relative">💬${cliente.chatNaoLido ? '<span class="mjchat-badge" style="position:absolute;top:2px;right:2px;margin:0"></span>' : ''}</button>${cfg.paradas && fone ? `<a class="mjnav-round" href="tel:${esc(fone)}" aria-label="Ligar para a loja">📞</a>` : ''}` : fone ? `<a class="mjnav-round" href="https://api.whatsapp.com/send?phone=55${esc(fone)}" target="_blank" rel="noopener" aria-label="WhatsApp">💬</a><a class="mjnav-round" href="tel:${esc(fone)}" aria-label="Ligar">📞</a>` : ''}
           </div>
         </div>
         ${htmlParadasNav(cfg)}
@@ -913,6 +1066,12 @@
   }
 
   async function atualizarRotaNav(L, cfg, forcar) {
+    // Lote: com a distancia pela rua, a "mais perto" pode mudar (se o motoboy nao escolheu outra).
+    if (cfg.paradas && !tela?.editando && await atualizarDistanciasRua(cfg)) {
+      const antes = `${cfg.alvo?.lat},${cfg.alvo?.lon}`;
+      aplicarAlvoParadas(cfg);
+      if (`${cfg.alvo?.lat},${cfg.alvo?.lon}` !== antes) forcar = true;
+    }
     const eu = ultimaPosicao;
     const chave = `${cfg.id}:${cfg.etapa}:${Number(cfg.alvo?.lat || 0).toFixed(5)},${Number(cfg.alvo?.lon || 0).toFixed(5)}`;
     const moveu = distanciaMetros(rotaNav.origem, eu);

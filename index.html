@@ -3123,7 +3123,7 @@
           return diferencas + (x.length - i) + (y.length - j) <= 1;
         }
         // Rua conferida no cadastro oficial de Conchal (IBGE + OSM) pelo servidor.
-        if (props && props.match_confirmed === true && ["ibge-cnefe-2022", "osm", "manual"].includes(props.match_source)) return true;
+        if (props && props.match_confirmed === true && ["ibge-cnefe-2022", "osm", "manual", "aprendido"].includes(props.match_source)) return true;
         const normalizar = normalizarNomeRuaMapa;
         const texto = normalizar(entrada);
         if (["city", "county", "state", "country", "postcode", "district", "suburb"].includes(props.result_type)) return false;
@@ -4986,7 +4986,7 @@
       })();
     </script>
     <script src="./customer-availability.js?v=224" defer></script>
-    <script src="./ride-chat.js?v=233" defer></script>
+    <script src="./ride-chat.js?v=234" defer></script>
     <script src="./ride-rating.js?v=234" defer></script>
     <script src="./cliente-menu.js?v=2"></script>
   </body>

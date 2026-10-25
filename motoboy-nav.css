@@ -785,3 +785,38 @@ html.mjnav-aberto body {
 .mjnav-achado.sugestao {
   border-color: rgba(255, 157, 0, 0.45);
 }
+.mjnav-mini.aviso {
+  background: #2a2316;
+  color: #ffd27a;
+}
+.mjnav-parada.problema {
+  border-color: rgba(255, 196, 0, 0.45);
+}
+.mjnav-problema-tag {
+  color: #ffd27a;
+  font-style: normal;
+}
+.mjnav-problema {
+  margin: -2px 0 8px;
+  padding: 10px;
+  border-radius: 12px;
+  background: #1d1a12;
+  border: 1px solid rgba(255, 196, 0, 0.4);
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+.mjnav-motivos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mjnav-problema input {
+  background: #0e1015;
+  border: 1px solid #3a3f4b;
+  border-radius: 10px;
+  padding: 9px 10px;
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+}

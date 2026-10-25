@@ -63,7 +63,7 @@ export function sameStreetWord(a, b) {
 
 export function addressFeatureMatches(value, props = {}) {
   // Endereco ja conferido no cadastro oficial de ruas de Conchal (IBGE/OSM).
-  if (props.match_confirmed === true && ['ibge-cnefe-2022', 'osm', 'manual'].includes(props.match_source)) return true;
+  if (props.match_confirmed === true && ['ibge-cnefe-2022', 'osm', 'manual', 'aprendido'].includes(props.match_source)) return true;
   if (['city', 'county', 'state', 'country', 'postcode', 'district', 'suburb'].includes(props.result_type)) return false;
   const text = normalized(value);
   const parts = streetNumber(text);

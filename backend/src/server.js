@@ -27,6 +27,8 @@ import { deliveryReportQuantity, buildCompanyDeliveryReport } from './delivery-r
 import { companyProfileUpdate } from './company-profile.js';
 import { protectedDelivery, deliveryHeld, completionReason, assertCompanyDelivery } from './delivery-completion.js';
 import { safeDepositCheckout, assertDepositPayment, assertDepositCompany, depositPaymentAmounts, companyDepositView } from './company-deposit.js';
+import { createLearnedAddresses, newlyDelivered, sanitizeStops, stopsSummary } from './delivery-stops.js';
+import { GAZETTEER_CITIES, gazetteerCityKey } from './conchal-gazetteer.js';
 import { createGeminiReceiptReader, createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
 import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
 
@@ -4396,6 +4398,17 @@ app.get('/api/maps/geocode', mapLimiter, async (req, res, next) => {
     if (/^proximity:-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(bias)) params.set('bias', bias);
 
     const original = cleanText(req.query.original, 220);
+    // Endereco onde um motoboy ja entregou: vale o GPS da entrega (ex.: casa nova, condominio).
+    const placeHint = requestedPlaceHint(text);
+    const learnedCity = gazetteerCityKey(placeHint) || placeHint.replace(/\s+/g, '_');
+    const learned = await learnedAddresses.lookup(original || text, learnedCity).catch(() => null);
+    if (learned) {
+      const cityName = GAZETTEER_CITIES[learnedCity]?.name || (placeHint ? placeHint.replace(/\b\w/g, (l) => l.toUpperCase()) : 'Conchal');
+      const formatted = `${learned.texto} - ${cityName} - SP`;
+      return res.json({ type: 'FeatureCollection', source: 'aprendido', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [learned.lon, learned.lat] },
+        properties: { lat: learned.lat, lon: learned.lon, name: learned.texto, formatted, address_line1: learned.texto, address_line2: `${cityName} - SP`, city: cityName, county: cityName,
+          state: 'São Paulo', country: 'Brasil', result_type: 'amenity', match_confirmed: true, match_source: 'aprendido', match_precision: 'entrega', match_score: learned.confirmacoes } }] });
+    }
     const data = await searchMapAddress({ text, original, apiKey: GEOAPIFY_API_KEY, filter: params.get('filter') || '', bias: params.get('bias') || '', city: requestedPlaceHint(text) || 'Conchal', limit: Number(params.get('limit')) });
     res.json(data);
   } catch (error) {
@@ -4443,6 +4456,147 @@ app.post('/api/maps/route', mapLimiter, async (req, res, next) => {
     next(error);
   }
 });
+
+// ---------- Lote pela nota: enderecos no servidor, chat com a loja e distancia pela rua ----------
+const noteBatchLimiter = rateLimit({ windowMs: 60 * 1000, limit: 40, standardHeaders: true, legacyHeaders: false });
+
+function deliveryCompanyId(delivery = {}) {
+  return String(delivery.empresaId || onlyDigits(delivery.telefoneEmpresa) || '');
+}
+
+// O celular do motoboy manda a lista inteira a cada mudanca; a empresa ve o andamento
+// e cada "entregue" com GPS bom ensina onde aquele endereco fica.
+app.post('/api/deliveries/:deliveryId/notas', noteBatchLimiter, async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body?.driverCpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+    const ref = db.collection('entregas').doc(String(req.params.deliveryId || ''));
+    let delivery = null;
+    let learn = [];
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw Object.assign(new Error('Entrega nao encontrada.'), { status: 404 });
+      const current = snap.data() || {};
+      if (onlyDigits(current.motoboyCpf) !== driverCpf) throw Object.assign(new Error('Entrega nao pertence ao motoboy.'), { status: 409 });
+      if (current.entregaNaNota !== true) throw Object.assign(new Error('Esta entrega nao e um lote pela nota.'), { status: 409 });
+      if (!['aceita', 'retirada'].includes(current.status)) throw Object.assign(new Error('Esta entrega ja foi encerrada.'), { status: 409, code: 'entrega_encerrada' });
+      const stops = sanitizeStops(req.body?.paradas, Math.max(1, Number(current.paradas || 1)) + 10);
+      learn = newlyDelivered(current.paradasNota || [], stops);
+      const resumo = stopsSummary(stops, current.paradas);
+      tx.set(ref, { paradasNota: stops, paradasNotaResumo: resumo, paradasNotaEmMs: Date.now() }, { merge: true });
+      delivery = { ...current, paradasNota: stops, paradasNotaResumo: resumo };
+    });
+    const city = String(delivery.cidadeOperacao || 'conchal');
+    await Promise.all(learn.map((stop) => learnedAddresses.learn({ texto: stop.texto, city, gps: stop.gpsEntrega }).catch(() => false)));
+    emitDeliveryTracking(deliveryCompanyId(delivery), { deliveryId: ref.id, status: delivery.status, paradasNota: delivery.paradasNota, paradasNotaResumo: delivery.paradasNotaResumo });
+    return res.json({ ok: true, resumo: delivery.paradasNotaResumo });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Chat da entrega entre o motoboy e a loja (o "nao achei o cliente" cai aqui com som na empresa).
+async function deliveryChatParticipant(req, delivery) {
+  const driverCpf = onlyDigits(req.body?.driverCpf);
+  if (driverCpf) {
+    await getDriverWithProof(driverCpf, req.body);
+    return onlyDigits(delivery.motoboyCpf) === driverCpf ? 'motoboy' : '';
+  }
+  const header = String(req.header('authorization') || '');
+  const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+  if (!token) return '';
+  const session = await findCompanySession(token);
+  return session && deliveryCompanyId(delivery) === String(session.companyId) ? 'empresa' : '';
+}
+
+function deliveryChatOpen(delivery = {}) {
+  if (['aceita', 'retirada'].includes(delivery.status)) return true;
+  const closedAt = timestampMs(delivery.finalizadaEm || delivery.canceladaEm || delivery.atualizadaEm);
+  return ['finalizada', 'cancelada'].includes(delivery.status) && closedAt && Date.now() - closedAt < 2 * 60 * 60 * 1000;
+}
+
+// Entre loja e motoboy o telefone do cliente pode passar (ajuda a achar a casa); links nao.
+function maskDeliveryChatText(value) {
+  return cleanText(value, RIDE_CHAT_MAX)
+    .replace(/(?:https?:\/\/|www\.)\S+|\b(?:wa\.me|api\.whatsapp\.com|chat\.whatsapp\.com|instagram\.com|t\.me)\/?\S*/gi, '[link oculto]')
+    .replace(/[^\S\n]{2,}/g, ' ')
+    .trim();
+}
+
+app.post('/api/deliveries/:deliveryId/chat/send', createRideLimiter, async (req, res, next) => {
+  try {
+    const ref = db.collection('entregas').doc(String(req.params.deliveryId || ''));
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'entrega_nao_encontrada' });
+    const delivery = snap.data() || {};
+    const autor = await deliveryChatParticipant(req, delivery);
+    if (!autor) return res.status(403).json({ error: 'chat_nao_autorizado', message: 'Este chat e so da loja e do motoboy desta entrega.' });
+    if (!['aceita', 'retirada'].includes(delivery.status)) return res.status(409).json({ error: 'chat_encerrado', message: 'O chat fica aberto so enquanto a entrega esta em andamento.' });
+    const texto = maskDeliveryChatText(req.body?.texto);
+    if (!texto) return res.status(400).json({ error: 'mensagem_vazia', message: 'Digite uma mensagem.' });
+    if (!rideChatAllowed(`entrega:${ref.id}:${autor}`)) return res.status(429).json({ error: 'muitas_mensagens', message: 'Aguarde um pouco antes de mandar outra mensagem.' });
+    const criadoEmMs = Date.now();
+    const messageRef = ref.collection('chat').doc();
+    const batch = db.batch();
+    batch.set(messageRef, { autor, texto, criadoEmMs, criadoEm: admin.firestore.FieldValue.serverTimestamp() });
+    batch.set(ref, { chatUltimaEmMs: criadoEmMs, chatUltimoAutor: autor, chatTotal: admin.firestore.FieldValue.increment(1) }, { merge: true });
+    await batch.commit();
+    const mensagem = { id: messageRef.id, autor, texto, criadoEmMs };
+    const companyId = onlyDigits(deliveryCompanyId(delivery));
+    if (companyId) io.to(`company:${companyId}`).emit('delivery:chat', { deliveryId: ref.id, motoboy: delivery.motoboy || 'Motoboy', mensagem });
+    return res.json({ ok: true, mensagem });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/deliveries/:deliveryId/chat/list', createRideLimiter, async (req, res, next) => {
+  try {
+    const ref = db.collection('entregas').doc(String(req.params.deliveryId || ''));
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'entrega_nao_encontrada' });
+    const delivery = snap.data() || {};
+    const voce = await deliveryChatParticipant(req, delivery);
+    if (!voce) return res.status(403).json({ error: 'chat_nao_autorizado', message: 'Este chat e so da loja e do motoboy desta entrega.' });
+    if (!deliveryChatOpen(delivery)) return res.json({ ok: true, voce, aberto: false, mensagens: [] });
+    const depois = Math.max(0, Number(req.body?.depoisDeMs || 0));
+    const query = depois ? ref.collection('chat').where('criadoEmMs', '>', depois) : ref.collection('chat');
+    const messages = await query.limit(200).get();
+    const mensagens = messages.docs
+      .map((doc) => ({ id: doc.id, autor: doc.data().autor, texto: doc.data().texto, criadoEmMs: Number(doc.data().criadoEmMs || 0) }))
+      .sort((a, b) => a.criadoEmMs - b.criadoEmMs);
+    return res.json({ ok: true, voce, aberto: ['aceita', 'retirada'].includes(delivery.status), mensagens,
+      outro: voce === 'empresa' ? { nome: delivery.motoboy || 'Motoboy' } : { nome: delivery.empresa || 'Loja' } });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Distancia pela rua do motoboy ate cada endereco do lote (OSRM table, gratis), para mostrar o mais perto de verdade.
+const roadDistanceCache = new Map();
+app.post('/api/maps/distances', mapLimiter, async (req, res, next) => {
+  try {
+    const point = (p) => (validCoordinate({ lat: Number(p?.lat), lon: Number(p?.lon) }) ? { lat: Number(p.lat), lon: Number(p.lon) } : null);
+    const origem = point(req.body?.origem);
+    const destinos = (Array.isArray(req.body?.destinos) ? req.body.destinos : []).slice(0, 25).map(point);
+    if (!origem || !destinos.length || destinos.some((p) => !p)) return res.status(400).json({ error: 'pontos_invalidos' });
+    const key = [origem, ...destinos].map((p) => `${p.lon.toFixed(4)},${p.lat.toFixed(4)}`).join(';');
+    const cached = roadDistanceCache.get(key);
+    if (cached && cached.expires > Date.now()) return res.json(cached.data);
+    const response = await fetch(`https://router.project-osrm.org/table/v1/driving/${key}?sources=0&annotations=distance,duration`, { signal: AbortSignal.timeout(10000) });
+    const table = response.ok ? await response.json() : null;
+    if (!table || table.code !== 'Ok') return res.status(502).json({ error: 'distancias_indisponiveis' });
+    const valor = (row, i) => (Number.isFinite(Number(row?.[i + 1])) && row[i + 1] !== null ? Math.round(Number(row[i + 1])) : null);
+    const data = { ok: true, distancias: destinos.map((_, i) => valor(table.distances?.[0], i)), duracoes: destinos.map((_, i) => valor(table.durations?.[0], i)) };
+    if (roadDistanceCache.size > 300) roadDistanceCache.delete(roadDistanceCache.keys().next().value);
+    roadDistanceCache.set(key, { data, expires: Date.now() + 2 * 60 * 1000 });
+    return res.json(data);
+  } catch (error) {
+    return next(error);
+  }
+});
+
 
 function driverStatusHtml(title, item = {}) {
   const name = cleanText(item.motoboy || 'Motoboy Nexus MotoJa', 80);
@@ -13152,6 +13306,7 @@ async function whatsappGroupFor(city, settings = {}) {
   return jid;
 }
 const geminiSupport = createGeminiSupport({ reserveBudget: () => reserveGeminiQuota(db) });
+const learnedAddresses = createLearnedAddresses({ db });
 const receiptReader = createGeminiReceiptReader({ reserveBudget: () => reserveSupportAiQuota(db, 'gemini-nota') });
 const openrouterSupport = createOpenRouterSupport({ reserveBudget: () => reserveSupportAiQuota(db, 'openrouter') });
 const supportAutomation = createSupportAutomation({
