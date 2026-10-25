@@ -83,6 +83,12 @@
     return canvas;
   }
 
+  // O leitor recebe JPEG: canvas ou PNG as vezes chegam em branco para ele (fundo colorido,
+  // tela do PC) e a leitura volta vazia.
+  function paraJpeg(canvas) {
+    return new Promise((ok) => canvas.toBlob((blob) => ok(blob || canvas.toDataURL('image/jpeg', 0.92)), 'image/jpeg', 0.92));
+  }
+
   const TIPO = /\b(?:rua|r\.|av\.?|avenida|travessa|tv\.|trav\.?|estrada|est\.|rodovia|rod\.|alameda|al\.|pra[cç]a|viela)\s+\S/i;
   const ROTULO = /^(?:endere[cç]o(?:\s+(?:de|da|para)\s+entrega)?|end\.?|entregar\s+(?:em|na|no)|local(?:\s+de\s+entrega)?|destino)\s*[:\-–]?\s*/i;
   const BAIRRO = /^(?:bairro|b\.)\s*[:\-–]?\s*/i;
@@ -90,7 +96,38 @@
   const RUIDO = /\b(?:cep|tel(?:efone)?|fone|cel(?:ular)?|whats(?:app)?|cpf|cnpj|cliente|pedido|total|troco|pagamento)\b.*$/i;
 
   function limparLinha(linha) {
-    return String(linha || '').replace(/[|_~^`´¨"“”]+/g, ' ').replace(/\s+/g, ' ').trim();
+    return String(linha || '').replace(/[|_~^`´¨"“”]+/g, ' ').replace(/\s+/g, ' ').trim()
+      .replace(/[,;\s]*\b\d{1,2}[:.]\d{2}\b[\s.,]*$/, '').trim();
+  }
+
+  // "R," "R:" e "Av" sem ponto: o leitor costuma errar a pontuacao do tipo da rua.
+  const TOKEN_RUA = /(?:^|[\s,;—–-])((?:rua|r|av|avenida|al|alameda|tv|trav|travessa|est|estr|estrada|rod|rodovia|pra[cç]a)[\s.,:]+(?=[A-Za-zÀ-ú]))/i;
+
+  // Camera mirando num endereco solto (tela do PC, papel): escolhe a UMA linha que mais
+  // parece "rua + numero" e ignora o resto (fundo da tela, horario, lixo da leitura).
+  function melhorLinhaSolta(linhas) {
+    let melhor = null;
+    for (const bruta of linhas) {
+      let linha = limparLinha(bruta);
+      if (/r\$|\d+[.,]\d{2}\b/i.test(linha)) continue;
+      const tipo = linha.match(TOKEN_RUA);
+      if (tipo) linha = linha.slice(tipo.index + tipo[0].indexOf(tipo[1]));
+      linha = linha.replace(RUIDO, '').trim();
+      const numero = linha.match(/\b\d{1,5}[a-z]?\b/i);
+      if (!numero) continue;
+      const antes = linha.slice(0, numero.index).trim();
+      const palavras = antes.split(/\s+/).filter(Boolean);
+      const boas = palavras.filter((p) => /^[a-zà-ú][a-zà-ú.,]{1,}$/i.test(p)).length;
+      if (!boas || !/[a-zà-ú]{3,}/i.test(antes)) continue;
+      // Depois do numero so fica o que parece bairro (palavras); para no primeiro simbolo estranho.
+      const depois = linha.slice(numero.index + numero[0].length).match(/^[\s,\-–]*([A-Za-zÀ-ú][A-Za-zÀ-ú\s.]{2,40})?/)?.[1] || '';
+      const lixo = (antes.match(/[^a-zà-ú0-9\s,.\-º°]/gi) || []).length;
+      const pontos = (tipo ? 3 : 0) + Math.min(boas, 4) - lixo * 1.5 - (palavras.length - boas);
+      const texto = `${antes} ${numero[0]}${depois.trim() ? `, ${depois.trim()}` : ''}`.replace(/\s+/g, ' ').replace(/\s+,/g, ',').slice(0, 120);
+      if (!melhor || pontos > melhor.pontos) melhor = { pontos, texto };
+    }
+    // "R, Dr. Altino" -> "R. Dr. Altino"
+    return melhor && melhor.pontos >= 2 ? melhor.texto.replace(/^r[,:]\s*/i, 'R. ') : '';
   }
 
   // Tira do texto lido as linhas que parecem endereco de entrega (rua, numero e bairro).
@@ -122,14 +159,11 @@
       if (bairro && !resto.toLowerCase().includes(bairro.toLowerCase())) resto += `, ${bairro}`;
       achados.push(resto.slice(0, 140));
     });
-    if (!achados.length && solto) {
-      // Preco ("25,00", "R$"), quantidade ("2x", "2L") e itens de pedido nao sao endereco.
-      const juntas = linhas
-        .filter((l) => !/r\$|\d+[.,]\d{2}\b/i.test(l))
-        .map((l) => l.replace(RUIDO, '').replace(/\b\d+\s*(?:x|un|und|kg|g|l|ml|lt)\b/gi, ' ').replace(/\s+/g, ' ').trim())
-        .filter((l) => /[a-zà-ú]{3}/i.test(l))
-        .join(', ');
-      if (juntas.length >= 6 && /[a-zà-ú]{4,}.*\b\d{1,5}[a-z]?\b/i.test(juntas)) achados.push(juntas.slice(0, 140));
+    if (solto) {
+      // Na camera vale so a melhor linha; o "achado" com rua e numero tem preferencia.
+      const comNumero = achados.find((a) => /\d/.test(a) && a.length <= 90);
+      const linha = comNumero || melhorLinhaSolta(linhas);
+      return linha ? [linha] : [];
     }
     return [...new Set(achados)].slice(0, 3);
   }
@@ -137,7 +171,8 @@
   async function lerNoCelular(img, aoProgresso) {
     const w = await leitor(aoProgresso);
     try {
-      const { data } = await w.recognize(prepararCanvas(img, 1800, true));
+      await w.setParameters({ tessedit_pageseg_mode: '3' }).catch(() => {});
+      const { data } = await w.recognize(await paraJpeg(prepararCanvas(img, 1800, true)));
       return enderecosDoTexto(data?.text || '');
     } finally {
       soltarLeitor();
@@ -257,8 +292,7 @@
 
     let ativo = true;
     let timer = null;
-    let ultimo = '';
-    let iguais = 0;
+    const historico = [];
     let achadoAtual = '';
     const fechar = () => {
       if (!ativo) return;
@@ -304,7 +338,8 @@
           const w = await leitor((p) => { if (ativo && !achadoAtual) dica.textContent = `Preparando o leitor... ${Math.round(p * 100)}%`; });
           if (!ativo) return;
           if (!achadoAtual) dica.textContent = 'Lendo... mire no endereço';
-          const { data } = await w.recognize(prepararCanvas(quadro, 1600, true));
+          await w.setParameters({ tessedit_pageseg_mode: '6' }).catch(() => {});
+          const { data } = await w.recognize(await paraJpeg(prepararCanvas(quadro, 1600, false)));
           if (!ativo) return;
           const [endereco] = enderecosDoTexto(data?.text || '', { solto: true });
           if (endereco) {
@@ -313,8 +348,9 @@
             achadoBox.querySelector('span').textContent = `✅ ${endereco}`;
             moldura.classList.add('ok');
             dica.textContent = 'Endereço encontrado! Segure parado...';
-            if (comparavel(endereco) === comparavel(ultimo)) iguais += 1;
-            else { ultimo = endereco; iguais = 1; }
+            historico.push(comparavel(endereco));
+            if (historico.length > 4) historico.shift();
+            const iguais = historico.filter((h) => h === comparavel(endereco)).length;
             // So confirma sozinho com numero (sem numero costuma ser endereco cortado); "Usar este" aceita.
             if (iguais >= 2 && /\d/.test(endereco)) {
               try { navigator.vibrate?.(120); } catch (_) {}

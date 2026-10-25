@@ -636,7 +636,7 @@
     if (window.MotoNota) return Promise.resolve(window.MotoNota);
     return new Promise((ok, erro) => {
       const script = document.createElement('script');
-      script.src = './motoboy-nota.js?v=2';
+      script.src = './motoboy-nota.js?v=3';
       script.onload = () => (window.MotoNota ? ok(window.MotoNota) : erro(new Error('leitor')));
       script.onerror = () => erro(new Error('leitor'));
       document.head.appendChild(script);
