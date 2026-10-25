@@ -62,10 +62,12 @@
 
   // Reduz a foto e passa para tons de cinza com mais contraste (papel termico apagado).
   function prepararCanvas(img, maior, contraste) {
-    const escala = Math.min(1, maior / Math.max(img.naturalWidth, img.naturalHeight));
+    const largura = img.naturalWidth || img.width;
+    const altura = img.naturalHeight || img.height;
+    const escala = Math.min(1, maior / Math.max(largura, altura));
     const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(img.naturalWidth * escala));
-    canvas.height = Math.max(1, Math.round(img.naturalHeight * escala));
+    canvas.width = Math.max(1, Math.round(largura * escala));
+    canvas.height = Math.max(1, Math.round(altura * escala));
     const ctx = canvas.getContext('2d', { willReadFrequently: contraste });
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     if (contraste) {
@@ -92,7 +94,8 @@
   }
 
   // Tira do texto lido as linhas que parecem endereco de entrega (rua, numero e bairro).
-  function enderecosDoTexto(texto) {
+  // solto: o texto veio so da moldura da camera; sem "Rua"/"Av" aceita "Nome 123".
+  function enderecosDoTexto(texto, { solto = false } = {}) {
     const linhas = String(texto || '').split(/\r?\n/).map(limparLinha).filter(Boolean);
     const bairroSolto = linhas.map((l) => (BAIRRO.test(l) ? l.replace(BAIRRO, '').replace(RUIDO, '').trim() : '')).find((b) => b.length >= 3) || '';
     const achados = [];
@@ -109,12 +112,25 @@
       if (!/\d/.test(resto) && /^(?:n[º°o.]*\s*)?\d{1,5}[a-z]?\b/i.test(seguinte)) {
         resto += `, ${seguinte.match(/\d{1,5}[a-z]?/i)[0]}`;
         seguinte = linhas[i + 2] || '';
+      } else if (!/\d/.test(resto) && /\d/.test(seguinte) && !TIPO.test(seguinte) && !BAIRRO.test(seguinte) && !RUIDO.test(seguinte)) {
+        // Nome da rua que continua na linha de baixo ("R. Eduardo Rogerio" / "Barbosa, 84").
+        resto = `${resto} ${seguinte}`.replace(/[\s,;.\-–]+$/, '');
+        seguinte = linhas[i + 2] || '';
       }
       const bairroAbaixo = BAIRRO.test(seguinte) ? seguinte.replace(BAIRRO, '') : COMECO_BAIRRO.test(seguinte) ? seguinte : '';
       const bairro = limparLinha(bairroAbaixo.replace(RUIDO, '')) || (!/,.*[a-z]{3}.*$/i.test(resto.replace(/^[^,]*,\s*\d+/, '')) ? bairroSolto : '');
       if (bairro && !resto.toLowerCase().includes(bairro.toLowerCase())) resto += `, ${bairro}`;
       achados.push(resto.slice(0, 140));
     });
+    if (!achados.length && solto) {
+      // Preco ("25,00", "R$"), quantidade ("2x", "2L") e itens de pedido nao sao endereco.
+      const juntas = linhas
+        .filter((l) => !/r\$|\d+[.,]\d{2}\b/i.test(l))
+        .map((l) => l.replace(RUIDO, '').replace(/\b\d+\s*(?:x|un|und|kg|g|l|ml|lt)\b/gi, ' ').replace(/\s+/g, ' ').trim())
+        .filter((l) => /[a-zà-ú]{3}/i.test(l))
+        .join(', ');
+      if (juntas.length >= 6 && /[a-zà-ú]{4,}.*\b\d{1,5}[a-z]?\b/i.test(juntas)) achados.push(juntas.slice(0, 140));
+    }
     return [...new Set(achados)].slice(0, 3);
   }
 
@@ -161,5 +177,173 @@
     }
   }
 
-  window.MotoNota = { lerEndereco, enderecosDoTexto };
+  // ---------- Camera dentro da propria tela ----------
+  // O app Android (WebView) perde a foto quando abre o app de camera do celular: o Android
+  // pode fechar o MotoJa enquanto a camera esta aberta. Aqui a camera abre dentro da tela,
+  // com uma moldura para o endereco; so a parte da moldura vai para a leitura.
+  function estiloScanner() {
+    if (document.getElementById('mjnota-estilo')) return;
+    const style = document.createElement('style');
+    style.id = 'mjnota-estilo';
+    style.textContent = `
+      .mjnota-cam{position:fixed;inset:0;z-index:100001;background:#000;display:flex;flex-direction:column;color:#fff;font-family:system-ui,sans-serif}
+      .mjnota-cam video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+      .mjnota-moldura{position:absolute;left:5%;width:90%;top:28%;height:30%;border:3px solid #ff9a00;border-radius:14px;box-shadow:0 0 0 100vmax rgba(0,0,0,.45)}
+      .mjnota-dica{position:absolute;left:0;right:0;top:calc(28% - 46px);text-align:center;font-weight:800;font-size:15px;text-shadow:0 1px 4px #000}
+      .mjnota-erro{position:absolute;left:16px;right:16px;top:40%;text-align:center;background:#2a1408;border:1px solid #ff9a00;border-radius:12px;padding:14px}
+      .mjnota-barra{position:absolute;left:0;right:0;bottom:0;padding:18px 18px calc(22px + env(safe-area-inset-bottom));display:flex;align-items:center;justify-content:space-between;gap:10px;background:linear-gradient(transparent,rgba(0,0,0,.75))}
+      .mjnota-barra button{border:0;border-radius:12px;padding:12px 14px;font:inherit;font-weight:800;font-size:14px;background:#23262f;color:#fff;min-width:84px}
+      .mjnota-barra .mjnota-ler{width:78px;height:78px;min-width:0;border-radius:50%;background:#ff9a00;color:#111;font-size:15px;border:5px solid #fff}
+      .mjnota-barra .mjnota-ler:disabled{opacity:.5}
+      .mjnota-moldura.ok{border-color:#35c979}
+      .mjnota-achado{position:absolute;left:5%;right:5%;top:calc(58% + 14px);display:flex;gap:10px;align-items:center;padding:10px 12px;border-radius:12px;background:rgba(10,40,22,.92);border:1px solid #35c979;font-weight:700;font-size:15px}
+      .mjnota-achado[hidden]{display:none}
+      .mjnota-achado span{flex:1;overflow-wrap:anywhere}
+      .mjnota-achado button{border:0;border-radius:10px;padding:9px 12px;background:#35c979;color:#06210f;font-weight:800;font:inherit}`;
+    document.head.appendChild(style);
+  }
+
+  const comparavel = (texto) => String(texto || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+  // Abre a camera na tela e le sozinha o que esta na moldura (nota, tela do PC, papel).
+  // Mesmo endereco lido duas vezes seguidas: vibra, mostra e preenche (aoEndereco).
+  // "Ler" manda o recorte para a leitura completa (com a reserva do servidor) via aoFoto.
+  // Devolve false se o aparelho/app nao liberar a camera (ai usa a galeria).
+  async function abrirCamera({ aoEndereco, aoFoto, aoGaleria, aoFechar }) {
+    if (!navigator.mediaDevices?.getUserMedia) return false;
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false
+      });
+    } catch (_) {
+      return false;
+    }
+    estiloScanner();
+    const tela = document.createElement('div');
+    tela.className = 'mjnota-cam';
+    tela.setAttribute('role', 'dialog');
+    tela.setAttribute('aria-label', 'Escanear o endereço');
+    tela.innerHTML = `<video playsinline muted autoplay></video>
+      <div class="mjnota-dica" aria-live="polite">Mire no endereço</div>
+      <div class="mjnota-moldura"></div>
+      <div class="mjnota-achado" hidden><span></span><button type="button" data-usar>Usar este</button></div>
+      <div class="mjnota-barra">
+        <button type="button" data-galeria>🖼️ Galeria</button>
+        <button type="button" class="mjnota-ler" data-ler aria-label="Ler agora">Ler</button>
+        <button type="button" data-fechar>✕ Fechar</button>
+      </div>`;
+    document.body.appendChild(tela);
+    const video = tela.querySelector('video');
+    const dica = tela.querySelector('.mjnota-dica');
+    const achadoBox = tela.querySelector('.mjnota-achado');
+    const moldura = tela.querySelector('.mjnota-moldura');
+    video.srcObject = stream;
+    video.play().catch(() => {});
+    const [faixa] = stream.getVideoTracks();
+    // Lanterna, quando o celular tem (entrega a noite).
+    try {
+      if (faixa?.getCapabilities?.().torch) {
+        const luz = document.createElement('button');
+        luz.type = 'button';
+        luz.textContent = '🔦';
+        luz.style.minWidth = '56px';
+        let ligada = false;
+        luz.onclick = () => { ligada = !ligada; faixa.applyConstraints({ advanced: [{ torch: ligada }] }).catch(() => {}); };
+        tela.querySelector('.mjnota-barra').insertBefore(luz, tela.querySelector('[data-fechar]'));
+      }
+    } catch (_) {}
+
+    let ativo = true;
+    let timer = null;
+    let ultimo = '';
+    let iguais = 0;
+    let achadoAtual = '';
+    const fechar = () => {
+      if (!ativo) return;
+      ativo = false;
+      clearTimeout(timer);
+      stream.getTracks().forEach((t) => t.stop());
+      tela.remove();
+      soltarLeitor();
+    };
+    const concluir = (texto) => {
+      fechar();
+      aoEndereco?.(texto);
+    };
+
+    // Recorta a moldura (com folga) do quadro real da camera (video em object-fit: cover).
+    function recortar() {
+      const iw = video.videoWidth;
+      const ih = video.videoHeight;
+      if (!iw || !ih) return null;
+      const caixa = video.getBoundingClientRect();
+      const quadro = moldura.getBoundingClientRect();
+      const escala = Math.max(caixa.width / iw, caixa.height / ih);
+      const sobraX = (iw * escala - caixa.width) / 2;
+      const sobraY = (ih * escala - caixa.height) / 2;
+      const folgaX = quadro.width * 0.06;
+      const folgaY = quadro.height * 0.25;
+      const sx = Math.max(0, (quadro.left - caixa.left - folgaX + sobraX) / escala);
+      const sy = Math.max(0, (quadro.top - caixa.top - folgaY + sobraY) / escala);
+      const sw = Math.min(iw - sx, (quadro.width + 2 * folgaX) / escala);
+      const sh = Math.min(ih - sy, (quadro.height + 2 * folgaY) / escala);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(sw));
+      canvas.height = Math.max(1, Math.round(sh));
+      canvas.getContext('2d').drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+      return canvas;
+    }
+
+    async function ciclo() {
+      if (!ativo) return;
+      const quadro = recortar();
+      if (quadro) {
+        try {
+          const w = await leitor((p) => { if (ativo && !achadoAtual) dica.textContent = `Preparando o leitor... ${Math.round(p * 100)}%`; });
+          if (!ativo) return;
+          if (!achadoAtual) dica.textContent = 'Lendo... mire no endereço';
+          const { data } = await w.recognize(prepararCanvas(quadro, 1600, true));
+          if (!ativo) return;
+          const [endereco] = enderecosDoTexto(data?.text || '', { solto: true });
+          if (endereco) {
+            achadoAtual = endereco;
+            achadoBox.hidden = false;
+            achadoBox.querySelector('span').textContent = `✅ ${endereco}`;
+            moldura.classList.add('ok');
+            dica.textContent = 'Endereço encontrado! Segure parado...';
+            if (comparavel(endereco) === comparavel(ultimo)) iguais += 1;
+            else { ultimo = endereco; iguais = 1; }
+            // So confirma sozinho com numero (sem numero costuma ser endereco cortado); "Usar este" aceita.
+            if (iguais >= 2 && /\d/.test(endereco)) {
+              try { navigator.vibrate?.(120); } catch (_) {}
+              return concluir(endereco);
+            }
+          } else if (!achadoAtual) {
+            dica.textContent = 'Procurando o endereço... chegue mais perto e com luz';
+          }
+        } catch (_) {
+          if (ativo) dica.textContent = 'Não consegui abrir o leitor. Use "Ler" ou a Galeria.';
+        }
+      }
+      if (ativo) timer = setTimeout(ciclo, 350);
+    }
+
+    tela.querySelector('[data-usar]').onclick = () => achadoAtual && concluir(achadoAtual);
+    tela.querySelector('[data-fechar]').onclick = () => { fechar(); aoFechar?.(); };
+    tela.querySelector('[data-galeria]').onclick = () => { fechar(); aoGaleria?.(); };
+    tela.querySelector('[data-ler]').onclick = () => {
+      const quadro = recortar();
+      if (!quadro) return;
+      fechar();
+      quadro.toBlob((blob) => blob && aoFoto?.(blob), 'image/jpeg', 0.92);
+    };
+    const comecar = () => { if (ativo && !timer) timer = setTimeout(ciclo, 300); };
+    video.addEventListener('playing', comecar, { once: true });
+    setTimeout(comecar, 1500);
+    return true;
+  }
+
+  window.MotoNota = { lerEndereco, enderecosDoTexto, abrirCamera };
 })();

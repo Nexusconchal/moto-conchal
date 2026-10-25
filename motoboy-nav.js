@@ -636,7 +636,7 @@
     if (window.MotoNota) return Promise.resolve(window.MotoNota);
     return new Promise((ok, erro) => {
       const script = document.createElement('script');
-      script.src = './motoboy-nota.js?v=1';
+      script.src = './motoboy-nota.js?v=2';
       script.onload = () => (window.MotoNota ? ok(window.MotoNota) : erro(new Error('leitor')));
       script.onerror = () => erro(new Error('leitor'));
       document.head.appendChild(script);
@@ -699,7 +699,7 @@
       ${formAberto
         ? `<form class="mjnav-add" data-mjnav-add-form>
             <button type="button" class="mjnav-mini mjnav-cam" data-mjnav-cam aria-label="Escanear o endereço da nota com a câmera">📷</button>
-            <input type="file" accept="image/*" capture="environment" data-mjnav-foto hidden>
+            <input type="file" accept="image/*" data-mjnav-foto hidden>
             <input type="text" name="endereco" placeholder="Endereço da nota ${dados.lista.length + 1}: rua, número, bairro" autocomplete="off" enterkeyhint="search" maxlength="160">
             <button type="submit" class="mjnav-mini laranja">Buscar</button>
           </form>
@@ -904,53 +904,87 @@
       buscar();
     };
 
-    // 📷: le o endereco da foto da nota, preenche o campo e ja procura no mapa.
+    // 📷: abre a camera dentro da tela (o app Android perde a foto se for para o app de camera).
+    // O motoboy mira no endereco (nota, tela do PC, papel) e o app le sozinho e preenche.
+    // "Galeria" escolhe uma foto ja tirada.
     const foto = form.querySelector('[data-mjnav-foto]');
-    form.querySelector('[data-mjnav-cam]').onclick = () => {
+    const abrirGaleria = () => {
       if (tela) tela.editando = true;
       foto.value = '';
       foto.click();
     };
-    foto.onchange = async () => {
-      const arquivo = foto.files?.[0];
-      if (!arquivo) {
-        if (tela) tela.editando = !!input.value.trim();
-        return;
-      }
+    form.querySelector('[data-mjnav-cam]').onclick = async () => {
       if (tela) tela.editando = true;
-      const progresso = (texto) => { if (resultados.isConnected) resultados.innerHTML = `<p class="mjnav-busca">${texto}</p>`; };
-      progresso('📷 Lendo a nota no celular...');
-      let leitura = { enderecos: [], fonte: '', aviso: '' };
+      let abriu = false;
       try {
         const leitor = await carregarLeitorNota();
-        leitura = await leitor.lerEndereco(arquivo, {
-          backend: cfg.backend,
-          cpf: cfg.prova?.driverCpf,
-          prova: cfg.prova,
-          aoProgresso: (p) => progresso(`📷 Lendo a nota no celular... ${Math.round(p * 100)}%`),
-          aoReserva: () => progresso('📷 Não achei o endereço na foto. Tentando a leitura reserva...')
+        abriu = await leitor.abrirCamera({
+          aoEndereco: (texto) => usarEnderecoLido(texto),
+          aoFoto: (blob) => lerFotoDaNota(cfg, blob),
+          aoGaleria: abrirGaleria,
+          aoFechar: () => { if (tela) tela.editando = !!ui().querySelector('[data-mjnav-add-form] input[name="endereco"]')?.value.trim(); }
         });
-      } catch (_) {
-        leitura.aviso = 'Não consegui abrir o leitor agora. Confira a internet ou digite o endereço.';
-      }
-      if (tela?.cfg !== cfg || !resultados.isConnected) return;
-      const usar = (texto) => {
-        input.value = texto;
-        buscar();
-      };
-      if (leitura.enderecos.length === 1) return usar(leitura.enderecos[0]);
-      if (leitura.enderecos.length > 1) {
-        resultados.innerHTML = `<p class="mjnav-busca">Achei mais de um endereço na nota. Qual é o da entrega?</p>
-          ${leitura.enderecos.map((e, index) => `<button type="button" class="mjnav-achado" data-mjnav-lido="${index}">🧾 ${esc(e)}</button>`).join('')}`;
-        resultados.querySelectorAll('[data-mjnav-lido]').forEach((btn) => {
-          btn.onclick = () => usar(leitura.enderecos[Number(btn.dataset.mjnavLido)]);
-        });
+      } catch (_) {}
+      if (!abriu) abrirGaleria();
+    };
+    foto.oncancel = () => {
+      if (tela) tela.editando = !!input.value.trim();
+      const lista = ui().querySelector('[data-mjnav-resultados]');
+      if (lista) lista.innerHTML = '<p class="mjnav-erro">A foto não chegou ao app. Tire a foto com a câmera do celular e depois escolha pela galeria, ou digite o endereço.</p>';
+    };
+    foto.onchange = () => {
+      const arquivo = foto.files?.[0];
+      if (!arquivo) {
+        foto.oncancel();
         return;
       }
-      if (tela) tela.editando = !!input.value.trim();
-      resultados.innerHTML = `<p class="mjnav-erro">${esc(leitura.aviso || 'Não consegui ler o endereço na foto. Tente de novo mais perto e com luz, ou digite.')}</p>`;
-      input.focus();
+      lerFotoDaNota(cfg, arquivo);
     };
+  }
+
+  // Coloca o endereco lido no campo que esta na tela agora e ja procura no mapa
+  // (a tela pode ter sido redesenhada enquanto a camera estava aberta).
+  function usarEnderecoLido(texto) {
+    const form = ui().querySelector('[data-mjnav-add-form]');
+    const input = form?.querySelector('input[name="endereco"]');
+    if (!form || !input) return;
+    input.value = texto;
+    if (tela) tela.editando = true;
+    form.requestSubmit();
+  }
+
+  async function lerFotoDaNota(cfg, arquivo) {
+    const lista = () => ui().querySelector('[data-mjnav-resultados]');
+    const progresso = (texto) => { const el = lista(); if (el) el.innerHTML = `<p class="mjnav-busca">${texto}</p>`; };
+    if (tela) tela.editando = true;
+    progresso('📷 Lendo a nota no celular...');
+    let leitura = { enderecos: [], fonte: '', aviso: '' };
+    try {
+      const leitor = await carregarLeitorNota();
+      leitura = await leitor.lerEndereco(arquivo, {
+        backend: cfg.backend,
+        cpf: cfg.prova?.driverCpf,
+        prova: cfg.prova,
+        aoProgresso: (p) => progresso(`📷 Lendo a nota no celular... ${Math.round(p * 100)}%`),
+        aoReserva: () => progresso('📷 Não achei o endereço na foto. Tentando a leitura reserva...')
+      });
+    } catch (_) {
+      leitura.aviso = 'Não consegui abrir o leitor agora. Confira a internet ou digite o endereço.';
+    }
+    if (tela?.cfg?.id !== cfg.id || !lista()) return;
+    if (leitura.enderecos.length === 1) return usarEnderecoLido(leitura.enderecos[0]);
+    if (leitura.enderecos.length > 1) {
+      lista().innerHTML = `<p class="mjnav-busca">Achei mais de um endereço na nota. Qual é o da entrega?</p>
+        ${leitura.enderecos.map((e, index) => `<button type="button" class="mjnav-achado" data-mjnav-lido="${index}">🧾 ${esc(e)}</button>`).join('')}`;
+      lista().querySelectorAll('[data-mjnav-lido]').forEach((btn) => {
+        btn.onclick = () => usarEnderecoLido(leitura.enderecos[Number(btn.dataset.mjnavLido)]);
+      });
+      return;
+    }
+    const input = ui().querySelector('[data-mjnav-add-form] input[name="endereco"]');
+    if (tela) tela.editando = !!input?.value.trim();
+    lista().innerHTML = `<p class="mjnav-erro">${esc(leitura.aviso || 'Não consegui ler o endereço na foto. Tente de novo mais perto e com luz, ou digite.')}</p>`;
+    input?.focus();
   }
 
   function linksNavegacao(alvo) {
