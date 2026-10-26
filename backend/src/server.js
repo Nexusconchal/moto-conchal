@@ -1712,6 +1712,22 @@ function serializeFirestore(value) {
   return value;
 }
 
+// O painel do dono nao precisa de nenhuma credencial: tokens do Mercado Pago dos motoboys,
+// hashes de senha/sessao, dados criptografados e o id do aparelho do cliente (que abre o
+// acompanhamento da corrida) saem da resposta. Se a senha do dono vazar, nada disso vaza junto.
+const OWNER_HIDDEN_KEY = /(token|tokens|hash|hashes|salt|secret|password|encrypted|criptografad[ao])$/i;
+const OWNER_HIDDEN_EXACT = new Set(['clienteDeviceId', 'deviceId']);
+function withoutSecrets(value, depth = 0) {
+  if (Array.isArray(value)) return value.map((item) => withoutSecrets(item, depth + 1));
+  if (!value || typeof value !== 'object' || depth > 10) return value;
+  const out = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (OWNER_HIDDEN_EXACT.has(key) || OWNER_HIDDEN_KEY.test(key)) continue;
+    out[key] = withoutSecrets(item, depth + 1);
+  }
+  return out;
+}
+
 async function collectionState(name, limit = 500, orderField = '') {
   let query = db.collection(name);
   if (orderField) query = query.orderBy(orderField, 'desc');
@@ -1854,15 +1870,48 @@ function isValidDriverPassword(password) {
   return driverPasswordValues().some((allowed) => safeEqual(typed, allowed));
 }
 
-function assertOwner(req, res, next) {
+// Senha do dono errada: 10 tentativas por IP em 15 minutos, em qualquer rota do dono
+// (nao so no login), para ninguem ficar chutando a senha pelo cabecalho.
+const OWNER_FAIL_WINDOW_MS = 15 * 60 * 1000;
+const OWNER_FAIL_MAX = 10;
+const ownerAuthFailures = new Map();
+
+function ownerAuthBlocked(ip) {
+  const entry = ownerAuthFailures.get(ip);
+  if (!entry) return false;
+  if (Date.now() - entry.desdeMs > OWNER_FAIL_WINDOW_MS) {
+    ownerAuthFailures.delete(ip);
+    return false;
+  }
+  return entry.erros >= OWNER_FAIL_MAX;
+}
+
+function ownerAuthFailed(ip) {
+  const entry = ownerAuthFailures.get(ip);
+  if (!entry || Date.now() - entry.desdeMs > OWNER_FAIL_WINDOW_MS) ownerAuthFailures.set(ip, { erros: 1, desdeMs: Date.now() });
+  else entry.erros += 1;
+  if (ownerAuthFailures.size > 5000) ownerAuthFailures.delete(ownerAuthFailures.keys().next().value);
+}
+
+function checkOwnerPassword(req, password) {
   const ownerPassword = ownerPasswordValue();
-  const password = String(req.header('x-owner-password') || req.body.password || '');
-  if (!ownerPassword) {
-    return res.status(503).json({ error: 'owner_password_not_configured' });
+  const ip = String(req.ip || 'sem-ip');
+  if (!ownerPassword) return { status: 503, body: { error: 'owner_password_not_configured' } };
+  if (ownerAuthBlocked(ip)) {
+    return { status: 429, body: { error: 'muitas_tentativas_login', message: 'Muitas tentativas. Aguarde 15 minutos antes de tentar novamente.' } };
   }
   if (!safeEqual(password, ownerPassword)) {
-    return res.status(401).json({ error: 'senha_incorreta' });
+    ownerAuthFailed(ip);
+    return { status: 401, body: { error: 'senha_incorreta' } };
   }
+  ownerAuthFailures.delete(ip);
+  return null;
+}
+
+function assertOwner(req, res, next) {
+  const password = String(req.header('x-owner-password') || req.body?.password || '');
+  const failure = checkOwnerPassword(req, password);
+  if (failure) return res.status(failure.status).json(failure.body);
   return next();
 }
 
@@ -4668,14 +4717,8 @@ app.get('/entrega/:deliveryId', async (req, res, next) => {
 });
 
 app.post('/api/admin/login', authLimiter, (req, res) => {
-  const ownerPassword = ownerPasswordValue();
-  const password = String(req.body.password || '');
-  if (!ownerPassword) {
-    return res.status(503).json({ error: 'owner_password_not_configured' });
-  }
-  if (!safeEqual(password, ownerPassword)) {
-    return res.status(401).json({ error: 'senha_incorreta' });
-  }
+  const failure = checkOwnerPassword(req, String(req.body.password || ''));
+  if (failure) return res.status(failure.status).json(failure.body);
   return res.json({ ok: true });
 });
 
@@ -5424,7 +5467,7 @@ app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
     const contasSuporte = (contasSuporteSnap.docs || [])
       .map((doc) => publicSupportAccount(doc.data() || {}, doc.id, true))
       .sort((a, b) => timestampMs(b.cadastradaEm) - timestampMs(a.cadastradaEm));
-    const payload = { ok: true, corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil, contasSuporte, clientesCadastrados, planosAtivados, avaliacoes, indicacoes };
+    const payload = withoutSecrets({ ok: true, corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil, contasSuporte, clientesCadastrados, planosAtivados, avaliacoes, indicacoes });
     adminStateCache = { payload, expiresAt: Date.now() + ADMIN_STATE_CACHE_MS };
     return res.json(payload);
   } catch (error) {

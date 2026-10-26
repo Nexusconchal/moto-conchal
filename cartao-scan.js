@@ -5,6 +5,9 @@
   // A imagem nunca sai do aparelho e nao e guardada. O numero so vale se passar na conta
   // de verificacao dos cartoes (Luhn); o codigo de seguranca o cliente digita.
   const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+  // Integridade do arquivo: se o CDN entregar outro conteudo, o navegador nao executa
+  // (a tela do cartao nao pode rodar codigo alterado de terceiros).
+  const TESSERACT_SRI = 'sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F';
 
   function luhn(numero) {
     let soma = 0;
@@ -106,6 +109,8 @@
       carregando = new Promise((ok, erro) => {
         const script = document.createElement('script');
         script.src = TESSERACT_URL;
+        script.integrity = TESSERACT_SRI;
+        script.crossOrigin = 'anonymous';
         script.async = true;
         script.onload = () => (raiz.Tesseract ? ok(raiz.Tesseract) : erro(new Error('leitor_indisponivel')));
         script.onerror = () => { carregando = null; erro(new Error('leitor_indisponivel')); };
