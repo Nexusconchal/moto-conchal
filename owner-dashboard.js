@@ -135,7 +135,11 @@
 
   function appValue(item, type) {
     if (type === "delivery") return deliveryAppValue(item);
-    return Number(item.valor || 0) * (Number(item.km || 0) > 8 ? 0.2 : 0.25);
+    const value = Number(item.valor || 0);
+    const app = value * (Number(item.km || 0) > 8 ? 0.2 : 0.25);
+    // Desde 26/10/2026 o motoboy recebe pelo menos R$ 5,00 por corrida (ate 3 km: app R$ 1,50).
+    const created = Number(item.criadaEm?.seconds || 0) * 1000;
+    return created >= Date.UTC(2026, 9, 26, 3) && value >= 5 ? Math.min(app, value - 5) : app;
   }
 
   function periodLabel() {

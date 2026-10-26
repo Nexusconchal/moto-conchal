@@ -27,3 +27,16 @@ test('the WhatsApp tracking link opens on the MotoJa site and only its own ride'
   assert.equal((source.match(/rideTrackingUrl\(/g) || []).length >= 3, true);
   assert.doesNotMatch(source, /\$\{BACKEND_BASE_URL\}\/corrida\//);
 });
+
+test('from 26/10/2026 the motoboy gets at least R$ 5,00 per ride; older rides keep 25%', () => {
+  const ctx = vm.createContext({ Math, Number, Date, money: (v) => Math.round(Number(v || 0) * 100) / 100 });
+  vm.runInContext(slice('function rideSplit(km)', 'function carFare(') + slice('// Desde 26/10/2026 o motoboy recebe pelo menos', 'function isOutOfConchal('), ctx);
+  const novo = Date.UTC(2026, 9, 26, 15);
+  const antigo = Date.UTC(2026, 9, 20, 15);
+  assert.equal(ctx.rideSplitAmounts(6.5, 2, novo).driverAmount, 5);
+  assert.equal(ctx.rideSplitAmounts(6.5, 2, novo).appFee, 1.5);
+  assert.equal(ctx.rideSplitAmounts(6.5, 2, antigo).driverAmount, 4.87);
+  assert.equal(ctx.rideSplitAmounts(9.5, 4, novo).driverAmount, 7.12, 'faixas maiores continuam com 25%');
+  assert.equal(ctx.rideSplitAmounts(8, 2, novo).driverAmount, 6, 'tarifa noturna ate 3 km ja passa de R$ 5');
+  assert.equal(ctx.rideSplitAmounts(4, 1, novo).driverAmount, 3, 'valor menor que R$ 5 segue a porcentagem');
+});

@@ -184,10 +184,16 @@ function carRideSplit(total) {
   };
 }
 
-function rideSplitAmounts(total, km) {
+// Desde 26/10/2026 o motoboy recebe pelo menos R$ 5,00 por corrida: na faixa de
+// ate 3 km (R$ 6,50) o app fica com R$ 1,50. Corridas anteriores seguem os 25%.
+const RIDE_DRIVER_MIN = 5;
+const RIDE_DRIVER_MIN_FROM_MS = Date.UTC(2026, 9, 26, 3, 0, 0);
+
+function rideSplitAmounts(total, km, createdAtMs = Date.now()) {
   const amount = money(total);
   const split = rideSplit(km);
-  const appFee = money(amount * split.appPercent);
+  let appFee = money(amount * split.appPercent);
+  if (Number(createdAtMs || Date.now()) >= RIDE_DRIVER_MIN_FROM_MS && amount >= RIDE_DRIVER_MIN) appFee = money(Math.min(appFee, amount - RIDE_DRIVER_MIN));
   return {
     ...split,
     total: amount,
@@ -1406,7 +1412,7 @@ function driverEarningEvent(kind, serviceId, job = {}, finishedAtMs = Date.now()
     ? deliverySplit(job)
     : isCar
       ? carRideSplit(job.valor)
-      : rideSplitAmounts(job.pagamento?.total || job.valor, job.km);
+      : rideSplitAmounts(job.pagamento?.total || job.valor, job.km, timestampMs(job.criadaEm));
   const driverAmount = money(job.ganhoMotoboy ?? job.valorMotoboy ?? split.driverAmount);
   return {
     serviceId: String(serviceId || '').slice(0, 120),
@@ -3186,7 +3192,7 @@ async function createPaymentPreference(rideId, ride, driverCpf) {
     throw error;
   }
 
-  const split = rideSplitAmounts(ride.valor, ride.km);
+  const split = rideSplitAmounts(ride.valor, ride.km, timestampMs(ride.criadaEm));
   const { total, appFee, driverAmount } = split;
 
   const preference = await mpFetch('/checkout/preferences', {
@@ -3278,7 +3284,7 @@ async function createCarPaymentPreference(rideId, ride, driverCpf) {
 }
 
 async function createOwnerRidePaymentPreference(rideId, ride, driverCpf) {
-  const split = rideSplitAmounts(ride.valor, ride.km);
+  const split = rideSplitAmounts(ride.valor, ride.km, timestampMs(ride.criadaEm));
   const { total, appFee, driverAmount } = split;
 
   const preference = await mpFetch('/checkout/preferences', {
@@ -3333,7 +3339,7 @@ async function createPointPaymentOrder(rideId, ride, driverCpf) {
     throw error;
   }
 
-  const split = rideSplitAmounts(ride.valor, ride.km);
+  const split = rideSplitAmounts(ride.valor, ride.km, timestampMs(ride.criadaEm));
   const externalReference = String(`ride_${rideId}`).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
   const idempotencyKey = crypto.createHash('sha256')
     .update(`${externalReference}:${terminalId}:${money(ride.valor).toFixed(2)}`)
@@ -4928,7 +4934,7 @@ app.post('/api/support/operations/:kind/:jobId/finish', assertSupport, async (re
         finishedDriverCpf = driverCpf;
         const valorOriginal = money(ride.pagamento?.total || ride.valor || 0);
         const valor = requestedValue > 0 ? requestedValue : valorOriginal;
-        const split = rideSplitAmounts(valor, ride.km);
+        const split = rideSplitAmounts(valor, ride.km, timestampMs(ride.criadaEm));
         const performedAtMs = timestampMs(ride.aceitaEm) || timestampMs(ride.criadaEm) || Date.now();
         const performedAt = admin.firestore.Timestamp.fromMillis(performedAtMs);
 
@@ -7916,7 +7922,7 @@ app.post('/api/admin/rides/:rideId/force-finish', assertOwner, async (req, res, 
         throw error;
       }
 
-      const split = rideSplitAmounts(valor, ride.km);
+      const split = rideSplitAmounts(valor, ride.km, timestampMs(ride.criadaEm));
       const performedAtMs = timestampMs(ride.aceitaEm) || timestampMs(ride.criadaEm) || Date.now();
       const performedAt = admin.firestore.Timestamp.fromMillis(performedAtMs);
 
@@ -12285,7 +12291,7 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
         }
       }
 
-      const split = rideSplitAmounts(ride.pagamento?.total || ride.valor, ride.km);
+      const split = rideSplitAmounts(ride.pagamento?.total || ride.valor, ride.km, timestampMs(ride.criadaEm));
       const event = driverEarningEvent('corrida', rideRef.id, { ...ride, ganhoMotoboy: split.driverAmount });
       await recordDriverEarning(tx, driverCpf, event);
       tx.set(rideRef, {
