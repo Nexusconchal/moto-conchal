@@ -4397,7 +4397,7 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'motoja-conchal-backend',
-    release: 'offer-alert-v236',
+    release: 'whatsapp-pedido-v1',
     manualDeliveryDateMigration: manualDeliveryDateMigrationStatus
   });
 });
