@@ -70,6 +70,7 @@
       driverCpf: String(driver.cpf || '').replace(/\D/g, ''),
       driverCnh: String(driver.cnh || '').replace(/\D/g, ''),
       driverTelefone: String(driver.telefone || '').replace(/\D/g, ''),
+      driverToken: String(driver.driverToken || ''),
       driverName: String(driver.nome || '').trim()
     };
   }

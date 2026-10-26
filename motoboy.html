@@ -927,33 +927,23 @@
         /></label>
         </div>
         <div class="access-code-box">
-        <label
-          >Código de acesso<input
+        <p class="access-code-note">📲 Para confirmar que o WhatsApp é seu, a MotoJá manda um código de 6 números para ele. Não tem senha.</p>
+        <label id="senhaCampo" hidden
+          >Código do WhatsApp<input
             id="senha"
-            placeholder="Peça o código no grupo"
-            type="password"
+            placeholder="Digite os 6 números"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            maxlength="6"
         /></label>
-        <p class="access-code-note">O código é fornecido no grupo oficial e serve para autorizar o cadastro de novos motoboys.</p>
-        <button
-          id="btnGrupoCidade"
-          class="ok"
-          type="button"
-          aria-expanded="false"
-          aria-controls="gruposCidade"
-        >Entrar no grupo e pedir o código</button>
-        <div id="gruposCidade" class="grupos-cidade" hidden>
-          <p class="access-code-note">Escolha o grupo da sua cidade:</p>
-          <button type="button" class="secondary" data-grupo-cidade="conchal">Conchal</button>
-          <button type="button" class="secondary" data-grupo-cidade="aguai">Aguaí</button>
-          <button type="button" class="secondary" data-grupo-cidade="engenheiro_coelho">Engenheiro Coelho</button>
-        </div>
+        <p id="codigoCadastroInfo" class="access-code-note" hidden></p>
         </div>
         <button id="entrar" type="button">
-          Enviar cadastro
+          Receber código no WhatsApp
         </button>
         <button class="secondary" type="button" data-step-back="2">Voltar</button>
         </div>
-        <details class="status quick-login quick-login-green">
+        <details id="quickLogin" class="status quick-login quick-login-green">
           <summary>Já sou cadastrado</summary>
           <div class="quick-login-fields">
             <label
@@ -963,14 +953,17 @@
                 inputmode="numeric"
                 maxlength="14"
             /></label>
-            <label
-              >Código de acesso<input
+            <label id="loginSenhaCampo" hidden
+              >Código do WhatsApp<input
                 id="loginSenha"
-                placeholder="Digite o código"
-                type="password"
+                placeholder="Digite os 6 números"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                maxlength="6"
             /></label>
+            <p id="loginCodigoInfo" class="access-code-note" hidden></p>
             <button id="entrarCpf" type="button">
-              Entrar com CPF
+              Receber código no WhatsApp
             </button>
           </div>
         </details>
@@ -981,8 +974,8 @@
           Limpar dados salvos
         </button>
         <p class="muted">
-          Motoboy já cadastrado pode entrar só com CPF e código. O app busca o
-          cadastro salvo no servidor e grava neste aparelho.
+          Já é cadastrado? Entre só com o CPF: o código chega no WhatsApp do seu
+          cadastro e o app fica conectado neste celular.
         </p>
         <p class="muted">
           Regras obrigatorias: primeiro clique em Aceitar corrida. Depois va em
@@ -1752,6 +1745,7 @@
         motoboyCpf = "",
         motoboyCnh = "",
         motoboyTelefone = "",
+        motoboyToken = "",
         motoboyFoto = "",
         motoModelo = "",
         motoAno = "",
@@ -1838,6 +1832,8 @@
         if (d.cpf) $("cpf").value = d.cpf;
         if (d.cnh) $("cnh").value = d.cnh;
         if (d.telefone) $("telefone").value = d.telefone;
+        // Chave deste celular (login seguro): so ela abre o app.
+        motoboyToken = d.driverToken || "";
         if (d.motoModelo) $("motoModelo").value = d.motoModelo;
         if (d.motoAno) $("motoAno").value = d.motoAno;
         if (d.motoPlaca) $("motoPlaca").value = d.motoPlaca;
@@ -1865,6 +1861,7 @@
               motoAno: motoAno || antigo.motoAno || "",
               motoPlaca: motoPlaca || antigo.motoPlaca || "",
               crlvFoto: crlvFoto || antigo.crlvFoto || "",
+              driverToken: motoboyToken || "",
             };
           if (lembrarLogin) dados.loginExpiraEm = Date.now() + LOGIN_MOTOBOY_MS;
           else if (loginSalvoValido(antigo))
@@ -2167,6 +2164,7 @@
           driverCpf: motoboyCpf,
           driverCnh: motoboyCnh,
           driverTelefone: motoboyTelefone,
+          driverToken: motoboyToken,
           driverName: motoboy,
         };
       }
@@ -3370,35 +3368,39 @@
       }
       async function entrarNoPainel(lembrarLogin) {
         salvarMotoboy(lembrarLogin);
-        const loginLembrado = !lembrarLogin && loginSalvoValido(lerMotoboySalvo());
-        const senha = $("senha").value.trim() || (loginLembrado ? "moto123" : "");
-        if (!senha) throw new Error("Digite a senha fornecida pelo dono.");
+        // App de antes do login seguro: troca a CNH + telefone salvos por uma chave so deste celular.
+        if (!motoboyToken) {
+          const up = await fetchMotoboyComRetry(`${CONFIG.backend}/api/drivers/session/upgrade`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ driverCpf: motoboyCpf, driverCnh: motoboyCnh, driverTelefone: motoboyTelefone }),
+          });
+          const upDados = await up.json().catch(() => ({}));
+          if (!up.ok || !upDados.driverToken)
+            throw new Error(upDados.message || 'Entre de novo: toque em "Já sou cadastrado" e receba o código no WhatsApp.');
+          motoboyToken = upDados.driverToken;
+          salvarMotoboy(false);
+        }
         const reg = await fetchMotoboyComRetry(
-          `${CONFIG.backend}/api/drivers/register`,
+          `${CONFIG.backend}/api/drivers/${motoboyCpf}/me`,
           {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              nome: motoboy,
-              cpf: motoboyCpf,
-              cnh: motoboyCnh,
-              telefone: motoboyTelefone,
-              password: senha,
-              fotoMotoboy: motoboyFoto,
-              motoModelo,
-              motoAno,
-              motoPlaca,
-              crlvFoto,
-            }),
+            body: JSON.stringify(driverProof()),
           },
         );
         const regDados = await reg.json().catch(() => ({}));
-        if (!reg.ok)
+        if (!reg.ok) {
+          if (/^sessao_motoboy/.test(regDados.error || "")) {
+            motoboyToken = "";
+            salvarMotoboy(false);
+          }
           throw new Error(
             regDados.message ||
               regDados.error ||
               "Nao consegui validar seu cadastro no servidor.",
           );
+        }
         motoboy = regDados.nome || motoboy;
         motoboyCpf = soNumeros(regDados.cpf || motoboyCpf);
         motoboyCnh = soNumeros(regDados.cnh || motoboyCnh);
@@ -3632,65 +3634,175 @@
       // Login so com CPF: usa o cadastro salvo no servidor, sem enviar
       // nome/CNH/telefone que ficaram no formulario ou de outro motoboy
       // que usou este celular (isso gerava "CPF ja cadastrado com outros dados").
-      $("entrarCpf").onclick = () => {
-        const cpf = soNumeros($("loginCpf").value);
-        if (soNumeros(lerMotoboySalvo().cpf) !== cpf) {
-          try {
-            localStorage.removeItem(MEMORIA_MOTOBOY);
-          } catch (e) {}
-          motoboyFoto = "";
-          crlvFoto = "";
-          $("fotoPreview").src = "";
-          $("fotoPreview").classList.add("hidden");
-        }
-        [
-          "nome",
-          "cnh",
-          "telefone",
-          "motoModelo",
-          "motoAno",
-          "motoPlaca",
-          "foto",
-          "crlvFoto",
-        ].forEach((id) => {
-          if ($(id)) $(id).value = "";
+      // ---------- Login seguro: codigo de 6 numeros pelo WhatsApp da MotoJa ----------
+      async function postMotoboy(caminho, corpo) {
+        const r = await fetchMotoboyComRetry(`${CONFIG.backend}${caminho}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(corpo),
         });
-        $("cpf").value = $("loginCpf").value;
-        $("senha").value = $("loginSenha").value;
-        $("entrar").click();
+        const d = await r.json().catch(() => ({}));
+        return { r, d };
+      }
+      async function pedirCodigoMotoboy(cpf, telefone = "") {
+        const { r, d } = await postMotoboy("/api/drivers/otp/request", { cpf, telefone });
+        if (!r.ok) throw new Error(d.message || "Nao consegui enviar o codigo agora. Tente de novo.");
+        return d;
+      }
+      async function confirmarCodigoMotoboy(cpf, codigo) {
+        const code = soNumeros(codigo);
+        if (code.length !== 6) throw new Error("Digite o codigo de 6 numeros que chegou no WhatsApp.");
+        const { r, d } = await postMotoboy("/api/drivers/otp/verify", { cpf, code });
+        if (d.driverToken) {
+          motoboyCpf = cpf;
+          motoboyToken = d.driverToken;
+          salvarMotoboy(true);
+        }
+        if (!r.ok) throw new Error(d.message || "Codigo nao confere. Confira a mensagem no WhatsApp.");
+        return d;
+      }
+      // Codigo confirmado: grava o cadastro que veio do servidor neste celular e abre o app.
+      async function entrarComChave(cpf, d) {
+        motoboyCpf = cpf;
+        motoboy = d.nome || "";
+        motoboyCnh = soNumeros(d.cnh);
+        motoboyTelefone = soNumeros(d.telefone);
+        motoboyFoto = d.fotoMotoboy || "";
+        motoModelo = d.motoModelo || "";
+        motoAno = soNumeros(d.motoAno);
+        motoPlaca = d.motoPlaca || "";
+        crlvFoto = d.crlvFoto || "";
+        const valores = { nome: motoboy, cpf, cnh: motoboyCnh, telefone: motoboyTelefone, motoModelo, motoAno, motoPlaca };
+        Object.keys(valores).forEach((id) => {
+          if ($(id)) $(id).value = valores[id] || "";
+        });
+        if (motoboyFoto) {
+          $("fotoPreview").src = motoboyFoto;
+          $("fotoPreview").classList.remove("hidden");
+        }
+        salvarMotoboy(true);
+        await entrarNoPainel(false);
+      }
+      function mostrarCampoCodigoLogin(texto) {
+        loginCodigoPedido = true;
+        $("loginSenhaCampo").hidden = false;
+        $("loginCodigoInfo").hidden = false;
+        $("loginCodigoInfo").textContent = texto;
+        $("entrarCpf").textContent = "Entrar";
+        $("loginSenha").value = "";
+        $("loginSenha").focus();
+      }
+      let loginCodigoPedido = false;
+      $("loginCpf").addEventListener("input", () => {
+        loginCodigoPedido = false;
+        $("loginSenhaCampo").hidden = true;
+        $("loginCodigoInfo").hidden = true;
+        $("entrarCpf").textContent = "Receber código no WhatsApp";
+      });
+      $("entrarCpf").onclick = async () => {
+        const cpf = soNumeros($("loginCpf").value);
+        const botao = $("entrarCpf");
+        if (!cpfOk(cpf)) {
+          alert("CPF invalido. Confira os numeros.");
+          return;
+        }
+        botao.disabled = true;
+        try {
+          // Sem codigo digitado: pede (ou pede de novo) o codigo.
+          if (!loginCodigoPedido || !soNumeros($("loginSenha").value)) {
+            if (soNumeros(lerMotoboySalvo().cpf) !== cpf) {
+              try {
+                localStorage.removeItem(MEMORIA_MOTOBOY);
+              } catch (e) {}
+              motoboyToken = "";
+            }
+            const r = await pedirCodigoMotoboy(cpf);
+            mostrarCampoCodigoLogin(`📲 Mandamos o código para o WhatsApp do seu cadastro ${r.para}. Digite abaixo. Não chegou? Espere 1 minuto e toque em Entrar com o campo vazio para pedir outro.`);
+            return;
+          }
+          const d = await confirmarCodigoMotoboy(cpf, $("loginSenha").value);
+          await entrarComChave(cpf, d);
+        } catch (e) {
+          alert(e.message || "Nao consegui entrar agora.");
+        } finally {
+          botao.disabled = false;
+        }
       };
+      // Cadastro novo: confirma o WhatsApp digitado com o codigo antes de enviar para o dono.
+      let cadastroCodigoPedido = false;
+      ["cpf", "telefone"].forEach((id) =>
+        $(id)?.addEventListener("input", () => {
+          cadastroCodigoPedido = false;
+          $("senhaCampo").hidden = true;
+          $("codigoCadastroInfo").hidden = true;
+          $("entrar").textContent = "Receber código no WhatsApp";
+        }),
+      );
       $("entrar").onclick = async () => {
-        const senha = $("senha").value.trim();
+        const botao = $("entrar");
         try {
           await preencherMotoboyDasEntradas();
         } catch (e) {
           alert(e.message || "Nao consegui ler a foto.");
           return;
         }
-        if (!senha) {
-          alert("Digite a senha que voce recebeu do dono.");
-          return;
-        }
-        if (!podeRecuperarCadastro(senha) && !validarCadastroMotoboy()) return;
+        if (!validarCadastroMotoboy()) return;
+        botao.disabled = true;
         try {
+          if (!cadastroCodigoPedido || !soNumeros($("senha").value)) {
+            const r = await pedirCodigoMotoboy(motoboyCpf, motoboyTelefone);
+            if (!r.novo) {
+              // CPF ja cadastrado: o codigo foi para o WhatsApp do cadastro; termina em "Ja sou cadastrado".
+              $("quickLogin").open = true;
+              $("loginCpf").value = $("cpf").value;
+              mostrarCampoCodigoLogin(`Esse CPF já tem cadastro. 📲 Mandamos o código para o WhatsApp do cadastro ${r.para}. Digite abaixo.`);
+              $("quickLogin").scrollIntoView({ behavior: "smooth", block: "center" });
+              return;
+            }
+            cadastroCodigoPedido = true;
+            $("senhaCampo").hidden = false;
+            $("codigoCadastroInfo").hidden = false;
+            $("codigoCadastroInfo").textContent = `📲 Mandamos o código para ${r.para}. Digite abaixo e toque em Enviar cadastro.`;
+            botao.textContent = "Enviar cadastro";
+            $("senha").value = "";
+            $("senha").focus();
+            return;
+          }
+          const v = await confirmarCodigoMotoboy(motoboyCpf, $("senha").value);
+          const { r, d } = await postMotoboy("/api/drivers/register", {
+            nome: motoboy,
+            cpf: motoboyCpf,
+            cnh: motoboyCnh,
+            telefone: motoboyTelefone,
+            fotoMotoboy: motoboyFoto,
+            motoModelo,
+            motoAno,
+            motoPlaca,
+            crlvFoto,
+            verificationToken: v.verificationToken,
+          });
+          if (d.driverToken) {
+            motoboyToken = d.driverToken;
+            salvarMotoboy(true);
+          }
+          if (d.pendente) {
+            alert("✅ Cadastro enviado! O dono vai conferir seus documentos. Quando ele liberar, é só abrir o app: ele entra sozinho.");
+            return;
+          }
+          if (!r.ok) throw new Error(d.message || "Nao consegui enviar o cadastro agora.");
           await entrarNoPainel(true);
         } catch (e) {
           alert(
-            e.message === "senha_incorreta"
-              ? "Senha incorreta. Peca a senha ao dono ou no grupo dos motoboys."
-              : e.message === "dados_invalidos"
-                ? "CPF nao encontrado ou cadastro incompleto. Se ainda nao tem cadastro, preencha o formulario acima."
-              : /failed to fetch|load failed|networkerror|servidor|abort|timeout|conectar/i.test(
-                    e.message || "",
-                  )
-                ? e.message ||
-                  "Nao consegui conectar no servidor agora. Confira a internet e tente de novo em alguns segundos."
-                : e.message || "Nao consegui entrar agora.",
+            /failed to fetch|load failed|networkerror|abort|timeout/i.test(e.message || "")
+              ? "Nao consegui conectar no servidor agora. Confira a internet e tente de novo em alguns segundos."
+              : e.message || "Nao consegui enviar agora.",
           );
+        } finally {
+          botao.disabled = false;
         }
       };
     </script>
-    <script src="./motoboy-tracking.js?v=210" defer></script>
+    <script src="./motoboy-tracking.js?v=211" defer></script>
     <script src="./app-versao.js?v=1" defer></script>
   </body>
 </html>

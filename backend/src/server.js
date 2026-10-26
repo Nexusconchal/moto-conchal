@@ -31,6 +31,7 @@ import { createLearnedAddresses, newlyDelivered, sanitizeStops, stopsSummary } f
 import { GAZETTEER_CITIES, gazetteerCityKey, gazetteerFor } from './conchal-gazetteer.js';
 import { createWhatsappBooking, BOOKING_CITIES } from './whatsapp-booking.js';
 import { createCustomerCards, repasseUpdate } from './customer-cards.js';
+import { createDriverSessions, driverSessionValid, legacyProofAllowed } from './driver-sessions.js';
 import { createGeminiReceiptReader, createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
 import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
 
@@ -2563,7 +2564,27 @@ function disconnectSupportSockets(accountId) {
   }
 }
 
-function assertDriverProof(driver = {}, body = {}) {
+// Motoboy: vale a chave do celular (driverToken). CNH + telefone (app antigo) so na
+// transicao e so para quem ainda nao tem nenhuma chave (driver-sessions.js).
+function assertDriverProof(driver = {}, body = {}, { requireSession = false } = {}) {
+  const token = String(body.driverToken || '');
+  if (token) {
+    if (driverSessionValid(driver, token, hashSecret, safeEqual)) return;
+    const error = new Error('Seu acesso neste celular expirou. Entre de novo com o código do WhatsApp.');
+    error.status = 401;
+    error.code = 'sessao_motoboy_invalida';
+    throw error;
+  }
+  if (requireSession || !legacyProofAllowed(driver)) {
+    const error = new Error('Entre de novo: toque em "Já sou cadastrado" e receba o código no WhatsApp.');
+    error.status = 401;
+    error.code = 'sessao_motoboy_obrigatoria';
+    throw error;
+  }
+  assertLegacyDriverProof(driver, body);
+}
+
+function assertLegacyDriverProof(driver = {}, body = {}) {
   const expectedCnh = onlyDigits(driver.cnh);
   const expectedPhone = onlyDigits(driver.telefone);
   const givenCnh = onlyDigits(body.driverCnh);
@@ -2577,8 +2598,9 @@ function assertDriverProof(driver = {}, body = {}) {
   }
 }
 
-async function getDriverWithProof(driverCpf, body = {}) {
-  const cacheKey = `${driverCpf}:${onlyDigits(body.driverCnh)}:${onlyDigits(body.driverTelefone)}`;
+async function getDriverWithProof(driverCpf, body = {}, options = {}) {
+  const proofKey = body.driverToken ? `t:${hashSecret(String(body.driverToken))}` : `l:${onlyDigits(body.driverCnh)}:${onlyDigits(body.driverTelefone)}`;
+  const cacheKey = `${driverCpf}:${proofKey}:${options.requireSession ? 's' : ''}`;
   const cached = driverProofCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     if (cached.driver?.status === 'bloqueado') {
@@ -2605,7 +2627,7 @@ async function getDriverWithProof(driverCpf, body = {}) {
     error.code = 'motoboy_bloqueado';
     throw error;
   }
-  assertDriverProof(driver, body);
+  assertDriverProof(driver, body, options);
   driverProofCache.set(cacheKey, { driver, expiresAt: Date.now() + DRIVER_PROOF_CACHE_MS });
   return driver;
 }
@@ -4447,7 +4469,7 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'motoja-conchal-backend',
-    release: 'cartao-salvo-v1',
+    release: 'login-motoboy-v1',
     manualDeliveryDateMigration: manualDeliveryDateMigrationStatus
   });
 });
@@ -5860,14 +5882,116 @@ app.post('/api/admin/car/drivers/:cpf/block', assertOwner, async (req, res, next
   }
 });
 
+// ---------- Login seguro do motoboy (chave por celular + codigo no WhatsApp) ----------
+const driverSessionsApi = createDriverSessions({
+  db,
+  admin,
+  hashSecret,
+  safeEqual,
+  sendText: (number, text) => sendEvolutionText(number, text)
+});
+
+const driverOtpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'muitas_tentativas_login', message: 'Muitas tentativas. Aguarde 15 minutos antes de tentar novamente.' }
+});
+
+// O que o app do motoboy precisa do proprio cadastro (nunca tokens, sessoes ou senhas).
+function driverAppProfile(driver = {}, cpf = '') {
+  return {
+    nome: cleanText(driver.nome, 80),
+    cpf: onlyDigits(driver.cpf || cpf),
+    cnh: onlyDigits(driver.cnh),
+    telefone: onlyDigits(driver.telefone),
+    fotoMotoboy: driver.fotoMotoboy || '',
+    motoModelo: cleanText(driver.motoModelo, 60),
+    motoAno: onlyDigits(driver.motoAno),
+    motoPlaca: cleanText(driver.motoPlaca, 12),
+    crlvFoto: driver.crlvFoto || '',
+    cidadesAtivas: driverRideCities(driver)
+  };
+}
+
+function driverBlockedResponse(driver = {}) {
+  const pendente = !!driver.aguardandoAprovacaoEm && /aguardando aprovacao/i.test(String(driver.motivoBloqueio || ''));
+  return pendente
+    ? { error: 'motoboy_aguardando_aprovacao', message: 'Seu cadastro ainda está com o dono para conferir os documentos. Assim que ele liberar, o app entra sozinho.' }
+    : { error: 'motoboy_bloqueado', message: 'Seu cadastro está bloqueado pelo dono. Fale com o suporte MotoJá.' };
+}
+
+app.post('/api/drivers/otp/request', driverOtpLimiter, async (req, res, next) => {
+  try {
+    return res.json(await driverSessionsApi.requestCode({ cpf: req.body.cpf, telefone: req.body.telefone }));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/drivers/otp/verify', authLimiter, async (req, res, next) => {
+  try {
+    const result = await driverSessionsApi.verifyCode({ cpf: req.body.cpf, code: req.body.code, aparelho: req.get('user-agent') });
+    if (result.novo) return res.json({ ok: true, novo: true, verificationToken: result.verificationToken });
+    driverProofCache.clear();
+    const driver = result.driver || {};
+    if (driver.status === 'bloqueado') {
+      return res.status(403).json({ ...driverBlockedResponse(driver), driverToken: result.driverToken });
+    }
+    return res.json({ ok: true, novo: false, driverToken: result.driverToken, ...driverAppProfile(driver, onlyDigits(req.body.cpf)) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// App antigo (guardou CNH + telefone): troca por uma chave na primeira abertura.
+app.post('/api/drivers/session/upgrade', authLimiter, async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.body.driverCpf);
+    if (cpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    const result = await driverSessionsApi.upgradeLegacy(cpf, req.body, { assertLegacyProof: assertLegacyDriverProof, aparelho: req.get('user-agent') });
+    driverProofCache.clear();
+    return res.json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Abertura do app com a chave: devolve o proprio cadastro.
+app.post('/api/drivers/:cpf/me', async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.params.cpf);
+    if (cpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    const snap = await db.collection('motoboys').doc(cpf).get();
+    if (!snap.exists) return res.status(404).json({ error: 'motoboy_nao_cadastrado', message: 'Motoboy não cadastrado.' });
+    const driver = snap.data() || {};
+    assertDriverProof(driver, req.body, { requireSession: true });
+    if (driver.status === 'bloqueado') return res.status(403).json(driverBlockedResponse(driver));
+    await snap.ref.set({ ultimoAcesso: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    return res.json({ ok: true, ...driverAppProfile(driver, cpf) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Dono: derruba o acesso de todos os celulares do motoboy (celular perdido, suspeita).
+app.post('/api/admin/drivers/:cpf/sessions/revoke', assertOwner, async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.params.cpf);
+    if (cpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await driverSessionsApi.revokeAll(cpf);
+    driverProofCache.clear();
+    adminStateCache = null;
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/drivers/register', authLimiter, async (req, res, next) => {
   try {
-    const password = String(req.body.password || '');
     const cpf = onlyDigits(req.body.cpf);
-
-    if (!isValidDriverPassword(password)) {
-      return res.status(401).json({ error: 'senha_incorreta' });
-    }
     if (cpf.length !== 11) {
       return res.status(400).json({ error: 'cpf_invalido' });
     }
@@ -5875,9 +5999,26 @@ app.post('/api/drivers/register', authLimiter, async (req, res, next) => {
     const driverRef = db.collection('motoboys').doc(cpf);
     const driverSnap = await driverRef.get();
     const savedDriver = driverSnap.exists ? driverSnap.data() || {} : {};
-    const nome = cleanText(req.body.nome || savedDriver.nome, 80);
-    const cnh = onlyDigits(req.body.cnh || savedDriver.cnh);
-    const telefone = onlyDigits(req.body.telefone || savedDriver.telefone);
+    // Quem pode mexer neste cadastro:
+    // - cadastro novo: WhatsApp confirmado com o codigo (verificationToken, conferido no fim);
+    // - ja cadastrado: a chave do celular. O app antigo (senha + CNH + telefone DIGITADOS)
+    //   so na transicao e so sem chave. Nunca completa CNH/telefone pelo cadastro salvo:
+    //   antes, CPF + senha publica devolviam a CNH e o telefone do motoboy.
+    const viaSessao = driverSnap.exists && driverSessionValid(savedDriver, req.body.driverToken, hashSecret, safeEqual);
+    if (driverSnap.exists && !viaSessao) {
+      if (req.body.driverToken) {
+        return res.status(401).json({ error: 'sessao_motoboy_invalida', message: 'Seu acesso neste celular expirou. Entre de novo com o código do WhatsApp.' });
+      }
+      if (!legacyProofAllowed(savedDriver) || !isValidDriverPassword(String(req.body.password || ''))) {
+        return res.status(401).json({ error: 'sessao_motoboy_obrigatoria', message: 'Entre de novo: toque em "Já sou cadastrado" e receba o código no WhatsApp.' });
+      }
+      if (onlyDigits(req.body.cnh) !== onlyDigits(savedDriver.cnh) || onlyDigits(req.body.telefone) !== onlyDigits(savedDriver.telefone)) {
+        return res.status(409).json({ error: 'cadastro_ja_existe', message: 'CPF ja cadastrado com outros dados. Fale com o dono para conferir.' });
+      }
+    }
+    const nome = cleanText(viaSessao ? savedDriver.nome : req.body.nome || savedDriver.nome, 80);
+    const cnh = onlyDigits(viaSessao ? savedDriver.cnh : req.body.cnh);
+    const telefone = onlyDigits(viaSessao ? savedDriver.telefone : req.body.telefone);
     const fotoMotoboy = validDriverPhoto(req.body.fotoMotoboy) || savedDriver.fotoMotoboy || '';
     const motoModelo = cleanText(req.body.motoModelo || savedDriver.motoModelo, 60);
     const motoAno = onlyDigits(req.body.motoAno || savedDriver.motoAno);
@@ -5963,12 +6104,20 @@ app.post('/api/drivers/register', authLimiter, async (req, res, next) => {
       driverData.crlvAtualizadoEm = admin.firestore.FieldValue.serverTimestamp();
     }
 
+    // Cadastro novo so com o WhatsApp confirmado pelo codigo (e o mesmo numero do cadastro).
+    if (newDriver) await driverSessionsApi.consumeVerification(cpf, req.body.verificationToken, telefone);
+
     await driverRef.set(driverData, { merge: true });
 
     if (newDriver) {
       driverProofCache.clear();
-      return res.status(403).json({
+      // O celular ja fica com a chave: quando o dono liberar, o app entra sozinho.
+      const session = await driverSessionsApi.issueSession(cpf, { aparelho: req.get('user-agent') });
+      return res.status(202).json({
+        ok: false,
+        pendente: true,
         error: 'motoboy_aguardando_aprovacao',
+        driverToken: session.token,
         message: 'Cadastro recebido. Aguarde o dono conferir seus documentos e liberar seu acesso.'
       });
     }
@@ -13012,7 +13161,8 @@ app.post('/api/drivers/:cpf/mercadopago/oauth-link', authLimiter, async (req, re
   try {
     const driverCpf = onlyDigits(req.params.cpf);
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
-    await getDriverWithProof(driverCpf, req.body);
+    // Trocar a conta que recebe o dinheiro: so com a chave do celular (nunca CNH + telefone).
+    await getDriverWithProof(driverCpf, req.body, { requireSession: true });
 
     const state = crypto.randomBytes(32).toString('hex');
     await db.collection('mercadoPagoOAuthStates').doc(hashSecret(state)).set({
@@ -13144,6 +13294,12 @@ app.get('/api/mercadopago/oauth/callback', async (req, res, next) => {
       atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
 
+    // Aviso no WhatsApp do motoboy (e do dono, se OWNER_WHATSAPP estiver configurado).
+    const conectado = await db.collection('motoboys').doc(driverCpf).get().then((snap) => snap.data() || {}).catch(() => ({}));
+    const avisoMp = `💳 Nexus MotoJá: a conta Mercado Pago que recebe as corridas de ${cleanText(conectado.nome, 60) || 'motoboy'} foi conectada agora.
+Se não foi você, avise o dono imediatamente.`;
+    await driverSessionsApi.notify(conectado.telefone, avisoMp);
+    if (process.env.OWNER_WHATSAPP) await driverSessionsApi.notify(process.env.OWNER_WHATSAPP, avisoMp);
     return res.redirect(appUrl('/motoboy.html?mp=ok'));
   } catch (error) {
     return next(error);
