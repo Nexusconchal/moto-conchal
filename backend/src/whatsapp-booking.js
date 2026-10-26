@@ -64,6 +64,8 @@ const CITY_QUESTION = 'Em qual cidade fica esse endereço?\n1 • Conchal\n2 •
 const ORIGIN_QUESTION = '📍 Onde você está?\nMande sua *localização* (toque no 📎 e escolha Localização) ou escreva *rua, número e bairro*.';
 const DESTINATION_QUESTION = '🏁 Para onde você vai?\nEscreva *rua, número e bairro* (e a cidade, se for fora). Também pode mandar a localização do destino.';
 const HELP = '\n\nPara desistir, responda CANCELAR. Para falar com uma pessoa, ATENDENTE.';
+// Depois de 2 enderecos nao encontrados seguidos, o cliente tambem recebe o app para nao ficar preso.
+const APP_LINK = '\n\nSe preferir, faça o pedido pelo app: https://nexusmotoja.com.br/';
 
 export function bookingSummary(state) {
   const quote = state.cotacao;
@@ -95,6 +97,7 @@ export function createWhatsappBooking({ db, encrypt, decrypt, now = () => Date.n
       cotacao: data.cotacao || null,
       cotacoesHora: data.cotacoesHora || null,
       buscasHora: data.buscasHora || null,
+      falhas: Number(data.falhas || 0),
       pedidosDia: data.pedidosDia || null,
       atualizadoEmMs: Number(data.atualizadoEmMs || 0),
       nome: open(data.nomeCriptografado) || '',
@@ -118,6 +121,7 @@ export function createWhatsappBooking({ db, encrypt, decrypt, now = () => Date.n
       rideId: state.rideId || '',
       cotacoesHora: state.cotacoesHora || null,
       buscasHora: state.buscasHora || null,
+      falhas: Number(state.falhas || 0),
       pedidosDia: state.pedidosDia || null,
       atualizadoEmMs: t,
       expiresAt: new Date(t + 7 * 86400000)
@@ -178,8 +182,9 @@ export function createWhatsappBooking({ db, encrypt, decrypt, now = () => Date.n
       result = await quote(state.origem, state.destino);
     } catch (error) {
       state.destino = null;
+      state.falhas = Number(state.falhas || 0) + 1;
       const asked = await ask(phone, state, 'destino', `${error?.publicMessage || 'Não consegui calcular essa rota agora.'}\n\n`);
-      return { failed: true, text: asked.text };
+      return { failed: true, text: `${asked.text}${state.falhas >= 2 ? APP_LINK : ''}` };
     }
     state.cotacao = { km: result.km, valor: result.valor, periodo: result.periodo, cidade: result.cidade, emMs: now(), id: crypto.randomBytes(6).toString('hex') };
     state.etapa = 'confirmar';
@@ -243,9 +248,11 @@ export function createWhatsappBooking({ db, encrypt, decrypt, now = () => Date.n
       state.pendente = { texto: typed };
       state.sugestoes = (result?.sugestoes || []).slice(0, 3);
       state.etapa = role;
+      state.falhas = Number(state.falhas || 0) + 1;
       await save(phone, state);
-      return { text: `${placeProblem(result, role)}${HELP}` };
+      return { text: `${placeProblem(result, role)}${HELP}${state.falhas >= 2 ? APP_LINK : ''}` };
     }
+    state.falhas = 0;
     state.pendente = null;
     state.sugestoes = [];
     state[role] = result.lugar;

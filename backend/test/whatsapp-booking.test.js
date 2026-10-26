@@ -323,3 +323,13 @@ test('the expiry notice does not disturb a new order already being made', async 
   assert.equal(sent.length, 0);
   assert.match((await h.say('Rua das Azaleias 65')).text, /Para onde você vai/);
 });
+
+test('after 2 addresses not found in a row, the app link is sent too (the customer never gets stuck)', async () => {
+  const h = setup();
+  await h.say('quero uma moto', 'request'); await h.say('Rafael');
+  assert.doesNotMatch((await h.say('rua que nao existe 10')).text, /nexusmotoja\.com\.br/);
+  assert.match((await h.say('outra rua errada 20')).text, /faça o pedido pelo app: https:\/\/nexusmotoja\.com\.br\//);
+  // Achou o endereco: zera a contagem.
+  await h.say('Rua das Azaleias 65');
+  assert.doesNotMatch((await h.say('destino errado 30')).text, /nexusmotoja\.com\.br/);
+});
