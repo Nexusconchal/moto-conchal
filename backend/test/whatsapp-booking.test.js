@@ -75,11 +75,11 @@ test('whole conversation: name, pickup, destination, summary and a ride only aft
   assert.match((await h.say('Rua das Azaleias 65')).text, /Saída: Rua das Azaleias, 65 - Centro, Conchal - SP[\s\S]*Para onde você vai/);
   const summary = (await h.say('rua dos zancheta 128')).text;
   assert.match(summary, /Confere o seu pedido, Rafael/);
-  assert.match(summary, /2,1 km · 💰 R\$\s?6,50/);
+  assert.match(summary, /2,1 km · 💰 \*R\$\s?6,50\*/);
   assert.match(summary, /Responda \*SIM\*/);
   assert.equal(h.calls.create.length, 0, 'nothing is created before the SIM');
   const sent = (await h.say('sim'));
-  assert.match(sent.text, /Pedido enviado, Rafael! Estou chamando os motoboys de Conchal/);
+  assert.match(sent.text, /Pedido enviado, Rafael![\s\S]*Estou chamando os motoboys de Conchal/);
   assert.equal(h.calls.create.length, 1);
   const created = h.calls.create[0];
   assert.equal(created.phone, PHONE);
@@ -150,8 +150,8 @@ test('a misspelled street shows the suggestions, and a number picks one keeping 
   await h.say('quero uma moto', 'request');
   await h.say('Rafael');
   const answer = (await h.say('rua azaleia 65')).text;
-  assert.match(answer, /Será algum destes\?\n1 • Rua das Azaleias\n2 • Rua das Acacias - Jardim Sao Paulo/);
-  assert.match((await h.say('1')).text, /Saída: Rua das Azaleias, 65/);
+  assert.match(answer, /Será algum destes\?\n\n1️⃣ Rua das Azaleias\n2️⃣ Rua das Acacias - Jardim Sao Paulo/);
+  assert.match((await h.say('1️⃣')).text, /Saída: Rua das Azaleias, 65/);
   assert.equal(seen.at(-1), 'Rua das Azaleias, 65');
 });
 
@@ -186,7 +186,7 @@ test('an old quote is recalculated: same price creates, a changed price asks aga
   h.advance(11 * 60000);
   price = 8;
   const changed = (await h.say('sim')).text;
-  assert.match(changed, /O valor foi atualizado[\s\S]*R\$\s?8,00 \(tarifa da noite\)/);
+  assert.match(changed, /O valor foi atualizado[\s\S]*R\$\s?8,00\* \(tarifa da noite\)/);
   assert.equal(h.calls.create.length, 0);
   assert.match((await h.say('sim')).text, /Pedido enviado/);
   assert.equal(h.calls.create[0].cotacao.valor, 8);

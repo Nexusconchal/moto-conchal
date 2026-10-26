@@ -60,17 +60,17 @@ const money = value => Number(value || 0).toLocaleString('pt-BR', { style: 'curr
 const distance = value => `${Number(value || 0).toFixed(1).replace('.', ',')} km`;
 const firstName = name => String(name || '').split(' ')[0];
 const cityName = key => BOOKING_CITIES.find(item => item.key === key)?.name || '';
-const CITY_QUESTION = 'Em qual cidade fica esse endereço?\n1 • Conchal\n2 • Aguaí\n3 • Engenheiro Coelho';
-const ORIGIN_QUESTION = '📍 Onde você está?\nMande sua *localização* (toque no 📎 e escolha Localização) ou escreva *rua, número e bairro*.';
-const DESTINATION_QUESTION = '🏁 Para onde você vai?\nEscreva *rua, número e bairro* (e a cidade, se for fora). Também pode mandar a localização do destino.';
-const HELP = '\n\nPara desistir, responda CANCELAR. Para falar com uma pessoa, ATENDENTE.';
+const CITY_QUESTION = '🏙️ *Em qual cidade fica esse endereço?*\n\n1️⃣ Conchal\n2️⃣ Aguaí\n3️⃣ Engenheiro Coelho\n\nResponda com o número.';
+const ORIGIN_QUESTION = '📍 *Onde você está?*\n\n📲 Mande sua *localização*: toque no 📎 › *Localização* › *Localização atual*\n✍️ Ou escreva *rua, número e bairro*';
+const DESTINATION_QUESTION = '🏁 *Para onde você vai?*\n\n✍️ Escreva *rua, número e bairro* (e a cidade, se for fora)\n📌 Ou mande a localização do destino';
+const HELP = '\n\n❌ Para desistir: *CANCELAR*\n🙋 Falar com uma pessoa: *ATENDENTE*';
 // Depois de 2 enderecos nao encontrados seguidos, o cliente tambem recebe o app para nao ficar preso.
-const APP_LINK = '\n\nSe preferir, faça o pedido pelo app: https://nexusmotoja.com.br/';
+const APP_LINK = '\n\n📱 Se preferir, faça o pedido pelo app: https://nexusmotoja.com.br/';
 
 export function bookingSummary(state) {
   const quote = state.cotacao;
   const period = quote.periodo === 'noite' ? ' (tarifa da noite)' : quote.periodo === 'madrugada' ? ' (tarifa da madrugada)' : '';
-  return `Confere o seu pedido, ${firstName(state.nome)}:\n\n📍 Saída: ${state.origem.encontrado}\n🏁 Destino: ${state.destino.encontrado}\n📏 ${distance(quote.km)} · 💰 ${money(quote.valor)}${period}\n💳 O link de pagamento chega aqui depois que um motoboy aceitar.\n\nResponda *SIM* para chamar o motoboy ou *NÃO* para corrigir.`;
+  return `🧾 *Confere o seu pedido, ${firstName(state.nome)}:*\n\n📍 *Saída:* ${state.origem.encontrado}\n🏁 *Destino:* ${state.destino.encontrado}\n📏 ${distance(quote.km)} · 💰 *${money(quote.valor)}*${period}\n💳 O link de pagamento chega aqui depois que um motoboy aceitar.\n\n✅ Responda *SIM* para chamar o motoboy\n✏️ Ou *NÃO* para corrigir`;
 }
 
 // Escolha de uma sugestao ("2") mantem o numero da casa que o cliente tinha escrito.
@@ -148,16 +148,16 @@ export function createWhatsappBooking({ db, encrypt, decrypt, now = () => Date.n
     if (result?.motivo === 'limite') return 'Muitas buscas de endereço nesta última hora. Tente de novo mais tarde, peça pelo app ou escreva ATENDENTE.';
     if (result?.motivo === 'fora_da_area') return 'Por enquanto buscamos passageiros em Conchal, Aguaí e Engenheiro Coelho. Mande um endereço de saída numa dessas cidades ou a sua localização.';
     const suggestions = (result?.sugestoes || []).slice(0, 3);
-    if (suggestions.length) return `Não achei exatamente esse endereço 😕 Será algum destes?\n${suggestions.map((item, index) => `${index + 1} • ${item}`).join('\n')}\n\nResponda com o número, ou escreva o endereço de novo com *rua, número e bairro*.`;
+    if (suggestions.length) return `😕 Não achei exatamente esse endereço. Será algum destes?\n\n${suggestions.map((item, index) => `${['1️⃣', '2️⃣', '3️⃣'][index]} ${item}`).join('\n')}\n\n👉 Responda com o número, ou escreva o endereço de novo com *rua, número e bairro*.`;
     return role === 'origem'
-      ? 'Não encontrei esse endereço de saída no mapa 😕\nEscreva de novo com *rua, número e bairro*, ou mande a sua 📍 localização.'
-      : 'Não encontrei esse destino no mapa 😕\nEscreva de novo com *rua, número e bairro* (e a cidade, se for fora).';
+      ? '😕 Não encontrei esse endereço de saída no mapa.\n\n✍️ Escreva de novo com *rua, número e bairro*\n📍 Ou mande a sua localização'
+      : '😕 Não encontrei esse destino no mapa.\n\n✍️ Escreva de novo com *rua, número e bairro* (e a cidade, se for fora)';
   }
 
   async function ask(phone, state, etapa, prefix = '') {
     state.etapa = etapa;
     await save(phone, state);
-    if (etapa === 'nome') return { text: `${prefix}Qual é o seu nome?${HELP}` };
+    if (etapa === 'nome') return { text: `${prefix}👤 *Qual é o seu nome?*${HELP}` };
     if (etapa === 'origem') return { text: `${prefix}${ORIGIN_QUESTION}${HELP}` };
     return { text: `${prefix}${DESTINATION_QUESTION}${HELP}` };
   }
@@ -166,7 +166,7 @@ export function createWhatsappBooking({ db, encrypt, decrypt, now = () => Date.n
   function next(phone, state, prefix = '') {
     if (!state.nome) return ask(phone, state, 'nome', prefix);
     if (!state.origem) return ask(phone, state, 'origem', prefix);
-    return ask(phone, state, 'destino', `${prefix}Saída: ${state.origem.encontrado}\n\n`);
+    return ask(phone, state, 'destino', `${prefix}\n📍 Saída: ${state.origem.encontrado}\n\n`);
   }
 
   // Cotacao com limite por hora: cada cotacao consulta rota e mapa.
@@ -174,7 +174,7 @@ export function createWhatsappBooking({ db, encrypt, decrypt, now = () => Date.n
     state.cotacoesHora = window(state.cotacoesHora, 3600000);
     if (state.cotacoesHora.n >= MAX_QUOTES_PER_HOUR) {
       await clear(phone, state);
-      return { failed: true, text: 'Muitas tentativas de pedido nesta última hora. Tente de novo mais tarde, peça pelo app ou escreva ATENDENTE.' };
+      return { failed: true, text: '⚠️ Muitas tentativas de pedido nesta última hora. Tente de novo mais tarde, peça pelo app ou escreva ATENDENTE.' };
     }
     state.cotacoesHora.n += 1;
     let result;
@@ -208,14 +208,14 @@ export function createWhatsappBooking({ db, encrypt, decrypt, now = () => Date.n
     state.pedidosDia = window(state.pedidosDia, 86400000);
     if (state.pedidosDia.n >= MAX_RIDES_PER_DAY) {
       await clear(phone, state);
-      return { text: 'Você já fez vários pedidos por aqui hoje. Para pedir de novo, use o app ou escreva ATENDENTE.' };
+      return { text: '⚠️ Você já fez vários pedidos por aqui hoje. Para pedir de novo, use o app ou escreva ATENDENTE.' };
     }
     // Cotacao velha (ou o horario mudou de faixa): calcula de novo e pede outro SIM se mudou.
     if (now() - Number(state.cotacao?.emMs || 0) > QUOTE_TTL_MS) {
       const previous = state.cotacao?.valor;
       const fresh = await quoteAndConfirm(phone, state);
       if (fresh.failed) return fresh;
-      if (state.cotacao.valor !== previous) return { text: `O valor foi atualizado.\n\n${fresh.text}` };
+      if (state.cotacao.valor !== previous) return { text: `🔄 O valor foi atualizado.\n\n${fresh.text}` };
     }
     let created;
     try {
@@ -223,16 +223,16 @@ export function createWhatsappBooking({ db, encrypt, decrypt, now = () => Date.n
     } catch (error) {
       if (error?.code === 'valor_nao_confere_com_tabela') {
         const fresh = await quoteAndConfirm(phone, state);
-        return fresh.failed ? fresh : { text: `O valor foi atualizado.\n\n${fresh.text}` };
+        return fresh.failed ? fresh : { text: `🔄 O valor foi atualizado.\n\n${fresh.text}` };
       }
       if (Number(error?.status) !== 400) throw error;
       state.origem = null; state.destino = null; state.cotacao = null;
-      return ask(phone, state, 'origem', 'O mapa não confirmou um dos endereços, então não chamei o motoboy. Vamos de novo, com rua, número e bairro.\n\n');
+      return ask(phone, state, 'origem', '😕 O mapa não confirmou um dos endereços, então não chamei o motoboy. Vamos de novo, com rua, número e bairro.\n\n');
     }
     state.pedidosDia.n += 1;
     await save(phone, { ...state, etapa: 'enviado', rideId: created.rideId });
-    if (created.duplicated) return { text: 'Esse pedido já está chamando os motoboys. Assim que um aceitar, te aviso aqui.' };
-    return { text: `✅ Pedido enviado, ${firstName(state.nome)}! Estou chamando os motoboys de ${cityName(state.cotacao.cidade) || 'sua cidade'}.\n\nAssim que um aceitar, te mando aqui o nome dele, o link para acompanhar no mapa e o pagamento. Se ninguém aceitar em ${Math.round(rideExpireMs / 60000)} minutos, te aviso.\n\nPara cancelar antes do aceite, responda CANCELAR.` };
+    if (created.duplicated) return { text: '⏳ Esse pedido já está chamando os motoboys. Assim que um aceitar, te aviso aqui.' };
+    return { text: `✅ *Pedido enviado, ${firstName(state.nome)}!*\n🔎 Estou chamando os motoboys de ${cityName(state.cotacao.cidade) || 'sua cidade'}.\n\n📲 Assim que um aceitar, te mando aqui o nome dele, o link para acompanhar no mapa e o pagamento.\n⏱️ Se ninguém aceitar em ${Math.round(rideExpireMs / 60000)} minutos, te aviso.\n\n❌ Para cancelar antes do aceite: *CANCELAR*` };
   }
 
   // Resultado da busca de um endereco (ou localizacao) para a saida ou o destino.
@@ -256,13 +256,14 @@ export function createWhatsappBooking({ db, encrypt, decrypt, now = () => Date.n
     state.pendente = null;
     state.sugestoes = [];
     state[role] = result.lugar;
-    if (role === 'origem') return next(phone, state, 'Anotado! ');
+    if (role === 'origem') return next(phone, state, '👍 Anotado!');
     return quoteAndConfirm(phone, state);
   }
 
   async function takePlace(phone, state, event, role) {
     let typed = String(event.text || '').trim();
-    const picked = /^[1-3]$/.test(typed) && state.sugestoes?.[Number(typed) - 1];
+    const choice = typed.replace(/[\uFE0F\u20E3\s]/g, '');
+    const picked = /^[1-3]$/.test(choice) && state.sugestoes?.[Number(choice) - 1];
     if (picked) typed = suggestionText(picked, state.pendente?.texto);
     if (!event.location && typed.length < 4) return ask(phone, state, role);
     const city = role === 'origem' ? '' : state.origem?.cidade || '';
@@ -281,12 +282,12 @@ export function createWhatsappBooking({ db, encrypt, decrypt, now = () => Date.n
     }
     const customer = await lookupCustomer(phone).catch(() => null);
     const state = { nome: validName(customer?.nome) || previous.nome, pedidosDia: previous.pedidosDia, cotacoesHora: previous.cotacoesHora, buscasHora: previous.buscasHora };
-    const greeting = state.nome ? `Oi, ${firstName(state.nome)}! Vamos pedir a sua moto 🏍️\n\n` : 'Vamos pedir a sua moto! 🏍️\n\n';
+    const greeting = state.nome ? `👋 Oi, ${firstName(state.nome)}! Vamos pedir a sua moto 🏍️\n\n` : '🏍️ *Vamos pedir a sua moto!*\n\n';
     if (event.location) {
       const result = await lookup(phone, state, { text: '', location: event.location, city: '', role: 'origem' });
       if (!result?.ok) { state.etapa = 'origem'; await save(phone, state); return { text: `${placeProblem(result, 'origem')}${HELP}` }; }
       state.origem = result.lugar;
-      return next(phone, state, `${greeting}Recebi sua localização. `);
+      return next(phone, state, `${greeting}📍 Recebi sua localização!`);
     }
     return next(phone, state, greeting);
   }
@@ -302,7 +303,7 @@ export function createWhatsappBooking({ db, encrypt, decrypt, now = () => Date.n
 
     if (collecting) {
       if (intent === 'human' || intent === 'menu') { await clear(phone, state); return null; }
-      if (reply === 'cancel') { await clear(phone, state); return { text: 'Tudo bem, cancelei este pedido. Quando precisar, é só mandar *1* ou "quero uma moto".' }; }
+      if (reply === 'cancel') { await clear(phone, state); return { text: '✅ Tudo bem, cancelei este pedido. Quando precisar, é só mandar *1* ou "quero uma moto".' }; }
       // Localizacao vale como saida (ou destino, se a saida ja foi informada).
       if (event.location && state.etapa !== 'confirmar') {
         const role = state.origem && ['destino', 'cidade_destino'].includes(state.etapa) ? 'destino' : 'origem';
@@ -313,7 +314,7 @@ export function createWhatsappBooking({ db, encrypt, decrypt, now = () => Date.n
         const name = intent === 'other' ? validName(event.text) : '';
         if (!name) return { text: `Me diga só o seu nome, por favor 🙂${HELP}` };
         state.nome = name;
-        return next(phone, state, `Prazer, ${firstName(name)}! `);
+        return next(phone, state, `😊 Prazer, ${firstName(name)}!\n\n`);
       }
       if (state.etapa === 'cidade_origem' || state.etapa === 'cidade_destino') {
         const city = cityChoice(event.text);
@@ -332,7 +333,7 @@ export function createWhatsappBooking({ db, encrypt, decrypt, now = () => Date.n
           state.origem = null; state.destino = null; state.cotacao = null;
           return ask(phone, state, 'origem', 'Sem problemas, vamos corrigir.\n\n');
         }
-        return { text: `Responda *SIM* para chamar o motoboy ou *NÃO* para corrigir.${HELP}` };
+        return { text: `✅ Responda *SIM* para chamar o motoboy\n✏️ Ou *NÃO* para corrigir${HELP}` };
       }
     }
 
@@ -342,14 +343,14 @@ export function createWhatsappBooking({ db, encrypt, decrypt, now = () => Date.n
       const renewed = await renewRide(phone, state.rideId);
       if (renewed === 'renovada') {
         await save(phone, { ...state, etapa: 'enviado' });
-        return { text: 'Pronto, chamei os motoboys de novo! Te aviso aqui assim que um aceitar. Para cancelar, responda CANCELAR.' };
+        return { text: '🔁 Pronto, chamei os motoboys de novo! Te aviso aqui assim que um aceitar. Para cancelar, responda CANCELAR.' };
       }
       await clear(phone, state);
       return start(phone, event);
     }
     if (recentRide && reply === 'cancel') {
       const result = await cancelRide(phone, state.rideId);
-      if (result.status === 'cancelada') { await clear(phone, state); return { text: 'Pronto, cancelei a sua corrida. Quando precisar, é só mandar *1* aqui.' }; }
+      if (result.status === 'cancelada') { await clear(phone, state); return { text: '✅ Pronto, cancelei a sua corrida. Quando precisar, é só mandar *1* aqui.' }; }
       if (result.status === 'aceita') return { text: `${result.motoboy ? `O motoboy ${result.motoboy}` : 'O motoboy'} já aceitou e está a caminho, então não consigo cancelar por aqui. Fale com ele pelo link de acompanhamento que te mandei, ou escreva ATENDENTE.` };
       await clear(phone, state);
       return { text: 'Essa corrida já foi encerrada. Para pedir outra, é só mandar *1*.' };
