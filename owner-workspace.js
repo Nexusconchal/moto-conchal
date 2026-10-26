@@ -48,7 +48,7 @@
       title: "Depósitos e créditos",
       eyebrow: "Financeiro",
       description: "Confira comprovantes, aprove valores e controle créditos das empresas.",
-      targets: ["depositos-section"],
+      targets: ["depositos-section", "repasses-section"],
     },
     companies: {
       title: "Empresas",

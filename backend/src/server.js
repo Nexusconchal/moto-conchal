@@ -30,6 +30,7 @@ import { safeDepositCheckout, assertDepositPayment, assertDepositCompany, deposi
 import { createLearnedAddresses, newlyDelivered, sanitizeStops, stopsSummary } from './delivery-stops.js';
 import { GAZETTEER_CITIES, gazetteerCityKey, gazetteerFor } from './conchal-gazetteer.js';
 import { createWhatsappBooking, BOOKING_CITIES } from './whatsapp-booking.js';
+import { createCustomerCards, repasseUpdate } from './customer-cards.js';
 import { createGeminiReceiptReader, createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
 import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
 
@@ -4397,7 +4398,7 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'motoja-conchal-backend',
-    release: 'whatsapp-pedido-v2',
+    release: 'cartao-salvo-v1',
     manualDeliveryDateMigration: manualDeliveryDateMigrationStatus
   });
 });
@@ -7064,6 +7065,151 @@ app.get('/api/customers/me/referral', createRideLimiter, async (req, res, next) 
       participacoesMes: amigos.filter((a) => a.andou && monthKey(a.qualificadaEmMs) === mes).length,
       totalAndaram: amigos.filter((a) => a.andou).length
     });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// ---------- Meus cartoes (cartao salvo, cobrado na conta MotoJa) ----------
+function rideCardAmounts(ride = {}) {
+  const split = rideSplitAmounts(ride.pagamento?.total || ride.valor, ride.km, timestampMs(ride.criadaEm));
+  return { total: split.total, appFee: split.appFee, driverAmount: split.driverAmount };
+}
+
+// Cartao aprovado: o link de pagamento da corrida para de aceitar (evita pagar duas vezes).
+async function expireRidePreference(ride = {}) {
+  const preferenceId = String(ride.pagamento?.preferenceId || '');
+  if (!preferenceId) return;
+  let token = process.env.MP_OWNER_ACCESS_TOKEN || '';
+  if (ride.pagamento?.receiver !== 'motoja_owner') {
+    const driverSnap = await db.collection('motoboys').doc(onlyDigits(ride.motoboyCpf)).get();
+    token = driverSnap.data()?.mercadoPago?.accessToken || '';
+  }
+  if (!token) return;
+  await mpFetch(`/checkout/preferences/${encodeURIComponent(preferenceId)}`, {
+    token,
+    method: 'PUT',
+    body: { expires: true, expiration_date_to: new Date(Date.now() - 60000).toISOString() }
+  });
+}
+
+const customerCards = createCustomerCards({
+  db,
+  admin,
+  mpApi: MP_API,
+  ownerToken: () => String(process.env.MP_OWNER_ACCESS_TOKEN || '').trim(),
+  publicKey: () => String(process.env.MP_OWNER_PUBLIC_KEY || '').trim(),
+  hashSecret,
+  safeEqual,
+  validCpf,
+  rideAmounts: rideCardAmounts,
+  webhookUrl: mercadoPagoWebhookUrl,
+  expireRidePreference
+});
+
+async function cardCustomerSession(req) {
+  const header = String(req.header('authorization') || '');
+  const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+  const session = token ? await findCustomerSession(token) : null;
+  if (!session || !customerProfileComplete(session.customer)) {
+    const error = new Error('Entre na sua conta para usar cartão.');
+    error.status = 401;
+    error.code = 'cliente_login_obrigatorio';
+    throw error;
+  }
+  return session;
+}
+
+app.get('/api/payments/card-config', (_req, res) => {
+  res.set('cache-control', 'no-store');
+  res.json({ ok: true, ...customerCards.config() });
+});
+
+app.get('/api/customers/me/cards', createRideLimiter, async (req, res, next) => {
+  try {
+    res.set('cache-control', 'no-store');
+    const session = await cardCustomerSession(req);
+    return res.json({ ok: true, ...customerCards.config(), cartoes: customerCards.list(session.customer) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/customers/me/cards', createRideLimiter, async (req, res, next) => {
+  try {
+    const session = await cardCustomerSession(req);
+    return res.status(201).json({ ok: true, ...await customerCards.add(session, req.body) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/customers/me/cards/:cardId/remove', createRideLimiter, async (req, res, next) => {
+  try {
+    const session = await cardCustomerSession(req);
+    return res.json({ ok: true, ...await customerCards.remove(session, req.params.cardId) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/rides/:rideId/card-payment', createRideLimiter, async (req, res, next) => {
+  try {
+    const session = await cardCustomerSession(req);
+    const result = await customerCards.payRide(session, req.params.rideId, req.body, {
+      deviceSessionId: String(req.header('x-meli-session-id') || '')
+    });
+    rideStatusCache.delete(String(req.params.rideId || ''));
+    return res.status(result.aprovado ? 200 : 402).json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Repasses: corridas pagas na conta da MotoJa (cartao salvo ou link da conta MotoJa)
+// que a MotoJa ainda deve ao motoboy.
+app.get('/api/admin/repasses', assertOwner, async (_req, res, next) => {
+  try {
+    res.set('cache-control', 'no-store');
+    const snap = await db.collection('repassesMotoboy').where('status', '==', 'a_pagar').limit(500).get();
+    const porMotoboy = new Map();
+    snap.docs.forEach((docSnap) => {
+      const item = docSnap.data() || {};
+      const cpf = onlyDigits(item.motoboyCpf);
+      const atual = porMotoboy.get(cpf) || { motoboyCpf: cpf, motoboyNome: item.motoboyNome || 'Motoboy', total: 0, corridas: 0, desdeMs: 0 };
+      atual.total = money(atual.total + Number(item.valor || 0));
+      atual.corridas += 1;
+      atual.desdeMs = atual.desdeMs ? Math.min(atual.desdeMs, Number(item.criadoEmMs || 0)) : Number(item.criadoEmMs || 0);
+      porMotoboy.set(cpf, atual);
+    });
+    const estornos = await db.collection('repassesMotoboy').where('estornoAposPagamento', '==', true).limit(50).get();
+    return res.json({
+      ok: true,
+      motoboys: [...porMotoboy.values()].sort((a, b) => b.total - a.total),
+      estornosAposPagamento: estornos.docs.map((docSnap) => ({ rideId: docSnap.id, ...docSnap.data() }))
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/admin/repasses/pagar', assertOwner, async (req, res, next) => {
+  try {
+    const motoboyCpf = onlyDigits(req.body.motoboyCpf);
+    if (motoboyCpf.length !== 11) return res.status(400).json({ error: 'motoboy_invalido' });
+    const snap = await db.collection('repassesMotoboy')
+      .where('motoboyCpf', '==', motoboyCpf)
+      .where('status', '==', 'a_pagar')
+      .limit(400)
+      .get();
+    let total = 0;
+    const batch = db.batch();
+    snap.docs.forEach((docSnap) => {
+      total = money(total + Number(docSnap.data()?.valor || 0));
+      batch.set(docSnap.ref, { status: 'pago', pagoEmMs: Date.now() }, { merge: true });
+    });
+    if (!snap.empty) await batch.commit();
+    return res.json({ ok: true, corridas: snap.size, total });
   } catch (error) {
     return next(error);
   }
@@ -10543,7 +10689,8 @@ app.get('/api/rides/:rideId/status', async (req, res, next) => {
       pagamento: ride.pagamento ? {
         status: ride.pagamento.status || '',
         initPoint: ride.pagamento.initPoint || '',
-        metodo: ride.pagamento.metodo || ''
+        metodo: ride.pagamento.metodo || '',
+        cartaoFinal: ride.pagamento.metodo === 'cartao_app' ? String(ride.pagamento.cartaoFinal || '') : ''
       } : null
     };
     rideStatusCache.set(rideId, { at: Date.now(), payload, access });
@@ -13270,8 +13417,9 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
 
     const rideRef = db.collection('corridas').doc(rideId);
     const usageRef = db.collection('mercadoPagoPagamentos').doc(hashSecret(String(payment.id)));
+    const repasseRef = db.collection('repassesMotoboy').doc(rideId);
     await db.runTransaction(async (tx) => {
-      const [rideSnap, usageSnap] = await Promise.all([tx.get(rideRef), tx.get(usageRef)]);
+      const [rideSnap, usageSnap, repasseSnap] = await Promise.all([tx.get(rideRef), tx.get(usageRef), tx.get(repasseRef)]);
       if (!rideSnap.exists) {
         const error = new Error('Corrida do pagamento nao encontrada.');
         error.status = 404;
@@ -13301,6 +13449,37 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
       const valorEsperado = money(ride.pagamento?.total || ride.valor || 0);
       const pagamentoAprovado = payment.status === 'approved';
       const valorConfere = valorEsperado > 0 && Math.abs(totalPago - valorEsperado) <= 0.01;
+      const anterior = ride.pagamento || {};
+      if (anterior.status === 'approved' && anterior.valido !== false && anterior.paymentId
+        && anterior.paymentId !== String(payment.id)) {
+        // Segundo pagamento da mesma corrida (link e cartao): nao apaga o primeiro;
+        // fica marcado para o dono estornar.
+        if (pagamentoAprovado) {
+          tx.set(rideRef, {
+            pagamentoDuplicadoEm: admin.firestore.FieldValue.serverTimestamp(),
+            pagamentosDuplicados: { [String(payment.id)]: { status: payment.status, total: totalPago, conta: paymentSource } }
+          }, { merge: true });
+        }
+        return;
+      }
+      const cartaoApp = paymentSource === 'owner' && payment.metadata?.payment_kind === 'ride_card_owner';
+      const pagamento = {
+        ...anterior,
+        ...(cartaoApp ? { receiver: 'motoja_owner', metodo: 'cartao_app' } : {}),
+        provider: 'mercadopago',
+        paymentId: String(payment.id),
+        status: payment.status,
+        statusDetail: payment.status_detail || null,
+        totalPago,
+        valorEsperado,
+        valido: pagamentoAprovado && valorConfere,
+        divergencia: pagamentoAprovado && !valorConfere
+          ? `Valor pago ${totalPago.toFixed(2)} diferente do esperado ${valorEsperado.toFixed(2)}`
+          : null,
+        appFee: money(payment.marketplace_fee || payment.metadata?.app_fee || ride.pagamento?.appFee || 0),
+        driverAmount: money(payment.metadata?.driver_amount || ride.pagamento?.driverAmount || 0),
+        atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+      };
       tx.set(usageRef, {
         target,
         paymentId: String(payment.id),
@@ -13308,27 +13487,19 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
         atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
       tx.update(rideRef, {
-        pagamento: {
-          ...(ride.pagamento || {}),
-          provider: 'mercadopago',
-          paymentId: String(payment.id),
-          status: payment.status,
-          statusDetail: payment.status_detail || null,
-          totalPago,
-          valorEsperado,
-          valido: pagamentoAprovado && valorConfere,
-          divergencia: pagamentoAprovado && !valorConfere
-            ? `Valor pago ${totalPago.toFixed(2)} diferente do esperado ${valorEsperado.toFixed(2)}`
-            : null,
-          appFee: money(payment.marketplace_fee || payment.metadata?.app_fee || ride.pagamento?.appFee || 0),
-          driverAmount: money(payment.metadata?.driver_amount || ride.pagamento?.driverAmount || 0),
-          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
-        },
+        pagamento,
         pagamentoConfirmadoEm: pagamentoAprovado && valorConfere
           ? admin.firestore.FieldValue.serverTimestamp()
           : admin.firestore.FieldValue.delete(),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
+      // Pago na conta da MotoJa: a parte do motoboy vira repasse a pagar.
+      if (paymentSource === 'owner' && pagamento.receiver === 'motoja_owner') {
+        const repasse = repasseUpdate(repasseSnap.exists ? repasseSnap.data() : null, {
+          rideId, ride: { ...ride, pagamento }, payment, valido: pagamentoAprovado && valorConfere, driverAmount: pagamento.driverAmount
+        });
+        if (repasse) tx.set(repasseRef, repasse, { merge: true });
+      }
     });
 
     res.json({ ok: true });

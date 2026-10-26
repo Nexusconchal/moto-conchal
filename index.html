@@ -1841,6 +1841,8 @@
           <span class="mi">⌖</span>Pedir corrida</button
         ><button class="drawer-link" data-menu-action="minhas" type="button">
           <span class="mi">◴</span>Minhas corridas</button
+        ><button class="drawer-link" data-menu-action="cartoes" type="button">
+          <span class="mi">💳</span>Meus cartões</button
         ><button
           class="drawer-link"
           data-menu-action="motoristas"
@@ -3836,9 +3838,14 @@
         const valorTxt = `R$ ${Number(dados.valor || 0).toFixed(2).replace('.', ',')}`;
         let pagHtml = "";
         if (pag.status === "approved") {
-          pagHtml = `<div id="pagamento-cliente-box" style="margin:12px 0;padding:12px;border-radius:14px;background:rgba(37,211,102,.15);border:1px solid rgba(37,211,102,.35);color:#bfffd2;font-weight:800;text-align:center">Pagamento aprovado pelo Mercado Pago!</div>`;
+          const pagoTxt = pag.metodo === "cartao_app" && pag.cartaoFinal ? `✅ Pago no cartão final ${escHtml(pag.cartaoFinal)}!` : "Pagamento aprovado pelo Mercado Pago!";
+          pagHtml = `<div id="pagamento-cliente-box" style="margin:12px 0;padding:12px;border-radius:14px;background:rgba(37,211,102,.15);border:1px solid rgba(37,211,102,.35);color:#bfffd2;font-weight:800;text-align:center">${pagoTxt}</div>`;
         } else if (pag.initPoint) {
-          pagHtml = `<div id="pagamento-cliente-box" style="margin:12px 0;padding:14px;border-radius:14px;background:linear-gradient(135deg,rgba(0,158,227,.18),rgba(0,158,227,.08));border:1px solid rgba(0,158,227,.4);text-align:center"><div class="small" style="font-weight:800;color:#75d1ff;margin-bottom:8px">Pagar corrida online</div><a href="${escHtml(pag.initPoint)}" target="_blank" rel="noopener" class="btn-main" style="display:inline-block;padding:11px 22px;text-decoration:none;border-radius:999px;background:linear-gradient(135deg,#009ee3,#007eb5);color:#fff;font-weight:900;font-size:1.02rem;box-shadow:0 8px 22px rgba(0,158,227,.35)">Pagar com Pix / Cartão (${valorTxt})</a><div class="small" style="margin-top:8px;color:#aeb4c3">Ou pague direto ao motoboy em dinheiro ou Pix.</div></div>`;
+          // Cartao salvo (Meus cartoes): so com conta conectada e quando o servidor liberou.
+          const cartaoBtn = window.MotojaCartoes?.disponivel()
+            ? `<button type="button" data-pagar-cartao="${escHtml(pedido.id)}" data-valor="${Number(dados.valor || 0)}" style="display:block;width:100%;margin:0 0 10px;padding:12px 18px;border-radius:999px;border:0;background:linear-gradient(135deg,#ff9a00,#ff7a00);color:#111;font-weight:900;font-size:1.02rem;cursor:pointer;box-shadow:0 8px 22px rgba(255,154,0,.3);font-family:inherit">💳 Pagar com cartão salvo (${valorTxt})</button>`
+            : "";
+          pagHtml = `<div id="pagamento-cliente-box" style="margin:12px 0;padding:14px;border-radius:14px;background:linear-gradient(135deg,rgba(0,158,227,.18),rgba(0,158,227,.08));border:1px solid rgba(0,158,227,.4);text-align:center"><div class="small" style="font-weight:800;color:#75d1ff;margin-bottom:8px">Pagar corrida online</div>${cartaoBtn}<a href="${escHtml(pag.initPoint)}" target="_blank" rel="noopener" class="btn-main" style="display:inline-block;padding:11px 22px;text-decoration:none;border-radius:999px;background:linear-gradient(135deg,#009ee3,#007eb5);color:#fff;font-weight:900;font-size:1.02rem;box-shadow:0 8px 22px rgba(0,158,227,.35)">Pagar com Pix / Cartão (${valorTxt})</a><div class="small" style="margin-top:8px;color:#aeb4c3">Ou pague direto ao motoboy em dinheiro ou Pix.</div></div>`;
         }
 
         // Conversa com o motoboy pelo chat do app (sem trocar WhatsApp), como no 99.
@@ -4490,6 +4497,7 @@
             }
           }
           if (a === "minhas") window.MotojaClienteMenu?.abrir("corridas");
+          if (a === "cartoes") window.MotojaCartoes?.abrir();
           if (a === "motoristas") window.MotojaClienteMenu?.abrir("motoristas");
           if (a === "indicar") indicarApp();
           if (a === "promocoes")
@@ -4542,6 +4550,25 @@
           if ((r.destino || r.destinoEncontrado) && $("destino")) $("destino").value = r.destino || r.destinoEncontrado;
           abrirModal();
         },
+      });
+      // Meus cartoes e pagar a corrida com cartao salvo (cliente-cartoes.js).
+      window.MotojaCartoes?.configurar({
+        backend: CONFIG.backend,
+        authHeaders: cabecalhosCliente,
+        logado: () => clienteAutenticado,
+        pedirLogin: (motivo) => {
+          abrirAuthCliente("login", false);
+          authStatus(motivo);
+        },
+      });
+      document.addEventListener("click", (e) => {
+        const botao = e.target.closest("[data-pagar-cartao]");
+        if (!botao) return;
+        window.MotojaCartoes?.pagar({
+          rideId: botao.dataset.pagarCartao,
+          valor: Number(botao.dataset.valor || 0),
+          aoPagar: () => verificarPedidoAtivo(true),
+        });
       });
       $("btn-instalar").addEventListener("click", salvarNaTelaInicial);
       $("btn-lembretes")?.addEventListener("click", ativarLembretesCliente);
@@ -5001,6 +5028,8 @@
     <script src="./ride-chat.js?v=234" defer></script>
     <script src="./ride-rating.js?v=234" defer></script>
     <script src="./cliente-menu.js?v=2"></script>
+    <script src="./cartao-scan.js?v=1"></script>
+    <script src="./cliente-cartoes.js?v=1"></script>
     <script src="./app-versao.js?v=1" defer></script>
   </body>
 </html>
