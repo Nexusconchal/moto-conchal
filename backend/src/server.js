@@ -28,7 +28,8 @@ import { companyProfileUpdate } from './company-profile.js';
 import { protectedDelivery, deliveryHeld, completionReason, assertCompanyDelivery } from './delivery-completion.js';
 import { safeDepositCheckout, assertDepositPayment, assertDepositCompany, depositPaymentAmounts, companyDepositView } from './company-deposit.js';
 import { createLearnedAddresses, newlyDelivered, sanitizeStops, stopsSummary } from './delivery-stops.js';
-import { GAZETTEER_CITIES, gazetteerCityKey } from './conchal-gazetteer.js';
+import { GAZETTEER_CITIES, gazetteerCityKey, gazetteerFor } from './conchal-gazetteer.js';
+import { createWhatsappBooking, BOOKING_CITIES } from './whatsapp-booking.js';
 import { createGeminiReceiptReader, createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
 import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
 
@@ -10335,6 +10336,76 @@ app.post('/api/drivers/:cpf/mercadopago/status', authLimiter, async (req, res, n
   }
 });
 
+// Cria a corrida com as regras do servidor (rota e preco calculados aqui, enderecos conferidos,
+// pedido repetido barrado) e chama os motoboys. Usada pelo app e pelo pedido no WhatsApp.
+async function createRideRecord(ride) {
+  const serverKm = await calculateRouteDistanceKm([
+    { lat: ride.origemLat, lon: ride.origemLon },
+    { lat: ride.destinoLat, lon: ride.destinoLon }
+  ]);
+  ride.km = serverKm;
+  if (!isGpsOrigin(ride.origemDigitada || ride.origem)) {
+    ensureResolvedPlaceMatches(ride.origemDigitada || ride.origem, ride.origemEncontrada || ride.origem, 'Origem da corrida');
+    ensureResolvedAddressIsSpecific(ride.origemDigitada || ride.origem, ride.origemEncontrada || ride.origem, 'Origem da corrida');
+  }
+  ensureResolvedPlaceMatches(ride.destino, ride.destinoEncontrado || ride.destino, 'Destino da corrida');
+  ensureResolvedAddressIsSpecific(ride.destino, ride.destinoEncontrado || ride.destino, 'Destino da corrida');
+  ensureDistantRouteIsPlausible(ride.km, { origem: `${ride.origemEncontrada || ride.origem || ''} ${ride.origemEnderecoGps || ''} ${String(ride.cidadeOperacao || '').replace(/_/g, ' ')}` }, ride.destino, ride.destinoEncontrado);
+  if (money(ride.valor) !== expectedFare(ride.km)) {
+    throw Object.assign(new Error('O valor nao confere com a tabela.'), { status: 400, code: 'valor_nao_confere_com_tabela' });
+  }
+
+  const duplicateRideId = await findRecentDuplicateRide(ride);
+  if (duplicateRideId) {
+    return {
+      rideId: duplicateRideId,
+      duplicated: true,
+      httpStatus: 200,
+      body: {
+        rideId: duplicateRideId,
+        duplicated: true,
+        message: 'Corrida igual ja foi enviada agora. Aguarde a resposta dos motoboys.',
+        push: { sent: 0, failed: 0 },
+        telegram: { sent: false, skipped: true }
+      }
+    };
+  }
+
+  const ref = ride.clientRequestId
+    ? db.collection('corridas').doc(ride.clientRequestId)
+    : db.collection('corridas').doc();
+  let created = false;
+
+  await db.runTransaction(async (tx) => {
+    const existing = await tx.get(ref);
+    if (existing.exists) return;
+
+    tx.set(ref, {
+      ...ride,
+      status: 'pendente',
+      pagamento: 'mercadopago_apos_aceite',
+      criadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    });
+    created = true;
+  });
+
+  if (!created) {
+    return { rideId: ref.id, duplicated: true, httpStatus: 200, body: { rideId: ref.id, duplicated: true, push: { sent: 0, failed: 0 } } };
+  }
+
+  const push = await notifyDriversAboutRide(ref.id, ride).catch((error) => {
+    console.error('driver push failed', error);
+    return { sent: 0, failed: 0 };
+  });
+  const telegram = await notifyTelegramAboutRide(ref.id, ride).catch((error) => {
+    console.error('telegram notify failed', error);
+    return { sent: false, failed: true };
+  });
+
+  return { rideId: ref.id, duplicated: false, httpStatus: 201, body: { rideId: ref.id, push, telegram } };
+}
+
 app.post('/api/rides', createRideLimiter, async (req, res, next) => {
   try {
     const ride = ridePublicData(req.body);
@@ -10385,66 +10456,14 @@ app.post('/api/rides', createRideLimiter, async (req, res, next) => {
       ride.fotoCliente = validDriverPhoto(customerSession.customer.fotoCliente) || '';
       ride.clienteVerificado = true;
     }
-    const serverKm = await calculateRouteDistanceKm([
-      { lat: ride.origemLat, lon: ride.origemLon },
-      { lat: ride.destinoLat, lon: ride.destinoLon }
-    ]);
-    ride.km = serverKm;
-    if (!isGpsOrigin(ride.origemDigitada || ride.origem)) {
-      ensureResolvedPlaceMatches(ride.origemDigitada || ride.origem, ride.origemEncontrada || ride.origem, 'Origem da corrida');
-      ensureResolvedAddressIsSpecific(ride.origemDigitada || ride.origem, ride.origemEncontrada || ride.origem, 'Origem da corrida');
+    let created;
+    try {
+      created = await createRideRecord(ride);
+    } catch (error) {
+      if (error.code === 'valor_nao_confere_com_tabela') return res.status(400).json({ error: 'valor_nao_confere_com_tabela' });
+      throw error;
     }
-    ensureResolvedPlaceMatches(ride.destino, ride.destinoEncontrado || ride.destino, 'Destino da corrida');
-    ensureResolvedAddressIsSpecific(ride.destino, ride.destinoEncontrado || ride.destino, 'Destino da corrida');
-    ensureDistantRouteIsPlausible(ride.km, { origem: `${ride.origemEncontrada || ride.origem || ''} ${ride.origemEnderecoGps || ''} ${String(ride.cidadeOperacao || '').replace(/_/g, ' ')}` }, ride.destino, ride.destinoEncontrado);
-    if (money(ride.valor) !== expectedFare(ride.km)) {
-      return res.status(400).json({ error: 'valor_nao_confere_com_tabela' });
-    }
-
-    const duplicateRideId = await findRecentDuplicateRide(ride);
-    if (duplicateRideId) {
-      return res.status(200).json({
-        rideId: duplicateRideId,
-        duplicated: true,
-        message: 'Corrida igual ja foi enviada agora. Aguarde a resposta dos motoboys.',
-        push: { sent: 0, failed: 0 },
-        telegram: { sent: false, skipped: true }
-      });
-    }
-
-    const ref = ride.clientRequestId
-      ? db.collection('corridas').doc(ride.clientRequestId)
-      : db.collection('corridas').doc();
-    let created = false;
-
-    await db.runTransaction(async (tx) => {
-      const existing = await tx.get(ref);
-      if (existing.exists) return;
-
-      tx.set(ref, {
-        ...ride,
-        status: 'pendente',
-        pagamento: 'mercadopago_apos_aceite',
-        criadaEm: admin.firestore.FieldValue.serverTimestamp(),
-        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
-      });
-      created = true;
-    });
-
-    if (!created) {
-      return res.status(200).json({ rideId: ref.id, duplicated: true, push: { sent: 0, failed: 0 } });
-    }
-
-    const push = await notifyDriversAboutRide(ref.id, ride).catch((error) => {
-      console.error('driver push failed', error);
-      return { sent: 0, failed: 0 };
-    });
-    const telegram = await notifyTelegramAboutRide(ref.id, ride).catch((error) => {
-      console.error('telegram notify failed', error);
-      return { sent: false, failed: true };
-    });
-
-    res.status(201).json({ rideId: ref.id, push, telegram });
+    res.status(created.httpStatus).json(created.body);
   } catch (error) {
     next(error);
   }
@@ -13361,8 +13380,226 @@ const geminiSupport = createGeminiSupport({ reserveBudget: () => reserveGeminiQu
 const learnedAddresses = createLearnedAddresses({ db });
 const receiptReader = createGeminiReceiptReader({ reserveBudget: () => reserveSupportAiQuota(db, 'gemini-nota') });
 const openrouterSupport = createOpenRouterSupport({ reserveBudget: () => reserveSupportAiQuota(db, 'openrouter') });
+// ---------- Pedido de corrida pelo WhatsApp da empresa ----------
+// A conversa fica em whatsapp-booking.js; aqui ficam os acessos ao mapa e as regras da corrida,
+// as mesmas do app. Distancia acima disso fica com o atendimento.
+const BOOKING_MAX_KM = 60;
+
+async function reverseGeocodeText(point) {
+  if (!GEOAPIFY_API_KEY) return '';
+  const params = new URLSearchParams({ lat: String(point.lat), lon: String(point.lon), lang: 'pt', apiKey: GEOAPIFY_API_KEY });
+  const response = await fetch(`https://api.geoapify.com/v1/geocode/reverse?${params.toString()}`, { signal: AbortSignal.timeout(10000) });
+  const data = await response.json().catch(() => ({}));
+  return response.ok ? cleanText(data.features?.[0]?.properties?.formatted || '', 200) : '';
+}
+
+// "Rua X 140 Limeira": sem virgula, a cidade depois do numero nao e reconhecida pelas
+// conferencias do mapa; vira "Rua X 140, Limeira".
+function bookingAddressText(typed) {
+  if (requestedPlaceHint(typed)) return typed;
+  const parts = typed.match(/^(.*\b\d{1,5}[a-z]?)\s+([^\d,]+)$/i);
+  return parts && requestedPlaceHint(parts[2]) ? `${parts[1]}, ${parts[2].trim()}` : typed;
+}
+
+// Saida ou destino do pedido. Sem cidade escrita: na saida, a cidade e a unica onde o cadastro
+// de ruas acha esse endereco (se forem varias ou nenhuma, pergunta); no destino, a da saida.
+async function resolveBookingPlace({ text = '', location = null, city = '', role = 'destino' } = {}) {
+  if (location) {
+    const point = { lat: Number(location.lat), lon: Number(location.lon) };
+    if (!validCoordinate(point)) return { ok: false };
+    const served = cityForPoint(point);
+    if (role === 'origem' && !served) return { ok: false, motivo: 'fora_da_area' };
+    const near = await reverseGeocodeText(point).catch(() => '');
+    return { ok: true, lugar: { gps: true, lat: point.lat, lon: point.lon, texto: 'Localização enviada pelo WhatsApp', encontrado: near || 'Localização enviada pelo WhatsApp', cidade: served } };
+  }
+  const typed = bookingAddressText(cleanText(text, 200));
+  if (typed.length < 4) return { ok: false };
+  const hint = requestedPlaceHint(typed);
+  let cityKey = hint ? (gazetteerCityKey(hint) || '') : city;
+  if (!hint && !cityKey) {
+    const found = BOOKING_CITIES.filter((item) => gazetteerFor(item.key)?.search(typed).features.length).map((item) => item.key);
+    if (found.length !== 1) return { ok: false, pedirCidade: true };
+    cityKey = found[0];
+  }
+  const cityLabel = GAZETTEER_CITIES[cityKey]?.name || '';
+  const query = hint || !cityLabel ? typed : `${typed}, ${cityLabel}`;
+  let point = null;
+  const learned = await learnedAddresses.lookup(typed, cityKey || hint.replace(/\s+/g, '_')).catch(() => null);
+  if (learned) point = { lat: learned.lat, lon: learned.lon, text: `${learned.texto} - ${cityLabel || 'Conchal'} - SP` };
+  if (!point) {
+    try {
+      point = await geocodeCapturedAddress(query);
+    } catch {
+      const data = GEOAPIFY_API_KEY
+        ? await searchMapAddress({ text: query, original: typed, apiKey: GEOAPIFY_API_KEY, city: cityLabel || hint || 'Conchal' }).catch(() => null)
+        : null;
+      return { ok: false, sugestoes: Array.isArray(data?.suggestions) ? data.suggestions.slice(0, 3) : [] };
+    }
+  }
+  const served = cityForPoint(point);
+  if (role === 'origem' && !served) return { ok: false, motivo: 'fora_da_area' };
+  return { ok: true, lugar: { gps: false, lat: point.lat, lon: point.lon, texto: typed, encontrado: cleanText(point.text, 200), cidade: served || cityKey || '' } };
+}
+
+function bookingPriceLabel(kmValue) {
+  const period = rideFarePeriod();
+  const mode = period === 'dia' ? '' : ` - modo ${period}`;
+  if (kmValue <= 3) return `Até 3 km${mode}`;
+  if (kmValue <= 5) return `Até 5 km${mode}`;
+  if (kmValue <= 8) return `Até 8 km${mode}`;
+  return `Acima de 8 km${mode}`;
+}
+
+async function quoteBookingRide(origem, destino) {
+  const fail = (publicMessage) => Object.assign(new Error(publicMessage), { publicMessage });
+  let kmValue;
+  try {
+    kmValue = await calculateRouteDistanceKm([{ lat: origem.lat, lon: origem.lon }, { lat: destino.lat, lon: destino.lon }]);
+  } catch {
+    throw fail('Não consegui calcular a rota até esse destino agora.');
+  }
+  if (!(kmValue > 0)) throw fail('A saída e o destino ficaram no mesmo lugar. Confira o destino.');
+  if (kmValue > BOOKING_MAX_KM) throw fail(`Essa viagem passa de ${BOOKING_MAX_KM} km. Para viagens longas, escreva ATENDENTE que a equipe combina com você.`);
+  try {
+    ensureDistantRouteIsPlausible(kmValue, { origem: `${origem.encontrado} ${origem.cidade || ''}` }, destino.texto, destino.encontrado);
+  } catch {
+    throw fail('A rota até esse destino ficou estranha. Escreva o destino com rua, número, bairro e cidade.');
+  }
+  const cidade = inferNewRideOperatingCity({ origem: origem.encontrado, origemLat: origem.lat, origemLon: origem.lon }, origem.cidade);
+  return { km: kmValue, valor: expectedFare(kmValue), periodo: rideFarePeriod(), cidade };
+}
+
+async function bookingCustomer(phone) {
+  const national = onlyDigits(phone).replace(/^55(?=\d{10,11}$)/, '');
+  const snap = await db.collection('clientes').doc(national).get();
+  const customer = snap.data() || {};
+  return snap.exists && customerProfileComplete(customer) ? { id: snap.id, nome: cleanText(customer.nome, 80), fotoCliente: validDriverPhoto(customer.fotoCliente) || '' } : null;
+}
+
+async function createBookingRide({ phone, nome, origem, destino, cotacao, requestId }) {
+  const national = onlyDigits(phone).replace(/^55(?=\d{10,11}$)/, '');
+  const customer = await bookingCustomer(phone).catch(() => null);
+  const mapa = `https://www.google.com/maps?q=${origem.lat},${origem.lon}`;
+  const ride = ridePublicData({
+    clientRequestId: requestId,
+    nome: customer?.nome || nome,
+    telefoneCliente: national,
+    origem: origem.gps ? `Localização enviada pelo WhatsApp (GPS)\nEndereço aproximado: ${origem.encontrado}\nMapa: ${mapa}` : origem.texto,
+    origemDigitada: origem.gps ? 'Localização atual pelo GPS (WhatsApp)' : origem.texto,
+    origemEncontrada: origem.encontrado,
+    origemLat: origem.lat,
+    origemLon: origem.lon,
+    destino: destino.gps ? `Localização enviada pelo WhatsApp (GPS): ${destino.encontrado}` : destino.texto,
+    destinoEncontrado: destino.encontrado,
+    destinoLat: destino.lat,
+    destinoLon: destino.lon,
+    km: cotacao.km,
+    valor: cotacao.valor,
+    precoLabel: bookingPriceLabel(cotacao.km),
+    origemMapa: origem.gps ? mapa : '',
+    cidadeOperacao: cotacao.cidade
+  });
+  ride.cidadeOperacao = inferNewRideOperatingCity(ride, cotacao.cidade);
+  ride.origemPedido = 'whatsapp';
+  ride.whatsappAcompanhar = true;
+  if (origem.gps) ride.origemEnderecoGps = origem.encontrado;
+  if (customer) {
+    ride.customerId = customer.id;
+    ride.fotoCliente = customer.fotoCliente;
+    ride.clienteVerificado = true;
+  }
+  if (!ride.nome || ride.telefoneCliente.length < 10) throw Object.assign(new Error('Pedido sem nome ou telefone.'), { status: 400 });
+  return createRideRecord(ride);
+}
+
+async function findOpenBookingRide(phone) {
+  const national = onlyDigits(phone).replace(/^55(?=\d{10,11}$)/, '');
+  const snap = await db.collection('corridas').where('telefoneCliente', '==', national).where('status', 'in', ['pendente', 'aceita']).limit(10).get();
+  const day = Date.now() - 86400000;
+  return snap.docs
+    .map((doc) => ({ ...doc.data(), id: doc.id }))
+    .filter((ride) => ['pendente', 'aceita'].includes(ride.status) && Math.max(timestampMs(ride.criadaEm), timestampMs(ride.aceitaEm)) > day)
+    .sort((a, b) => timestampMs(b.criadaEm) - timestampMs(a.criadaEm))[0] || null;
+}
+
+// Mesmas regras do "Cancelar pedido" do app: so o telefone que pediu e so antes do aceite.
+async function cancelBookingRide(phone, rideId) {
+  const national = onlyDigits(phone).replace(/^55(?=\d{10,11}$)/, '');
+  const ref = db.collection('corridas').doc(String(rideId || ''));
+  let result = { status: 'encerrada', motoboy: '' };
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const ride = snap.data() || {};
+    if (!snap.exists || onlyDigits(ride.telefoneCliente) !== national) { result = { status: 'encerrada', motoboy: '' }; return; }
+    if (!['pendente', 'expirada'].includes(ride.status)) {
+      result = { status: ride.status === 'aceita' ? 'aceita' : 'encerrada', motoboy: ride.motoboy || '' };
+      return;
+    }
+    tx.update(ref, {
+      status: 'cancelada',
+      canceladoPor: 'Cliente',
+      motivoCancelamento: 'Cliente cancelou pelo WhatsApp',
+      canceladoEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+    });
+    result = { status: 'cancelada', motoboy: '' };
+  });
+  rideStatusCache.delete(ref.id);
+  return result;
+}
+
+// Mesmas regras do "Pedir novamente" do app.
+async function renewBookingRide(phone, rideId) {
+  const national = onlyDigits(phone).replace(/^55(?=\d{10,11}$)/, '');
+  const ref = db.collection('corridas').doc(String(rideId || ''));
+  let renewed = null;
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const ride = snap.data() || {};
+    if (!snap.exists || onlyDigits(ride.telefoneCliente) !== national || !['pendente', 'expirada'].includes(ride.status)) return;
+    renewed = { ...ride, status: 'pendente' };
+    tx.update(ref, {
+      status: 'pendente',
+      renovacoes: Number(ride.renovacoes || 0) + 1,
+      expiradaEm: null,
+      renovadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      criadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      atualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+      whatsappAcompanhar: true,
+      whatsappAvisoExpiradaEm: admin.firestore.FieldValue.delete()
+    });
+  });
+  if (!renewed) return 'nao_renovada';
+  rideStatusCache.delete(ref.id);
+  notifyTelegramAboutRide(ref.id, renewed).catch((error) => console.error('telegram renew notify failed', error));
+  return 'renovada';
+}
+
+// Cadastro obrigatorio depois das corridas gratis (mesma regra do app), contando pelo numero.
+async function bookingRegistrationBlock(phone) {
+  if (!CUSTOMER_REGISTRATION_ENFORCED) return '';
+  if (await bookingCustomer(phone).catch(() => null)) return '';
+  const national = onlyDigits(phone).replace(/^55(?=\d{10,11}$)/, '');
+  const done = await db.collection('corridas').where('telefoneCliente', '==', national).where('status', '==', 'finalizada').limit(CUSTOMER_FREE_RIDES).get();
+  if (done.size < CUSTOMER_FREE_RIDES) return '';
+  return `Você já fez ${CUSTOMER_FREE_RIDES} corridas com a gente! 🎉 Para continuar pedindo, faça seu cadastro rapidinho no app: https://nexusmotoja.com.br/ (use este mesmo número de WhatsApp).`;
+}
+
+const whatsappBooking = createWhatsappBooking({
+  db, encrypt: encryptSecret, decrypt: decryptSecret, rideExpireMs: RIDE_EXPIRE_MS,
+  lookupCustomer: bookingCustomer,
+  resolvePlace: resolveBookingPlace,
+  quote: quoteBookingRide,
+  createRide: createBookingRide,
+  findOpenRide: findOpenBookingRide,
+  cancelRide: cancelBookingRide,
+  renewRide: renewBookingRide,
+  registrationBlock: bookingRegistrationBlock
+});
+
 const supportAutomation = createSupportAutomation({
   db, instance: supportInstance, encrypt: encryptSecret, decrypt: decryptSecret,
+  booking: whatsappBooking,
   generateReply: createSupportAiChain({ gemini: geminiSupport, openRouter: openrouterSupport, decrypt: decryptSecretSafe }),
   isSystemOutgoing: event => (automaticWhatsappMessages.get(hashSecret(`${event.phone}:${event.text}`)) || 0) > Date.now(),
   rideExpireMs: RIDE_EXPIRE_MS, deliveryExpireMs: DELIVERY_EXPIRE_MS,
@@ -13553,6 +13790,21 @@ setInterval(scheduledCleanup, CLEANUP_INTERVAL_MS);
 setInterval(() => {
   supportAutomation.tick().catch(() => console.error('support automation tick failed'));
 }, 60 * 1000);
+
+// Avisos das corridas pedidas pelo WhatsApp (motoboy chegou, ninguem aceitou, finalizada).
+let bookingTickRunning = false;
+setInterval(async () => {
+  if (bookingTickRunning) return;
+  bookingTickRunning = true;
+  try {
+    const settings = await supportAutomation.config();
+    if (settings.enabled && settings.pedidoWhatsapp !== false) await whatsappBooking.tick({ sendText: sendEvolutionText });
+  } catch (error) {
+    console.error('whatsapp booking tick failed', String(error?.message || '').slice(0, 120));
+  } finally {
+    bookingTickRunning = false;
+  }
+}, 30 * 1000);
 
 setInterval(() => {
   runCustomerReminderTick().catch((error) => console.error('customer reminder failed', error));

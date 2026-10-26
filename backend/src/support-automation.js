@@ -41,8 +41,12 @@ export function parseSupportMessage(body, instance, now = Date.now()) {
   if (message.reactionMessage || message.protocolMessage || message.stickerMessage) return null;
   const text = String(message.conversation || message.extendedTextMessage?.text || message.imageMessage?.caption || message.videoMessage?.caption || message.documentMessage?.caption
     || message.buttonsResponseMessage?.selectedButtonId || message.templateButtonReplyMessage?.selectedId || message.listResponseMessage?.singleSelectReply?.selectedRowId || '').slice(0, 2000);
-  if (!text && !message.audioMessage && !message.imageMessage && !message.videoMessage && !message.locationMessage && !message.documentMessage && !message.contactMessage) return null;
-  return { id: String(data.key.id).slice(0, 160), phone, jid, replyTo: phone || jid, fromMe, text, name: String(data.pushName || '').slice(0, 60), ageMs: Math.max(0, now - time) };
+  const place = message.locationMessage || message.liveLocationMessage;
+  const lat = Number(place?.degreesLatitude);
+  const lon = Number(place?.degreesLongitude);
+  const location = place && Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && (lat !== 0 || lon !== 0) ? { lat, lon } : null;
+  if (!text && !location && !message.audioMessage && !message.imageMessage && !message.videoMessage && !message.locationMessage && !message.liveLocationMessage && !message.documentMessage && !message.contactMessage) return null;
+  return { id: String(data.key.id).slice(0, 160), phone, jid, replyTo: phone || jid, fromMe, text, location, name: String(data.pushName || '').slice(0, 60), ageMs: Math.max(0, now - time) };
 }
 
 // Some Evolution webhook payloads omit the LID mapping present in stored messages.
@@ -167,8 +171,9 @@ export function rideFacts(ride, phoneKnown, looked, expireMs, now = Date.now()) 
   return `${kind} ${label}; pedida há cerca de ${minutes} minutos.`;
 }
 
-// This assistant never creates bookings, changes fares or accepts a job.
-export function createSupportAutomation({ db, sendText, encrypt, decrypt = () => '', generateReply = async () => null, instance, rideExpireMs, deliveryExpireMs, sendTelegram, isSystemOutgoing = () => false, markRead = async () => {}, typing = async () => {}, groupFor = async (job, kind, settings) => settings.driverGroupJid || '', now = () => Date.now() }) {
+// The assistant never changes fares or accepts a job. Ride requests go through `booking`
+// (whatsapp-booking.js), which asks and confirms every detail before the server creates the ride.
+export function createSupportAutomation({ db, sendText, encrypt, decrypt = () => '', generateReply = async () => null, booking = null, instance, rideExpireMs, deliveryExpireMs, sendTelegram, isSystemOutgoing = () => false, markRead = async () => {}, typing = async () => {}, groupFor = async (job, kind, settings) => settings.driverGroupJid || '', now = () => Date.now() }) {
   const configRef = db.collection('configuracoes').doc('atendimentoAutomatico');
   let cache, cacheUntil = 0, ticking = false, lastPrune = 0;
   const completedNotices = new Map(), outgoingEchoes = new Map(), queuedChats = new Set();
@@ -287,6 +292,10 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
           tx.set(chatRef, { pendingTextCriptografado: encrypt(`${pending ? `${pending}\n` : ''}${event.text}`.slice(-2000)), pendingName: event.name || '' }, { merge: true });
           queued = true;
         }
+        if (event.location) {
+          tx.set(chatRef, { pendingLocationCriptografada: encrypt(JSON.stringify(event.location)), pendingName: event.name || '' }, { merge: true });
+          queued = true;
+        }
         return;
       }
       tx.set(chatRef, { busyUntil: now() + 60000, ...(resumes || state.pauseReason === 'human' ? { pausedUntil: 0, pauseReason: '', ...(waitingHuman ? { awaitingHuman: true } : {}) } : {}), ...(resumes ? { aiContextCriptografado: '', aiContextUntil: 0 } : {}), expiresAt: new Date(now() + 7 * 86400000) }, { merge: true });
@@ -303,16 +312,23 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
       context = { ...context, name: event.name || context.pendingName || '' };
       const noted = waitingHuman && event.text.trim() && !['menu', 'greeting', 'thanks'].includes(intent);
       if (noted) await appendTicket(ticketRef, event.text);
+      // Pedido de corrida por etapas (nome, saida, destino, SIM). Fora dele, o atendimento segue igual.
+      const booked = booking && settings.pedidoWhatsapp !== false
+        ? await booking.handle(event, intent).catch((error) => {
+          console.error('whatsapp booking failed', String(error?.message || '').slice(0, 160));
+          return { text: 'Tive um problema para registrar o seu pedido agora 😕 Tente de novo em instantes, peça pelo app: https://nexusmotoja.com.br/ ou escreva ATENDENTE.' };
+        })
+        : null;
       // Greetings and help must work even when the ride lookup is unavailable.
-      const ride = event.phone && ['status', 'human', 'other', 'cancel', 'payment'].includes(intent) ? await findRide(event.phone, event.text, context).catch(() => null) : null;
+      const ride = !booked && event.phone && ['status', 'human', 'other', 'cancel', 'payment'].includes(intent) ? await findRide(event.phone, event.text, context).catch(() => null) : null;
       const jobKind = ride?.kind || 'corridas';
       const jobExpireMs = jobKind === 'entregas' ? deliveryExpireMs : rideExpireMs;
       const complaint = WAITING_COMPLAINT.test(plain(event.text));
-      let answer = supportAnswer(event.text, ride, jobExpireMs, now(), context);
+      let answer = booked ? { topic: 'pedido', text: booked.text } : supportAnswer(event.text, ride, jobExpireMs, now(), context);
       let action = 'none', aiState = { aiContextCriptografado: '', aiContextUntil: 0 }, fromAi = false;
       // The AI talks with the customer like a person, now knowing the ride situation (no phone,
       // address or code). Menu choices and an explicit ATENDENTE stay deterministic.
-      if (event.text.trim() && !['human', 'menu', 'greeting'].includes(intent) && !/^[0-7]$/.test(event.text.trim())) {
+      if (!booked && event.text.trim() && !['human', 'menu', 'greeting'].includes(intent) && !/^[0-7]$/.test(event.text.trim())) {
         let history = [];
         try { if (context.aiContextUntil > now() && context.aiContextCriptografado) history = JSON.parse(decrypt(context.aiContextCriptografado)); } catch { /* Ignore expired or unreadable history. */ }
         const facts = rideFacts(ride, !!event.phone, ['status', 'other', 'cancel', 'payment'].includes(intent), jobExpireMs, now());
@@ -328,7 +344,7 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
         }
       }
       // Without AI, a waiting complaint still triggers the same help a person would give.
-      if (!fromAi && action === 'none' && complaint && ride) action = ride.status === 'pendente' ? 'reforco_motoboys' : ACTIVE.includes(ride.status) ? 'avisar_motoboy_da_corrida' : 'none';
+      if (!booked && !fromAi && action === 'none' && complaint && ride) action = ride.status === 'pendente' ? 'reforco_motoboys' : ACTIVE.includes(ride.status) ? 'avisar_motoboy_da_corrida' : 'none';
       // Every action is checked here: owned ride (findRide), live state and rate limits.
       const notes = [];
       if (action === 'reforco_motoboys' && ride?.status === 'pendente' && settings.groupAlerts) {
@@ -378,12 +394,13 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
     // Answer what the customer sent while the previous reply was going out.
     if (!queuedChats.delete(chatRef.id)) return result;
     const after = (await chatRef.get()).data() || {};
-    if (after.pendingTextCriptografado) {
-      let pendingText = '';
-      try { pendingText = decrypt(after.pendingTextCriptografado); } catch { pendingText = ''; }
-      await chatRef.set({ pendingTextCriptografado: '', pendingName: '' }, { merge: true });
-      if (pendingText.trim()) {
-        const next = await processEvent({ ...event, id: `${event.id}:seguinte`.slice(0, 160), text: pendingText, ageMs: 0 }, settings);
+    if (after.pendingTextCriptografado || after.pendingLocationCriptografada) {
+      let pendingText = '', pendingLocation = null;
+      try { pendingText = after.pendingTextCriptografado ? decrypt(after.pendingTextCriptografado) : ''; } catch { pendingText = ''; }
+      try { pendingLocation = after.pendingLocationCriptografada ? JSON.parse(decrypt(after.pendingLocationCriptografada)) : null; } catch { pendingLocation = null; }
+      await chatRef.set({ pendingTextCriptografado: '', pendingLocationCriptografada: '', pendingName: '' }, { merge: true });
+      if (pendingText.trim() || pendingLocation) {
+        const next = await processEvent({ ...event, id: `${event.id}:seguinte`.slice(0, 160), text: pendingText, location: pendingLocation, ageMs: 0 }, settings);
         result = { ...result, followUp: !!next.replied };
       }
     }
@@ -456,7 +473,7 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
       }
       if (now() - lastPrune >= 3600000) {
         lastPrune = now();
-        for (const name of ['supportAutomationEvents', 'supportAutomationChats', 'supportAutomationNotices', 'supportAutomationTickets']) {
+        for (const name of ['supportAutomationEvents', 'supportAutomationChats', 'supportAutomationNotices', 'supportAutomationTickets', 'whatsappPedidos']) {
           const expired = await db.collection(name).where('expiresAt', '<', new Date(now())).limit(100).get();
           if (!expired.empty) {
             const batch = db.batch();
