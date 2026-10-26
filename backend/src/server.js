@@ -2116,13 +2116,22 @@ async function issueCompanySession(ref) {
   return token;
 }
 
-async function issueCustomerSession(ref) {
+// Cliente do mototaxi fica conectado para sempre (ate sair ou trocar a senha), em ate 5 aparelhos.
+// revokeOthers: troca de senha desconecta os outros aparelhos.
+const CUSTOMER_MAX_SESSIONS = 5;
+async function issueCustomerSession(ref, { revokeOthers = false } = {}) {
   const token = crypto.randomBytes(32).toString('hex');
+  const hash = hashSecret(token);
   const now = Date.now();
+  const current = revokeOthers ? {} : ((await ref.get()).data() || {});
+  const previous = [...(Array.isArray(current.sessionTokenHashes) ? current.sessionTokenHashes : []),
+    ...(current.sessionTokenHash && !(current.sessionExpiresAtMs && current.sessionExpiresAtMs <= now) ? [current.sessionTokenHash] : [])];
+  const sessionTokenHashes = [...new Set([...previous, hash])].slice(-CUSTOMER_MAX_SESSIONS);
   await ref.set({
-    sessionTokenHash: hashSecret(token),
+    sessionTokenHash: hash,
+    sessionTokenHashes,
     sessionIssuedAtMs: now,
-    sessionExpiresAtMs: now + CUSTOMER_SESSION_MS,
+    sessionExpiresAtMs: admin.firestore.FieldValue.delete(),
     ultimoLoginEm: admin.firestore.FieldValue.serverTimestamp(),
     atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
   }, { merge: true });
@@ -2156,12 +2165,21 @@ function customerProfileComplete(data = {}) {
 async function findCustomerSession(token) {
   const value = String(token || '').trim();
   if (!value) return null;
-  const snap = await db.collection('clientes').where('sessionTokenHash', '==', hashSecret(value)).limit(1).get();
+  const hash = hashSecret(value);
+  let snap = await db.collection('clientes').where('sessionTokenHash', '==', hash).limit(1).get();
+  if (snap.empty) snap = await db.collection('clientes').where('sessionTokenHashes', 'array-contains', hash).limit(1).get();
   if (snap.empty) return null;
   const customerSnap = snap.docs[0];
   const customer = customerSnap.data() || {};
   const expiresAt = Number(customer.sessionExpiresAtMs || 0);
   if (expiresAt && expiresAt <= Date.now()) return null;
+  // Login antigo (de 90 dias): passa a valer para sempre neste aparelho.
+  if (expiresAt || !(customer.sessionTokenHashes || []).includes(hash)) {
+    customerSnap.ref.set({
+      sessionExpiresAtMs: admin.firestore.FieldValue.delete(),
+      sessionTokenHashes: admin.firestore.FieldValue.arrayUnion(hash)
+    }, { merge: true }).catch(() => {});
+  }
   return { customerSnap, customer, customerId: customerSnap.id };
 }
 
@@ -6781,7 +6799,7 @@ app.post('/api/customers/password-reset/confirm', authLimiter, async (req, res, 
     });
     if (failure) return res.status(400).json({ error: failure.code, message: failure.message });
     // Uma nova sessao substitui a anterior: outros aparelhos precisam entrar de novo.
-    const token = await issueCustomerSession(customerRef);
+    const token = await issueCustomerSession(customerRef, { revokeOthers: true });
     const fresh = await customerRef.get();
     return res.json({ ok: true, token, customer: publicCustomer(fresh.data() || {}, customerRef.id), message: 'Senha alterada com sucesso.' });
   } catch (error) {
@@ -6795,10 +6813,11 @@ app.post('/api/customers/logout', async (req, res, next) => {
     const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
     const session = await findCustomerSession(token);
     if (session) {
+      // Sai so deste aparelho; os outros continuam conectados.
+      const hash = hashSecret(token);
       await session.customerSnap.ref.set({
-        sessionTokenHash: admin.firestore.FieldValue.delete(),
-        sessionIssuedAtMs: admin.firestore.FieldValue.delete(),
-        sessionExpiresAtMs: admin.firestore.FieldValue.delete(),
+        ...(session.customer.sessionTokenHash === hash ? { sessionTokenHash: admin.firestore.FieldValue.delete() } : {}),
+        sessionTokenHashes: admin.firestore.FieldValue.arrayRemove(hash),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
     }
@@ -10327,12 +10346,14 @@ app.post('/api/rides', createRideLimiter, async (req, res, next) => {
       return res.status(400).json({ error: 'valor_invalido' });
     }
     if (isStandaloneDelivery(ride)) {
-      if (!ride.itemEntrega || !ride.nomeRecebedor || ride.telefoneRecebedor.length < 10) {
+      // O WhatsApp de quem recebe e opcional: o codigo de entrega vai para quem pediu.
+      if (!ride.itemEntrega || !ride.nomeRecebedor) {
         return res.status(400).json({
           error: 'dados_entrega_incompletos',
-          message: 'Informe o que vai ser enviado, quem recebe e o WhatsApp de quem recebe.'
+          message: 'Informe o que vai ser enviado e quem recebe.'
         });
       }
+      if (ride.telefoneRecebedor.length < 10 || ride.telefoneRecebedor.length > 11) ride.telefoneRecebedor = '';
       ride.codigoEntrega = standaloneDeliveryCode();
       ride.tentativasCodigoEntrega = 0;
     }

@@ -1522,8 +1522,20 @@
       }
       .entrega-duo {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: 1fr;
         gap: 0.55rem;
+      }
+      #form-corrida [hidden] {
+        display: none !important;
+      }
+      .conta-pedido {
+        grid-column: 1 / -1;
+        padding: 0.7rem 0.85rem;
+        border-radius: 14px;
+        background: rgba(53, 201, 121, 0.1);
+        border: 1px solid rgba(53, 201, 121, 0.35);
+        font-size: 0.85rem;
+        color: #d7f5e3;
       }
       .entrega-aviso {
         font-size: 0.74rem;
@@ -2014,13 +2026,16 @@
           </button>
         </div>
         <form id="form-corrida">
-          <label
+          <div id="conta-pedido" class="conta-pedido" hidden>
+            👤 Pedindo como <b id="conta-pedido-nome"></b> · WhatsApp <b id="conta-pedido-whats"></b>
+          </div>
+          <label id="campo-nome"
             >Seu nome<input
               id="nome"
               autocomplete="name"
               placeholder="Ex: Rafael"
               required /></label
-          ><label
+          ><label id="campo-telefone"
             >Seu WhatsApp<input
               id="telefoneCliente"
               autocomplete="tel"
@@ -2059,12 +2074,6 @@
                   id="nomeRecebedor"
                   maxlength="80"
                   placeholder="Ex: Maria"
-              /></label>
-              <label
-                >WhatsApp de quem recebe<input
-                  id="telefoneRecebedor"
-                  inputmode="tel"
-                  placeholder="Ex: 19999999999"
               /></label>
             </div>
             <label
@@ -2769,18 +2778,28 @@
         }
         return true;
       }
-      // Conta conectada: o WhatsApp do pedido e o confirmado na conta (o servidor so aceita esse).
-      function travarWhatsappDaConta(telefone) {
-        const campo = $("telefoneCliente");
-        if (!campo) return;
+      // Conta conectada: o pedido usa o nome e o WhatsApp confirmado da conta; os campos somem.
+      function travarWhatsappDaConta(telefone, nome = "") {
+        const campoTel = $("telefoneCliente"), campoNome = $("nome");
+        if (!campoTel || !campoNome) return;
         const numero = String(telefone || "").replace(/\D/g, "").slice(0, 11);
-        campo.readOnly = !!numero;
-        campo.title = numero ? "WhatsApp confirmado da sua conta. Para usar outro número, saia da conta." : "";
-        if (numero) campo.value = numero;
+        const conectado = numero.length >= 10;
+        if (conectado) {
+          campoTel.value = numero;
+          if (nome) campoNome.value = nome;
+        }
+        campoTel.readOnly = conectado;
+        campoTel.required = campoNome.required = !conectado;
+        $("campo-nome").hidden = $("campo-telefone").hidden = conectado;
+        $("conta-pedido").hidden = !conectado;
+        if (conectado) {
+          $("conta-pedido-nome").textContent = campoNome.value || "você";
+          $("conta-pedido-whats").textContent = numero.length === 11 ? `(${numero.slice(0, 2)}) ${numero.slice(2, 7)}-${numero.slice(7)}` : numero;
+        }
       }
       function aplicarCliente(d = {}) {
         if (d.nome) $("nome").value = d.nome;
-        if (d.telefoneCliente) travarWhatsappDaConta(d.telefoneCliente);
+        if (d.telefoneCliente) travarWhatsappDaConta(d.telefoneCliente, d.nome);
         if (d.origem) $("origem").value = d.origem;
         try {
           const antigo = JSON.parse(
@@ -3461,7 +3480,7 @@
           ? `${km.toFixed(2).replace(".", ",")} km`
           : "Não calculada";
         let txt = entrega
-          ? `Olá! Quero enviar uma entrega.\n\nNome: ${nome}\nWhatsApp: ${telefoneCliente || "Não informado"}\nO que vai: ${entrega.itemEntrega}\nBuscar em: ${origemTexto}\nEntregar em: ${destinoTexto}\nEndereço encontrado no mapa: ${destinoEncontrado || destinoTexto}\nQuem recebe: ${entrega.nomeRecebedor} (${entrega.telefoneRecebedor})\n${entrega.observacaoEntrega ? `Observação: ${entrega.observacaoEntrega}\n` : ""}Distância calculada: ${dist}\n`
+          ? `Olá! Quero enviar uma entrega.\n\nNome: ${nome}\nWhatsApp: ${telefoneCliente || "Não informado"}\nO que vai: ${entrega.itemEntrega}\nBuscar em: ${origemTexto}\nEntregar em: ${destinoTexto}\nEndereço encontrado no mapa: ${destinoEncontrado || destinoTexto}\nQuem recebe: ${entrega.nomeRecebedor}\n${entrega.observacaoEntrega ? `Observação: ${entrega.observacaoEntrega}\n` : ""}Distância calculada: ${dist}\n`
           : `Olá! Quero pedir uma corrida.\n\nNome: ${nome}\nWhatsApp: ${telefoneCliente || "Não informado"}\nEstou em: ${origemTexto}\nDestino digitado: ${destinoTexto}\nDestino encontrado no mapa: ${destinoEncontrado || destinoTexto}\nDistância calculada: ${dist}\n`;
         txt += `Valor: ${formatarValor(preco.valor)} (${preco.label})\n`;
         if (preco.porKm)
@@ -3851,7 +3870,7 @@
               <div id="driver-contact-box">${driverWaBtn}</div>
             </div>
             ${pagHtml}
-            ${dados.modalidade === "entrega_avulsa" && dados.codigoEntrega ? `<div style="margin:12px 0;padding:12px 14px;border-radius:14px;background:rgba(255,138,0,.12);border:1px solid rgba(255,138,0,.4);text-align:center"><div class="small" style="font-weight:800;color:#ffd38a">Código de entrega para ${escHtml(dados.nomeRecebedor || "quem recebe")}</div><div style="font-size:28px;font-weight:900;letter-spacing:8px;color:#fff;margin:4px 0">${escHtml(dados.codigoEntrega)}</div><div class="small" style="color:#cbd5e1">Quem recebe passa esse código para o motoboy na hora da entrega. Se a pessoa não receber pelo WhatsApp, envie para ela.</div></div>` : ""}
+            ${dados.modalidade === "entrega_avulsa" && dados.codigoEntrega ? `<div style="margin:12px 0;padding:12px 14px;border-radius:14px;background:rgba(255,138,0,.12);border:1px solid rgba(255,138,0,.4);text-align:center"><div class="small" style="font-weight:800;color:#ffd38a">Código de entrega para ${escHtml(dados.nomeRecebedor || "quem recebe")}</div><div style="font-size:28px;font-weight:900;letter-spacing:8px;color:#fff;margin:4px 0">${escHtml(dados.codigoEntrega)}</div><div class="small" style="color:#cbd5e1">Envie esse código para quem vai receber: a pessoa passa o código para o motoboy na hora da entrega.</div></div>` : ""}
             <div id="gps-cliente-status" style="margin:12px 0 8px;padding:12px 14px;border-radius:14px;background:rgba(255,154,0,.12);border:1px solid rgba(255,154,0,.35);font-weight:800;display:flex;align-items:center;justify-content:space-between;gap:8px">
               <span id="gps-status-txt">Aguardando o motoboy iniciar o GPS...</span>
               <span id="gps-live-dot" style="display:none;width:8px;height:8px;border-radius:50%;background:#25d366;box-shadow:0 0 10px #25d366"></span>
@@ -4534,11 +4553,6 @@
         aplicarModoPedido("entrega");
         abrirModal();
       });
-      $("telefoneRecebedor").addEventListener("input", () => {
-        $("telefoneRecebedor").value = $("telefoneRecebedor")
-          .value.replace(/\D/g, "")
-          .slice(0, 11);
-      });
       $("btn-fechar").addEventListener("click", fecharModal);
       modal.addEventListener("click", (e) => {
         if (e.target === modal) fecharModal();
@@ -4625,7 +4639,6 @@
             ? {
                 itemEntrega: $("itemEntrega").value.trim(),
                 nomeRecebedor: $("nomeRecebedor").value.trim(),
-                telefoneRecebedor: $("telefoneRecebedor").value.replace(/\D/g, ""),
                 observacaoEntrega: $("observacaoEntrega").value.trim(),
               }
             : null;
@@ -4634,14 +4647,6 @@
           (!entrega.itemEntrega || !entrega.nomeRecebedor)
         ) {
           mostrarStatus("Diga o que vai ser enviado e quem vai receber.", true);
-          return;
-        }
-        if (
-          entrega &&
-          (entrega.telefoneRecebedor.length < 10 ||
-            entrega.telefoneRecebedor.length > 11)
-        ) {
-          mostrarStatus("Digite o WhatsApp de quem recebe com DDD.", true);
           return;
         }
         if (corridaRepetida(assinatura)) {
