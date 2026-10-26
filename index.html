@@ -2769,12 +2769,18 @@
         }
         return true;
       }
+      // Conta conectada: o WhatsApp do pedido e o confirmado na conta (o servidor so aceita esse).
+      function travarWhatsappDaConta(telefone) {
+        const campo = $("telefoneCliente");
+        if (!campo) return;
+        const numero = String(telefone || "").replace(/\D/g, "").slice(0, 11);
+        campo.readOnly = !!numero;
+        campo.title = numero ? "WhatsApp confirmado da sua conta. Para usar outro número, saia da conta." : "";
+        if (numero) campo.value = numero;
+      }
       function aplicarCliente(d = {}) {
         if (d.nome) $("nome").value = d.nome;
-        if (d.telefoneCliente)
-          $("telefoneCliente").value = String(d.telefoneCliente)
-            .replace(/\D/g, "")
-            .slice(0, 11);
+        if (d.telefoneCliente) travarWhatsappDaConta(d.telefoneCliente);
         if (d.origem) $("origem").value = d.origem;
         try {
           const antigo = JSON.parse(
@@ -4482,6 +4488,7 @@
               }).catch(() => {});
             localStorage.removeItem(TOKEN_CLIENTE);
             clienteAutenticado = false;
+            travarWhatsappDaConta("");
             verificarAcessoCliente(true);
           }
         }),

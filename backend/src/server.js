@@ -10340,7 +10340,11 @@ app.post('/api/rides', createRideLimiter, async (req, res, next) => {
     const customerToken = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
     const customerSession = await findCustomerSession(customerToken);
     const authenticated = !!(customerSession && customerProfileComplete(customerSession.customer));
-    if (authenticated && onlyDigits(customerSession.customer.telefoneCliente || customerSession.customerId) !== ride.telefoneCliente) {
+    // Conta conectada: a corrida vai sempre com o WhatsApp confirmado da conta (o campo do
+    // formulario pode ter outro numero digitado ou preenchido pelo navegador).
+    const accountPhone = authenticated ? onlyDigits(customerSession.customer.telefoneCliente || customerSession.customerId) : '';
+    if (accountPhone.length >= 10 && accountPhone.length <= 11) ride.telefoneCliente = accountPhone;
+    else if (authenticated) {
       return res.status(403).json({ error: 'telefone_cliente_divergente', message: 'Use o WhatsApp confirmado da sua conta.' });
     }
     if (CUSTOMER_REGISTRATION_ENFORCED && !authenticated) {
