@@ -145,3 +145,15 @@ test('sign-up and payment account changes are closed to CPF-only access', () => 
   assert.match(me, /requireSession: true/);
   assert.doesNotMatch(slice('function driverAppProfile(', 'function driverBlockedResponse('), /mercadoPago|sessoesApp|accessToken/);
 });
+
+test('group check matches the same phone with or without the extra 9 and skips hidden (LID) members', () => {
+  const context = vm.createContext({ onlyDigits: v => String(v || '').replace(/\D/g, ''), String });
+  vm.runInContext(slice('function groupPhoneKey(', 'async function groupPhoneKeys('), context);
+  const cadastro = context.groupPhoneKey('19988887777');
+  assert.equal(context.participantPhoneKey({ id: '5519988887777@s.whatsapp.net' }), cadastro);
+  assert.equal(context.participantPhoneKey({ id: '551988887777@s.whatsapp.net' }), cadastro, 'WhatsApp sem o 9');
+  assert.equal(context.participantPhoneKey({ id: '123456789@lid', phoneNumber: '5519988887777@s.whatsapp.net' }), cadastro);
+  assert.equal(context.participantPhoneKey({ id: '123456789012345@lid' }), '', 'sem numero visivel');
+  assert.notEqual(context.participantPhoneKey({ id: '5511988887777@s.whatsapp.net' }), cadastro, 'outro DDD');
+  assert.match(source, /app\.get\('\/api\/admin\/drivers\/groups', assertOwner/);
+});

@@ -943,6 +943,15 @@
         </button>
         <button class="secondary" type="button" data-step-back="2">Voltar</button>
         </div>
+        <div id="grupoCadastro" class="access-code-box" hidden>
+          <p class="access-code-note"><strong>✅ Cadastro enviado!</strong> 👥 Último passo: entre no grupo dos motoboys da sua cidade. O dono só libera quem está no grupo, e é por lá que ele chama quando sobra corrida.</p>
+          <div id="gruposCidade" class="grupos-cidade">
+            <button type="button" class="ok" data-grupo-cidade="conchal">Grupo de Conchal</button>
+            <button type="button" class="ok" data-grupo-cidade="aguai">Grupo de Aguaí</button>
+            <button type="button" class="ok" data-grupo-cidade="engenheiro_coelho">Grupo de Engenheiro Coelho</button>
+          </div>
+          <p class="access-code-note">Depois que o dono liberar, é só abrir o app: ele entra sozinho.</p>
+        </div>
         <details id="quickLogin" class="status quick-login quick-login-green">
           <summary>Já sou cadastrado</summary>
           <div class="quick-login-fields">
@@ -3395,11 +3404,13 @@
             motoboyToken = "";
             salvarMotoboy(false);
           }
-          throw new Error(
+          const erro = new Error(
             regDados.message ||
               regDados.error ||
               "Nao consegui validar seu cadastro no servidor.",
           );
+          erro.code = regDados.error || "";
+          throw erro;
         }
         motoboy = regDados.nome || motoboy;
         motoboyCpf = soNumeros(regDados.cpf || motoboyCpf);
@@ -3625,6 +3636,10 @@
         if (validarCadastroMotoboy())
           entrarNoPainel(false).catch((e) => {
             ocultarBoot();
+            if (e.code === "motoboy_aguardando_aprovacao") {
+              mostrarGrupoCadastro();
+              return;
+            }
             alert(
               e.message ||
                 "Nao consegui entrar automaticamente. Digite a senha novamente.",
@@ -3635,6 +3650,10 @@
       // nome/CNH/telefone que ficaram no formulario ou de outro motoboy
       // que usou este celular (isso gerava "CPF ja cadastrado com outros dados").
       // ---------- Login seguro: codigo de 6 numeros pelo WhatsApp da MotoJa ----------
+      function mostrarGrupoCadastro() {
+        $("grupoCadastro").hidden = false;
+        $("grupoCadastro").scrollIntoView({ behavior: "smooth", block: "center" });
+      }
       async function postMotoboy(caminho, corpo) {
         const r = await fetchMotoboyComRetry(`${CONFIG.backend}${caminho}`, {
           method: "POST",
@@ -3786,7 +3805,9 @@
             salvarMotoboy(true);
           }
           if (d.pendente) {
-            alert("✅ Cadastro enviado! O dono vai conferir seus documentos. Quando ele liberar, é só abrir o app: ele entra sozinho.");
+            $("senhaCampo").hidden = true;
+            $("codigoCadastroInfo").hidden = true;
+            mostrarGrupoCadastro();
             return;
           }
           if (!r.ok) throw new Error(d.message || "Nao consegui enviar o cadastro agora.");

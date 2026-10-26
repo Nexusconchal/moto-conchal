@@ -4469,7 +4469,7 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'motoja-conchal-backend',
-    release: 'login-motoboy-v1',
+    release: 'grupo-motoboy-v1',
     manualDeliveryDateMigration: manualDeliveryDateMigrationStatus
   });
 });
@@ -13746,6 +13746,78 @@ async function whatsappGroupFor(city, settings = {}) {
   whatsappCityGroups.set(city, { jid, until: Date.now() + (jid ? 6 * 3600000 : 10 * 60000) });
   return jid;
 }
+
+// ---------- Quem esta nos grupos de motoboys do WhatsApp ----------
+// O numero da empresa precisa estar nos grupos. Compara DDD + 8 ultimos numeros, porque o
+// WhatsApp guarda muitos celulares do Brasil sem o 9 da frente. Participante que aparece
+// so com id interno (LID, sem numero) nao da para conferir: o painel mostra quantos sao.
+const DRIVER_GROUP_CITIES = ['conchal', 'aguai', 'engenheiro_coelho'];
+const groupParticipantsCache = new Map();
+
+function groupPhoneKey(value) {
+  const d = onlyDigits(value).replace(/^55(?=\d{10,11}$)/, '');
+  return d.length === 10 || d.length === 11 ? `${d.slice(0, 2)}${d.slice(-8)}` : '';
+}
+
+function participantPhoneKey(participant = {}) {
+  const fields = typeof participant === 'string'
+    ? [participant]
+    : [participant.phoneNumber, participant.pn, participant.jid, participant.id];
+  for (const field of fields) {
+    const text = String(field || '');
+    if (!text || text.endsWith('@lid') || text.endsWith('@g.us')) continue;
+    const key = groupPhoneKey(text.split('@')[0]);
+    if (key) return key;
+  }
+  return '';
+}
+
+async function groupPhoneKeys(jid) {
+  const cached = groupParticipantsCache.get(jid);
+  if (cached && cached.until > Date.now()) return cached.value;
+  const data = await supportEvolution(`/group/participants/${supportInstancePath}?groupJid=${encodeURIComponent(jid)}`);
+  const list = Array.isArray(data) ? data : Array.isArray(data?.participants) ? data.participants : [];
+  const keys = new Set();
+  let semNumero = 0;
+  for (const participant of list) {
+    const key = participantPhoneKey(participant);
+    if (key) keys.add(key);
+    else semNumero += 1;
+  }
+  const value = { keys, total: list.length, semNumero };
+  groupParticipantsCache.set(jid, { value, until: Date.now() + 10 * 60000 });
+  return value;
+}
+
+app.get('/api/admin/drivers/groups', assertOwner, async (_req, res, next) => {
+  try {
+    res.set('cache-control', 'no-store');
+    const settings = await supportAutomation.config();
+    const grupos = {};
+    const membros = {};
+    for (const city of DRIVER_GROUP_CITIES) {
+      const jid = await whatsappGroupFor(city, settings).catch(() => '');
+      if (!jid) { grupos[city] = { configurado: false }; continue; }
+      try {
+        const info = await groupPhoneKeys(jid);
+        membros[city] = info.keys;
+        grupos[city] = { configurado: true, total: info.total, semNumero: info.semNumero };
+      } catch (error) {
+        grupos[city] = { configurado: true, erro: true };
+      }
+    }
+    const snap = await db.collection('motoboys').limit(500).get();
+    const motoboys = {};
+    snap.docs.forEach((docSnap) => {
+      const key = groupPhoneKey(docSnap.data()?.telefone);
+      motoboys[docSnap.id] = Object.fromEntries(DRIVER_GROUP_CITIES.map((city) => [city, membros[city] ? !!key && membros[city].has(key) : null]));
+    });
+    return res.json({ ok: true, grupos, motoboys });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 const geminiSupport = createGeminiSupport({ reserveBudget: () => reserveGeminiQuota(db) });
 const learnedAddresses = createLearnedAddresses({ db });
 const receiptReader = createGeminiReceiptReader({ reserveBudget: () => reserveSupportAiQuota(db, 'gemini-nota') });
