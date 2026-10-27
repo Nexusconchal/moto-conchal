@@ -157,3 +157,25 @@ test('group check matches the same phone with or without the extra 9 and skips h
   assert.notEqual(context.participantPhoneKey({ id: '5511988887777@s.whatsapp.net' }), cadastro, 'outro DDD');
   assert.match(source, /app\.get\('\/api\/admin\/drivers\/groups', assertOwner/);
 });
+
+test('the Play Store test account logs in with a fixed code from Render, on many phones, without WhatsApp', async () => {
+  const records = motoboy();
+  const h = (() => {
+    const base = setup(records);
+    return base;
+  })();
+  const api = createDriverSessions({
+    db: { collection: name => ({ doc: id => ({ path: `${name}/${id}`, get: async () => ({ exists: h.store.has(`${name}/${id}`), data: () => h.store.get(`${name}/${id}`) }) }) }),
+      runTransaction: async fn => { const w = []; const r = await fn({ get: async x => ({ exists: h.store.has(x.path), data: () => h.store.get(x.path) }), set: (x, d) => w.push([x.path, d]) }); w.forEach(([p, d]) => h.store.set(p, { ...(h.store.get(p) || {}), ...d })); return r; } },
+    admin: {}, hashSecret, safeEqual, sendText: async () => { throw new Error('nao deve mandar WhatsApp'); },
+    reviewLogin: () => `${CPF}:654321`
+  });
+  const pedido = await api.requestCode({ cpf: CPF });
+  assert.equal(pedido.teste, true);
+  await assert.rejects(api.verifyCode({ cpf: CPF, code: '000000' }), { code: 'codigo_incorreto' });
+  for (let i = 0; i < 20; i += 1) await api.verifyCode({ cpf: CPF, code: '654321' });
+  assert.equal(h.store.get('motoboys/12345678901').sessoesApp.length, 20, '20 celulares ao mesmo tempo');
+  const legacy = () => {};
+  const up = await api.upgradeLegacy(CPF, {}, { assertLegacyProof: legacy });
+  assert.match(up.driverToken, /^md1\./, 'celular antigo de testador troca mesmo com outras chaves');
+});

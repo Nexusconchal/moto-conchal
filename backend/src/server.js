@@ -4469,7 +4469,7 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'motoja-conchal-backend',
-    release: 'grupo-motoboy-v1',
+    release: 'conta-teste-v1',
     manualDeliveryDateMigration: manualDeliveryDateMigrationStatus
   });
 });
@@ -5888,7 +5888,8 @@ const driverSessionsApi = createDriverSessions({
   admin,
   hashSecret,
   safeEqual,
-  sendText: (number, text) => sendEvolutionText(number, text)
+  sendText: (number, text) => sendEvolutionText(number, text),
+  reviewLogin: () => process.env.DRIVER_REVIEW_LOGIN || ''
 });
 
 const driverOtpLimiter = rateLimit({

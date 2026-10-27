@@ -17,6 +17,19 @@ export const DRIVER_OTP_COOLDOWN_MS = 60000;
 export const DRIVER_OTP_MAX_ATTEMPTS = 5;
 export const DRIVER_OTP_PER_HOUR = 5;
 export const DRIVER_VERIFICATION_MS = 30 * 60000;
+// Conta de teste (testadores do Google Play): varios celulares na mesma conta.
+export const REVIEW_MAX_SESSIONS = 60;
+
+// DRIVER_REVIEW_LOGIN="CPF:CODIGO" (varios separados por virgula), so no Render.
+// Essa conta entra com um codigo fixo de 6 numeros, sem WhatsApp. Nunca no codigo publico.
+export function reviewLogins(value = '') {
+  const map = new Map();
+  for (const item of String(value || '').split(',')) {
+    const [cpf, code] = item.split(':').map(part => digits(part));
+    if (cpf && cpf.length === 11 && code && code.length === 6) map.set(cpf, code);
+  }
+  return map;
+}
 
 const digits = value => String(value || '').replace(/\D/g, '');
 
@@ -49,14 +62,16 @@ export function legacyProofAllowed(driver = {}, now = Date.now(), until = DRIVER
 }
 
 // Nova sessao no topo; guarda no maximo 5 celulares (o mais antigo sai).
-export function withNewSession(driver, hash, { now = Date.now(), aparelho = '' } = {}) {
+export function withNewSession(driver, hash, { now = Date.now(), aparelho = '', max = MAX_DRIVER_SESSIONS } = {}) {
   const current = driverSessions(driver).filter(item => item.hash !== hash);
-  return [{ hash, criadoEmMs: now, aparelho: String(aparelho || '').slice(0, 80) }, ...current].slice(0, MAX_DRIVER_SESSIONS);
+  return [{ hash, criadoEmMs: now, aparelho: String(aparelho || '').slice(0, 80) }, ...current].slice(0, max);
 }
 
 export function createDriverSessions({
-  db, admin, hashSecret, safeEqual, sendText, now = () => Date.now(), legacyUntil = () => DRIVER_LEGACY_UNTIL_MS
+  db, admin, hashSecret, safeEqual, sendText, now = () => Date.now(), legacyUntil = () => DRIVER_LEGACY_UNTIL_MS,
+  reviewLogin = () => ''
 }) {
+  const reviewCode = cpf => reviewLogins(reviewLogin()).get(digits(cpf)) || '';
   function fail(status, code, message) {
     const error = new Error(message);
     error.status = status;
@@ -77,6 +92,7 @@ export function createDriverSessions({
   async function requestCode({ cpf, telefone }) {
     const id = digits(cpf);
     if (id.length !== 11) throw fail(400, 'cpf_invalido', 'Digite o CPF com 11 números.');
+    if (reviewCode(id)) return { ok: true, para: 'da conta de teste', novo: false, teste: true };
     const driverSnap = await db.collection('motoboys').doc(id).get();
     const driver = driverSnap.exists ? driverSnap.data() || {} : null;
     const destino = driver ? digits(driver.telefone) : digits(telefone);
@@ -125,6 +141,11 @@ export function createDriverSessions({
     const id = digits(cpf);
     const typed = digits(code);
     if (id.length !== 11 || typed.length !== 6) throw fail(400, 'codigo_invalido', 'Digite o código de 6 números.');
+    if (reviewCode(id)) {
+      if (!safeEqual(hashSecret(`${id}:${typed}`), hashSecret(`${id}:${reviewCode(id)}`))) throw fail(400, 'codigo_incorreto', 'Código errado.');
+      const session = await issueSession(id, { aparelho });
+      return { ok: true, novo: false, driverToken: session.token, driver: session.driver };
+    }
     const ref = otpRef(id);
     let result = null;
     let error = null;
@@ -182,7 +203,7 @@ export function createDriverSessions({
       if (!snap.exists) throw fail(404, 'motoboy_nao_cadastrado', 'Motoboy não cadastrado.');
       driver = snap.data() || {};
       tx.set(ref, {
-        sessoesApp: withNewSession(driver, hashSecret(token), { now: now(), aparelho }),
+        sessoesApp: withNewSession(driver, hashSecret(token), { now: now(), aparelho, max: reviewCode(id) ? REVIEW_MAX_SESSIONS : MAX_DRIVER_SESSIONS }),
         ultimoNovoAparelhoEmMs: now()
       }, { merge: true });
     });
@@ -201,11 +222,13 @@ export function createDriverSessions({
     const snap = await db.collection('motoboys').doc(id).get();
     if (!snap.exists) throw fail(404, 'motoboy_nao_cadastrado', 'Motoboy não cadastrado.');
     const driver = snap.data() || {};
-    if (!legacyProofAllowed(driver, now(), legacyUntil())) {
+    // Conta de teste: cada celular dos testadores troca pela propria chave (mesmo ja tendo outras).
+    const allowed = reviewCode(id) ? now() < legacyUntil() : legacyProofAllowed(driver, now(), legacyUntil());
+    if (!allowed) {
       throw fail(401, 'sessao_motoboy_obrigatoria', 'Entre de novo: toque em "Já sou cadastrado" e receba o código no WhatsApp.');
     }
     assertLegacyProof(driver, body);
-    const session = await issueSession(id, { aparelho, aviso: 'atualizacao' });
+    const session = await issueSession(id, { aparelho, aviso: reviewCode(id) ? '' : 'atualizacao' });
     return { ok: true, driverToken: session.token };
   }
 

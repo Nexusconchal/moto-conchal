@@ -3736,7 +3736,7 @@
               motoboyToken = "";
             }
             const r = await pedirCodigoMotoboy(cpf);
-            mostrarCampoCodigoLogin(`📲 Mandamos o código para o WhatsApp do seu cadastro ${r.para}. Digite abaixo. Não chegou? Espere 1 minuto e toque em Entrar com o campo vazio para pedir outro.`);
+            mostrarCampoCodigoLogin(r.teste ? "🧪 Conta de teste: digite o código de teste de 6 números." : `📲 Mandamos o código para o WhatsApp do seu cadastro ${r.para}. Digite abaixo. Não chegou? Espere 1 minuto e toque em Entrar com o campo vazio para pedir outro.`);
             return;
           }
           const d = await confirmarCodigoMotoboy(cpf, $("loginSenha").value);
