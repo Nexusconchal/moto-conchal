@@ -1072,7 +1072,7 @@
     </main>
     <script src="./driver-availability.js?v=227"></script>
     <script src="./ride-chat.js?v=234"></script>
-    <script src="./motoboy-avisos.js?v=1"></script>
+    <script src="./motoboy-avisos.js?v=2"></script>
     <script src="./motoboy-nav.js?v=8" defer></script>
     <script src="./motoboy-home.js?v=4" defer></script>
     <script type="module">
@@ -3458,7 +3458,7 @@
         // Quem abriu o app ja Disponivel confere a cidade em silencio (o GPS pode ter mudado).
         setTimeout(() => { if (window.MotojaDriverAvailability?.canReceive()) confirmarCidadePeloGps({ silencioso: true }); }, 8000);
         iniciarPlanosMotoboy();
-        window.MotojaDriverExtras?.start({ backend: CONFIG.backend, getProof: driverProof });
+        window.MotojaDriverExtras?.start({ backend: CONFIG.backend, getProof: driverProof, cidade: () => Object.keys(cidadesAtivas || {}).find((c) => cidadesAtivas[c]) || "" });
         // No app da Play Store, o celular ja se cadastra para as chamadas ao entrar.
         ativarPushNativo(true);
         ocultarBoot();

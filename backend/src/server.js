@@ -3820,7 +3820,10 @@ function telegramOfferText(kind, job = {}) {
   return [...lines, '', `Quem aceitar primeiro leva. Abra o app:\n${link}`].join('\n');
 }
 
+// As chamadas vao para o grupo do Telegram de cada cidade (comunidade dos motoboys).
+// O aviso individual no Telegram fica desligado; TELEGRAM_DM_OFFERS=true religa.
 function telegramOfferInBackground(docs, text) {
+  if (process.env.TELEGRAM_DM_OFFERS !== 'true') return;
   if (!docs.length) return;
   driverTelegram.notifyDrivers(docs, text).catch((error) => console.error('telegram dm failed', error?.message));
 }
@@ -4517,7 +4520,7 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'motoja-conchal-backend',
-    release: 'servicos-motoboy-v1',
+    release: 'telegram-grupo-v1',
     manualDeliveryDateMigration: manualDeliveryDateMigrationStatus
   });
 });

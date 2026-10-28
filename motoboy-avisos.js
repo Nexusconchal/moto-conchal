@@ -1,4 +1,4 @@
-// Perfil do motoboy: avisos de chamada (Telegram privado, teste e guia de bateria)
+// Perfil do motoboy: avisos de chamada (grupo do Telegram da cidade, teste e guia de bateria)
 // e "Minha avaliação" (media e comentarios dos clientes, sem nome, como na 99).
 // Uso: MotojaDriverExtras.start({ backend, getProof })
 (function () {
@@ -39,6 +39,8 @@
       .mjx-status .no{background:rgba(255,114,0,.14);color:#ffb27a}
       .mjx-card details{background:#0c0f16;border-radius:12px;padding:10px 12px;border:1px solid #232a38}
       .mjx-card summary{cursor:pointer;font-weight:700}
+      .mjx-grupo{display:block;text-align:center;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:#1a2030;color:#fff;font-weight:800;text-decoration:none}
+      .mjx-grupo.sua{border-color:#2aabee;background:rgba(42,171,238,.14)}
       .mjx-card ol{margin:8px 0 0;padding-left:20px;display:grid;gap:6px;color:#c8cdd6;font-size:.86rem;line-height:1.35}`;
     document.head.appendChild(style);
   }
@@ -97,43 +99,29 @@
     </ol></details>`;
   }
 
+  // Grupos dos motoboys no Telegram: toda corrida e entrega da cidade chega neles.
+  const GRUPOS_TELEGRAM = [
+    ["conchal", "Conchal", "https://t.me/+M49aycYVf_kyZjUx"],
+    ["aguai", "Aguaí", "https://t.me/+-4wK_5c2Rks3OTMx"],
+    ["engenheiro_coelho", "Engenheiro Coelho", "https://t.me/+hxfRgsNR1VcxYzVh"],
+  ];
+
   async function loadAlerts() {
     const box = $("avisosMotoboy");
     if (!box || !cpf()) return;
     let status = null;
     try { status = await post(`/api/drivers/${cpf()}/notification-status`); } catch (_) {}
-    const tg = status?.telegram || {};
     const devices = Number(status?.push?.devices || 0);
+    const cidade = options.cidade?.() || "";
     box.innerHTML = `<h3>🔔 Avisos de chamada</h3>
-      <p class="mjx-sub">O Telegram é um app de verdade: avisa mesmo com o celular bloqueado. Ative para receber cada corrida e entrega no seu Telegram particular, quando estiver Disponível.</p>
+      <p class="mjx-sub">Toda corrida e entrega da sua cidade chega no <b>grupo dos motoboys no Telegram</b>. Entre no grupo da sua cidade e deixe as notificações dele ligadas: o Telegram avisa mesmo com o celular bloqueado.</p>
       <div class="mjx-status">
-        <span class="${tg.linked ? "ok" : "no"}">${tg.linked ? "✅ Telegram ativo" : "⚠️ Telegram não ativado"}</span>
         <span class="${devices ? "ok" : "no"}">${devices ? `✅ Notificação em ${devices} aparelho${devices > 1 ? "s" : ""}` : "⚠️ Notificação do aparelho desligada"}</span>
       </div>
-      ${tg.configured === false ? "" : `<button type="button" class="secondary" data-mjx-telegram>${tg.linked ? "Vincular outro Telegram" : "Receber chamadas no meu Telegram"}</button>`}
+      ${GRUPOS_TELEGRAM.map(([id, nome, link]) => `<a class="secondary mjx-grupo${id === cidade ? " sua" : ""}" href="${link}" target="_blank" rel="noopener">✈️ Grupo de ${nome}${id === cidade ? " (sua cidade)" : ""}</a>`).join("")}
       <button type="button" class="secondary" data-mjx-teste>Testar aviso agora</button>
       <p class="mjx-sub" data-mjx-msg></p>
       ${guiaBateria()}`;
-  }
-
-  async function linkTelegram(button) {
-    // Abre a aba antes do await para o navegador nao bloquear o pop-up.
-    const tab = window.open("about:blank", "_blank");
-    button.disabled = true;
-    button.textContent = "Gerando link...";
-    try {
-      const d = await post(`/api/drivers/${cpf()}/telegram-dm-link`);
-      if (tab) tab.location.href = d.link;
-      else location.href = d.link;
-      message("No Telegram, toque em INICIAR. Depois volte aqui e toque em Testar aviso.");
-      setTimeout(loadAlerts, 20000);
-    } catch (error) {
-      tab?.close();
-      message(error.message);
-    } finally {
-      button.disabled = false;
-      button.textContent = "Receber chamadas no meu Telegram";
-    }
   }
 
   function message(text) {
@@ -147,7 +135,6 @@
     try {
       const d = await post(`/api/drivers/${cpf()}/notification-test`);
       const partes = [];
-      partes.push(d.telegram.sent ? "✅ Teste enviado no seu Telegram." : d.telegram.linked ? "⚠️ O Telegram não recebeu. Toque em Receber chamadas no meu Telegram de novo." : "⚠️ Telegram ainda não ativado.");
       partes.push(d.push.sent ? `✅ Notificação enviada para ${d.push.sent} aparelho(s).` : "⚠️ Nenhum aparelho recebeu notificação. Toque em Ativar notificações neste aparelho.");
       message(`${partes.join(" ")} Se não apitou com a tela bloqueada, siga o guia da bateria abaixo.`);
     } catch (error) {
@@ -165,8 +152,6 @@
     if (perfil && !$("minhaAvaliacao")) {
       perfil.insertAdjacentHTML("afterend", `<div id="minhaAvaliacao" class="mjx-card"></div><div id="avisosMotoboy" class="mjx-card"></div>`);
       $("avisosMotoboy").addEventListener("click", (event) => {
-        const tg = event.target.closest("[data-mjx-telegram]");
-        if (tg) return linkTelegram(tg);
         const teste = event.target.closest("[data-mjx-teste]");
         if (teste) test(teste);
       });
