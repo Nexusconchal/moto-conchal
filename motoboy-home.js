@@ -65,6 +65,10 @@
         <div class="mjhome-state">
           <span class="mjhome-dot" data-home-dot></span>
           <div><h2 data-home-estado>Conectando…</h2><p data-home-estado-sub></p></div>
+          <div class="mjhome-servicos" aria-label="O que você quer receber">
+            <button type="button" class="mjhome-sw" data-home-servico="corrida" aria-pressed="true"><i aria-hidden="true"></i><span>🏍️ Moto táxi</span></button>
+            <button type="button" class="mjhome-sw" data-home-servico="entrega" aria-pressed="true"><i aria-hidden="true"></i><span>📦 Entregas</span></button>
+          </div>
         </div>
         <button type="button" class="mjhome-active" data-home-ativo hidden>
           <span class="mjhome-active-ic" data-home-ativo-ic>🏍️</span>
@@ -212,7 +216,7 @@
     $('[data-home-procurando-titulo]').textContent = estado === 'ocupado'
       ? 'Em atendimento'
       : estado === 'conectando' ? 'Reconectando…' : 'Procurando chamadas';
-    $('[data-home-procurando-sub]').textContent = opcoes?.resumoCidades?.() || '';
+    $('[data-home-procurando-sub]').textContent = [opcoes?.resumoCidades?.(), resumoServicos()].filter(Boolean).join(' · ');
     $('[data-home-pausar]').disabled = !d.pronto;
 
     const titulos = {
@@ -226,6 +230,63 @@
       ? (d.pronto ? 'Toque no botão para receber chamadas' : d.texto || 'Conectando ao servidor…')
       : d.texto;
     desenharEu();
+  }
+
+  // ---------- Moto táxi / Entregas ----------
+  // O motoboy escolhe o que quer receber. O servidor guarda e filtra avisos, lista e aceite.
+  let servicos = { corrida: true, entrega: true };
+
+  function renderServicos() {
+    if (!root) return;
+    root.querySelectorAll('[data-home-servico]').forEach((botao) => {
+      botao.setAttribute('aria-pressed', String(servicos[botao.dataset.homeServico] !== false));
+    });
+  }
+
+  function resumoServicos() {
+    if (servicos.corrida && servicos.entrega) return '';
+    return servicos.corrida ? 'só moto táxi' : 'só entregas';
+  }
+
+  async function chamarServicos(novos) {
+    const proof = opcoes?.getProof?.() || {};
+    if (!/^\d{11}$/.test(proof.driverCpf || '')) return null;
+    const r = await fetch(`${opcoes.backend}/api/drivers/${proof.driverCpf}/services`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...proof, ...(novos ? { servicos: novos } : {}) }),
+      cache: 'no-store'
+    });
+    const d = await r.json().catch(() => ({}));
+    if (d.servicosAtivos) servicos = d.servicosAtivos;
+    if (!r.ok) throw new Error(d.message || 'Não consegui salvar agora. Tente de novo.');
+    return d;
+  }
+
+  async function carregarServicos() {
+    try { await chamarServicos(); } catch (_) {}
+    renderServicos();
+    renderDisponibilidade();
+  }
+
+  async function trocarServico(tipo) {
+    const anterior = { ...servicos };
+    const novos = { ...servicos, [tipo]: servicos[tipo] === false };
+    if (!novos.corrida && !novos.entrega) {
+      alert('Deixe pelo menos um ligado. Para parar de receber chamadas, toque em Pausar.');
+      return;
+    }
+    servicos = novos;
+    renderServicos();
+    try {
+      await chamarServicos(novos);
+      opcoes?.aoMudarServicos?.();
+    } catch (error) {
+      servicos = anterior;
+      alert(error.message);
+    }
+    renderServicos();
+    renderDisponibilidade();
   }
 
   // ---------- Ganhos de hoje ----------
@@ -398,6 +459,9 @@
         else iniciarGps();
       };
       $('[data-home-ativo]').onclick = () => opcoes?.abrirServicoAtivo?.();
+      root.querySelectorAll('[data-home-servico]').forEach((botao) => {
+        botao.onclick = () => trocarServico(botao.dataset.homeServico);
+      });
       $('[data-home-pref]').onclick = abrirPreferencias;
       $('[data-home-servicos]').onclick = () => document.getElementById('nav-servicos')?.click();
       $('[data-home-prefs-fechar]').onclick = fecharPreferencias;
@@ -453,6 +517,7 @@
     iniciarMapa();
     iniciarGps();
     carregarGanhos();
+    carregarServicos();
     clearInterval(ganhosTimer);
     ganhosTimer = setInterval(() => {
       carregarGanhos();

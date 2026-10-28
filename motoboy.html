@@ -22,7 +22,7 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="./motoboy-nav.css?v=4" />
-    <link rel="stylesheet" href="./motoboy-home.css?v=3" />
+    <link rel="stylesheet" href="./motoboy-home.css?v=4" />
     <style>
       * {
         box-sizing: border-box;
@@ -1074,7 +1074,7 @@
     <script src="./ride-chat.js?v=234"></script>
     <script src="./motoboy-avisos.js?v=1"></script>
     <script src="./motoboy-nav.js?v=8" defer></script>
-    <script src="./motoboy-home.js?v=3" defer></script>
+    <script src="./motoboy-home.js?v=4" defer></script>
     <script type="module">
       let cidadesAtivas = {
           conchal: true,
@@ -3532,6 +3532,11 @@
           nome: () => motoboy,
           foto: () => motoboyFoto,
           resumoCidades: () => nomesCidadesAtivas(),
+          // Moto taxi / Entregas trocado: a lista de chamadas abertas recarrega na hora.
+          aoMudarServicos: () => {
+            limparCache();
+            atualizarTrabalho();
+          },
           abrirServicoAtivo: () => {
             const nav = lerNavAtiva();
             if (!nav?.id) return;

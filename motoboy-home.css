@@ -266,6 +266,59 @@ body.mjhome-ativo #dicaAvisos {
   align-items: center;
   gap: 10px;
 }
+.mjhome-servicos {
+  margin-left: auto;
+  display: grid;
+  gap: 6px;
+  flex: none;
+}
+.mjhome-sw {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px 6px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: #9aa0ab;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: none;
+}
+.mjhome-sw i {
+  position: relative;
+  width: 30px;
+  height: 18px;
+  flex: none;
+  border-radius: 999px;
+  background: #3a404c;
+  transition: background 0.15s;
+}
+.mjhome-sw i::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s;
+}
+.mjhome-sw[aria-pressed="true"] {
+  color: #fff;
+  border-color: rgba(53, 201, 121, 0.45);
+  background: rgba(53, 201, 121, 0.1);
+}
+.mjhome-sw[aria-pressed="true"] i {
+  background: #35c979;
+}
+.mjhome-sw[aria-pressed="true"] i::after {
+  transform: translateX(12px);
+}
 .mjhome-state h2 {
   font-size: 19px;
   line-height: 1.2;

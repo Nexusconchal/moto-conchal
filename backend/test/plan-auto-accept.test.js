@@ -18,6 +18,7 @@ function setup(delivery = planDelivery(), driver = { nome: 'Joao Pedro', telefon
     deliveryOperatingCity: () => 'conchal',
     telegramGroupChat: () => 'group', whatsappGroupFor: (_city, settings) => settings?.driverGroupJid || '',
     driverRideCities: () => ({ conchal: true, aguai: false, engenheiro_coelho: false }),
+    driverServices: () => ({ corrida: true, entrega: true }), driverWantsDeliveryIn: (_d, city) => city === 'conchal', driverWantsRide: () => true, rideServiceKind: () => 'corrida',
     process: { env: { TELEGRAM_BOT_TOKEN: 'test-token', TELEGRAM_CHAT_ID: 'group' } },
     fetch: async (_url, options) => { sent.telegram.push(JSON.parse(options.body).text); return { ok: true, json: async () => ({ result: { message_id: 1 } }) }; },
     sendEvolutionText: async (number, text) => { sent.whatsapp.push({ number, text }); return { sent: true }; },

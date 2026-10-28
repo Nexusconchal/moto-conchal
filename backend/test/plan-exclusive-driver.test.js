@@ -23,7 +23,7 @@ function context(records, extra = {}) {
   const ctx = vm.createContext({ db: makeDb(records), console, Date, Number, String, Object, Array,
     admin: { firestore: { FieldValue: { serverTimestamp: () => 'TS', delete: () => 'DELETE' } } },
     onlyDigits: v => String(v || '').replace(/\D/g, ''), cleanText: v => String(v || '').trim(),
-    getDriverWithProof: async cpf => ({ nome: cpf === A ? 'Ana' : 'Bruno' }), driverRideCities: () => ({ conchal: true }), rideOperatingCity: () => 'conchal', deliveryOperatingCity: () => 'conchal', rideCityLabel: () => 'Conchal',
+    getDriverWithProof: async cpf => ({ nome: cpf === A ? 'Ana' : 'Bruno' }), driverRideCities: () => ({ conchal: true }), driverServices: () => ({ corrida: true, entrega: true }), driverWantsDeliveryIn: () => true, driverWantsRide: () => true, rideServiceKind: () => 'corrida', rideOperatingCity: () => 'conchal', deliveryOperatingCity: () => 'conchal', rideCityLabel: () => 'Conchal',
     serializeFirestore: v => v, publicPendingJob: v => v, privateDriverJob: v => v, sortJobs: v => v, emitDeliveryTracking: () => {},
     assertOwner: 0, adminStateCache: null, app: { post: (path, ...h) => { routes[path] = h.at(-1); } }, ...extra });
   vm.runInContext(slice('function planActivationKey(', 'function halfPlanInactiveError('), ctx);

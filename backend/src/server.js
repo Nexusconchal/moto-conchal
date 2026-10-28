@@ -1297,6 +1297,27 @@ function driverRideCities(driver = {}) {
   };
 }
 
+// O que o motoboy quer receber (botoes "Moto táxi" e "Entregas" no inicio do app).
+// Os dois ligados por padrao. Entrega avulsa de cliente conta como entrega.
+function driverServices(driver = {}) {
+  return {
+    corrida: driver.servicosAtivos?.corrida !== false,
+    entrega: driver.servicosAtivos?.entrega !== false
+  };
+}
+
+function rideServiceKind(ride = {}) {
+  return isStandaloneDelivery(ride) ? 'entrega' : 'corrida';
+}
+
+function driverWantsRide(driver = {}, ride = {}) {
+  return !!driverRideCities(driver)[rideOperatingCity(ride)] && driverServices(driver)[rideServiceKind(ride)];
+}
+
+function driverWantsDeliveryIn(driver = {}, city = '') {
+  return !!driverRideCities(driver)[city] && driverServices(driver).entrega;
+}
+
 function rideOperatingCity(ride = {}) {
   // Corridas antigas nao tinham cidade e pertencem ao mercado original de Conchal.
   return canonicalRideCity(ride.cidadeOperacao, 'conchal');
@@ -3778,7 +3799,7 @@ async function availableDriverTokens(accepts = () => true) {
 
 async function repeatRideAlert(rideId, ride, count) {
   const city = rideOperatingCity(ride);
-  const tokens = await availableDriverTokens((data) => driverRideCities(data)[city]);
+  const tokens = await availableDriverTokens((data) => driverWantsRide(data, ride));
   if (tokens.length) await admin.messaging().sendEachForMulticast(rideOfferPush(rideId, ride, tokens, count));
 }
 
@@ -3808,11 +3829,11 @@ async function notifyDriversAboutRide(rideId, ride) {
   const drivers = await db.collection('motoboys').where('status', '==', 'ativo').get();
   const tokens = [];
   const city = rideOperatingCity(ride);
-  telegramOfferInBackground(telegramReadyDrivers(drivers.docs || [], (data) => driverRideCities(data)[city]), telegramOfferText('corrida', ride));
+  telegramOfferInBackground(telegramReadyDrivers(drivers.docs || [], (data) => driverWantsRide(data, ride)), telegramOfferText('corrida', ride));
 
   drivers.forEach((doc) => {
     const data = doc.data();
-    if (!driverRideCities(data)[city]) return;
+    if (!driverWantsRide(data, ride)) return;
     const saved = data.fcmTokens || {};
     Object.entries(saved).forEach(([token, info]) => {
       if (info?.ativo !== false) tokens.push(token);
@@ -3953,7 +3974,7 @@ function deliveryOfferPush(deliveryId, delivery, tokens, title, repeticao = 0) {
 async function repeatDeliveryAlert(deliveryId, delivery, count) {
   if (onlyDigits(delivery.motoboyExclusivoCpf).length === 11) return;
   const city = deliveryOperatingCity(delivery);
-  const tokens = await availableDriverTokens((data) => driverRideCities(data)[city]);
+  const tokens = await availableDriverTokens((data) => driverWantsDeliveryIn(data, city));
   if (tokens.length) await admin.messaging().sendEachForMulticast(deliveryOfferPush(deliveryId, delivery, tokens, 'Nova entrega Nexus MotoJa', count));
 }
 
@@ -3972,7 +3993,7 @@ async function notifyDriversAboutDelivery(deliveryId, delivery, { onlyReserved =
     });
   };
   const city = deliveryOperatingCity(delivery);
-  const inCity = (data) => driverRideCities(data)[city];
+  const inCity = (data) => driverWantsDeliveryIn(data, city);
   drivers.forEach((doc) => { if ((!reserved || doc.id !== reservedCpf) && inCity(doc.data() || {})) collect(doc, tokens); });
   if (reservedDriver?.exists && reservedDriver.data()?.status !== 'bloqueado') collect(reservedDriver, reservedTokens);
   // Telegram: entrega aberta vai para quem esta Disponivel; a do plano so para o dono dela.
@@ -4496,7 +4517,7 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'motoja-conchal-backend',
-    release: 'conta-teste-v1',
+    release: 'servicos-motoboy-v1',
     manualDeliveryDateMigration: manualDeliveryDateMigrationStatus
   });
 });
@@ -5939,7 +5960,8 @@ function driverAppProfile(driver = {}, cpf = '') {
     motoAno: onlyDigits(driver.motoAno),
     motoPlaca: cleanText(driver.motoPlaca, 12),
     crlvFoto: driver.crlvFoto || '',
-    cidadesAtivas: driverRideCities(driver)
+    cidadesAtivas: driverRideCities(driver),
+    servicosAtivos: driverServices(driver)
   };
 }
 
@@ -5981,6 +6003,27 @@ app.post('/api/drivers/session/upgrade', authLimiter, async (req, res, next) => 
     const result = await driverSessionsApi.upgradeLegacy(cpf, req.body, { assertLegacyProof: assertLegacyDriverProof, aparelho: req.get('user-agent') });
     driverProofCache.clear();
     return res.json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Botoes "Moto táxi" e "Entregas": sem "servicos" no corpo so le; com, troca.
+// Pelo menos um fica ligado (para nao receber nada, o motoboy usa Pausar).
+app.post('/api/drivers/:cpf/services', async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.params.cpf);
+    if (cpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    const driver = await getDriverWithProof(cpf, req.body);
+    const pedido = req.body.servicos;
+    if (!pedido || typeof pedido !== 'object') return res.json({ ok: true, servicosAtivos: driverServices(driver) });
+    const servicosAtivos = { corrida: pedido.corrida !== false, entrega: pedido.entrega !== false };
+    if (!servicosAtivos.corrida && !servicosAtivos.entrega) {
+      return res.status(400).json({ error: 'servico_obrigatorio', message: 'Deixe pelo menos um ligado. Para parar de receber, toque em Pausar.', servicosAtivos: driverServices(driver) });
+    }
+    await db.collection('motoboys').doc(cpf).set({ servicosAtivos, atualizadoEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    driverProofCache.clear();
+    return res.json({ ok: true, servicosAtivos });
   } catch (error) {
     return next(error);
   }
@@ -6466,13 +6509,14 @@ app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
         .where('status', '==', 'pendente')
         .limit(30)
         .get();
+      const services = driverServices(driver);
       docs = kind === 'rides'
-        ? snapshot.docs.filter((docSnap) => enabledCities[rideOperatingCity(docSnap.data())])
+        ? snapshot.docs.filter((docSnap) => enabledCities[rideOperatingCity(docSnap.data())] && services[rideServiceKind(docSnap.data())])
         : snapshot.docs.filter((docSnap) => {
           const delivery = docSnap.data();
           if (deliveryReservedForOther(delivery, driverCpf)) return false;
-          // A entrega do plano reservada para ele aparece em qualquer cidade.
-          return onlyDigits(delivery.motoboyExclusivoCpf) === driverCpf || enabledCities[deliveryOperatingCity(delivery)];
+          // A entrega do plano reservada para ele aparece em qualquer cidade (e mesmo com Entregas desligado).
+          return onlyDigits(delivery.motoboyExclusivoCpf) === driverCpf || (services.entrega && enabledCities[deliveryOperatingCity(delivery)]);
         });
     }
     const jobs = sortJobs(docs.map((docSnap) => {
@@ -12121,6 +12165,14 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
         error.code = 'cidade_desativada';
         throw error;
       }
+      if (!driverServices(driver)[rideServiceKind(ride)]) {
+        const error = new Error(rideServiceKind(ride) === 'entrega'
+          ? 'Ligue "Entregas" no início do app para aceitar entregas.'
+          : 'Ligue "Moto táxi" no início do app para aceitar corridas.');
+        error.status = 403;
+        error.code = 'servico_desativado';
+        throw error;
+      }
 
       acceptedRide = ride;
       tx.update(rideRef, {
@@ -12458,6 +12510,12 @@ app.post('/api/deliveries/:deliveryId/accept', async (req, res, next) => {
         const error = new Error(`Esta entrega e de ${rideCityLabel(deliveryCity)}. Voce recebe servicos da cidade onde o seu GPS esta.`);
         error.status = 403;
         error.code = 'cidade_desativada';
+        throw error;
+      }
+      if (onlyDigits(delivery.motoboyExclusivoCpf) !== driverCpf && !driverServices(driver).entrega) {
+        const error = new Error('Ligue "Entregas" no início do app para aceitar entregas.');
+        error.status = 403;
+        error.code = 'servico_desativado';
         throw error;
       }
 
