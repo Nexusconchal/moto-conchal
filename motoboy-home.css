@@ -263,26 +263,29 @@ body.mjhome-ativo #dicaAvisos {
 }
 .mjhome-state {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }
+/* Moto taxi e Entregas lado a lado, numa linha so embaixo do estado. */
 .mjhome-servicos {
-  margin-left: auto;
+  flex: 1 1 100%;
   display: grid;
-  gap: 6px;
-  flex: none;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 .mjhome-sw {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 6px 10px 6px 6px;
+  justify-content: center;
+  padding: 9px 10px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.04);
   color: #9aa0ab;
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 800;
   white-space: nowrap;
   cursor: pointer;
