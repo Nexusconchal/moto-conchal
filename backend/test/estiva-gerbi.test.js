@@ -39,3 +39,15 @@ test('server keeps Estiva Gerbi results and puts those rides in Conchal', () => 
   assert.equal(ctx.inferNewRideOperatingCity({ origem: 'Rua Sete de Setembro, 100, Estiva Gerbi - SP' }, 'aguai'), 'conchal');
   assert.equal(ctx.inferNewRideOperatingCity({ origemLat: -22.0572, origemLon: -46.9781 }), 'aguai');
 });
+
+test('a ride from outside the served cities goes to the motoboys of the destination city', () => {
+  const ctx = vm.createContext({ streetNumber, normalizeText, Math, Number, Object });
+  vm.runInContext(backend.slice(backend.indexOf('const RIDE_CITY_CENTERS = {'), backend.indexOf('function normalizedPersonName(')), ctx);
+  // Uniararas (Araras) fica a uns 20 km de Eng. Coelho e de Conchal; o destino e Conchal.
+  const araras = { origemLat: -22.3744441, origemLon: -47.3692512, origem: 'Minha localização atual pelo GPS' };
+  assert.equal(ctx.inferNewRideOperatingCity({ ...araras, destino: 'Rua Benedito novo, 838, novo horizonte Conchal' }, 'engenheiro_coelho'), 'conchal');
+  assert.equal(ctx.inferNewRideOperatingCity({ ...araras, destinoLat: -22.3308, destinoLon: -47.1724, destino: 'Rua X' }), 'conchal');
+  assert.equal(ctx.inferNewRideOperatingCity({ ...araras, destinoLat: -22.48805, destinoLon: -47.21572, destino: 'Centro' }), 'engenheiro_coelho');
+  // Corrida que sai de dentro de Conchal continua em Conchal, mesmo indo para fora.
+  assert.equal(ctx.inferNewRideOperatingCity({ origemLat: -22.335, origemLon: -47.17, destino: 'Uniararas, Araras' }), 'conchal');
+});

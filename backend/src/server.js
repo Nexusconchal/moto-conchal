@@ -1316,6 +1316,25 @@ function coordinateDistanceKm(a, b) {
   return 6371 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
+// Raio da cidade atendida (zona urbana e sitios em volta) para dizer de onde a corrida e.
+const RIDE_CITY_LOCAL_KM = 12;
+
+function servedCityWithin(point = {}, maxKm) {
+  if (!Number.isFinite(point.lat) || !Number.isFinite(point.lon) || !point.lat || !point.lon) return '';
+  const nearest = Object.entries(RIDE_CITY_CENTERS)
+    .map(([city, center]) => ({ city, km: coordinateDistanceKm(point, center) }))
+    .sort((a, b) => a.km - b.km)[0];
+  return nearest && nearest.km <= maxKm ? nearest.city : '';
+}
+
+function textRideCity(value) {
+  const text = normalizeText(value);
+  if (text.includes('engenheiro coelho') || /\beng\.?\s*coelho\b/.test(text)) return 'engenheiro_coelho';
+  if (text.includes('aguai')) return 'aguai';
+  if (text.includes('conchal')) return 'conchal';
+  return '';
+}
+
 function inferNewRideOperatingCity(ride = {}, requested = '') {
   const originText = normalizeText([
     ride.origem,
@@ -1324,6 +1343,14 @@ function inferNewRideOperatingCity(ride = {}, requested = '') {
   ].filter(Boolean).join(' '));
   const origin = { lat: Number(ride.origemLat), lon: Number(ride.origemLon) };
   if (originText.includes('estiva gerbi') || coordinateDistanceKm(origin, ESTIVA_GERBI_CENTER) <= 8) return 'conchal';
+  // Saiu de dentro de uma cidade atendida: fica com os motoboys dela.
+  const originLocal = servedCityWithin(origin, RIDE_CITY_LOCAL_KM);
+  if (originLocal) return originLocal;
+  // Saiu de fora (ex.: Araras) para uma cidade atendida: vai para os motoboys do destino,
+  // e nao para a cidade que so por acaso fica mais perto da origem.
+  const destinationLocal = servedCityWithin({ lat: Number(ride.destinoLat), lon: Number(ride.destinoLon) }, RIDE_CITY_LOCAL_KM)
+    || textRideCity([ride.destino, ride.destinoEncontrado].filter(Boolean).join(' '));
+  if (destinationLocal) return destinationLocal;
   if (Number.isFinite(origin.lat) && Number.isFinite(origin.lon) && origin.lat && origin.lon) {
     const nearestCity = Object.entries(RIDE_CITY_CENTERS)
       .map(([city, center]) => ({ city, km: coordinateDistanceKm(origin, center) }))
