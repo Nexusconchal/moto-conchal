@@ -34,6 +34,7 @@ import { createCustomerCards, repasseUpdate } from './customer-cards.js';
 import { createDriverSessions, driverSessionValid, legacyProofAllowed } from './driver-sessions.js';
 import { createGeminiReceiptReader, createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
 import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
+import { buscarResumoFood } from './food-summary.js';
 
 const PORT = Number(process.env.PORT || 10000);
 const DRIVER_PERCENT = Number(process.env.DRIVER_PERCENT || 0.7);
@@ -7435,6 +7436,15 @@ app.post('/api/rides/:rideId/card-payment', createRideLimiter, async (req, res, 
 
 // Repasses: corridas pagas na conta da MotoJa (cartao salvo ou link da conta MotoJa)
 // que a MotoJa ainda deve ao motoboy.
+app.get('/api/admin/food-summary', assertOwner, async (req, res, next) => {
+  try {
+    res.set('cache-control', 'no-store');
+    res.json(await buscarResumoFood({ dias: req.query.dias }));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/admin/repasses', assertOwner, async (_req, res, next) => {
   try {
     res.set('cache-control', 'no-store');
