@@ -14,7 +14,7 @@
   const CIDADES = { conchal: "Conchal", aguai: "Aguaí", "engenheiro-coelho": "Engenheiro Coelho" };
   const cidadeOpcoes = () => Object.entries(CIDADES).map(([id, nome]) => `<option value="${id}">${nome}</option>`).join("");
   const STATUS = { novo: "🆕 Novo", preparo: "👨‍🍳 Preparando", pronto: "✅ Pronto", entrega: "🛵 Saiu para entrega", entregue: "📦 Entregue", cancelado: "✖ Cancelado" };
-  const PAGAMENTO = { dinheiro: "Dinheiro", cartao: "Cartão", vale: "Vale", app: "Cartão pelo app" };
+  const PAGAMENTO = { dinheiro: "Dinheiro", cartao: "Cartão", vale: "Vale", app: "Cartão pelo app", pix: "Pix pelo app" };
   const PROBLEMA = { atraso: "Atraso", item: "Problema no item", endereco: "Endereço", pagamento: "Pagamento", cliente_ausente: "Cliente ausente", outro: "Outro" };
   const ABAS = [["resumo", "Resumo"], ["pedidos", "Pedidos"], ["empresas", "Empresas"], ["promocoes", "Promoções"], ["avisos", "Avisos"], ["acerto", "Acerto"], ["equipe", "Equipe"], ["atendimento", "Atendimento"]];
   const PIX = { cpf: "CPF", cnpj: "CNPJ", email: "E-mail", telefone: "Celular", aleatoria: "Chave aleatória" };
