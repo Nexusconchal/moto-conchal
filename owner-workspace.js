@@ -370,6 +370,49 @@
       : `<div class="owner-support-empty">Quando um amigo indicado fizer a primeira corrida, ele aparece aqui.</div>`;
   }
 
+  // Corridas que o motoboy avisou que o cliente pagou em dinheiro: o dono confere e finaliza.
+  function renderCashRides() {
+    const section = document.getElementById("corridas-section");
+    if (!section) return;
+    let box = document.getElementById("ownerCashRides");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "ownerCashRides";
+      box.className = "owner-ratings";
+      section.insertBefore(box, section.children[1] || null);
+      box.addEventListener("click", finishCashRide);
+    }
+    const lista = (Array.isArray(carAdminState.corridas) ? carAdminState.corridas : [])
+      .filter((c) => c.dinheiroInformado && c.status === "aceita" && c.pagamento?.status !== "approved")
+      .sort((a, b) => Number(b.dinheiroInformado.emMs || 0) - Number(a.dinheiroInformado.emMs || 0));
+    box.hidden = !lista.length;
+    if (!lista.length) { box.innerHTML = ""; return; }
+    box.innerHTML = `<h3 class="owner-ratings-title">💵 Pagos em dinheiro, aguardando você: ${lista.length}</h3>
+      <div class="owner-ratings-list">${lista.map((c) => `<article><div><span>${planDate(c.dinheiroInformado.emMs)}</span><strong>${Number(c.valor || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong><small>${c.modalidade === "entrega_avulsa" ? "📦 Entrega avulsa" : "🏍️ Mototáxi"}${c.dinheiroInformado.codigoConferido ? " · código conferido" : ""}</small></div><div><span>Motoboy</span><strong>${escapeHtml(c.motoboy || "-")}</strong><small>CPF ${formatCpf(c.motoboyCpf || "")}</small></div><div><span>Cliente</span><strong>${escapeHtml(c.nome || "Cliente")}</strong><small>${escapeHtml(formatPhone(c.telefoneCliente || ""))}</small></div><div><button class="approve" type="button" data-cash-finish="${escapeHtml(c.id)}">Confirmar e finalizar</button></div></article>`).join("")}</div>`;
+  }
+
+  async function finishCashRide(event) {
+    const botao = event.target.closest("[data-cash-finish]");
+    if (!botao) return;
+    if (!confirm("Confirmar que o cliente pagou em dinheiro ao motoboy e finalizar? O ganho do motoboy é registrado e ele fica devendo a parte do app no fechamento.")) return;
+    botao.disabled = true;
+    botao.textContent = "Finalizando...";
+    try {
+      const response = await fetch(`${getBackendUrl()}/api/admin/rides/${encodeURIComponent(botao.dataset.cashFinish)}/force-finish`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-owner-password": getOwnerPassword() },
+        body: JSON.stringify({ reason: "Pago em dinheiro ao motoboy (informado pelo app do motoboy)" }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || "Não consegui finalizar agora.");
+      if (typeof window.carregarPainel === "function") await window.carregarPainel();
+    } catch (error) {
+      alert(error.message);
+      botao.disabled = false;
+      botao.textContent = "Confirmar e finalizar";
+    }
+  }
+
   // Corridas canceladas pelo motoboy depois de esperar 10 min no local (cliente nao apareceu).
   function renderWaitCancels() {
     const section = document.getElementById("corridas-section");
@@ -639,7 +682,7 @@
     if (name === "plans") renderPlansSection();
     if (name === "ratings") renderRatingsSection();
     if (name === "referrals") renderReferralsSection();
-    if (name === "rides") renderWaitCancels();
+    if (name === "rides") { renderWaitCancels(); renderCashRides(); }
   }
 
   function buildNavigation(nav) {
@@ -746,6 +789,7 @@
     renderRatingsSection();
     renderReferralsSection();
     renderWaitCancels();
+    renderCashRides();
     if (Array.isArray(event.detail?.contasSuporte) && event.detail.contasSuporte.length) {
       renderSupportAccounts(event.detail.contasSuporte);
     } else if (getOwnerPassword()) {
