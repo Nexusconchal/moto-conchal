@@ -6,12 +6,12 @@ const source = fs.readFileSync(new URL('../../driver-availability.js', import.me
 const cpf = '12345678901', key = `motoja:availability:${cpf}`;
 const settle = () => new Promise(resolve => setImmediate(resolve));
 function harness(storage = new Map(), { now = 100000, driverCpf = cpf, unavailableStorage = false } = {}) {
-  const events = {}, sockets = [], alerts = [], intervals = new Set();
+  const events = {}, sockets = [], alerts = [], intervals = new Set(), emitted = [];
   const buttons = ['true','false'].map(value => ({ dataset: { available: value }, attributes: {}, setAttribute(name, v) { this.attributes[name] = v; } }));
   const label = {}, root = { dataset: {}, querySelectorAll: () => buttons, querySelector: () => label };
   const document = { visibilityState: 'visible', getElementById: () => root, addEventListener: (name, fn) => events[name] = fn };
   const localStorage = { getItem: name => { if (unavailableStorage) throw Error('blocked'); return storage.get(name); }, setItem: (name, value) => { if (unavailableStorage) throw Error('blocked'); storage.set(name, value); }, removeItem: name => storage.delete(name) };
-  const window = { addEventListener: (name, fn) => events[name] = fn, io: (_url, options) => {
+  const window = { addEventListener: (name, fn) => events[name] = fn, dispatchEvent: event => emitted.push(event), io: (_url, options) => {
     const handlers = {}, emissions = [];
     options.auth(proof => assert.equal(proof.driverCpf, driverCpf));
     const s = { id: `session-${sockets.length}`, connected: true, disconnects: 0, connects: 0, emissions,
@@ -20,20 +20,34 @@ function harness(storage = new Map(), { now = 100000, driverCpf = cpf, unavailab
       connect() { this.connected = true; this.id += '-reconnected'; this.connects++; },
       disconnect() { this.connected = false; this.disconnects++; handlers.disconnect?.(); },
       receive(value) { handlers['availability:state']?.(value); },
+      callChanged(value) { handlers['call-alert:changed']?.(value); },
       reply(index, value, error = null) { emissions[index].callback(error, value); }
     }; sockets.push(s); return s;
   } };
-  vm.runInContext(source, vm.createContext({ window, document, localStorage, Date: { now: () => now }, alert: value => alerts.push(value), setTimeout, clearTimeout, setInterval: fn => { intervals.add(fn); return fn; }, clearInterval: fn => intervals.delete(fn) }));
+  class CustomEvent { constructor(type, options = {}) { this.type = type; this.detail = options.detail; } }
+  vm.runInContext(source, vm.createContext({ window, document, localStorage, CustomEvent, Date: { now: () => now }, alert: value => alerts.push(value), setTimeout, clearTimeout, setInterval: fn => { intervals.add(fn); return fn; }, clearInterval: fn => intervals.delete(fn) }));
   const api = window.MotojaDriverAvailability;
   const start = () => api.start({ backend: 'https://example.test', getProof: () => ({ driverCpf }), onChange: () => {} });
   start();
-  return { api, start, sockets, root, label, buttons, events, storage, document, alerts, tick: ms => now += ms, heartbeat: () => [...intervals].forEach(fn => fn()) };
+  return { api, start, sockets, root, label, buttons, events, emitted, storage, document, alerts, tick: ms => now += ms, heartbeat: () => [...intervals].forEach(fn => fn()) };
 }
 const state = (desired = false, extra = {}) => ({ connected: true, desired, available: desired, busy: false, ...extra });
 async function available(h) {
   await settle(); const s = h.sockets.at(-1); s.receive(state(false, { preferenceMissing: true }));
   h.buttons[0].onclick(); s.reply(s.emissions.length - 1, { ok: true, ...state(true) }); return s;
 }
+
+test('call changes reach the alarm and availability changes stop it while busy or deliberately unavailable', async () => {
+  const h = harness(); const s = await available(h);
+  assert.equal(h.api.canAlert(), true);
+  s.callChanged({ kind: 'rides', id: 'r1', status: 'aceita' });
+  assert.equal(h.emitted.at(-1).type, 'motoja:call-alert-changed');
+  assert.equal(h.emitted.at(-1).detail.id, 'r1');
+  s.receive(state(true, { busy: true, available: false }));
+  assert.equal(h.api.canAlert(), false);
+  assert.equal(h.emitted.at(-1).type, 'motoja:availability-changed');
+  s.receive(state(false)); assert.equal(h.api.canAlert(), false);
+});
 test('switching to WhatsApp does not disconnect or erase availability; background heartbeat still renews presence', async () => {
   const h = harness(); const s = await available(h);
   h.document.visibilityState = 'hidden'; h.events.visibilitychange();

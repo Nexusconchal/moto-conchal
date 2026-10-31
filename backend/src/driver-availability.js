@@ -63,6 +63,7 @@ export function createDriverAvailability({ now = Date.now, ttlMs = 90000, maxDri
       return state(cpf);
     },
     cities(cpf, enabledCities) { const d = drivers.get(cpf); if (d) d.cities = cityMap(enabledCities); },
+    isReady(cpf) { return drivers.get(cpf)?.ready === true; },
     initializeJobs(cpf, jobs) { const d = drivers.get(cpf); if (d) { for (const key of jobs) if (!d.initialRemoved.has(key)) d.jobs.add(key); d.initialRemoved.clear(); d.ready = true; } },
     job(kind, id, status, cpf = '') {
       const key = `${kind}:${id}`;

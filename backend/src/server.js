@@ -11,6 +11,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import { createDriverAvailability, observeAvailabilityJob } from './driver-availability.js';
 import { attachDriverAvailability } from './driver-availability-socket.js';
 import { createOfferAlerts } from './offer-alert.js';
+import { createCallPushDispatcher, callOfferExpiry, reconcileCallOffers } from './driver-call-alerts.js';
 import { createDriverTelegram } from './driver-telegram.js';
 import { publicDriverCard, publicDriverId, sortPublicDrivers, referralCode, normalizeReferralCode, monthKey } from './customer-menu.js';
 import { reachedPickup, lateCancelState, lateCancelBlocker, waitCancelState, waitCancelBlocker } from './ride-late.js';
@@ -3044,13 +3045,18 @@ const driverAvailability = createDriverAvailability({
     }, { merge: true }).catch((error) => console.error('driver availability save failed', error));
   }
 });
+function driverCallExpiry(kind, job) {
+  return callOfferExpiry(kind, job, { rides: RIDE_EXPIRE_MS, deliveries: DELIVERY_EXPIRE_MS });
+}
 // Alerta insistente: repete o push da chamada para quem esta Disponivel ate
-// alguem aceitar (a cada 20s, no maximo 8 vezes).
+// alguem aceitar ou a oferta expirar. No Android atualizado, o áudio é um loop local.
 const offerAlerts = createOfferAlerts({
   async loadPending(kind, id) {
     const snap = await db.collection(kind === 'deliveries' ? 'entregas' : 'corridas').doc(id).get();
     const job = snap.exists ? snap.data() : null;
-    return job?.status === 'pendente' ? job : null;
+    if (job?.status === 'pendente' && driverCallExpiry(kind, job) > Date.now()) return job;
+    callPush.closed(kind, id).catch(error => console.error('call alert close failed', error?.message));
+    return null;
   },
   send(kind, id, job, count) {
     return kind === 'deliveries' ? repeatDeliveryAlert(id, job, count) : repeatRideAlert(id, job, count);
@@ -3129,6 +3135,11 @@ const driverAvailabilitySocket = attachDriverAvailability(io, driverAvailability
   verifyDriver: getDriverWithProof,
   enabledCities: driverRideCities,
   loadJobs: loadDriverActiveJobs
+});
+const callPush = createCallPushDispatcher({
+  expiry: driverCallExpiry,
+  send: message => admin.messaging().sendEachForMulticast(message),
+  changed: (kind, id, status) => driverAvailabilitySocket.offerChanged(kind, id, status)
 });
 
 // Planos ativados antes do espelho existir (ou enquanto ele falhava) entram na lista do dono.
@@ -3221,7 +3232,10 @@ app.use('/api', (req, res, next) => {
       // Indique e ganhe: a primeira corrida finalizada do amigo vale a participacao.
       if (rideFinished) qualifyReferralFromRide(rideFinished[1]).catch((error) => console.error('referral qualify failed', error?.message));
       const offerDone = res.statusCode < 300 && body?.ok === true && req.originalUrl.split('?')[0].match(/^\/api\/(?:admin\/|companies\/me\/)?(rides|deliveries)\/([^/]+)\/(?:accept|cancel|client-cancel|force-finish)$/);
-      if (offerDone) offerAlerts.stop(offerDone[1], offerDone[2]);
+      if (offerDone) {
+        offerAlerts.stop(offerDone[1], offerDone[2]);
+        callPush.closed(offerDone[1], offerDone[2]).catch(error => console.error('call alert close failed', error?.message));
+      }
       return originalJson.call(this, body);
     };
   }
@@ -3793,6 +3807,7 @@ async function availableDriverTokens(accepts = () => true) {
     const data = doc.data();
     if (!presence.desired || presence.busy || !accepts(data)) return;
     Object.entries(data.fcmTokens || {}).forEach(([token, info]) => {
+      callPush.remember(token, info);
       if (info?.ativo !== false) tokens.push(token);
     });
   });
@@ -3802,7 +3817,7 @@ async function availableDriverTokens(accepts = () => true) {
 async function repeatRideAlert(rideId, ride, count) {
   const city = rideOperatingCity(ride);
   const tokens = await availableDriverTokens((data) => driverWantsRide(data, ride));
-  if (tokens.length) await admin.messaging().sendEachForMulticast(rideOfferPush(rideId, ride, tokens, count));
+  if (tokens.length) await callPush.offer(rideOfferPush(rideId, ride, tokens, count), { kind: 'rides', id: rideId, job: ride });
 }
 
 // Quem escolheu Disponivel e nao esta em servico recebe a chamada tambem no Telegram.
@@ -3841,13 +3856,14 @@ async function notifyDriversAboutRide(rideId, ride) {
     if (!driverWantsRide(data, ride)) return;
     const saved = data.fcmTokens || {};
     Object.entries(saved).forEach(([token, info]) => {
+      callPush.remember(token, info);
       if (info?.ativo !== false) tokens.push(token);
     });
   });
 
   if (!tokens.length) return { sent: 0, failed: 0 };
 
-  const response = await admin.messaging().sendEachForMulticast(rideOfferPush(rideId, ride, tokens));
+  const response = await callPush.offer(rideOfferPush(rideId, ride, tokens), { kind: 'rides', id: rideId, job: ride });
   offerAlerts.start('rides', rideId);
 
   return {
@@ -3980,7 +3996,7 @@ async function repeatDeliveryAlert(deliveryId, delivery, count) {
   if (onlyDigits(delivery.motoboyExclusivoCpf).length === 11) return;
   const city = deliveryOperatingCity(delivery);
   const tokens = await availableDriverTokens((data) => driverWantsDeliveryIn(data, city));
-  if (tokens.length) await admin.messaging().sendEachForMulticast(deliveryOfferPush(deliveryId, delivery, tokens, 'Nova entrega Nexus MotoJa', count));
+  if (tokens.length) await callPush.offer(deliveryOfferPush(deliveryId, delivery, tokens, 'Nova entrega Nexus MotoJa', count), { kind: 'deliveries', id: deliveryId, job: delivery });
 }
 
 async function notifyDriversAboutDelivery(deliveryId, delivery, { onlyReserved = false } = {}) {
@@ -3994,6 +4010,7 @@ async function notifyDriversAboutDelivery(deliveryId, delivery, { onlyReserved =
   const reservedTokens = [];
   const collect = (doc, list) => {
     Object.entries(doc.data()?.fcmTokens || {}).forEach(([token, info]) => {
+      callPush.remember(token, info);
       if (info?.ativo !== false) list.push(token);
     });
   };
@@ -4009,7 +4026,7 @@ async function notifyDriversAboutDelivery(deliveryId, delivery, { onlyReserved =
   }
 
   const send = (list, title) => (list.length
-    ? admin.messaging().sendEachForMulticast(deliveryOfferPush(deliveryId, delivery, list, title))
+    ? callPush.offer(deliveryOfferPush(deliveryId, delivery, list, title), { kind: 'deliveries', id: deliveryId, job: delivery, ring: !reserved })
     : Promise.resolve({ successCount: 0, failureCount: 0 }));
   const responses = await Promise.all([
     send(tokens, 'Nova entrega Nexus MotoJa'),
@@ -6486,6 +6503,36 @@ app.post('/api/drivers/:cpf/earnings/history', async (req, res, next) => {
   } catch (error) {
     return next(error);
   }
+});
+
+// Consulta pequena para encerrar o alarme local por estado confirmado no servidor.
+app.post('/api/drivers/:cpf/call-alerts', async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.params.cpf);
+    if (cpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    const driver = await getDriverWithProof(cpf, req.body);
+    if (driverAvailability.state(cpf).desired && !driverAvailability.isReady(cpf))
+      driverAvailability.initializeJobs(cpf, await loadDriverActiveJobs(cpf));
+    const available = driverAvailability.state(cpf).available;
+    if (!available) return res.json({ ok: true, available: false, offers: [] });
+    let offers;
+    try {
+      offers = await reconcileCallOffers(req.body.offers, {
+        expiry: driverCallExpiry,
+        load: async (kind, id) => {
+          const snapshot = await db.collection(kind === 'deliveries' ? 'entregas' : 'corridas').doc(id).get();
+          return snapshot.exists ? snapshot.data() : null;
+        },
+        allowed: (kind, job) => !job.motoboyExclusivoCpf && job.tipo !== 'servico_exclusivo' &&
+          (kind === 'rides' ? driverWantsRide(driver, job) : !deliveryReservedForOther(job, cpf) && driverWantsDeliveryIn(driver, deliveryOperatingCity(job)))
+      });
+    } catch (error) {
+      if (error.message === 'chamadas_invalidas') return res.status(400).json({ error: error.message });
+      throw error;
+    }
+    res.set('cache-control', 'no-store');
+    return res.json({ ok: true, available: true, offers });
+  } catch (error) { next(error); }
 });
 
 app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
@@ -10857,6 +10904,7 @@ app.post('/api/drivers/:cpf/push-token', async (req, res, next) => {
         [token]: {
           ativo: true,
           plataforma: req.body.plataforma === 'android_nativo' ? 'android_nativo' : 'web',
+          callAlertVersion: req.body.plataforma === 'android_nativo' && req.body.callAlertVersion === 1 ? 1 : 0,
           userAgent: String(req.body.userAgent || '').slice(0, 300),
           atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
         }
@@ -10864,6 +10912,7 @@ app.post('/api/drivers/:cpf/push-token', async (req, res, next) => {
       atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
 
+    callPush.remember(token, { ativo: true, plataforma: req.body.plataforma, callAlertVersion: req.body.callAlertVersion });
     res.json({ ok: true });
   } catch (error) {
     next(error);
