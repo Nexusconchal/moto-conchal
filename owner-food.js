@@ -194,7 +194,8 @@
     const lojas = (estado.empresas || []).slice().sort((a, b) => ordem(a) - ordem(b));
     if (!lojas.length) return vazio("Nenhuma empresa cadastrada ainda.");
     const hoje = hojeSP();
-    return `<p class="muted">Aprove as empresas novas, pause uma loja na hora ou dê entrega grátis hoje (a loja paga o frete). O Pix de cada loja aparece em "Pix".</p>
+    const escondidas = !!estado.launch?.hideDemo, exemplos = lojas.filter((e) => e.isDemo).length;
+    return `${exemplos ? `<div class="fd-form"><b>${escondidas ? "🚀 Modo lançamento ligado: os clientes não veem as lojas de exemplo." : `🧪 ${exemplos} loja(s) de exemplo aparecem para os clientes.`}</b><button type="button" class="${escondidas ? "sec" : ""}" data-fd-demo="${escondidas ? "0" : "1"}">${escondidas ? "Mostrar as lojas de exemplo" : "Esconder as lojas de exemplo (lançamento)"}</button></div>` : ""}<p class="muted">Aprove as empresas novas, pause uma loja na hora ou dê entrega grátis hoje (a loja paga o frete). O Pix de cada loja aparece em "Pix".</p>
       ${tabela(["Empresa", "Cidade", "Situação", "Loja agora", "Ações"], lojas.map((e) => {
         const s = estado.stores.find((x) => x.id === e.id) || {};
         const gratis = s.freeDeliveryFrom > 0 && (!s.freeDeliveryUntil || s.freeDeliveryUntil >= hoje);
@@ -385,6 +386,7 @@
       }).catch((error) => aviso(error.message, true));
     }
     if (b.dataset.fdEncerrar && confirm("Encerrar esta promoção agora?")) acao(b, () => food("POST", `campaigns/${b.dataset.fdEncerrar}/stop`, {}), "Promoção encerrada.");
+    if (b.dataset.fdDemo) acao(b, () => food("POST", "launch", { hideDemo: b.dataset.fdDemo === "1" }), b.dataset.fdDemo === "1" ? "Lojas de exemplo escondidas. Os clientes veem só as lojas reais." : "Lojas de exemplo visíveis de novo.");
     if (b.dataset.fdExtrato) { const [tipo, id] = b.dataset.fdExtrato.split("|"); extrato(tipo, id); }
     if (b.dataset.fdConferir) acao(b, () => food("POST", `settlements/payments/${b.dataset.fdConferir}`, { action: b.dataset.acao }), b.dataset.acao === "confirmar" ? "Pagamento confirmado: já entrou no acerto." : "Pagamento marcado como não recebido.");
     if (b.dataset.fdPagar) {
