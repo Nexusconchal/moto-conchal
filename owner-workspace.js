@@ -74,6 +74,12 @@
       description: "Identifique em qual etapa os clientes desistem antes de confirmar.",
       targets: ["funil-section"],
     },
+    food: {
+      title: "MotoJÁ Food",
+      eyebrow: "App de comida",
+      description: "Pedidos, empresas, promoções pagas pela MotoJá, avisos para os clientes, equipe e atendimento do Food.",
+      targets: ["food-section"],
+    },
   };
 
   const navConfig = [
@@ -89,6 +95,7 @@
     ["Indicações", "referrals", "10", ""],
     ["Equipe suporte", "support", "11", ""],
     ["Funil", "funnel", "12", "Análise"],
+    ["🍔 Food", "food", "13", "MotoJÁ Food"],
   ];
 
   const DEFAULT_BACKEND = "https://motoboy-conchal.onrender.com";

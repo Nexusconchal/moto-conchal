@@ -7446,6 +7446,18 @@ app.get('/api/admin/food-summary', assertOwner, async (req, res, next) => {
   }
 });
 
+// Administração do MotoJÁ Food dentro do painel do dono: o Food confere quais rotas são liberadas.
+app.post('/api/admin/food/admin', assertOwner, async (req, res, next) => {
+  try {
+    res.set('cache-control', 'no-store');
+    if (!foodConfigurado()) return res.json({ configurado: false });
+    const pedido = { method: req.body?.method === 'POST' ? 'POST' : 'GET', path: String(req.body?.path || '').slice(0, 200), body: req.body?.body || {} };
+    return res.json({ configurado: true, ...(await chamarFood('admin', pedido)) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 // Entregas do MotoJÁ Food no app do motoboy: a lista e as ações passam por aqui com o login dele.
 async function motoboyDoFood(body = {}) {
   const cpf = onlyDigits(body.driverCpf);
