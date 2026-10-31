@@ -3077,7 +3077,61 @@
               }
             }),
         );
+        if (modoMinhas() && !modoEntrega()) avisarPagamentosAprovados(docs.map((d) => ({ ...d.data, id: d.id })));
         sincronizarTelaMapa(docs);
+      }
+      // Pix ou cartao aprovado pelo Mercado Pago: so dentro do app. Com o app aberto aparece
+      // na hora; se estava fechado, aparece quando abrir, com o dia e o horario do pagamento.
+      function avisarPagamentosAprovados(jobs) {
+        let vistos = [];
+        try { vistos = JSON.parse(localStorage.getItem("motoja:pagos-avisados") || "[]"); } catch {}
+        const limite = Date.now() - 3 * 24 * 60 * 60 * 1000;
+        const quandoPagou = (c) => (c.pagamentoConfirmadoEm?.seconds || c.pagamento?.atualizadoEm?.seconds || 0) * 1000;
+        const novos = jobs.filter((c) => c?.id && ["aceita", "finalizada"].includes(c.status) && c.pagamento?.status === "approved"
+          && c.pagamento?.valido !== false && !vistos.includes(c.id) && quandoPagou(c) >= limite);
+        if (!novos.length) return;
+        try { localStorage.setItem("motoja:pagos-avisados", JSON.stringify([...vistos, ...novos.map((c) => c.id)].slice(-80))); } catch {}
+        try { beep(); } catch {}
+        const linha = (c) => {
+          const parte = Number(c.pagamento?.driverAmount || 0) || ganhoMotoboy(c.pagamento?.totalPago || c.valor, c);
+          const ms = quandoPagou(c);
+          const dia = new Date(ms).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+          const hora = new Date(ms).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+          const onde = c.pagamento?.receiver === "motoja_owner" ? "no seu repasse da MotoJá" : "no Mercado Pago";
+          return { parte, texto: `Você recebeu ${moeda(parte)} ${onde} no dia ${dia} às ${hora}. Obrigado pela ${entregaAvulsa(c) ? "entrega" : "corrida"}!${c.status === "aceita" ? " Já pode finalizar." : ""}` };
+        };
+        const linhas = novos.map(linha);
+        const total = linhas.reduce((t, l) => t + l.parte, 0);
+        document.querySelector(".mj-pago-aviso")?.remove();
+        const aviso = document.createElement("div");
+        aviso.className = "mj-pago-aviso";
+        aviso.setAttribute("role", "status");
+        aviso.style.cssText = "position:fixed;left:12px;right:12px;top:12px;z-index:20050;padding:14px 16px;border-radius:16px;background:#1fbf62;color:#05200f;font-weight:900;box-shadow:0 12px 30px rgba(0,0,0,.45);font-family:inherit;max-height:60vh;overflow:auto";
+        aviso.innerHTML = `💰 Você recebeu ${moeda(total)}${linhas.map((l) => `<div style="font-weight:700;font-size:.88rem;margin-top:6px;line-height:1.35">${escSeguro(l.texto)}</div>`).join("")}<div style="font-weight:700;font-size:.75rem;margin-top:8px;opacity:.75">Toque para fechar</div>`;
+        aviso.onclick = () => aviso.remove();
+        document.body.appendChild(aviso);
+        setTimeout(() => aviso.remove(), 15000);
+      }
+      // Confere de tempos em tempos (e ao abrir o app) se caiu pagamento nas corridas do motoboy.
+      let pagamentosTimer = 0;
+      async function checarPagamentosRecebidos() {
+        if (!motoboyCpf) return;
+        try {
+          const r = await fetch(`${CONFIG.backend}/api/drivers/${motoboyCpf}/jobs`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ...driverProof(), kind: "rides", scope: "mine" }),
+            cache: "no-store",
+          });
+          const d = await r.json().catch(() => ({}));
+          if (r.ok && Array.isArray(d.jobs)) avisarPagamentosAprovados(d.jobs);
+        } catch {}
+      }
+      function iniciarAvisoPagamentos() {
+        clearInterval(pagamentosTimer);
+        checarPagamentosRecebidos();
+        pagamentosTimer = setInterval(checarPagamentosRecebidos, 45000);
+        document.addEventListener("visibilitychange", () => { if (!document.hidden) checarPagamentosRecebidos(); });
       }
       async function ouvir(silencioso = false) {
         if (!motoboyCpf) return;
@@ -3592,6 +3646,7 @@
         window.MotoFood?.start({ backend: CONFIG.backend, getProof: driverProof });
         // No app da Play Store, o celular ja se cadastra para as chamadas ao entrar.
         ativarPushNativo(true);
+        iniciarAvisoPagamentos();
         ocultarBoot();
         renderPerfilMotoboy();
         renderCidadesAtivas();
