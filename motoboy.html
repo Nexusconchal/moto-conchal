@@ -1575,6 +1575,7 @@
             <input data-codigo inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" maxlength="4" placeholder="0000" style="box-sizing:border-box;width:100%;text-align:center;font:inherit;font-weight:900;font-size:2.4rem;letter-spacing:.5em;padding:12px 0 12px .5em;border-radius:14px;border:2px solid #ff9a00;background:#0c0f16;color:#fff">
             <p data-erro hidden style="margin:0;padding:10px 12px;border-radius:12px;background:rgba(255,82,82,.14);color:#ffb3ad;font-size:.88rem;line-height:1.35"></p>
             <button type="button" data-confirmar style="padding:14px;border-radius:14px;border:0;background:#25d366;color:#05200f;font:inherit;font-weight:900;font-size:1.05rem">Confirmar e finalizar</button>
+            <button type="button" data-dinheiro hidden style="padding:13px;border-radius:14px;border:1px solid rgba(255,154,0,.6);background:#1a1f2c;color:#ffd39a;font:inherit;font-weight:900">💵 Cliente pagou em dinheiro</button>
             <button type="button" data-voltar style="padding:10px;border:0;background:none;color:#aeb4c3;font:inherit;font-weight:800">Voltar</button>
           </div>`;
           document.body.appendChild(back);
@@ -1597,9 +1598,66 @@
               erro.hidden = false;
               confirmar.disabled = false;
               confirmar.textContent = "Confirmar e finalizar";
+              // Codigo certo e pagamento pendente: se pagou em dinheiro, avisa o suporte.
+              back.querySelector("[data-dinheiro]").hidden = e.code !== "pagamento_ainda_nao_aprovado";
+            }
+          };
+          back.querySelector("[data-dinheiro]").onclick = async (ev) => {
+            const botao = ev.currentTarget;
+            botao.disabled = true;
+            botao.textContent = "Avisando o suporte...";
+            try {
+              fim(await avisarPagamentoDinheiro(job.id, campo.value.replace(/\D/g, "")));
+            } catch (e) {
+              erro.textContent = e.message;
+              erro.hidden = false;
+              botao.disabled = false;
+              botao.textContent = "💵 Cliente pagou em dinheiro";
             }
           };
           setTimeout(() => campo.focus(), 80);
+        });
+      }
+      // Cliente pagou em dinheiro (ou Pix direto): avisa o suporte; o dono confere e finaliza.
+      async function avisarPagamentoDinheiro(rideId, codigoEntrega = "") {
+        const r = await fetch(`${CONFIG.backend}/api/rides/${encodeURIComponent(rideId)}/cash-reported`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ...driverProof(), codigoEntrega }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.message || "Não consegui avisar o suporte agora. Tente de novo.");
+        return { ...d, aguardandoDono: true };
+      }
+      function perguntarDinheiro(job) {
+        return new Promise((resolve) => {
+          const back = document.createElement("div");
+          back.style.cssText = "position:fixed;inset:0;z-index:20000;background:rgba(0,0,0,.7);display:flex;align-items:flex-end;justify-content:center";
+          back.innerHTML = `<div role="dialog" aria-modal="true" style="width:min(480px,100%);background:#11151f;color:#f3f5f8;border-radius:20px 20px 0 0;border:1px solid rgba(255,154,0,.4);padding:20px 18px 24px;display:grid;gap:12px;font-family:inherit;text-align:center">
+            <div style="font-size:2rem">💳</div>
+            <strong style="font-size:1.1rem">Pagamento ainda não aprovado no app</strong>
+            <span style="color:#aeb4c3;font-size:.9rem;line-height:1.4">Se ${escSeguro(job.nome || "o cliente")} vai pagar pelo link ou cartão, espere aprovar e toque em Finalizar de novo. Se ele pagou em <b>dinheiro</b> (ou Pix direto para você), avise o suporte: o dono confere e finaliza.</span>
+            <p data-erro hidden style="margin:0;padding:10px 12px;border-radius:12px;background:rgba(255,82,82,.14);color:#ffb3ad;font-size:.88rem"></p>
+            <button type="button" data-dinheiro style="padding:14px;border-radius:14px;border:0;background:#ff9a00;color:#140a00;font:inherit;font-weight:900;font-size:1.02rem">💵 Cliente pagou em dinheiro</button>
+            <button type="button" data-voltar style="padding:10px;border:0;background:none;color:#aeb4c3;font:inherit;font-weight:800">Voltar</button>
+          </div>`;
+          document.body.appendChild(back);
+          const fim = (v) => { back.remove(); resolve(v); };
+          back.querySelector("[data-voltar]").onclick = () => fim(null);
+          back.querySelector("[data-dinheiro]").onclick = async (ev) => {
+            const botao = ev.currentTarget;
+            botao.disabled = true;
+            botao.textContent = "Avisando o suporte...";
+            try {
+              fim(await avisarPagamentoDinheiro(job.id));
+            } catch (e) {
+              const erro = back.querySelector("[data-erro]");
+              erro.textContent = e.message;
+              erro.hidden = false;
+              botao.disabled = false;
+              botao.textContent = "💵 Cliente pagou em dinheiro";
+            }
+          };
         });
       }
       function acaoDoCard(c, seletor, confirmacao) {
@@ -2456,6 +2514,8 @@
               ? "Pagamento aprovado pelo Mercado Pago"
               : c.pagamento?.valido === false
                 ? "Pagamento com divergencia - fale com o dono"
+                : c.dinheiroInformado && c.pagamento?.status !== "approved"
+                  ? "💵 Dinheiro informado: aguardando o dono finalizar"
                 : c.pagamento?.presencialManual?.codigo
                   ? `Aproximacao informada: ${c.pagamento.status === "approved" ? "aprovada pelo dono" : "em conferencia"}`
                   : pointStatus
@@ -2945,7 +3005,7 @@
                       body: JSON.stringify({ ...driverProof(), codigoEntrega: codigo }),
                     });
                     const dados = await resposta.json().catch(() => ({}));
-                    if (!resposta.ok) throw new Error(dados.message || "Não consegui finalizar pelo servidor.");
+                    if (!resposta.ok) throw Object.assign(new Error(dados.message || "Não consegui finalizar pelo servidor."), { code: dados.error });
                     return dados;
                   });
                   if (!finalizadoPeloCodigo) {
@@ -2985,12 +3045,26 @@
                     },
                   );
                   d = await r.json().catch(() => ({}));
-                  if (!r.ok)
+                  if (!r.ok && d.error === "pagamento_ainda_nao_aprovado" && recursoAtual() === "rides") {
+                    d = await perguntarDinheiro(job);
+                    if (!d) {
+                      btn.disabled = false;
+                      btn.textContent = `Finalizar ${servico}`;
+                      return;
+                    }
+                  } else if (!r.ok)
                     throw new Error(
                       d.message ||
                         d.error ||
                         `Nao consegui finalizar pelo servidor.`,
                     );
+                }
+                if (d.aguardandoDono) {
+                  alert(d.message || "Avisamos o suporte. O dono confere e finaliza.");
+                  btn.textContent = "Aguardando o dono finalizar";
+                  limparCache();
+                  ouvir();
+                  return;
                 }
                 if (lerNavAtiva()?.id === btn.dataset.finalizar) salvarNavAtiva(null);
                 btn.textContent = d.pendingApproval ? "Aguardando confirmação da empresa" : `${servico[0].toUpperCase() + servico.slice(1)} finalizada`;

@@ -11420,6 +11420,48 @@ app.post('/api/rides/:rideId/wait-cancel', async (req, res, next) => {
   }
 });
 
+// Cliente pagou em dinheiro (ou Pix direto ao motoboy): o motoboy avisa pelo app e a
+// corrida fica no painel do dono, que confere e finaliza. Na entrega avulsa o codigo de
+// quem recebeu precisa estar certo antes.
+app.post('/api/rides/:rideId/cash-reported', async (req, res, next) => {
+  try {
+    const driverCpf = onlyDigits(req.body.driverCpf);
+    if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(driverCpf, req.body);
+    const ref = db.collection('corridas').doc(String(req.params.rideId || ''));
+    let wrongCode = false;
+    let attemptsUsed = 0;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const ride = snap.data() || {};
+      const fail = (message, code, status = 409) => Object.assign(new Error(message), { code, status });
+      if (!snap.exists || onlyDigits(ride.motoboyCpf) !== driverCpf) throw fail('Esta corrida nao esta mais com voce.', 'corrida_nao_e_sua');
+      if (ride.status !== 'aceita') throw fail('Esta corrida nao esta mais em andamento.', 'corrida_nao_aceita');
+      if (!ride.clienteAvisadoEm) throw fail('Avise o cliente antes de finalizar.', 'avise_o_cliente_antes_de_finalizar');
+      if (ride.pagamento?.status === 'approved' && ride.pagamento?.valido !== false) throw fail('O pagamento ja foi aprovado pelo app. Toque em Finalizar.', 'pagamento_ja_aprovado');
+      if (isStandaloneDelivery(ride)) {
+        attemptsUsed = Number(ride.tentativasCodigoEntrega || 0);
+        if (attemptsUsed >= STANDALONE_DELIVERY_CODE_MAX_ATTEMPTS) throw fail('Codigo de entrega bloqueado por tentativas erradas. Fale com o suporte MotoJa.', 'codigo_entrega_bloqueado', 423);
+        if (!ride.codigoEntrega || onlyDigits(req.body.codigoEntrega) !== ride.codigoEntrega) { wrongCode = true; return; }
+      }
+      tx.set(ref, {
+        dinheiroInformado: { emMs: Date.now(), motoboy: cleanText(ride.motoboy || '', 80), motoboyCpf: driverCpf, codigoConferido: isStandaloneDelivery(ride) },
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+    if (wrongCode) {
+      await ref.set({ tentativasCodigoEntrega: admin.firestore.FieldValue.increment(1), atualizadaEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      return res.status(409).json({ error: 'codigo_entrega_invalido', message: 'Codigo de entrega incorreto. Confira os 4 numeros com quem recebeu a encomenda.' });
+    }
+    rideStatusCache.delete(ref.id);
+    adminStateCache = null;
+    emitSupportOperationsRefresh();
+    return res.json({ ok: true, message: 'Pronto! Avisamos o suporte. O dono confere o pagamento em dinheiro e finaliza.' });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 // Avisa o motoboy que perdeu a corrida por atraso (push e Telegram particular).
 async function notifyDriverLateCancel(ride = {}, acao = 'trocar') {
   const cpf = onlyDigits(ride.motoboyCpf);
