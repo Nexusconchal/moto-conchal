@@ -1596,6 +1596,28 @@
         }
         return btn;
       }
+      // Retirada pela tela do mapa: o card confirma no servidor (motoboy-tracking.js) e o
+      // mapa passa na hora para "Entregar pedido". Se a retirada ja tinha sido confirmada
+      // (botao do card "Pedido retirado"), so avanca, sem mostrar isso como erro.
+      function confirmarRetiradaPeloMapa(c) {
+        const seletor = `[data-confirmar-retirada="${c.id}"]`;
+        const jaRetirado = () => {
+          const btn = botaoDoCard(seletor);
+          return !!btn && btn.disabled && /retirad/i.test(btn.textContent || "");
+        };
+        const avancar = () => {
+          const atual = { ...jobAtualizado(c), status: "retirada" };
+          [...jobsCache.values()].forEach((lista) => (lista.jobs || []).forEach((j) => { if (j.id === c.id) j.status = "retirada"; }));
+          abrirNavegacaoServico(atual);
+          limparCache();
+          ouvir(true);
+        };
+        return async () => {
+          if (jaRetirado()) return avancar();
+          await acaoDoCard(c, seletor)();
+          if (jaRetirado() && window.MotoNav.idAtual() === c.id) avancar();
+        };
+      }
       function jobAtualizado(c) {
         return (
           [...jobsCache.values()]
@@ -1774,7 +1796,7 @@
                 principal: {
                   texto: "Confirmei a retirada",
                   textoCarregando: "Confirmando...",
-                  acao: acaoDoCard(c, `[data-confirmar-retirada="${c.id}"]`),
+                  acao: confirmarRetiradaPeloMapa(c),
                 },
               }
             : {
