@@ -24,60 +24,10 @@
   let seguirMotoboy = true;
   let rotaNav = { chave: '', em: 0, origem: null };
   const rotasCache = new Map();
-  let audioCtx = null;
-  let alarmeTimer = null;
-
-  // Alarme da oferta: toca e vibra em loop ate aceitar, recusar ou expirar.
-  // O navegador so libera o som depois de um toque na tela; o primeiro toque
-  // (login, Ficar disponivel...) ja deixa o audio pronto.
-  function contextoAudio() {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return null;
-    if (!audioCtx) audioCtx = new Ctx();
-    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-    return audioCtx;
-  }
-  ['pointerdown', 'touchstart', 'keydown'].forEach((tipo) => document.addEventListener(tipo, contextoAudio, { passive: true }));
-
-  function bip(ctx, inicio, freq, dur) {
-    const osc = ctx.createOscillator();
-    const ganho = ctx.createGain();
-    osc.type = 'square';
-    osc.frequency.value = freq;
-    ganho.gain.setValueAtTime(0.0001, inicio);
-    ganho.gain.exponentialRampToValueAtTime(0.35, inicio + 0.02);
-    ganho.gain.exponentialRampToValueAtTime(0.0001, inicio + dur);
-    osc.connect(ganho).connect(ctx.destination);
-    osc.start(inicio);
-    osc.stop(inicio + dur + 0.02);
-  }
-
-  function cicloAlarme() {
-    const ctx = contextoAudio();
-    if (ctx && ctx.state === 'running') {
-      const t = ctx.currentTime + 0.02;
-      bip(ctx, t, 1046, 0.16);
-      bip(ctx, t + 0.22, 1318, 0.16);
-      bip(ctx, t + 0.44, 1568, 0.24);
-    }
-    try {
-      navigator.vibrate?.([400, 150, 400]);
-    } catch (_) {}
-  }
-
-  function iniciarAlarme() {
-    pararAlarme();
-    cicloAlarme();
-    alarmeTimer = setInterval(cicloAlarme, 1600);
-  }
-
-  function pararAlarme() {
-    if (alarmeTimer) clearInterval(alarmeTimer);
-    alarmeTimer = null;
-    try {
-      navigator.vibrate?.(0);
-    } catch (_) {}
-  }
+  // O alarme pertence à fila de chamados, não à abertura/fechamento do mapa.
+  // Clicar em Aceitar só o encerra depois que o servidor confirmar o aceite.
+  function iniciarAlarme() { window.MotojaCallAlerts?.refresh(); }
+  function pararAlarme() {}
 
   function esc(value) {
     return String(value ?? '').replace(/[&<>"']/g, (char) => ({
