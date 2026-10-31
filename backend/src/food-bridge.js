@@ -8,6 +8,15 @@ export const CIDADE_FOOD = { conchal: 'conchal', aguai: 'aguai', engenheiro_coel
 const CIDADE_APP = Object.fromEntries(Object.entries(CIDADE_FOOD).map(([app, food]) => [food, app]));
 export const ACOES_FOOD = ['accept', 'pickup', 'arrived', 'deliver'];
 
+// No alerta contínuo do motoboy, a entrega do Food é uma "deliveries" com id "food-<pedido>":
+// o app Android 1.0.5 já aceita esse formato. Toca enquanto o pedido estiver livre, até 15 min.
+export const FOOD_OFFER_MS = 15 * 60000;
+export const idOfertaFood = (orderId) => `food-${orderId}`;
+export function pedidoDaOferta(id = '') {
+  const m = String(id).match(/^food-([a-zA-Z0-9-]{1,64})$/);
+  return m ? m[1] : null;
+}
+
 export function foodConfigurado(env = process.env) {
   return !!String(env.FOOD_URL || '').trim() && String(env.FOOD_PLATFORM_KEY || '').length >= 24;
 }

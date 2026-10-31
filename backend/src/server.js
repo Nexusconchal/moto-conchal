@@ -36,7 +36,7 @@ import { createDriverSessions, driverSessionValid, legacyProofAllowed } from './
 import { createGeminiReceiptReader, createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
 import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
 import { buscarResumoFood } from './food-summary.js';
-import { ACOES_FOOD, avaliacaoFood, avisoFood, chamarFood, chaveFoodConfere, foodConfigurado, motoboyParaFood, pushEntregaFood } from './food-bridge.js';
+import { ACOES_FOOD, FOOD_OFFER_MS, idOfertaFood, pedidoDaOferta, avaliacaoFood, avisoFood, chamarFood, chaveFoodConfere, foodConfigurado, motoboyParaFood, pushEntregaFood } from './food-bridge.js';
 
 const PORT = Number(process.env.PORT || 10000);
 const DRIVER_PERCENT = Number(process.env.DRIVER_PERCENT || 0.7);
@@ -6506,6 +6506,26 @@ app.post('/api/drivers/:cpf/earnings/history', async (req, res, next) => {
 });
 
 // Consulta pequena para encerrar o alarme local por estado confirmado no servidor.
+// Pedidos do Food ainda livres para este motoboy (para o alerta contínuo). Guarda 3 s por motoboy,
+// porque o app confere a cada 3 s.
+const foodAbertasCache = new Map();
+async function foodAbertasPara(cpf, driver) {
+  const cached = foodAbertasCache.get(cpf);
+  if (cached && Date.now() - cached.at < 3000) return cached.ids;
+  let ids = new Set();
+  if (foodConfigurado() && driver.status === 'ativo') {
+    try {
+      const r = await chamarFood('deliveries', motoboyParaFood(cpf, driver, { cidade: canonicalRideCity(driver.cidadeGps, 'conchal'), recebeEntregas: driverServices(driver).entrega }));
+      ids = new Set((r.deliveries || []).filter((d) => !d.mine && d.status === 'pronto').map((d) => d.id));
+    } catch (error) {
+      console.warn('food call alerts failed', error?.message);
+    }
+  }
+  foodAbertasCache.set(cpf, { at: Date.now(), ids });
+  if (foodAbertasCache.size > 2000) foodAbertasCache.delete(foodAbertasCache.keys().next().value);
+  return ids;
+}
+
 app.post('/api/drivers/:cpf/call-alerts', async (req, res, next) => {
   try {
     const cpf = onlyDigits(req.params.cpf);
@@ -6516,14 +6536,18 @@ app.post('/api/drivers/:cpf/call-alerts', async (req, res, next) => {
     const available = driverAvailability.state(cpf).available;
     if (!available) return res.json({ ok: true, available: false, offers: [] });
     let offers;
+    const temFood = Array.isArray(req.body.offers) && req.body.offers.some((o) => pedidoDaOferta(o?.id));
+    const foodAbertas = temFood ? await foodAbertasPara(cpf, driver) : new Set();
     try {
       offers = await reconcileCallOffers(req.body.offers, {
         expiry: driverCallExpiry,
         load: async (kind, id) => {
+          const pedidoFood = kind === 'deliveries' ? pedidoDaOferta(id) : null;
+          if (pedidoFood) return foodAbertas.has(pedidoFood) ? { status: 'pendente', expiraEmMs: Date.now() + FOOD_OFFER_MS, food: true } : null;
           const snapshot = await db.collection(kind === 'deliveries' ? 'entregas' : 'corridas').doc(id).get();
           return snapshot.exists ? snapshot.data() : null;
         },
-        allowed: (kind, job) => !job.motoboyExclusivoCpf && job.tipo !== 'servico_exclusivo' &&
+        allowed: (kind, job) => job.food === true || !job.motoboyExclusivoCpf && job.tipo !== 'servico_exclusivo' &&
           (kind === 'rides' ? driverWantsRide(driver, job) : !deliveryReservedForOther(job, cpf) && driverWantsDeliveryIn(driver, deliveryOperatingCity(job)))
       });
     } catch (error) {
@@ -7541,7 +7565,12 @@ app.post('/api/food/deliveries/:orderId/:acao', createRideLimiter, async (req, r
     const motoboy = await motoboyDoFood(req.body);
     if (!foodConfigurado()) return res.status(503).json({ error: 'food_desligado', message: 'O MotoJÁ Food ainda não está ligado.' });
     const corpo = { ...motoboy, code: String(req.body.code || '').slice(0, 8) };
-    return res.json({ configurado: true, ...(await chamarFood(`deliveries/${orderId}/${acao}`, corpo)) });
+    const resultado = await chamarFood(`deliveries/${orderId}/${acao}`, corpo);
+    if (acao === 'accept') {
+      foodAbertasCache.clear();
+      callPush.closed('deliveries', idOfertaFood(orderId)).catch((error) => console.error('call alert close failed', error?.message));
+    }
+    return res.json({ configurado: true, ...resultado });
   } catch (error) {
     return next(error);
   }
@@ -7612,11 +7641,9 @@ app.post('/api/food/notify', async (req, res, next) => {
     if (!aviso) return res.status(400).json({ error: 'aviso_invalido' });
     const tokens = await availableDriverTokens((data) => driverWantsDeliveryIn(data, aviso.cidade));
     const link = process.env.APP_BASE_URL ? appUrl('/motoboy.html?aba=food') : 'https://nexusmotoja.com.br/motoboy.html?aba=food';
-    let sent = 0;
-    for (let i = 0; i < tokens.length; i += 500) {
-      sent += (await admin.messaging().sendEachForMulticast(pushEntregaFood(aviso, tokens.slice(i, i + 500), link))).successCount;
-    }
-    return res.json({ ok: true, sent });
+    if (!tokens.length) return res.json({ ok: true, sent: 0 });
+    const r = await callPush.offer(pushEntregaFood(aviso, tokens, link), { kind: 'deliveries', id: idOfertaFood(aviso.orderId), job: { expiraEmMs: Date.now() + FOOD_OFFER_MS } });
+    return res.json({ ok: true, sent: r.successCount });
   } catch (error) {
     return next(error);
   }

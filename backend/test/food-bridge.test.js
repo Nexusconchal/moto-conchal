@@ -1,6 +1,7 @@
 import test from 'node:test';
+import { reconcileCallOffers } from '../src/driver-call-alerts.js';
 import assert from 'node:assert/strict';
-import { avaliacaoFood, avisoFood, chamarFood, chaveFoodConfere, foodConfigurado, motoboyParaFood, pushEntregaFood } from '../src/food-bridge.js';
+import { FOOD_OFFER_MS, idOfertaFood, pedidoDaOferta, avaliacaoFood, avisoFood, chamarFood, chaveFoodConfere, foodConfigurado, motoboyParaFood, pushEntregaFood } from '../src/food-bridge.js';
 
 const CHAVE = 'chave-de-teste-da-plataforma-123456';
 const env = { FOOD_URL: 'https://food.example.com/', FOOD_PLATFORM_KEY: CHAVE };
@@ -49,4 +50,18 @@ test('ponte Food: nota do motoboy confere CPF, nota de 1 a 5 e o pedido', () => 
   assert.equal(avaliacaoFood({ cpf: '52998224725', nota: 4, orderId: '../x' }), null);
   const a = avaliacaoFood({ cpf: '529.982.247-25', nota: 4, orderId: 'abc-1', comentario: 'Rápido', loja: 'Burger', cidade: 'engenheiro-coelho' });
   assert.deepEqual(a, { cpf: '52998224725', nota: 4, orderId: 'abc-1', comentario: 'Rápido', loja: 'Burger', cidade: 'engenheiro_coelho' });
+});
+
+test('ponte Food: entrega do Food toca no alerta contínuo como "deliveries" com id food-<pedido>', async () => {
+  assert.equal(idOfertaFood('abc-1'), 'food-abc-1');
+  assert.equal(pedidoDaOferta('food-abc-1'), 'abc-1');
+  assert.equal(pedidoDaOferta('abc-1'), null);
+  assert.equal(pedidoDaOferta('food-../x'), null);
+  // O app Android 1.0.5 só aceita rides/deliveries com id [a-zA-Z0-9_-]{1,120}.
+  assert.match(idOfertaFood('3f2a9c1e-1b2c-4d5e-8f90-123456789abc'), /^[a-zA-Z0-9_-]{1,120}$/);
+  const abertas = new Set(['p1']);
+  const now = Date.now();
+  const load = async (kind, id) => { const pedido = pedidoDaOferta(id); return pedido && abertas.has(pedido) ? { status: 'pendente', expiraEmMs: now + FOOD_OFFER_MS, food: true } : null; };
+  const offers = await reconcileCallOffers([{ kind: 'deliveries', id: 'food-p1' }, { kind: 'deliveries', id: 'food-p2' }], { load, allowed: (kind, job) => job.food === true, now });
+  assert.deepEqual(offers.map((o) => o.id), ['food-p1'], 'pedido aceito por outro para de tocar');
 });
