@@ -12793,6 +12793,7 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
 
     const rideRef = db.collection('corridas').doc(req.params.rideId);
     let wrongDeliveryCode = false;
+    let attemptsUsed = 0;
     await db.runTransaction(async (tx) => {
       wrongDeliveryCode = false;
       const rideSnap = await tx.get(rideRef);
@@ -12821,20 +12822,17 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
         error.code = 'avise_o_cliente_antes_de_finalizar';
         throw error;
       }
-      if (ride.pagamento?.status !== 'approved' || ride.pagamento?.valido === false) {
-        const error = new Error('Pagamento ainda nao aprovado.');
-        error.status = 409;
-        error.code = 'pagamento_ainda_nao_aprovado';
-        throw error;
-      }
       if (ride.status === 'cancelada') {
         const error = new Error('Corrida cancelada.');
         error.status = 409;
         error.code = 'corrida_cancelada';
         throw error;
       }
+      // Entrega avulsa: o codigo de quem recebeu e conferido antes do pagamento, para o
+      // motoboy saber na hora se o codigo esta certo e o que ainda falta.
       if (isStandaloneDelivery(ride)) {
-        if (Number(ride.tentativasCodigoEntrega || 0) >= STANDALONE_DELIVERY_CODE_MAX_ATTEMPTS) {
+        attemptsUsed = Number(ride.tentativasCodigoEntrega || 0);
+        if (attemptsUsed >= STANDALONE_DELIVERY_CODE_MAX_ATTEMPTS) {
           const error = new Error('Codigo de entrega bloqueado por tentativas erradas. Fale com o suporte MotoJa.');
           error.status = 423;
           error.code = 'codigo_entrega_bloqueado';
@@ -12844,6 +12842,15 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
           wrongDeliveryCode = true;
           return;
         }
+      }
+      if (ride.pagamento?.status !== 'approved' || ride.pagamento?.valido === false) {
+        const error = new Error(isStandaloneDelivery(ride)
+          ? 'Codigo de entrega certo. Falta o pagamento: peca para quem pediu pagar pelo link do Mercado Pago ou pelo cartao salvo no app e toque em Finalizar de novo.'
+          : 'Pagamento ainda nao aprovado.');
+        error.status = 409;
+        error.code = 'pagamento_ainda_nao_aprovado';
+        error.codigoConferido = isStandaloneDelivery(ride) || undefined;
+        throw error;
       }
 
       const split = rideSplitAmounts(ride.pagamento?.total || ride.valor, ride.km, timestampMs(ride.criadaEm));
@@ -12871,9 +12878,13 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
         tentativasCodigoEntrega: admin.firestore.FieldValue.increment(1),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
+      const restantes = Math.max(0, STANDALONE_DELIVERY_CODE_MAX_ATTEMPTS - attemptsUsed - 1);
       return res.status(409).json({
         error: 'codigo_entrega_invalido',
-        message: 'Codigo de entrega incorreto. Peca o codigo de 4 numeros para quem recebeu a encomenda.'
+        tentativasRestantes: restantes,
+        message: restantes
+          ? `Codigo de entrega incorreto. Confira os 4 numeros com quem recebeu a encomenda (restam ${restantes} tentativa${restantes > 1 ? 's' : ''}).`
+          : 'Codigo de entrega incorreto. As tentativas acabaram: fale com o suporte MotoJa.'
       });
     }
 
@@ -14444,7 +14455,8 @@ app.use((error, _req, res, _next) => {
     error: error.code || 'internal_error',
     message: status >= 500 ? 'Erro interno. Tente novamente ou fale com o suporte.' : error.message,
     currentStatus: error.currentStatus || undefined,
-    motoboy: error.motoboy || undefined
+    motoboy: error.motoboy || undefined,
+    codigoConferido: error.codigoConferido || undefined
   });
 });
 
