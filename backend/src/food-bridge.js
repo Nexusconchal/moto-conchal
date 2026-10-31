@@ -6,7 +6,7 @@ import { timingSafeEqual } from 'node:crypto';
 // O app de corridas grava "engenheiro_coelho"; o Food usa "engenheiro-coelho".
 export const CIDADE_FOOD = { conchal: 'conchal', aguai: 'aguai', engenheiro_coelho: 'engenheiro-coelho' };
 const CIDADE_APP = Object.fromEntries(Object.entries(CIDADE_FOOD).map(([app, food]) => [food, app]));
-export const ACOES_FOOD = ['accept', 'pickup', 'deliver'];
+export const ACOES_FOOD = ['accept', 'pickup', 'arrived', 'deliver'];
 
 export function foodConfigurado(env = process.env) {
   return !!String(env.FOOD_URL || '').trim() && String(env.FOOD_PLATFORM_KEY || '').length >= 24;

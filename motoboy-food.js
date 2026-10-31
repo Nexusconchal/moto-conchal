@@ -9,6 +9,7 @@
   let entregas = [];
   let aviso = "";
   let acerto = null;
+  let gps = null;
   let acertoEm = 0;
   const ocupado = new Set();
   const $ = (id) => document.getElementById(id);
@@ -52,6 +53,9 @@
       .mf-acerto.recebe{background:rgba(53,201,121,.1);border-color:rgba(53,201,121,.35)}
       .mf-acerto b.v{font-size:1.1rem}
       .mf-acerto small{color:#c8cdd6}
+      .mf-gps{font-size:.78rem;color:#7ee2a8}
+      .mf-gps.off{color:#ffb27a}
+      .mf-chegou{padding:8px 10px;border-radius:10px;background:rgba(53,201,121,.12);color:#7ee2a8;font-weight:800;font-size:.85rem}
       .mf-pix{padding:8px 10px;border-radius:10px;background:#0c0f16;border:1px dashed #394150;overflow-wrap:anywhere}
       #foodPilula{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom));z-index:40;padding:11px 18px;border-radius:999px;border:0;background:#ff8a00;color:#111;font-weight:900;box-shadow:0 8px 24px rgba(0,0,0,.45);cursor:pointer}
       body:not([data-tela="inicio"]) #foodPilula{display:none}`;
@@ -110,6 +114,8 @@
     }
     return `<article class="mf-card mine">${topo}<div class="mf-linha"><b>2. Leve até o cliente</b></div>${cliente}${cobrar(e)}
       <div class="mf-acoes"><a href="${rota(e.dropGeo, endereco, e.city)}" target="_blank" rel="noopener">🗺️ Rota até o cliente</a>${c.phone ? `<a href="tel:${esc(c.phone)}">📞 Cliente</a>` : ""}</div>
+      <small class="mf-gps ${gps?.erro ? "off" : ""}">${gps?.erro ? "📍 " + esc(gps.erro) : gps?.enviadoEm ? "📍 O cliente vê você no mapa (atualizado " + new Date(gps.enviadoEm).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) + ")" : "📍 Ligando a localização para o cliente ver você no mapa…"}</small>
+      ${e.arrivedAt ? `<div class="mf-chegou">🛎️ Cliente avisado que você chegou (${new Date(e.arrivedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })})</div>` : `<div class="mf-acoes"><button type="button" data-mf-acao="arrived" data-mf-id="${id}" ${espera}>🛎️ Cheguei</button></div>`}
       ${e.hasCode ? `<div class="mf-linha">Peça ao cliente o <b>código de 4 dígitos</b> que aparece no pedido dele.</div><div class="mf-codigo"><input id="mf-codigo-${id}" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="0000" aria-label="Código do cliente"></div>` : ""}
       <div class="mf-acoes"><button type="button" class="mf-principal" data-mf-acao="deliver" data-mf-id="${id}" ${espera}>${e.toCollect ? "Recebi e entreguei" : "Entreguei"}</button></div></article>`;
   }
@@ -150,9 +156,43 @@
     render();
   }
 
+  // Enquanto o motoboy leva um pedido do Food, a posição vai para o mapa do cliente a cada 15 s.
+  function gpsSeguir() {
+    const ativa = entregas.find((e) => e.mine && e.status === "entrega");
+    if (!ativa) {
+      if (gps) { navigator.geolocation?.clearWatch(gps.watch); gps = null; }
+      return;
+    }
+    if (gps?.id === ativa.id) return;
+    if (gps) navigator.geolocation?.clearWatch(gps.watch);
+    if (!navigator.geolocation) { gps = { id: ativa.id, erro: "Este celular não libera a localização." }; return; }
+    const atual = { id: ativa.id, ultimo: 0, enviando: false, erro: "", enviadoEm: 0, watch: null };
+    gps = atual;
+    atual.watch = navigator.geolocation.watchPosition(async (pos) => {
+      if (gps !== atual || atual.enviando || Date.now() - atual.ultimo < 15000) return;
+      atual.enviando = true;
+      try {
+        await post(`/api/food/posicao/${encodeURIComponent(atual.id)}`, { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: Math.min(999, pos.coords.accuracy || 50), observedAt: pos.timestamp || Date.now() });
+        atual.ultimo = Date.now();
+        atual.enviadoEm = Date.now();
+        atual.erro = "";
+      } catch (_) {
+        atual.ultimo = Date.now();
+      } finally {
+        atual.enviando = false;
+        render();
+      }
+    }, () => {
+      if (gps !== atual) return;
+      atual.erro = "Localização desligada. Ligue o GPS e permita a localização para o cliente ver você no mapa.";
+      render();
+    }, { enableHighAccuracy: true, maximumAge: 10000, timeout: 30000 });
+  }
+
   function render() {
     const painel = $("foodEntregas");
     if (!painel) return;
+    gpsSeguir();
     const minhas = entregas.filter((e) => e.mine);
     const abertas = entregas.filter((e) => !e.mine);
     const acertoHtml = cartaoAcerto();

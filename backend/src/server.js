@@ -7500,6 +7500,21 @@ app.post('/api/food/deliveries/:orderId/:acao', createRideLimiter, async (req, r
   }
 });
 
+// GPS do motoboy durante a entrega do Food (a cada 15 s), para o mapa ao vivo do cliente.
+// Fica fora do limite de ações porque chega toda hora; o login do motoboy fica em cache.
+app.post('/api/food/posicao/:orderId', async (req, res, next) => {
+  try {
+    const { orderId } = req.params;
+    if (!/^[a-zA-Z0-9-]{1,64}$/.test(orderId)) return res.status(404).json({ error: 'nao_encontrado' });
+    const motoboy = await motoboyDoFood(req.body);
+    if (!foodConfigurado()) return res.status(503).json({ error: 'food_desligado' });
+    const { lat, lon, accuracy, observedAt } = req.body;
+    return res.json(await chamarFood(`deliveries/${orderId}/location`, { ...motoboy, lat, lon, accuracy, observedAt }));
+  } catch (error) {
+    return next(error);
+  }
+});
+
 // Acerto do Food: quanto o motoboy recebeu em dinheiro que é da loja e da MotoJÁ (ou o que a MotoJÁ deve a ele).
 app.post('/api/food/acerto', createRideLimiter, async (req, res, next) => {
   try {
