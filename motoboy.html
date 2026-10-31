@@ -1259,10 +1259,35 @@
         return firebaseModsPromise;
       }
       function ocultarBoot() {
+        window.__motojaEntrandoAuto = false;
         const b = document.getElementById("boot");
         if (b) b.classList.add("hide");
       }
-      setTimeout(ocultarBoot, 7000);
+      // Ja fez login neste celular: a tela de carregamento fica ate o painel abrir, sem
+      // mostrar o cadastro no meio (o servidor pode demorar alguns segundos para acordar).
+      function prepararBootEntrando() {
+        window.__motojaEntrandoAuto = true;
+        const texto = document.querySelector("#boot .boot-text");
+        if (texto) texto.textContent = "Entrando no seu painel...";
+        setTimeout(() => {
+          if (window.__motojaEntrandoAuto && texto) texto.textContent = "Conectando ao servidor, só mais um instante...";
+        }, 8000);
+        setTimeout(() => {
+          const card = document.querySelector("#boot .boot-card");
+          if (!window.__motojaEntrandoAuto || !card || card.querySelector("[data-boot-outra]")) return;
+          const botao = document.createElement("button");
+          botao.type = "button";
+          botao.dataset.bootOutra = "1";
+          botao.className = "secondary";
+          botao.style.marginTop = "14px";
+          botao.textContent = "Entrar com outra conta";
+          botao.onclick = ocultarBoot;
+          card.appendChild(botao);
+        }, 25000);
+      }
+      setTimeout(() => {
+        if (!window.__motojaEntrandoAuto) ocultarBoot();
+      }, 7000);
       const $ = (id) => document.getElementById(id),
         CONFIG = {
           backend: "https://motoboy-conchal.onrender.com",
@@ -3494,8 +3519,20 @@
       }
       $("btn-instalar").onclick = salvarNaTelaInicial;
       const motoboySalvo = carregarMotoboy();
+      const entrandoAutomatico = !!(
+        loginSalvoValido(motoboySalvo) &&
+        motoboySalvo.nome &&
+        motoboySalvo.cpf &&
+        motoboySalvo.cnh &&
+        motoboySalvo.telefone &&
+        motoboySalvo.motoModelo &&
+        motoboySalvo.motoAno &&
+        motoboySalvo.motoPlaca &&
+        motoboySalvo.crlvFoto
+      );
+      if (entrandoAutomatico) prepararBootEntrando();
       setTimeout(() => {
-        if (!$("login").classList.contains("hidden")) ocultarBoot();
+        if (!entrandoAutomatico && !$("login").classList.contains("hidden")) ocultarBoot();
       }, 450);
       $("limpar-dados").onclick = () => {
         localStorage.removeItem(MEMORIA_MOTOBOY);
@@ -3836,6 +3873,7 @@
                 "Nao consegui entrar automaticamente. Digite a senha novamente.",
             );
           });
+        else ocultarBoot();
       }
       // Login so com CPF: usa o cadastro salvo no servidor, sem enviar
       // nome/CNH/telefone que ficaram no formulario ou de outro motoboy
