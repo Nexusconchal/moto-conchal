@@ -7500,6 +7500,21 @@ app.post('/api/food/deliveries/:orderId/:acao', createRideLimiter, async (req, r
   }
 });
 
+// Acerto do Food: quanto o motoboy recebeu em dinheiro que é da loja e da MotoJÁ (ou o que a MotoJÁ deve a ele).
+app.post('/api/food/acerto', createRideLimiter, async (req, res, next) => {
+  try {
+    res.set('cache-control', 'no-store');
+    const motoboy = await motoboyDoFood(req.body);
+    if (!foodConfigurado()) return res.json({ configurado: false });
+    const corpo = req.body.acao === 'paguei'
+      ? { ...motoboy, action: 'paid', amount: Number(req.body.valor), note: String(req.body.obs || '').slice(0, 200) }
+      : motoboy;
+    return res.json({ configurado: true, ...(await chamarFood('settlement', corpo)) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 // O Food avisa que um pedido da frota MotoJÁ ficou pronto: push para quem está Disponível na cidade.
 app.post('/api/food/notify', async (req, res, next) => {
   try {

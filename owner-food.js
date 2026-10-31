@@ -16,7 +16,9 @@
   const STATUS = { novo: "🆕 Novo", preparo: "👨‍🍳 Preparando", pronto: "✅ Pronto", entrega: "🛵 Saiu para entrega", entregue: "📦 Entregue", cancelado: "✖ Cancelado" };
   const PAGAMENTO = { dinheiro: "Dinheiro", cartao: "Cartão", vale: "Vale" };
   const PROBLEMA = { atraso: "Atraso", item: "Problema no item", endereco: "Endereço", pagamento: "Pagamento", cliente_ausente: "Cliente ausente", outro: "Outro" };
-  const ABAS = [["resumo", "Resumo"], ["pedidos", "Pedidos"], ["empresas", "Empresas"], ["promocoes", "Promoções"], ["avisos", "Avisos"], ["equipe", "Equipe"], ["atendimento", "Atendimento"]];
+  const ABAS = [["resumo", "Resumo"], ["pedidos", "Pedidos"], ["empresas", "Empresas"], ["promocoes", "Promoções"], ["avisos", "Avisos"], ["acerto", "Acerto"], ["equipe", "Equipe"], ["atendimento", "Atendimento"]];
+  const PIX = { cpf: "CPF", cnpj: "CNPJ", email: "E-mail", telefone: "Celular", aleatoria: "Chave aleatória" };
+  const QUEM = { motoboy: "motoboy (dinheiro)", loja: "loja (maquininha/caixa)", motoja: "app" };
   const hojeSP = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
   const hora = (iso) => (iso ? new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "-");
   const local = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -85,6 +87,7 @@
       empresas: (estado?.empresas || []).filter((e) => !e.isDemo && e.approval === "pendente").length,
       atendimento: (estado?.incidents || []).filter((i) => i.status !== "resolvido").length,
       pedidos: (estado?.orders || []).filter((o) => ABERTOS.includes(o.status)).length,
+      acerto: (estado?.acerto?.pending || []).length,
     };
   }
 
@@ -108,12 +111,13 @@
   async function carregarEstado() {
     const st = await food("GET", "state");
     if (!st.configurado) return null;
-    const [emp, camp, avisos] = await Promise.all([
+    const [emp, acerto, camp, avisos] = await Promise.all([
       food("GET", "partner/stores"),
+      food("GET", "settlements").catch(() => ({ parties: [], pending: [] })),
       food("GET", "campaigns"),
       food("GET", "push/promos").catch(() => ({ promos: [] })),
     ]);
-    return { ...st, empresas: emp.stores || [], campanhas: camp.campaigns || [], promosEnviadas: avisos.promos || [] };
+    return { ...st, empresas: emp.stores || [], campanhas: camp.campaigns || [], promosEnviadas: avisos.promos || [], acerto };
   }
 
   async function carregar() {
@@ -293,12 +297,49 @@
       }).join("")}`;
   }
 
+  // Saldo de cada loja e motoboy com a MotoJá: quem recebeu do cliente fica com dinheiro dos outros.
+  function saldoTexto(p) {
+    if (Math.abs(p.balance) < 1) return '<span class="fd-tag verde">em dia</span>';
+    return p.balance < 0 ? `<span class="fd-tag vermelha">deve ${reais(-p.balance)} à MotoJá</span>` : `<span class="fd-tag amarela">MotoJá deve ${reais(p.balance)}</span>`;
+  }
+
+  function renderAcerto() {
+    const a = estado.acerto || { parties: [], pending: [] };
+    const pix = a.pix || {};
+    const receber = a.parties.filter((p) => p.balance < 0).reduce((s, p) => s - p.balance, 0);
+    const pagar = a.parties.filter((p) => p.balance > 0).reduce((s, p) => s + p.balance, 0);
+    return `<p class="muted">O cliente paga na entrega. Quando o motoboy MotoJá recebe em dinheiro, ele fica com a parte da loja e da MotoJá; quando a loja recebe na maquininha, ela fica com a parte do motoboy e da MotoJá. Aqui você vê quanto cada um deve passar para a MotoJá e quanto a MotoJá deve pagar a cada um.</p>
+      <div class="fd-nums">${card(reais(receber), "a receber de lojas e motoboys")}${card(reais(pagar), "a pagar para lojas e motoboys")}${card(a.pending.length, "pagamentos para conferir")}</div>
+      ${a.pending.length ? `<h3 class="fd-sub">Pagamentos informados: confira no banco</h3>${tabela(["Quem", "Valor", "Quando", "Observação", ""], a.pending.map((x) => `<tr><td><b>${esc(x.name)}</b><br><small>${x.type === "loja" ? "loja" : "motoboy"}</small></td><td>${reais(Math.abs(x.amount))}</td><td>${hora(x.createdAt)}</td><td>${esc(x.note || "-")}</td><td class="actions"><button type="button" data-fd-conferir="${esc(x.id)}" data-acao="confirmar">Caiu no banco</button><button type="button" class="perigo" data-fd-conferir="${esc(x.id)}" data-acao="recusar">Não caiu</button></td></tr>`))}` : ""}
+      <h3 class="fd-sub">Saldo de cada um</h3>
+      ${a.parties.length ? tabela(["Quem", "Últimos 30 dias", "Saldo", ""], a.parties.map((p) => `<tr><td><b>${esc(p.name)}</b><br><small>${p.type === "loja" ? "loja" : "motoboy"}</small></td><td>${p.orders30} pedidos<br><small>recebeu ${reais(p.collected30)} do cliente</small></td><td>${saldoTexto(p)}</td>
+          <td class="actions">${Math.abs(p.balance) >= 1 ? `<button type="button" data-fd-pagar="${esc(p.type)}|${esc(p.id)}|${p.balance}">${p.balance < 0 ? "Recebi" : "Paguei"}</button>` : ""}${p.type === "loja" ? `<button type="button" class="sec" data-fd-pix="${esc(p.id)}">Pix</button>` : ""}<button type="button" class="sec" data-fd-extrato="${esc(p.type)}|${esc(p.id)}">Pedidos</button></td></tr>`)) : vazio("Nenhum pedido entregue ainda. O acerto aparece quando as entregas começarem.")}
+      <div id="fdExtrato"></div>
+      <form id="fdPix" class="fd-form"><h3>Pix da MotoJá para o acerto</h3><p class="muted">Lojas e motoboys veem esta chave quando precisam passar dinheiro para a MotoJá.</p>
+        <div class="fd-linha"><label>Tipo<select name="keyType">${Object.entries(PIX).map(([k, n]) => `<option value="${k}" ${pix.keyType === k ? "selected" : ""}>${n}</option>`).join("")}</select></label><label>Chave<input name="key" required maxlength="140" value="${esc(pix.key || "")}"></label><label>Nome de quem recebe<input name="holder" required maxlength="80" value="${esc(pix.holder || "")}"></label></div>
+        <p class="fd-erro" role="alert"></p><button type="submit">Salvar Pix</button></form>`;
+  }
+
+  async function extrato(tipo, id) {
+    const box = $("fdExtrato");
+    box.innerHTML = '<div class="empty">Carregando…</div>';
+    const p = (estado.acerto?.parties || []).find((x) => x.type === tipo && x.id === id) || { name: "" };
+    try {
+      const d = await food("GET", `settlements/${tipo}/${encodeURIComponent(id)}`);
+      box.innerHTML = `<h3 class="fd-sub">Pedidos de ${esc(p.name)}</h3>${d.orders.length ? tabela(["Pedido", "Quem recebeu", "Total", tipo === "loja" ? "Parte da loja" : "Ganho do motoboy", "Acerto"], d.orders.map((o) => `<tr><td>#${esc(o.code)}<br><small>${hora(o.at)}${tipo === "motoboy" ? " • " + esc(o.storeName || "") : o.driver ? " • " + esc(o.driver) : ""}</small></td><td>${QUEM[o.collector] || ""}<br><small>${PAGAMENTO[o.payment] || ""}</small></td><td>${reais(o.total)}</td><td>${reais(o.share)}</td><td>${o.balance > 0 ? "MotoJá paga " + reais(o.balance) : o.balance < 0 ? "passa " + reais(-o.balance) : "-"}</td></tr>`)) : vazio("Sem pedidos.")}
+        ${d.payouts.length ? `<h3 class="fd-sub">Pagamentos</h3>${tabela(["Quando", "Quem pagou", "Valor", "Situação"], d.payouts.map((x) => `<tr><td>${hora(x.createdAt)}</td><td>${x.amount > 0 ? "MotoJá" : esc(p.name)}</td><td>${reais(Math.abs(x.amount))}</td><td>${x.status === "informado" ? "esperando conferir" : x.status === "recusado" ? "não caiu" : "confirmado"}${x.note ? `<br><small>${esc(x.note)}</small>` : ""}</td></tr>`))}` : ""}`;
+      box.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (error) {
+      box.innerHTML = `<div class="fd-erro">${esc(error.message)}</div>`;
+    }
+  }
+
   function render() {
     const box = $("foodResumo");
     if (!box || !estado) return;
     renderAbas();
     if (aba === "resumo") return;
-    const telas = { pedidos: renderPedidos, empresas: renderEmpresas, promocoes: renderPromocoes, avisos: renderAvisos, equipe: renderEquipe, atendimento: renderAtendimento };
+    const telas = { pedidos: renderPedidos, empresas: renderEmpresas, promocoes: renderPromocoes, avisos: renderAvisos, acerto: renderAcerto, equipe: renderEquipe, atendimento: renderAtendimento };
     box.innerHTML = telas[aba]();
     custoPromo();
   }
@@ -344,6 +385,18 @@
       }).catch((error) => aviso(error.message, true));
     }
     if (b.dataset.fdEncerrar && confirm("Encerrar esta promoção agora?")) acao(b, () => food("POST", `campaigns/${b.dataset.fdEncerrar}/stop`, {}), "Promoção encerrada.");
+    if (b.dataset.fdExtrato) { const [tipo, id] = b.dataset.fdExtrato.split("|"); extrato(tipo, id); }
+    if (b.dataset.fdConferir) acao(b, () => food("POST", `settlements/payments/${b.dataset.fdConferir}`, { action: b.dataset.acao }), b.dataset.acao === "confirmar" ? "Pagamento confirmado: já entrou no acerto." : "Pagamento marcado como não recebido.");
+    if (b.dataset.fdPagar) {
+      const [tipo, id, saldo] = b.dataset.fdPagar.split("|"), deve = Number(saldo) < 0;
+      const p = (estado.acerto?.parties || []).find((x) => x.type === tipo && x.id === id) || { name: "" };
+      const valor = prompt(deve ? `Quanto você recebeu de ${p.name}? (R$)` : `Quanto a MotoJá pagou para ${p.name}? (R$)`, (Math.abs(Number(saldo)) / 100).toFixed(2).replace(".", ","));
+      if (valor !== null) {
+        let centavosPagos = 0;
+        try { centavosPagos = centavos(valor); } catch (error) { aviso(error.message, true); return; }
+        acao(b, () => food("POST", "settlements/payments", { type: tipo, id, amount: centavosPagos, direction: deve ? "para_motoja" : "da_motoja", note: "registrado no painel do dono" }), "Pagamento registrado no acerto.");
+      }
+    }
     if (b.dataset.fdRemover && confirm("Tirar o acesso desta pessoa ao Food?")) acao(b, () => food("POST", `members/${b.dataset.fdRemover}`, {}), "Acesso retirado.");
   }
 
@@ -364,7 +417,7 @@
 
   async function enviar(e) {
     const f = e.target;
-    if (!["fdPromo", "fdAviso", "fdEquipe"].includes(f.id) && !f.dataset.fdChamado) return;
+    if (!["fdPromo", "fdAviso", "fdEquipe", "fdPix"].includes(f.id) && !f.dataset.fdChamado) return;
     e.preventDefault();
     const b = f.querySelector("[type=submit]");
     const erro = f.querySelector(".fd-erro");
@@ -391,6 +444,10 @@
       if (f.id === "fdAviso") {
         const r = await food("POST", "push/promo", { city: d.get("city"), title: d.get("title"), body: d.get("body") });
         aviso(r.configured === false ? "Aviso registrado, mas o envio para celulares ainda não está ligado no Food (falta FIREBASE_SERVICE_ACCOUNT_JSON)." : `Aviso enviado para ${r.sent} celulares.`);
+      }
+      if (f.id === "fdPix") {
+        await food("POST", "settlements/pix", { keyType: d.get("keyType"), key: d.get("key"), holder: d.get("holder") });
+        aviso("Pix da MotoJá salvo. Lojas e motoboys já veem esta chave no acerto.");
       }
       if (f.id === "fdEquipe") {
         await food("POST", "members", { email: d.get("email"), role: d.get("role"), store: d.get("store"), scope: d.get("scope") });

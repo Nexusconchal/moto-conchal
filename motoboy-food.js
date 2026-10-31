@@ -8,6 +8,8 @@
   let carregando = false;
   let entregas = [];
   let aviso = "";
+  let acerto = null;
+  let acertoEm = 0;
   const ocupado = new Set();
   const $ = (id) => document.getElementById(id);
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -46,6 +48,11 @@
       .mf-codigo input{flex:1;min-width:0;min-height:44px;padding:8px 12px;border-radius:12px;border:1px solid #394150;background:#0c0f16;color:#fff;font-size:1.3rem;letter-spacing:6px;text-align:center}
       .mf-aviso{padding:10px 12px;border-radius:12px;background:rgba(255,114,0,.14);color:#ffb27a;font-size:.85rem}
       .mf-vazio{color:#9aa3b2;font-size:.86rem;padding:4px 2px}
+      .mf-acerto{display:grid;gap:8px;padding:12px 14px;border-radius:14px;background:rgba(255,180,0,.1);border:1px solid rgba(255,180,0,.35);font-size:.88rem}
+      .mf-acerto.recebe{background:rgba(53,201,121,.1);border-color:rgba(53,201,121,.35)}
+      .mf-acerto b.v{font-size:1.1rem}
+      .mf-acerto small{color:#c8cdd6}
+      .mf-pix{padding:8px 10px;border-radius:10px;background:#0c0f16;border:1px dashed #394150;overflow-wrap:anywhere}
       #foodPilula{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom));z-index:40;padding:11px 18px;border-radius:999px;border:0;background:#ff8a00;color:#111;font-weight:900;box-shadow:0 8px 24px rgba(0,0,0,.45);cursor:pointer}
       body:not([data-tela="inicio"]) #foodPilula{display:none}`;
     document.head.appendChild(style);
@@ -61,7 +68,8 @@
     $("foodPilula").addEventListener("click", () => abrir());
     $("foodEntregas").addEventListener("click", (event) => {
       const botao = event.target.closest("[data-mf-acao]");
-      if (botao) agir(botao.dataset.mfId, botao.dataset.mfAcao, botao);
+      if (botao?.dataset.mfAcao === "paguei") pagueiAcerto();
+      else if (botao) agir(botao.dataset.mfId, botao.dataset.mfAcao, botao);
     });
     $("nav-servicos")?.addEventListener("click", () => carregar());
   }
@@ -106,17 +114,55 @@
       <div class="mf-acoes"><button type="button" class="mf-principal" data-mf-acao="deliver" data-mf-id="${id}" ${espera}>${e.toCollect ? "Recebi e entreguei" : "Entreguei"}</button></div></article>`;
   }
 
+  // Acerto: em dinheiro, a parte da loja e da MotoJá fica com o motoboy até ele passar por Pix.
+  function cartaoAcerto() {
+    if (!acerto || Math.abs(acerto.balance || 0) < 1) return "";
+    const pendente = (acerto.pending || []).reduce((s, p) => s - p.amount, 0);
+    if (acerto.balance > 0) return `<div class="mf-acerto recebe"><span>💰 A MotoJá vai te pagar <b class="v">${moeda(acerto.balance)}</b> das entregas do Food (quando a loja recebeu no cartão).</span></div>`;
+    const pix = acerto.pix;
+    return `<div class="mf-acerto"><span>💰 Acerto do Food: passe <b class="v">${moeda(-acerto.balance)}</b> para a MotoJá. É a parte da loja e do app nas entregas que você recebeu em dinheiro.</span>
+      ${pix ? `<div class="mf-pix">Pix da MotoJá: <b>${esc(pix.key)}</b><br><small>${esc(pix.holder)}</small></div>` : "<small>A MotoJá ainda vai informar a chave Pix.</small>"}
+      ${pendente ? `<small>Esperando a MotoJá conferir: ${moeda(pendente)}.</small>` : ""}
+      <div class="mf-acoes"><button type="button" data-mf-acao="paguei" data-mf-id="acerto">Já paguei</button></div></div>`;
+  }
+
+  async function carregarAcerto(forcar = false) {
+    if (!forcar && Date.now() - acertoEm < 120000) return;
+    acertoEm = Date.now();
+    try {
+      const d = await post("/api/food/acerto");
+      acerto = d.configurado ? d : null;
+    } catch (_) {}
+  }
+
+  async function pagueiAcerto() {
+    const sugerido = acerto && acerto.balance < 0 ? (-acerto.balance / 100).toFixed(2).replace(".", ",") : "";
+    const valor = prompt("Quanto você mandou por Pix para a MotoJá? (R$)", sugerido);
+    if (valor === null) return;
+    const t = String(valor).trim().replace(",", ".");
+    if (!/^\d+(\.\d{1,2})?$/.test(t)) { aviso = "Confira o valor, como 25,00."; render(); return; }
+    try {
+      acerto = { configurado: true, ...(await post("/api/food/acerto", { acao: "paguei", valor: Math.round(Number(t) * 100) })) };
+      aviso = "Pagamento informado. Ele entra no acerto quando a MotoJá conferir no banco.";
+    } catch (erro) {
+      aviso = erro.message;
+    }
+    render();
+  }
+
   function render() {
     const painel = $("foodEntregas");
     if (!painel) return;
     const minhas = entregas.filter((e) => e.mine);
     const abertas = entregas.filter((e) => !e.mine);
-    painel.hidden = !entregas.length && !aviso;
+    const acertoHtml = cartaoAcerto();
+    painel.hidden = !entregas.length && !aviso && !acertoHtml;
     // O código digitado não pode sumir quando a lista atualiza sozinha.
     const digitados = {};
     painel.querySelectorAll(".mf-codigo input").forEach((input) => { digitados[input.id] = input.value; });
     painel.innerHTML = `<div class="mf-head"><h3>🍔 Entregas MotoJÁ Food</h3><small>${abertas.length ? `${abertas.length} disponível${abertas.length > 1 ? "is" : ""}` : "atualiza sozinho"}</small></div>
       ${aviso ? `<div class="mf-aviso">${esc(aviso)}</div>` : ""}
+      ${acertoHtml}
       ${minhas.map(cartao).join("")}${abertas.map(cartao).join("")}
       ${!entregas.length ? '<p class="mf-vazio">Nenhuma entrega do Food agora.</p>' : ""}`;
     Object.entries(digitados).forEach(([id, valor]) => { if ($(id)) $(id).value = valor; });
@@ -143,7 +189,7 @@
     if (!options || carregando || document.hidden) return;
     carregando = true;
     try {
-      const dados = await post("/api/food/deliveries");
+      const [dados] = await Promise.all([post("/api/food/deliveries"), carregarAcerto()]);
       entregas = Array.isArray(dados.deliveries) ? dados.deliveries : [];
       aviso = "";
     } catch (erro) {
@@ -172,6 +218,7 @@
       const dados = await post(`/api/food/deliveries/${encodeURIComponent(id)}/${acao}`, extra);
       entregas = Array.isArray(dados.deliveries) ? dados.deliveries : [];
       aviso = "";
+      if (acao === "deliver") await carregarAcerto(true);
     } catch (erro) {
       aviso = erro.message;
       if (acao === "accept") carregar();
