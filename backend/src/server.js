@@ -35,6 +35,7 @@ import { createDriverSessions, driverSessionValid, legacyProofAllowed } from './
 import { createGeminiReceiptReader, createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
 import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
 import { buscarResumoFood } from './food-summary.js';
+import { ACOES_FOOD, avisoFood, chamarFood, chaveFoodConfere, foodConfigurado, motoboyParaFood, pushEntregaFood } from './food-bridge.js';
 
 const PORT = Number(process.env.PORT || 10000);
 const DRIVER_PERCENT = Number(process.env.DRIVER_PERCENT || 0.7);
@@ -7442,6 +7443,66 @@ app.get('/api/admin/food-summary', assertOwner, async (req, res, next) => {
     res.json(await buscarResumoFood({ dias: req.query.dias }));
   } catch (error) {
     next(error);
+  }
+});
+
+// Entregas do MotoJÁ Food no app do motoboy: a lista e as ações passam por aqui com o login dele.
+async function motoboyDoFood(body = {}) {
+  const cpf = onlyDigits(body.driverCpf);
+  if (cpf.length !== 11) {
+    const error = new Error('CPF do motoboy inválido.');
+    error.status = 400;
+    throw error;
+  }
+  const driver = await getDriverWithProof(cpf, body);
+  if (driver.status !== 'ativo') {
+    const error = new Error('Seu cadastro ainda não foi aprovado para pegar entregas.');
+    error.status = 403;
+    error.code = 'motoboy_nao_aprovado';
+    throw error;
+  }
+  return motoboyParaFood(cpf, driver, { cidade: canonicalRideCity(driver.cidadeGps, 'conchal'), recebeEntregas: driverServices(driver).entrega });
+}
+
+app.post('/api/food/deliveries', async (req, res, next) => {
+  try {
+    res.set('cache-control', 'no-store');
+    const motoboy = await motoboyDoFood(req.body);
+    if (!foodConfigurado()) return res.json({ configurado: false, deliveries: [] });
+    return res.json({ configurado: true, ...(await chamarFood('deliveries', motoboy)) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/food/deliveries/:orderId/:acao', createRideLimiter, async (req, res, next) => {
+  try {
+    const { orderId, acao } = req.params;
+    if (!ACOES_FOOD.includes(acao) || !/^[a-zA-Z0-9-]{1,64}$/.test(orderId)) return res.status(404).json({ error: 'nao_encontrado' });
+    const motoboy = await motoboyDoFood(req.body);
+    if (!foodConfigurado()) return res.status(503).json({ error: 'food_desligado', message: 'O MotoJÁ Food ainda não está ligado.' });
+    const corpo = { ...motoboy, code: String(req.body.code || '').slice(0, 8) };
+    return res.json({ configurado: true, ...(await chamarFood(`deliveries/${orderId}/${acao}`, corpo)) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// O Food avisa que um pedido da frota MotoJÁ ficou pronto: push para quem está Disponível na cidade.
+app.post('/api/food/notify', async (req, res, next) => {
+  try {
+    if (!chaveFoodConfere(req.get('x-motoja-key'))) return res.status(403).json({ error: 'chave_invalida' });
+    const aviso = avisoFood(req.body);
+    if (!aviso) return res.status(400).json({ error: 'aviso_invalido' });
+    const tokens = await availableDriverTokens((data) => driverWantsDeliveryIn(data, aviso.cidade));
+    const link = process.env.APP_BASE_URL ? appUrl('/motoboy.html?aba=food') : 'https://nexusmotoja.com.br/motoboy.html?aba=food';
+    let sent = 0;
+    for (let i = 0; i < tokens.length; i += 500) {
+      sent += (await admin.messaging().sendEachForMulticast(pushEntregaFood(aviso, tokens.slice(i, i + 500), link))).successCount;
+    }
+    return res.json({ ok: true, sent });
+  } catch (error) {
+    return next(error);
   }
 });
 

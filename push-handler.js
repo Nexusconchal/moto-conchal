@@ -1,7 +1,7 @@
 // Tratamento de push compartilhado pelo sw.js e pelo firebase-messaging-sw.js.
 // Os dois sao registrados no mesmo escopo e o ultimo registrado vence; com o
 // codigo aqui, o push funciona qualquer que seja o service worker ativo.
-var MOTOJA_OFERTAS = ['nova_corrida', 'nova_entrega', 'nova_corrida_carro'];
+var MOTOJA_OFERTAS = ['nova_corrida', 'nova_entrega', 'nova_corrida_carro', 'entrega_food'];
 
 function motojaPayload(event) {
   try {
@@ -14,6 +14,7 @@ function motojaPayload(event) {
 function motojaDestino(data) {
   if (data.tipo === 'cliente_lembrete') return './index.html';
   if (data.tipo === 'nova_entrega') return './motoboy.html?aba=entregas';
+  if (data.tipo === 'entrega_food') return './motoboy.html?aba=food';
   return './motoboy.html';
 }
 
@@ -26,7 +27,7 @@ self.addEventListener('push', function (event) {
   var notification = payload.notification || {};
   var data = payload.data || {};
   var oferta = MOTOJA_OFERTAS.indexOf(data.tipo) !== -1;
-  var ofertaId = data.rideId || data.deliveryId || '';
+  var ofertaId = data.rideId || data.deliveryId || data.foodOrderId || '';
   var title = notification.title || data.title || 'MotoJa Conchal';
   var options = {
     body: notification.body || data.body || 'A MotoJa esta online.',

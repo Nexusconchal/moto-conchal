@@ -1075,6 +1075,7 @@
     <script src="./motoboy-avisos.js?v=2"></script>
     <script src="./motoboy-nav.js?v=8" defer></script>
     <script src="./motoboy-home.js?v=4" defer></script>
+    <script src="./motoboy-food.js?v=1"></script>
     <script type="module">
       let cidadesAtivas = {
           conchal: true,
@@ -3459,6 +3460,8 @@
         setTimeout(() => { if (window.MotojaDriverAvailability?.canReceive()) confirmarCidadePeloGps({ silencioso: true }); }, 8000);
         iniciarPlanosMotoboy();
         window.MotojaDriverExtras?.start({ backend: CONFIG.backend, getProof: driverProof, cidade: () => Object.keys(cidadesAtivas || {}).find((c) => cidadesAtivas[c]) || "" });
+        // Entregas do MotoJÁ Food (cardápio) aparecem na tela Serviços.
+        window.MotoFood?.start({ backend: CONFIG.backend, getProof: driverProof });
         // No app da Play Store, o celular ja se cadastra para as chamadas ao entrar.
         ativarPushNativo(true);
         ocultarBoot();
