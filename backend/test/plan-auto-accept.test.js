@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createCallPushDispatcher } from '../src/driver-call-alerts.js';
 import { harness, companyId, driverCpf } from './financial-harness.js';
 
 const planDelivery = (extra = {}) => ({
@@ -81,6 +82,7 @@ test('app notification goes to every motoboy; the fixed one is told the delivery
   });
   const pushes = [];
   h.context.admin = { ...h.context.admin, messaging: () => ({ sendEachForMulticast: async (message) => { pushes.push(message); return { successCount: message.tokens.length, failureCount: 0 }; } }) };
+  h.context.callPush = createCallPushDispatcher({ send: message => h.context.admin.messaging().sendEachForMulticast(message) });
   h.context.appUrl = (path) => path;
   const telegramDms = [];
   h.context.telegramReadyDrivers = (docs) => docs;

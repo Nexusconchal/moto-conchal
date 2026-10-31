@@ -20,6 +20,7 @@
   }
   const box = () => document.getElementById('driver-availability');
   function render() {
+    window.dispatchEvent(new CustomEvent('motoja:availability-changed'));
     const root = box(); if (!root) return;
     root.hidden = stopped;
     root.dataset.state = state.connected && state.available ? 'available' : 'offline';
@@ -79,6 +80,7 @@
           apply(next, { save: next.preferenceMissing === false });
         }
       });
+      socket.on('call-alert:changed', detail => window.dispatchEvent(new CustomEvent('motoja:call-alert-changed', { detail })));
       socket.on('disconnect', () => { if (current !== generation || stopped) return; changing = false; state = { ...state, connected: false, available: false }; render(); options?.onChange?.(); });
       socket.on('connect_error', () => {
         if (current !== generation || stopped) return;
@@ -131,7 +133,8 @@
       connect(); timer = setInterval(heartbeat, 30000);
     },
     stop({ forgetPreference = false } = {}) { stopped = true; generation++; restorePending = false; if (forgetPreference) forget(); clearInterval(timer); socket?.disconnect(); socket = null; changing = false; state = { connected: false, desired: false, busy: false }; render(); },
-    canReceive() { return stopped ? null : state.connected && state.desired; }
+    canReceive() { return stopped ? null : state.connected && state.desired; },
+    canAlert() { return !stopped && state.desired && !state.busy; }
   };
   document.addEventListener('visibilitychange', () => {
     if (stopped) return;

@@ -1070,10 +1070,11 @@
         </nav>
       </section>
     </main>
-    <script src="./driver-availability.js?v=227"></script>
+    <script src="./driver-availability.js?v=call-alert-1"></script>
+    <script src="./motoboy-call-alerts.js?v=1"></script>
     <script src="./ride-chat.js?v=234"></script>
     <script src="./motoboy-avisos.js?v=2"></script>
-    <script src="./motoboy-nav.js?v=8" defer></script>
+    <script src="./motoboy-nav.js?v=call-alert-1" defer></script>
     <script src="./motoboy-home.js?v=4" defer></script>
     <script src="./motoboy-food.js?v=4"></script>
     <script type="module">
@@ -2729,7 +2730,6 @@
               : cardMinha(d.id, d.data);
           })
           .join("");
-        if (nova && audioLiberado) beep();
         if (!modoMinhas() && window.MotoNav && !window.MotoNav.aberto()) {
           const oferta = docs.find(
             (d) =>
@@ -3357,7 +3357,6 @@
           const nova = abertas.find((job) => !vistos.has(chave(job)) && !ofertasRecusadas.has(job.id) && !servicoExclusivo(job));
           if (nova && window.MotoNav && !window.MotoNav.aberto()) {
             vistos.add(chave(nova));
-            if (audioLiberado) beep();
             abrirOfertaMapa(nova, { alarme: true });
           }
         } finally {
@@ -3365,6 +3364,7 @@
         }
       }
       setInterval(procurarChamadas, 30000);
+      window.addEventListener('motoja:call-alert-changed', () => { procurarChamadas(); if (telaAtual === 'servicos') ouvir(true); });
       // O service worker avisa quando chega push de chamada: busca na hora,
       // sem esperar os 30 segundos.
       navigator.serviceWorker?.addEventListener("message", (event) => {
@@ -3422,7 +3422,7 @@
               const r = await fetch(`${CONFIG.backend}/api/drivers/${motoboyCpf}/push-token`, {
                 method: "POST",
                 headers: { "content-type": "application/json" },
-                body: JSON.stringify({ ...driverProof(), token: value, plataforma: "android_nativo", userAgent: navigator.userAgent }),
+                body: JSON.stringify({ ...driverProof(), token: value, plataforma: "android_nativo", callAlertVersion: Number(window.NexusNative?.callAlertVersion?.()) === 1 ? 1 : 0, userAgent: navigator.userAgent }),
               }).catch(() => null);
               if (avisarRegistroNativo) alert(r?.ok ? "Notificações ativadas neste celular." : "Não consegui salvar a notificação. Tente de novo.");
               avisarRegistroNativo = false;
@@ -3432,6 +3432,7 @@
             });
             // Tocou na notificacao: abre o app ja buscando a chamada.
             await push.addListener("pushNotificationActionPerformed", () => atualizarTrabalho());
+            await push.addListener("pushNotificationReceived", () => atualizarTrabalho());
           }
           await push.register();
         } catch (e) {
@@ -3688,6 +3689,7 @@
         salvarMotoboy(false);
         audioLiberado = true;
         beep();
+        window.MotojaCallAlerts?.start({ backend: CONFIG.backend, getProof: driverProof, canAlert: () => window.MotojaDriverAvailability?.canAlert() === true });
         $("login").classList.add("hidden");
         $("painel").classList.remove("hidden");
         $("online").textContent = "Online";
@@ -3757,6 +3759,7 @@
         const sair = $("sair-conta");
         if (sair)
           sair.onclick = () => {
+            window.MotojaCallAlerts?.stop();
             window.MotojaDriverAvailability?.stop();
             localStorage.removeItem(MEMORIA_MOTOBOY);
             location.reload();

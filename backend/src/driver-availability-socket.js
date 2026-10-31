@@ -62,6 +62,7 @@ export function attachDriverAvailability(io, presence, { verifyDriver, enabledCi
     handle('availability:set'); handle('availability:heartbeat');
     socket.on('disconnect', () => { presence.disconnect(cpf, socket.id); publish(cpf); });
   });
-  return { publish, publishAll() { for (const cpf of new Set([...namespace.sockets.values()].map(s => s.data.availabilityCpf))) publish(cpf); },
+  return { publish, offerChanged(kind, id, status) { namespace.emit('call-alert:changed', { kind, id, status }); },
+    publishAll() { for (const cpf of new Set([...namespace.sockets.values()].map(s => s.data.availabilityCpf))) publish(cpf); },
     revoke(cpf) { presence.remove(cpf); namespace.in(room(cpf)).disconnectSockets(true); } };
 }

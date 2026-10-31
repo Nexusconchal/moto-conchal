@@ -1,10 +1,10 @@
 // Alerta insistente das chamadas: depois do primeiro push, o servidor repete o
 // aviso (mesma notificacao, que toca e vibra de novo no celular) enquanto a
 // chamada continuar pendente. Para quando alguem aceita, quando ela sai de
-// pendente ou depois de maxRepeats repeticoes.
+// pendente. Um limite opcional serve apenas para integrações que o solicitarem.
 export function createOfferAlerts({
   intervalMs = 20000,
-  maxRepeats = 8,
+  maxRepeats = Infinity,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
   loadPending,
@@ -34,6 +34,7 @@ export function createOfferAlerts({
           stop(kind, id);
           return;
         }
+        if (active.get(key) !== current) return;
         await send(kind, id, job, current.count);
       } catch (error) {
         onError(error);
