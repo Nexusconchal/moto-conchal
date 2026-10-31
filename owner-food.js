@@ -14,7 +14,7 @@
   const CIDADES = { conchal: "Conchal", aguai: "Aguaí", "engenheiro-coelho": "Engenheiro Coelho" };
   const cidadeOpcoes = () => Object.entries(CIDADES).map(([id, nome]) => `<option value="${id}">${nome}</option>`).join("");
   const STATUS = { novo: "🆕 Novo", preparo: "👨‍🍳 Preparando", pronto: "✅ Pronto", entrega: "🛵 Saiu para entrega", entregue: "📦 Entregue", cancelado: "✖ Cancelado" };
-  const PAGAMENTO = { dinheiro: "Dinheiro", cartao: "Cartão", vale: "Vale" };
+  const PAGAMENTO = { dinheiro: "Dinheiro", cartao: "Cartão", vale: "Vale", app: "Cartão pelo app" };
   const PROBLEMA = { atraso: "Atraso", item: "Problema no item", endereco: "Endereço", pagamento: "Pagamento", cliente_ausente: "Cliente ausente", outro: "Outro" };
   const ABAS = [["resumo", "Resumo"], ["pedidos", "Pedidos"], ["empresas", "Empresas"], ["promocoes", "Promoções"], ["avisos", "Avisos"], ["acerto", "Acerto"], ["equipe", "Equipe"], ["atendimento", "Atendimento"]];
   const PIX = { cpf: "CPF", cnpj: "CNPJ", email: "E-mail", telefone: "Celular", aleatoria: "Chave aleatória" };
@@ -185,7 +185,7 @@
         return `<tr><td><b>#${esc(o.code)}</b>${o.isDemo ? " <small>teste</small>" : ""}</td><td>${esc(o.storeName || lojaNome(o.store))}<br><small>${whats(o.shopPhone)}</small></td>
           <td>${esc(o.profile?.name || "Cliente")}<br><small>${esc(o.profile?.district || "")}${whats(o.profile?.phone)}</small></td>
           <td>${STATUS[o.status] || esc(o.status)}${o.scheduledFor ? `<br><small>agendado ${hora(o.scheduledFor)}</small>` : ""}</td><td>${entrega}</td>
-          <td>${reais(o.total)}<br><small>${PAGAMENTO[o.payment] || esc(o.payment)}${o.paid ? " • pago" : ""}${o.campaign ? " • promoção" : ""}</small></td><td>${hora(o.created)}</td></tr>`;
+          <td>${reais(o.total)}<br><small>${PAGAMENTO[o.payment] || esc(o.payment)}${o.paid ? " • pago" : ""}${o.refund ? (o.refund.status === "erro" ? " • ⚠️ devolver no Mercado Pago" : " • devolvido") : ""}${o.campaign ? " • promoção" : ""}</small></td><td>${hora(o.created)}</td></tr>`;
       })) : vazio("Nenhum pedido aqui agora.")}`;
   }
 

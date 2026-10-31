@@ -35,7 +35,7 @@ import { createDriverSessions, driverSessionValid, legacyProofAllowed } from './
 import { createGeminiReceiptReader, createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
 import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
 import { buscarResumoFood } from './food-summary.js';
-import { ACOES_FOOD, avisoFood, chamarFood, chaveFoodConfere, foodConfigurado, motoboyParaFood, pushEntregaFood } from './food-bridge.js';
+import { ACOES_FOOD, avaliacaoFood, avisoFood, chamarFood, chaveFoodConfere, foodConfigurado, motoboyParaFood, pushEntregaFood } from './food-bridge.js';
 
 const PORT = Number(process.env.PORT || 10000);
 const DRIVER_PERCENT = Number(process.env.DRIVER_PERCENT || 0.7);
@@ -7525,6 +7525,33 @@ app.post('/api/food/acerto', createRideLimiter, async (req, res, next) => {
       ? { ...motoboy, action: 'paid', amount: Number(req.body.valor), note: String(req.body.obs || '').slice(0, 200) }
       : motoboy;
     return res.json({ configurado: true, ...(await chamarFood('settlement', corpo)) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// O cliente do Food avaliou o motoboy MotoJÁ: entra na mesma média e em "Minha avaliação" do app dele.
+app.post('/api/food/avaliacao', async (req, res, next) => {
+  try {
+    if (!chaveFoodConfere(req.get('x-motoja-key'))) return res.status(403).json({ error: 'chave_invalida' });
+    const a = avaliacaoFood(req.body);
+    if (!a) return res.status(400).json({ error: 'avaliacao_invalida' });
+    const driverRef = db.collection('motoboys').doc(a.cpf);
+    const id = `food-${a.orderId}`;
+    const criadoEmMs = Date.now();
+    const avaliacao = { nota: a.nota, tags: [], comentario: maskChatText(cleanText(a.comentario, 300)), criadoEmMs, origem: 'food' };
+    let nova = false;
+    await db.runTransaction(async (tx) => {
+      const [driverSnap, ja] = await Promise.all([tx.get(driverRef), tx.get(driverRef.collection('avaliacoes').doc(id))]);
+      if (!driverSnap.exists || ja.exists) return;
+      const inc = admin.firestore.FieldValue.increment;
+      tx.set(driverRef.collection('avaliacoes').doc(id), avaliacao);
+      tx.set(db.collection('avaliacoesMotoboy').doc(id), { ...avaliacao, rideId: id, motoboyCpf: a.cpf, motoboy: driverSnap.data()?.nome || '', clienteNome: 'Cliente MotoJÁ Food', cidadeOperacao: a.cidade, modalidade: 'food', loja: a.loja });
+      tx.set(driverRef, { notaSoma: inc(a.nota), notaQtd: inc(1), notaDist: { [a.nota]: inc(1) }, notaUltimaEmMs: criadoEmMs }, { merge: true });
+      nova = true;
+    });
+    if (nova) adminStateCache = null;
+    return res.json({ ok: true, nova });
   } catch (error) {
     return next(error);
   }

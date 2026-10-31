@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { avisoFood, chamarFood, chaveFoodConfere, foodConfigurado, motoboyParaFood, pushEntregaFood } from '../src/food-bridge.js';
+import { avaliacaoFood, avisoFood, chamarFood, chaveFoodConfere, foodConfigurado, motoboyParaFood, pushEntregaFood } from '../src/food-bridge.js';
 
 const CHAVE = 'chave-de-teste-da-plataforma-123456';
 const env = { FOOD_URL: 'https://food.example.com/', FOOD_PLATFORM_KEY: CHAVE };
@@ -41,4 +41,12 @@ test('ponte Food: aviso de pedido pronto confere a chave e não leva dados do cl
   assert.match(push.notification.body, /Burger • Centro • 3,4 km • você ganha R\$\s?6,00/);
   assert.equal(push.data.foodOrderId, 'abc-1');
   assert.deepEqual(push.tokens, ['t1']);
+});
+
+test('ponte Food: nota do motoboy confere CPF, nota de 1 a 5 e o pedido', () => {
+  assert.equal(avaliacaoFood({ cpf: '123', nota: 5, orderId: 'a1' }), null);
+  assert.equal(avaliacaoFood({ cpf: '52998224725', nota: 6, orderId: 'a1' }), null);
+  assert.equal(avaliacaoFood({ cpf: '52998224725', nota: 4, orderId: '../x' }), null);
+  const a = avaliacaoFood({ cpf: '529.982.247-25', nota: 4, orderId: 'abc-1', comentario: 'Rápido', loja: 'Burger', cidade: 'engenheiro-coelho' });
+  assert.deepEqual(a, { cpf: '52998224725', nota: 4, orderId: 'abc-1', comentario: 'Rápido', loja: 'Burger', cidade: 'engenheiro_coelho' });
 });

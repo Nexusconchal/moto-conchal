@@ -16,7 +16,7 @@
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const moeda = (centavos) => (Number(centavos || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   const CIDADES = { conchal: "Conchal", aguai: "Aguaí", "engenheiro-coelho": "Engenheiro Coelho" };
-  const PAGAMENTO = { dinheiro: "em dinheiro", cartao: "no cartão (maquininha da loja)", vale: "no vale-refeição (maquininha da loja)" };
+  const PAGAMENTO = { dinheiro: "em dinheiro", cartao: "no cartão (maquininha da loja)", vale: "no vale-refeição (maquininha da loja)", app: "" };
 
   function injectStyle() {
     if ($("motofood-style")) return;

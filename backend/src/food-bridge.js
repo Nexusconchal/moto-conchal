@@ -61,6 +61,15 @@ export function avisoFood(corpo = {}) {
   };
 }
 
+// Nota que o cliente do Food deu ao motoboy MotoJÁ. Devolve null se algo não confere.
+export function avaliacaoFood(corpo = {}) {
+  const cpf = String(corpo.cpf || '').replace(/\D/g, '');
+  const nota = Number(corpo.nota);
+  const orderId = String(corpo.orderId || '');
+  if (cpf.length !== 11 || !Number.isInteger(nota) || nota < 1 || nota > 5 || !/^[a-zA-Z0-9-]{1,64}$/.test(orderId)) return null;
+  return { cpf, nota, orderId, comentario: String(corpo.comentario || '').trim().slice(0, 300), loja: String(corpo.loja || '').slice(0, 60), cidade: CIDADE_APP[corpo.city || corpo.cidade] || '' };
+}
+
 export function pushEntregaFood(aviso, tokens, link) {
   const valor = (aviso.frete / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const onde = [aviso.bairro, aviso.km != null ? `${String(aviso.km).replace('.', ',')} km` : ''].filter(Boolean).join(' • ');
