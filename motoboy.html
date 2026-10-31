@@ -1093,11 +1093,14 @@
           aguai: value?.aguai === true,
           engenheiro_coelho: value?.engenheiro_coelho === true,
         };
-        if (!cidades.conchal && !cidades.aguai && !cidades.engenheiro_coelho) cidades.conchal = true;
+        // Sem informacao do servidor: Conchal. Tudo falso vindo do servidor = fora da area (ex.: Araras).
+        if (!value || typeof value !== "object") cidades.conchal = true;
         return cidades;
       }
       function nomesCidadesAtivas() {
-        return Object.keys(NOMES_CIDADES).filter((cidade) => cidadesAtivas[cidade]).map((cidade) => NOMES_CIDADES[cidade]).join(", ");
+        const nomes = Object.keys(NOMES_CIDADES).filter((cidade) => cidadesAtivas[cidade]).map((cidade) => NOMES_CIDADES[cidade]).join(", ");
+        // GPS fora de Conchal, Aguai e Eng. Coelho (ex.: Araras): nao recebe chamadas.
+        return nomes || "Fora da área atendida";
       }
       function montarSeletorCidades() {
         if (document.getElementById("cidadeCorridas")) return;
@@ -1149,6 +1152,20 @@
             body: JSON.stringify({ ...driverProof(), lat: coords.latitude, lon: coords.longitude }),
           });
           const d = await r.json().catch(() => ({}));
+          if (!r.ok && d.error === "fora_da_area") {
+            // Saiu da area atendida: para de mostrar e aceitar chamadas da cidade antiga.
+            const mudou = Object.values(cidadesAtivas).some(Boolean);
+            cidadesAtivas = { conchal: false, aguai: false, engenheiro_coelho: false };
+            cidadeGpsLabel = "Fora da área atendida";
+            cidadesCarregadasCpf = motoboyCpf;
+            renderCidadesAtivas();
+            if (mudou) {
+              limparCache();
+              ouvir(true);
+            }
+            if (!silencioso || mudou) alert(d.message || "Você está fora da área atendida.");
+            return false;
+          }
           if (!r.ok) {
             if (!silencioso) alert(d.message || "Não consegui confirmar a sua cidade. Tente de novo.");
             return false;
@@ -1579,6 +1596,28 @@
         }
         return btn;
       }
+      // Retirada pela tela do mapa: o card confirma no servidor (motoboy-tracking.js) e o
+      // mapa passa na hora para "Entregar pedido". Se a retirada ja tinha sido confirmada
+      // (botao do card "Pedido retirado"), so avanca, sem mostrar isso como erro.
+      function confirmarRetiradaPeloMapa(c) {
+        const seletor = `[data-confirmar-retirada="${c.id}"]`;
+        const jaRetirado = () => {
+          const btn = botaoDoCard(seletor);
+          return !!btn && btn.disabled && /retirad/i.test(btn.textContent || "");
+        };
+        const avancar = () => {
+          const atual = { ...jobAtualizado(c), status: "retirada" };
+          [...jobsCache.values()].forEach((lista) => (lista.jobs || []).forEach((j) => { if (j.id === c.id) j.status = "retirada"; }));
+          abrirNavegacaoServico(atual);
+          limparCache();
+          ouvir(true);
+        };
+        return async () => {
+          if (jaRetirado()) return avancar();
+          await acaoDoCard(c, seletor)();
+          if (jaRetirado() && window.MotoNav.idAtual() === c.id) avancar();
+        };
+      }
       function jobAtualizado(c) {
         return (
           [...jobsCache.values()]
@@ -1757,7 +1796,7 @@
                 principal: {
                   texto: "Confirmei a retirada",
                   textoCarregando: "Confirmando...",
-                  acao: acaoDoCard(c, `[data-confirmar-retirada="${c.id}"]`),
+                  acao: confirmarRetiradaPeloMapa(c),
                 },
               }
             : {

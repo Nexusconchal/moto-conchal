@@ -1292,6 +1292,8 @@ function rideCityLabel(value) {
 // O motoboy recebe corridas e entregas so da cidade onde o GPS dele esta, marcada ao
 // ficar Disponivel. Quem ainda nao mandou a localizacao fica em Conchal, o mercado original.
 function driverRideCities(driver = {}) {
+  // GPS fora das cidades atendidas (ex.: Araras): nao recebe chamada de nenhuma.
+  if (driver.cidadeGps === 'fora') return { conchal: false, aguai: false, engenheiro_coelho: false };
   const city = canonicalRideCity(driver.cidadeGps, 'conchal');
   return {
     conchal: city === 'conchal',
@@ -1342,6 +1344,8 @@ function coordinateDistanceKm(a, b) {
 
 // Raio da cidade atendida (zona urbana e sitios em volta) para dizer de onde a corrida e.
 const RIDE_CITY_LOCAL_KM = 12;
+// Ate onde o GPS do motoboy conta como "dentro" da cidade (zona urbana, sitios e distritos).
+const DRIVER_CITY_KM = 15;
 
 function servedCityWithin(point = {}, maxKm) {
   if (!Number.isFinite(point.lat) || !Number.isFinite(point.lon) || !point.lat || !point.lon) return '';
@@ -6420,9 +6424,18 @@ app.post('/api/drivers/:cpf/location-city', async (req, res, next) => {
     if (!Number.isFinite(point.lat) || !Number.isFinite(point.lon) || Math.abs(point.lat) > 90 || Math.abs(point.lon) > 180 || (!point.lat && !point.lon)) {
       return res.status(400).json({ error: 'localizacao_invalida', message: 'Nao recebi a sua localizacao. Libere o GPS e tente de novo.' });
     }
-    const city = cityForPoint(point);
+    // O motoboy precisa estar DENTRO de uma cidade atendida (nao so perto dela): de
+    // Araras, por exemplo, Eng. Coelho e a mais proxima, mas ele nao atende de la.
+    const city = coordinateDistanceKm(point, ESTIVA_GERBI_CENTER) <= 8 ? 'conchal' : servedCityWithin(point, DRIVER_CITY_KM);
     if (!city) {
-      return res.status(422).json({ error: 'fora_da_area', message: 'Voce esta fora da area atendida (Conchal, Aguai e Engenheiro Coelho). Fique Disponivel quando estiver em uma dessas cidades.' });
+      const nenhuma = { conchal: false, aguai: false, engenheiro_coelho: false };
+      await db.collection('motoboys').doc(driverCpf).set({
+        cidadeGps: 'fora', cidadeGpsEm: admin.firestore.FieldValue.serverTimestamp(), cidadesAtivas: nenhuma,
+        atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      driverProofCache.clear();
+      driverAvailability.cities(driverCpf, nenhuma);
+      return res.status(422).json({ error: 'fora_da_area', message: 'Você está fora da área atendida (Conchal, Aguaí e Engenheiro Coelho). As chamadas voltam quando você estiver em uma dessas cidades.' });
     }
     const cidadesAtivas = { conchal: city === 'conchal', aguai: city === 'aguai', engenheiro_coelho: city === 'engenheiro_coelho' };
     await db.collection('motoboys').doc(driverCpf).set({
