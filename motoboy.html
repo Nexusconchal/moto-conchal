@@ -1092,11 +1092,14 @@
           aguai: value?.aguai === true,
           engenheiro_coelho: value?.engenheiro_coelho === true,
         };
-        if (!cidades.conchal && !cidades.aguai && !cidades.engenheiro_coelho) cidades.conchal = true;
+        // Sem informacao do servidor: Conchal. Tudo falso vindo do servidor = fora da area (ex.: Araras).
+        if (!value || typeof value !== "object") cidades.conchal = true;
         return cidades;
       }
       function nomesCidadesAtivas() {
-        return Object.keys(NOMES_CIDADES).filter((cidade) => cidadesAtivas[cidade]).map((cidade) => NOMES_CIDADES[cidade]).join(", ");
+        const nomes = Object.keys(NOMES_CIDADES).filter((cidade) => cidadesAtivas[cidade]).map((cidade) => NOMES_CIDADES[cidade]).join(", ");
+        // GPS fora de Conchal, Aguai e Eng. Coelho (ex.: Araras): nao recebe chamadas.
+        return nomes || "Fora da área atendida";
       }
       function montarSeletorCidades() {
         if (document.getElementById("cidadeCorridas")) return;
@@ -1148,6 +1151,20 @@
             body: JSON.stringify({ ...driverProof(), lat: coords.latitude, lon: coords.longitude }),
           });
           const d = await r.json().catch(() => ({}));
+          if (!r.ok && d.error === "fora_da_area") {
+            // Saiu da area atendida: para de mostrar e aceitar chamadas da cidade antiga.
+            const mudou = Object.values(cidadesAtivas).some(Boolean);
+            cidadesAtivas = { conchal: false, aguai: false, engenheiro_coelho: false };
+            cidadeGpsLabel = "Fora da área atendida";
+            cidadesCarregadasCpf = motoboyCpf;
+            renderCidadesAtivas();
+            if (mudou) {
+              limparCache();
+              ouvir(true);
+            }
+            if (!silencioso || mudou) alert(d.message || "Você está fora da área atendida.");
+            return false;
+          }
           if (!r.ok) {
             if (!silencioso) alert(d.message || "Não consegui confirmar a sua cidade. Tente de novo.");
             return false;

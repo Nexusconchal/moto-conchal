@@ -51,3 +51,19 @@ test('a ride from outside the served cities goes to the motoboys of the destinat
   // Corrida que sai de dentro de Conchal continua em Conchal, mesmo indo para fora.
   assert.equal(ctx.inferNewRideOperatingCity({ origemLat: -22.335, origemLon: -47.17, destino: 'Uniararas, Araras' }), 'conchal');
 });
+
+test('a motoboy in Araras is outside the service area and gets no calls (not Eng. Coelho)', () => {
+  const ctx = vm.createContext({ streetNumber, normalizeText, Math, Number, Object });
+  vm.runInContext(backend.slice(backend.indexOf('const RIDE_CITY_CENTERS = {'), backend.indexOf('function normalizedPersonName(')), ctx);
+  vm.runInContext('this.DRIVER_CITY_KM = DRIVER_CITY_KM;', ctx);
+  const araras = { lat: -22.3570, lon: -47.3840 };
+  assert.equal(ctx.servedCityWithin(araras, ctx.DRIVER_CITY_KM), '', 'Araras nao e cidade atendida');
+  assert.equal(ctx.servedCityWithin({ lat: -22.48805, lon: -47.21572 }, ctx.DRIVER_CITY_KM), 'engenheiro_coelho');
+  assert.equal(ctx.servedCityWithin({ lat: -22.3308, lon: -47.1724 }, ctx.DRIVER_CITY_KM), 'conchal');
+  assert.deepEqual({ ...ctx.driverRideCities({ cidadeGps: 'fora' }) }, { conchal: false, aguai: false, engenheiro_coelho: false });
+  assert.equal(ctx.driverRideCities({}).conchal, true, 'quem ainda nao mandou o GPS continua em Conchal');
+  // Fora da area: o servidor grava 'fora' e apaga a cidade antiga.
+  const rota = backend.slice(backend.indexOf("app.post('/api/drivers/:cpf/location-city'"), backend.indexOf("app.post('/api/drivers/:cpf/earnings/summary'"));
+  assert.match(rota, /cidadeGps: 'fora'/);
+  assert.match(rota, /servedCityWithin\(point, DRIVER_CITY_KM\)/);
+});
