@@ -124,7 +124,7 @@
   function cartaoAcerto() {
     if (!acerto || Math.abs(acerto.balance || 0) < 1) return "";
     const pendente = (acerto.pending || []).reduce((s, p) => s - p.amount, 0);
-    if (acerto.balance > 0) return `<div class="mf-acerto recebe"><span>💰 A MotoJá vai te pagar <b class="v">${moeda(acerto.balance)}</b> das entregas do Food (quando a loja recebeu no cartão).</span></div>`;
+    if (acerto.balance > 0) return `<div class="mf-acerto recebe"><span>💰 A MotoJá vai te pagar <b class="v">${moeda(acerto.balance)}</b> das suas entregas do Food (pedidos pagos pelo app ou na maquininha da loja).</span></div>`;
     const pix = acerto.pix;
     return `<div class="mf-acerto"><span>💰 Acerto do Food: passe <b class="v">${moeda(-acerto.balance)}</b> para a MotoJá. É a parte da loja e do app nas entregas que você recebeu em dinheiro.</span>
       ${pix ? `<div class="mf-pix">Pix da MotoJá: <b>${esc(pix.key)}</b><br><small>${esc(pix.holder)}</small></div>` : "<small>A MotoJá ainda vai informar a chave Pix.</small>"}

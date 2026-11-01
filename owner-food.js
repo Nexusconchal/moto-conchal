@@ -309,7 +309,7 @@
     const pix = a.pix || {};
     const receber = a.parties.filter((p) => p.balance < 0).reduce((s, p) => s - p.balance, 0);
     const pagar = a.parties.filter((p) => p.balance > 0).reduce((s, p) => s + p.balance, 0);
-    return `<p class="muted">O cliente paga na entrega. Quando o motoboy MotoJá recebe em dinheiro, ele fica com a parte da loja e da MotoJá; quando a loja recebe na maquininha, ela fica com a parte do motoboy e da MotoJá. Aqui você vê quanto cada um deve passar para a MotoJá e quanto a MotoJá deve pagar a cada um.</p>
+    return `<p class="muted">Quando o cliente paga pelo app (cartão ou Pix), o dinheiro cai na conta da MotoJá e você paga a loja e o motoboy. Quando paga na entrega, quem recebe fica com a parte dos outros: o motoboy MotoJá no dinheiro, a loja na maquininha. Aqui você vê quanto cada um deve passar para a MotoJá e quanto a MotoJá deve pagar a cada um.</p>
       <div class="fd-nums">${card(reais(receber), "a receber de lojas e motoboys")}${card(reais(pagar), "a pagar para lojas e motoboys")}${card(a.pending.length, "pagamentos para conferir")}</div>
       ${a.pending.length ? `<h3 class="fd-sub">Pagamentos informados: confira no banco</h3>${tabela(["Quem", "Valor", "Quando", "Observação", ""], a.pending.map((x) => `<tr><td><b>${esc(x.name)}</b><br><small>${x.type === "loja" ? "loja" : "motoboy"}</small></td><td>${reais(Math.abs(x.amount))}</td><td>${hora(x.createdAt)}</td><td>${esc(x.note || "-")}</td><td class="actions"><button type="button" data-fd-conferir="${esc(x.id)}" data-acao="confirmar">Caiu no banco</button><button type="button" class="perigo" data-fd-conferir="${esc(x.id)}" data-acao="recusar">Não caiu</button></td></tr>`))}` : ""}
       <h3 class="fd-sub">Saldo de cada um</h3>
