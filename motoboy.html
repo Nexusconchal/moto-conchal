@@ -1483,6 +1483,34 @@
         return Number(km) > 0 ? `${Number(km).toFixed(1).replace(".", ",")} km` : "-";
       }
       // Fecha a notificacao do celular de uma chamada (ou de todas que ja sairam).
+      // Chamada que outro motoboy aceitou (ou que foi cancelada/expirou): some na hora da
+      // tela do mapa, da lista e das notificacoes, para ninguem tentar pegar a mesma.
+      const aceitosPorMim = new Set(),
+        aceitandoAgora = new Set();
+      function removerOfertaEncerrada(id, aviso = "") {
+        // Quem esta aceitando (ou aceitou) nao perde a tela: o aviso "encerrada" e dele mesmo.
+        if (!id || aceitosPorMim.has(id) || aceitandoAgora.has(id)) return;
+        ofertasRecusadas.add(id);
+        fecharNotificacoesOferta((x) => x !== id);
+        let estavaVendo = false;
+        if (window.MotoNav?.modo?.() === "oferta" && window.MotoNav.idAtual() === id) {
+          window.MotoNav.fechar();
+          estavaVendo = true;
+        }
+        $("lista")?.querySelectorAll(`[data-aceitar="${CSS.escape(id)}"]`).forEach((botao) => {
+          if (botao.closest("article")) estavaVendo = true;
+          botao.closest("article")?.remove();
+        });
+        [...jobsCache.values()].forEach((lista) => { if (Array.isArray(lista.jobs)) lista.jobs = lista.jobs.filter((j) => j.id !== id || j.status !== "pendente"); });
+        if (aviso && estavaVendo) {
+          const t = document.createElement("div");
+          t.setAttribute("role", "status");
+          t.style.cssText = "position:fixed;left:12px;right:12px;top:12px;z-index:20060;padding:13px 16px;border-radius:14px;background:#2a2f3c;border:1px solid rgba(255,154,0,.5);color:#fff;font-weight:800;text-align:center;box-shadow:0 12px 30px rgba(0,0,0,.45);font-family:inherit";
+          t.textContent = `🏍️ ${aviso}`;
+          document.body.appendChild(t);
+          setTimeout(() => t.remove(), 5000);
+        }
+      }
       function fecharNotificacoesOferta(manter) {
         navigator.serviceWorker?.getRegistration?.()
           .then((reg) => reg?.getNotifications?.())
@@ -2706,16 +2734,23 @@
         if (window.MotojaDriverAvailability?.canReceive() === false) throw new Error('Toque em Ficar disponível no Início e espere conectar antes de aceitar um novo serviço.');
         const kind = recursoAtual();
         pedirGpsNoToque();
-        const r = await fetchMotoboyComRetry(
-          `${CONFIG.backend}/api/${kind}/${id}/accept`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(driverProof()),
-          },
-          20000,
-        );
-        const d = await r.json().catch(() => ({}));
+        aceitandoAgora.add(id);
+        let r, d;
+        try {
+          r = await fetchMotoboyComRetry(
+            `${CONFIG.backend}/api/${kind}/${id}/accept`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(driverProof()),
+            },
+            20000,
+          );
+          d = await r.json().catch(() => ({}));
+          if (r.ok) aceitosPorMim.add(id);
+        } finally {
+          aceitandoAgora.delete(id);
+        }
         if (!r.ok) {
           if (r.status === 409) {
             const confirmacao = await fetchMotoboyComRetry(
@@ -2739,9 +2774,13 @@
               Array.isArray(confirmado.jobs) &&
               confirmado.jobs.some((job) => job.id === id)
             ) {
+              aceitosPorMim.add(id);
               iniciarGpsDoAceite(kind, id);
               return { ok: true, alreadyAccepted: true };
             }
+            // Outro motoboy aceitou antes: a oferta some daqui na hora.
+            removerOfertaEncerrada(id, `Outro motoboy pegou esta ${nomeServico()} primeiro.`);
+            throw new Error(`Outro motoboy pegou esta ${nomeServico()} primeiro.`);
           }
           throw new Error(
             d.message ||
@@ -2749,6 +2788,7 @@
               `Nao consegui aceitar essa ${nomeServico()} pelo servidor.`,
           );
         }
+        aceitosPorMim.add(id);
         iniciarGpsDoAceite(kind, id);
         return d;
       }
@@ -3396,13 +3436,19 @@
                 1,
               ).catch(() => null);
               const d = r ? await r.json().catch(() => ({})) : {};
-              if (!r?.ok || !Array.isArray(d.jobs)) return [];
+              if (!r?.ok || !Array.isArray(d.jobs)) return null;
               return d.jobs
                 .map((job) => ({ ...job, __kind: kind }))
                 .filter((job) => job.status === "pendente" && !expirada(job));
             }),
           );
-          const abertas = listas.flat();
+          const abertas = listas.filter(Boolean).flat();
+          // Oferta aberta no mapa que nao esta mais nas chamadas abertas (outro pegou,
+          // cancelou ou expirou): fecha, mesmo se o aviso em tempo real nao chegou.
+          if (listas.every(Array.isArray) && window.MotoNav?.modo?.() === "oferta") {
+            const idOferta = window.MotoNav.idAtual();
+            if (idOferta && !abertas.some((job) => job.id === idOferta)) removerOfertaEncerrada(idOferta, "Esta chamada não está mais disponível: outro motoboy pegou ou ela foi cancelada.");
+          }
           atualizarContaAbertas(abertas.length);
           const idsAbertos = new Set(abertas.map((job) => job.id));
           fecharNotificacoesOferta((id) => idsAbertos.has(id));
@@ -3419,7 +3465,14 @@
         }
       }
       setInterval(procurarChamadas, 30000);
-      window.addEventListener('motoja:call-alert-changed', () => { procurarChamadas(); if (telaAtual === 'servicos') ouvir(true); });
+      // Com uma oferta aberta no mapa, confere mais rapido se ela continua disponivel.
+      setInterval(() => { if (window.MotoNav?.modo?.() === "oferta") procurarChamadas(); }, 6000);
+      window.addEventListener('motoja:call-alert-changed', (event) => {
+        const { id, status } = event.detail || {};
+        if (status === 'encerrada') removerOfertaEncerrada(id, 'Esta chamada não está mais disponível: outro motoboy pegou ou ela foi cancelada.');
+        procurarChamadas();
+        if (telaAtual === 'servicos') ouvir(true);
+      });
       // O service worker avisa quando chega push de chamada: busca na hora,
       // sem esperar os 30 segundos.
       navigator.serviceWorker?.addEventListener("message", (event) => {
