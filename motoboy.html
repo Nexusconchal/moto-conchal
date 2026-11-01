@@ -1804,7 +1804,7 @@
           if (window.MotoNav.idAtual() === job.id) window.MotoNav.fechar();
         }
         limparCache();
-        await ouvir(true);
+        await ouvir();
         if (window.MotoNav.idAtual() === job.id) abrirNavegacaoServico(jobAtualizado(job));
       }
       function abrirNavegacaoServico(c) {
