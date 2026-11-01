@@ -36,7 +36,7 @@ function harness({ cached = true, cardPresent = true } = {}) {
     escSeguro: value => String(value || ''), etapaServico: () => 'levar', pontosServico: () => ({ coleta: {}, destino: {} }),
     recursoAtual: () => 'rides', nomeServico: () => 'corrida', atualizarAbas() {}, tempoAvisoRestante: () => '', chegadaLocal: () => 0,
     fotoClienteSegura: () => '', chatNaoLido: () => false, lerNavAtiva: () => active, salvarNavAtiva: value => active = value,
-    limparCache: () => jobsCache.clear(), ouvir: async () => {}, chaveLista: () => 'rides:mine', sincronizarTelaMapa() {},
+    limparCache: () => jobsCache.clear(), ouvir: async (silencioso = false) => { nav.forceRefresh = !silencioso; }, chaveLista: () => 'rides:mine', sincronizarTelaMapa() {},
     avisarPagamentoDinheiro: async () => ({ aguardandoDono: true }), alert: message => alerts.push(message), confirm: () => true,
     window: { MotoNav: { idAtual: () => nav.closed ? '' : job.id, fechar: () => nav.closed = true,
       abrirNavegacao: config => { nav.config = config; }, ocupado: () => false } }
@@ -101,6 +101,7 @@ test('GPS closes only after the entered code has been accepted by the server', a
   const dialog = h.dialogs[0]; dialog.querySelector('[data-codigo]').value = '4821';
   await dialog.querySelector('[data-confirmar]').click(); await waiting;
   assert.equal(h.nav.closed, true); assert.equal(h.context.lerNavAtiva(), null);
+  assert.equal(h.nav.forceRefresh, true, 'Uma atualização anterior não pode repor o card já finalizado.');
   assert.equal(h.requests[0][0], 'https://fixture.invalid/api/rides/delivery-test/finish');
   assert.equal(JSON.parse(h.requests[0][1].body).codigoEntrega, '4821');
 });
