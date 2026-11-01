@@ -1628,12 +1628,21 @@
       // Tela para digitar o codigo de 4 numeros da entrega avulsa (no lugar do prompt do
       // navegador, que dentro do app instalado as vezes nem aparece). enviar(codigo) finaliza
       // no servidor; erro (codigo errado, pagamento pendente) aparece na propria tela.
+      let codigoEntregaDialogo = null;
       function pedirCodigoEntrega(job, enviar) {
-        return new Promise((resolve) => {
+        if (codigoEntregaDialogo) {
+          if (codigoEntregaDialogo.id !== job.id)
+            return Promise.reject(new Error("Conclua ou feche o código da outra entrega primeiro."));
+          codigoEntregaDialogo.campo.focus({ preventScroll: true });
+          return codigoEntregaDialogo.promise;
+        }
+        const dialogo = { id: job.id, campo: null, promise: null };
+        codigoEntregaDialogo = dialogo;
+        dialogo.promise = new Promise((resolve) => {
           const back = document.createElement("div");
           back.className = "mj-codigo-back";
-          back.style.cssText = "position:fixed;inset:0;z-index:20000;background:rgba(0,0,0,.7);display:flex;align-items:flex-end;justify-content:center";
-          back.innerHTML = `<div role="dialog" aria-modal="true" aria-label="Código de entrega" style="width:min(480px,100%);background:#11151f;color:#f3f5f8;border-radius:20px 20px 0 0;border:1px solid rgba(255,154,0,.4);padding:20px 18px 24px;display:grid;gap:12px;font-family:inherit;text-align:center">
+          back.style.cssText = "position:fixed;inset:0;z-index:20000;background:rgba(0,0,0,.7);display:flex;align-items:flex-end;justify-content:center;box-sizing:border-box;padding-top:max(12px,env(safe-area-inset-top))";
+          back.innerHTML = `<div role="dialog" aria-modal="true" aria-label="Código de entrega" style="width:min(480px,100%);max-height:100%;overflow-y:auto;box-sizing:border-box;background:#11151f;color:#f3f5f8;border-radius:20px 20px 0 0;border:1px solid rgba(255,154,0,.4);padding:20px 18px 24px;display:grid;gap:12px;font-family:inherit;text-align:center">
             <div style="font-size:2rem">📦</div>
             <strong style="font-size:1.15rem">Digite o código de entrega</strong>
             <span style="color:#aeb4c3;font-size:.9rem;line-height:1.35">Peça os 4 números para ${escSeguro(job.nomeRecebedor || "quem recebeu a encomenda")}. Só entregue com o código certo.</span>
@@ -1645,9 +1654,13 @@
           </div>`;
           document.body.appendChild(back);
           const campo = back.querySelector("[data-codigo]");
+          dialogo.campo = campo;
           const erro = back.querySelector("[data-erro]");
           const confirmar = back.querySelector("[data-confirmar]");
-          const fim = (valor) => { back.remove(); resolve(valor); };
+          const fim = (valor) => {
+            if (codigoEntregaDialogo !== dialogo) return;
+            codigoEntregaDialogo = null; back.remove(); resolve(valor);
+          };
           campo.addEventListener("input", () => { campo.value = campo.value.replace(/\D/g, "").slice(0, 4); erro.hidden = true; });
           campo.addEventListener("keydown", (e) => { if (e.key === "Enter") confirmar.click(); });
           back.querySelector("[data-voltar]").onclick = () => fim(null);
@@ -1680,8 +1693,10 @@
               botao.textContent = "💵 Cliente pagou em dinheiro";
             }
           };
-          setTimeout(() => campo.focus(), 80);
+          // No mesmo toque: o WebView pode bloquear o teclado se o foco vier de um timer.
+          campo.focus({ preventScroll: true });
         });
+        return dialogo.promise;
       }
       // Cliente pagou em dinheiro (ou Pix direto): avisa o suporte; o dono confere e finaliza.
       async function avisarPagamentoDinheiro(rideId, codigoEntrega = "") {
@@ -1761,6 +1776,36 @@
           if (lista) sincronizarTelaMapa(lista.jobs.map((j) => ({ id: j.id, data: j })), true);
           else abrirNavegacaoServico(jobAtualizado(c));
         };
+      }
+      function confirmarCodigoEntregaAvulsa(job) {
+        return pedirCodigoEntrega(job, async (codigo) => {
+          const resposta = await fetch(`${CONFIG.backend}/api/rides/${encodeURIComponent(job.id)}/finish`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ...driverProof(), codigoEntrega: codigo }),
+          });
+          const dados = await resposta.json().catch(() => ({}));
+          if (!resposta.ok) throw Object.assign(new Error(dados.message || "Não consegui finalizar pelo servidor."), { code: dados.error });
+          return dados;
+        });
+      }
+      async function finalizarEntregaAvulsaNoMapa(c) {
+        // O GPS já tem a entrega: não espere o card nem a atualização da lista para pedir o código.
+        const job = jobAtualizado(c);
+        const resultado = await confirmarCodigoEntregaAvulsa(job);
+        if (!resultado) {
+          if (window.MotoNav.idAtual() === job.id) abrirNavegacaoServico(jobAtualizado(job));
+          return;
+        }
+        if (resultado.aguardandoDono) {
+          alert(resultado.message || "Avisamos o suporte. O dono confere e finaliza.");
+        } else {
+          if (lerNavAtiva()?.id === job.id) salvarNavAtiva(null);
+          if (window.MotoNav.idAtual() === job.id) window.MotoNav.fechar();
+        }
+        limparCache();
+        await ouvir(true);
+        if (window.MotoNav.idAtual() === job.id) abrirNavegacaoServico(jobAtualizado(job));
       }
       function abrirNavegacaoServico(c) {
         if (!window.MotoNav || !c?.id || servicoExclusivo(c)) return false;
@@ -1878,10 +1923,10 @@
                     },
                   }
                 : {
-                    texto: textoFinalizar || "Finalizar corrida",
-                    textoCarregando: "Finalizando...",
+                    texto: avulsa ? "Digitar código de entrega" : textoFinalizar || "Finalizar corrida",
+                    textoCarregando: avulsa ? "Aguardando o código..." : "Finalizando...",
                     cor: "verde",
-                    acao: acaoDoCard(c, finalizarSel, confirmarFinalizar),
+                    acao: avulsa ? () => finalizarEntregaAvulsaNoMapa(c) : acaoDoCard(c, finalizarSel, confirmarFinalizar),
                   },
           };
         }
@@ -3045,10 +3090,7 @@
               btn.disabled = true;
               btn.textContent = "Finalizando...";
               try {
-                const job =
-                  [...jobsCache.values()]
-                    .flatMap((x) => x.jobs || [])
-                    .find((j) => j.id === btn.dataset.finalizar) || {};
+                const job = jobPorId(btn.dataset.finalizar) || {};
                 let extra = {};
                 if (job.entregaNaNota === true) {
                   if (!confirm(`Você concluiu TODAS as ${job.paradas || 1} entregas deste lote? Finalize somente após entregar todos os pedidos das notas.`)) {
@@ -3062,16 +3104,7 @@
                 if (entregaAvulsa(job)) {
                   // Entrega avulsa: primeiro o codigo de quem recebeu; a tela so fecha
                   // quando o servidor finaliza (codigo errado ou pagamento pendente aparecem nela).
-                  finalizadoPeloCodigo = await pedirCodigoEntrega(job, async (codigo) => {
-                    const resposta = await fetch(`${CONFIG.backend}/api/rides/${encodeURIComponent(btn.dataset.finalizar)}/finish`, {
-                      method: "POST",
-                      headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ ...driverProof(), codigoEntrega: codigo }),
-                    });
-                    const dados = await resposta.json().catch(() => ({}));
-                    if (!resposta.ok) throw Object.assign(new Error(dados.message || "Não consegui finalizar pelo servidor."), { code: dados.error });
-                    return dados;
-                  });
+                  finalizadoPeloCodigo = await confirmarCodigoEntregaAvulsa(job);
                   if (!finalizadoPeloCodigo) {
                     btn.disabled = false;
                     btn.textContent = "Finalizar entrega com codigo";
