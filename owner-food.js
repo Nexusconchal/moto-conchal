@@ -18,7 +18,7 @@
   const PROBLEMA = { atraso: "Atraso", item: "Problema no item", endereco: "Endereço", pagamento: "Pagamento", cliente_ausente: "Cliente ausente", outro: "Outro" };
   const ABAS = [["resumo", "Resumo"], ["pedidos", "Pedidos"], ["empresas", "Empresas"], ["promocoes", "Promoções"], ["avisos", "Avisos"], ["acerto", "Acerto"], ["equipe", "Equipe"], ["atendimento", "Atendimento"]];
   const PIX = { cpf: "CPF", cnpj: "CNPJ", email: "E-mail", telefone: "Celular", aleatoria: "Chave aleatória" };
-  const QUEM = { motoboy: "motoboy (dinheiro)", loja: "loja (maquininha/caixa)", motoja: "app" };
+  const QUEM = { motoboy: "motoboy (dinheiro)", loja: "loja (maquininha/caixa)", motoja: "app", loja_mp: "Pix direto na conta da loja" };
   const hojeSP = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
   const hora = (iso) => (iso ? new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "-");
   const local = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -54,7 +54,10 @@
       #food-section td small{color:#aeb4c3}
       #food-section td a{color:#ffb02e}
       #food-section td button.sec{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14)}
-      #food-section td button.perigo{background:rgba(255,82,82,.16);border:1px solid rgba(255,82,82,.4);color:#ffb4ab}`;
+      #food-section td button.perigo{background:rgba(255,82,82,.16);border:1px solid rgba(255,82,82,.4);color:#ffb4ab}
+      #foodAlertas{display:grid;gap:8px;margin:10px 0}
+      .fd-alerta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:12px 14px;border-radius:14px;border:1px solid rgba(255,82,82,.45);background:rgba(255,82,82,.12)}
+      .fd-alerta b{color:#ffb4ab}.fd-alerta span{flex:1 1 220px;color:#e6e8ef;font-size:.85rem}.fd-alerta button{min-height:34px;padding:6px 12px}`;
     document.head.appendChild(s);
   }
 
@@ -74,7 +77,7 @@
     const sec = $("food-section");
     if (!sec || $("foodAbas")) return;
     injectStyle();
-    $("foodResumo").insertAdjacentHTML("beforebegin", `<div id="foodAbas" class="fd-abas" role="tablist"></div><p id="foodMsg" class="fd-ok" hidden></p>`);
+    $("foodResumo").insertAdjacentHTML("beforebegin", `<div id="foodAbas" class="fd-abas" role="tablist"></div><div id="foodAlertas"></div><p id="foodMsg" class="fd-ok" hidden></p>`);
     $("foodResumo").classList.remove("table", "compact");
     $("foodResumo").classList.add("grid");
     sec.addEventListener("click", clique);
@@ -96,6 +99,22 @@
     $("foodAbas").innerHTML = ABAS.map(([id, nome]) => `<button type="button" data-fd-aba="${id}" class="${id === aba ? "on" : ""}">${nome}${n[id] ? `<i>${n[id]}</i>` : ""}</button>`).join("");
     const filtro = $("foodDias");
     if (filtro) filtro.hidden = aba !== "resumo";
+    renderAlertas();
+  }
+
+  // O que precisa do dono agora, em qualquer aba: cliente que pediu ajuda da MotoJá e devolução que falhou.
+  function renderAlertas() {
+    const box = $("foodAlertas");
+    if (!box) return;
+    const ajuda = (estado?.incidents || []).filter((i) => {
+      if (i.status === "resolvido") return false;
+      try { return !!JSON.parse(i.data || "{}").escalatedAt; } catch (_) { return false; }
+    }).length;
+    const devolver = (estado?.orders || []).filter((o) => o.refund?.status === "erro");
+    const itens = [];
+    if (ajuda) itens.push(`<div class="fd-alerta"><b>🆘 ${ajuda} cliente(s) pediram ajuda da MotoJá</b><span>A loja não resolveu em 2 horas. Responda o cliente.</span><button type="button" data-fd-aba="atendimento">Ver atendimento</button></div>`);
+    if (devolver.length) itens.push(`<div class="fd-alerta"><b>⚠️ ${devolver.length} devolução(ões) falharam no Mercado Pago</b><span>Pedidos ${devolver.slice(0, 5).map((o) => "#" + esc(o.code)).join(", ")}${devolver.length > 5 ? "…" : ""}: devolva o valor pelo painel do Mercado Pago.</span><button type="button" data-fd-aba="pedidos">Ver pedidos</button></div>`);
+    box.innerHTML = itens.join("");
   }
 
   function aviso(texto, erro = false) {
@@ -203,7 +222,7 @@
         const agora = !s.id ? "-" : s.manuallyPaused ? '<span class="fd-tag vermelha">Pausada</span>' : s.openNow ? '<span class="fd-tag verde">Aberta</span>' : '<span class="fd-tag">Fechada (horário)</span>';
         const id = esc(e.id);
         return `<tr><td><b>${esc(e.name)}</b>${e.isDemo ? " <small>exemplo</small>" : ""}<br><small>${esc(e.category || "")} • ${e.deliveryBy === "loja" ? "motoboy próprio" : "motoboy MotoJá"}${e.partner ? ` • ${esc(e.partner.responsible)} (${esc(e.partner.email)})` : ""}${s.rating ? ` • ⭐ ${s.rating.average} (${s.rating.count})` : ""}</small></td>
-          <td>${esc(CIDADES[e.city] || e.city)}</td><td>${situacao}${gratis ? '<br><span class="fd-tag verde">entrega grátis</span>' : ""}</td><td>${agora}</td>
+          <td>${esc(CIDADES[e.city] || e.city)}</td><td>${situacao}${gratis ? '<br><span class="fd-tag verde">entrega grátis</span>' : ""}${e.mercadoPago ? '<br><span class="fd-tag verde">Mercado Pago vinculado</span>' : ""}</td><td>${agora}</td>
           <td class="actions">${e.approval === "pendente" ? `<button type="button" data-fd-aprovar="${id}">Aprovar</button><button type="button" class="perigo" data-fd-recusar="${id}">Recusar</button>` : ""}
             ${s.id ? `<button type="button" class="sec" data-fd-pausar="${id}" data-pausa="${s.manuallyPaused ? "0" : "1"}">${s.manuallyPaused ? "Reabrir" : "Pausar"}</button>
             <button type="button" class="sec" data-fd-gratis="${id}" data-liga="${gratis ? "0" : "1"}">${gratis ? "Tirar entrega grátis" : "Entrega grátis hoje"}</button>` : ""}
@@ -309,7 +328,9 @@
     const pix = a.pix || {};
     const receber = a.parties.filter((p) => p.balance < 0).reduce((s, p) => s - p.balance, 0);
     const pagar = a.parties.filter((p) => p.balance > 0).reduce((s, p) => s + p.balance, 0);
-    return `<p class="muted">Quando o cliente paga pelo app (cartão ou Pix), o dinheiro cai na conta da MotoJá e você paga a loja e o motoboy. Quando paga na entrega, quem recebe fica com a parte dos outros: o motoboy MotoJá no dinheiro, a loja na maquininha. Aqui você vê quanto cada um deve passar para a MotoJá e quanto a MotoJá deve pagar a cada um.</p>
+    const g = a.gateway || { storePays: false, cardBps: 499, pixBps: 99 };
+    const pct = (bps) => (bps / 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+    return `<p class="muted">Quando o cliente paga pelo app (cartão ou Pix), o dinheiro cai na conta da MotoJá e você paga a loja e o motoboy. Loja com Mercado Pago vinculado recebe o Pix direto na conta dela, já sem os 10% e sem a entrega: a MotoJá fica com essa parte e passa a do motoboy. Quando paga na entrega, quem recebe fica com a parte dos outros: o motoboy MotoJá no dinheiro, a loja na maquininha. Aqui você vê quanto cada um deve passar para a MotoJá e quanto a MotoJá deve pagar a cada um.</p>
       <div class="fd-nums">${card(reais(receber), "a receber de lojas e motoboys")}${card(reais(pagar), "a pagar para lojas e motoboys")}${card(a.pending.length, "pagamentos para conferir")}</div>
       ${a.pending.length ? `<h3 class="fd-sub">Pagamentos informados: confira no banco</h3>${tabela(["Quem", "Valor", "Quando", "Observação", ""], a.pending.map((x) => `<tr><td><b>${esc(x.name)}</b><br><small>${x.type === "loja" ? "loja" : "motoboy"}</small></td><td>${reais(Math.abs(x.amount))}</td><td>${hora(x.createdAt)}</td><td>${esc(x.note || "-")}</td><td class="actions"><button type="button" data-fd-conferir="${esc(x.id)}" data-acao="confirmar">Caiu no banco</button><button type="button" class="perigo" data-fd-conferir="${esc(x.id)}" data-acao="recusar">Não caiu</button></td></tr>`))}` : ""}
       <h3 class="fd-sub">Saldo de cada um</h3>
@@ -318,7 +339,10 @@
       <div id="fdExtrato"></div>
       <form id="fdPix" class="fd-form"><h3>Pix da MotoJá para o acerto</h3><p class="muted">Lojas e motoboys veem esta chave quando precisam passar dinheiro para a MotoJá.</p>
         <div class="fd-linha"><label>Tipo<select name="keyType">${Object.entries(PIX).map(([k, n]) => `<option value="${k}" ${pix.keyType === k ? "selected" : ""}>${n}</option>`).join("")}</select></label><label>Chave<input name="key" required maxlength="140" value="${esc(pix.key || "")}"></label><label>Nome de quem recebe<input name="holder" required maxlength="80" value="${esc(pix.holder || "")}"></label></div>
-        <p class="fd-erro" role="alert"></p><button type="submit">Salvar Pix</button></form>`;
+        <p class="fd-erro" role="alert"></p><button type="submit">Salvar Pix</button></form>
+      <form id="fdTaxa" class="fd-form"><h3>Taxa do Mercado Pago (cartão e Pix pelo app)</h3><p class="muted">O Mercado Pago cobra uma taxa de cada pagamento que cai na conta da MotoJá. Escolha quem paga: sai da parte da MotoJá ou da parte da loja. Vale para os pedidos novos.</p>
+        <div class="fd-linha"><label>Quem paga a taxa<select name="storePays"><option value="0" ${g.storePays ? "" : "selected"}>A MotoJá paga</option><option value="1" ${g.storePays ? "selected" : ""}>A loja paga</option></select></label><label>Taxa do cartão (%)<input name="card" required inputmode="decimal" value="${pct(g.cardBps)}"></label><label>Taxa do Pix (%)<input name="pix" required inputmode="decimal" value="${pct(g.pixBps)}"></label></div>
+        <p class="fd-erro" role="alert"></p><button type="submit">Salvar taxa</button></form>`;
   }
 
   async function extrato(tipo, id) {
@@ -419,7 +443,7 @@
 
   async function enviar(e) {
     const f = e.target;
-    if (!["fdPromo", "fdAviso", "fdEquipe", "fdPix"].includes(f.id) && !f.dataset.fdChamado) return;
+    if (!["fdPromo", "fdAviso", "fdEquipe", "fdPix", "fdTaxa"].includes(f.id) && !f.dataset.fdChamado) return;
     e.preventDefault();
     const b = f.querySelector("[type=submit]");
     const erro = f.querySelector(".fd-erro");
@@ -450,6 +474,11 @@
       if (f.id === "fdPix") {
         await food("POST", "settlements/pix", { keyType: d.get("keyType"), key: d.get("key"), holder: d.get("holder") });
         aviso("Pix da MotoJá salvo. Lojas e motoboys já veem esta chave no acerto.");
+      }
+      if (f.id === "fdTaxa") {
+        // "4,99" vira 499 (centésimos de por cento), o formato que o Food guarda.
+        await food("POST", "settlements/gateway", { storePays: d.get("storePays") === "1", cardBps: centavos(d.get("card")), pixBps: centavos(d.get("pix")) });
+        aviso(d.get("storePays") === "1" ? "Taxa salva: a loja paga a taxa do Mercado Pago nos pedidos novos." : "Taxa salva: a MotoJá paga a taxa do Mercado Pago nos pedidos novos.");
       }
       if (f.id === "fdEquipe") {
         await food("POST", "members", { email: d.get("email"), role: d.get("role"), store: d.get("store"), scope: d.get("scope") });
