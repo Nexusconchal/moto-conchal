@@ -72,6 +72,7 @@
 
   function browser(env) {
     let context, buffer, loading, source, vibration, wanted = false, playEpoch = 0, native = false, nativeSnapshot = null;
+    let logged = false, banner = null;
     const soundUrl = new URL('./audio/motoja-bora-rodar-v1.wav', env.location.href).href;
     const bridge = () => env.NexusNative;
     function stopWeb() {
@@ -80,17 +81,52 @@
       env.clearInterval(vibration); vibration = null;
       try { env.navigator.vibrate?.(0); } catch {}
     }
+    function load() {
+      if (!loading) loading = env.fetch(soundUrl).then(r => {
+        if (!r.ok) throw new Error('audio_indisponivel');
+        return r.arrayBuffer();
+      }).then(bytes => context.decodeAudioData(bytes)).then(value => { buffer = value; })
+        .catch(error => { loading = null; throw error; });
+      return loading;
+    }
+    // Pelo link (navegador) o som so toca depois de um toque na tela. Com o login automatico
+    // o motoboy pode nunca tocar: mostra um aviso ate o som ficar liberado.
+    function needsTap() { return logged && !native && (!context || context.state !== 'running'); }
+    function paintBanner() {
+      const doc = env.document;
+      if (!doc?.body) return;
+      // Some um instante depois, para o toque no aviso nao cair num botao embaixo dele.
+      if (!needsTap()) { if (banner && !banner.hidden) env.setTimeout(() => { if (!needsTap()) banner.hidden = true; }, 450); return; }
+      if (!banner) {
+        banner = doc.createElement('button');
+        banner.type = 'button';
+        banner.className = 'mj-som-chamada';
+        banner.textContent = '🔊 Toque aqui para ligar o som das chamadas';
+        banner.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);top:calc(10px + env(safe-area-inset-top,0px));z-index:2147483000;' +
+          'max-width:calc(100vw - 24px);padding:12px 18px;border:0;border-radius:999px;background:#ff6b00;color:#fff;font:800 15px/1.2 system-ui,sans-serif;' +
+          'box-shadow:0 8px 24px rgba(0,0,0,.45);cursor:pointer';
+        banner.addEventListener('click', () => { unlock(true); });
+        doc.body.appendChild(banner);
+      }
+      banner.hidden = false;
+    }
+    // Toque no aviso: libera e toca a voz uma vez para o motoboy saber que esta ligado.
+    async function preview() {
+      try {
+        await load();
+        if (source || !context || context.state !== 'running' || !buffer) return;
+        const once = context.createBufferSource();
+        once.buffer = buffer; once.connect(context.destination);
+        once.onended = () => once.disconnect();
+        once.start();
+      } catch {}
+    }
     async function playWeb() {
       wanted = true;
       if (source || !context || context.state !== 'running') return;
       const epoch = ++playEpoch;
       try {
-        if (!loading) loading = env.fetch(soundUrl).then(r => {
-          if (!r.ok) throw new Error('audio_indisponivel');
-          return r.arrayBuffer();
-        }).then(bytes => context.decodeAudioData(bytes)).then(value => { buffer = value; })
-          .catch(error => { loading = null; throw error; });
-        await loading;
+        await load();
         if (!wanted || native || epoch !== playEpoch || context.state !== 'running') return;
         const current = context.createBufferSource();
         current.buffer = buffer; current.loop = true; current.connect(context.destination);
@@ -100,12 +136,18 @@
         vibrate(); vibration = env.setInterval(vibrate, 2080);
       } catch { /* Novo gesto ou próxima consulta pode tentar carregar o arquivo novamente. */ }
     }
-    function unlock() {
+    function unlock(withPreview) {
       if (native) return;
       const Audio = env.AudioContext || env.webkitAudioContext;
       if (!Audio) return;
       context ||= new Audio();
-      context.resume().then(() => { if (wanted) playWeb(); }).catch(() => {});
+      context.onstatechange ||= paintBanner;
+      context.resume().then(() => {
+        paintBanner();
+        if (wanted) playWeb();
+        else if (withPreview === true) preview();
+        else load().catch(() => {});
+      }).catch(() => paintBanner());
     }
     const output = {
       get native() { return native; },
@@ -115,8 +157,10 @@
           native = !!proof && Number(bridge()?.callAlertVersion?.()) === 1 && bridge().setCallAlertSession(JSON.stringify({ driverCpf: proof.driverCpf, driverToken: proof.driverToken, backend: proof.backend })) === true;
           if (!proof) bridge()?.clearCallAlerts?.();
           if (native) stopWeb();
-          else if (proof && env.Capacitor?.isNativePlatform?.()) unlock();
+          else if (proof) unlock();
         } catch { native = false; }
+        logged = !!proof;
+        paintBanner();
       },
       preference(enabled) { if (native) { try { bridge().setCallAlertEnabled(enabled); } catch {} } },
       update(offers) {
@@ -133,6 +177,10 @@
     env.addEventListener('motoja:call-alert-changed', event => controller.changed(event.detail));
     env.addEventListener('motoja:availability-changed', () => controller.refresh());
     env.addEventListener('pagehide', () => { if (!native) stopWeb(); });
+    env.document.addEventListener('visibilitychange', () => {
+      if (env.document.visibilityState === 'visible' && context && context.state !== 'running') context.resume().catch(() => {}).finally(paintBanner);
+      else paintBanner();
+    });
     return controller;
   }
   return { createController, browser };
