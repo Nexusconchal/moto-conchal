@@ -265,6 +265,8 @@
     garantirRoot();
     root.classList.remove('hidden');
     document.documentElement.classList.add('mjnav-aberto');
+    // Rodando pelo GPS do app a tela nao pode apagar (igual Google Maps).
+    window.MotojaTelaAcesa?.ligar('mapa');
   }
 
   function fechar() {
@@ -274,6 +276,7 @@
     tela = null;
     if (root) root.classList.add('hidden');
     document.documentElement.classList.remove('mjnav-aberto');
+    window.MotojaTelaAcesa?.desligar('mapa');
   }
 
   function ui() {

@@ -1,6 +1,10 @@
-# MotoJÁ Motorista 1.0.5 — alerta contínuo
+# MotoJÁ Motorista 1.0.6 — alerta contínuo e tela acesa
 
-Atualização exclusiva do aplicativo Android do motoboy, pacote `br.com.nexusconchal.motoja.motorista`, versionCode 6. O projeto anterior permanece preservado.
+Atualização exclusiva do aplicativo Android do motoboy, pacote `br.com.nexusconchal.motoja.motorista`, versionCode 7. O projeto anterior permanece preservado.
+
+Novidades da 1.0.6:
+- **Tela acesa no GPS:** enquanto o motoboy está com o mapa de navegação aberto ou com corrida/entrega mandando GPS para o cliente, o site chama `NexusNative.keepScreenOn(true)` e o app liga `FLAG_KEEP_SCREEN_ON` (a tela não apaga, como no Google Maps). Ao fechar o mapa/finalizar, volta ao normal.
+- **Som da notificação com o app fechado:** `res/raw/chamada.wav` agora é a própria voz “MotoJÁ! Bora rodar!” (antes era um bip-bip). Vale para quem recebe a notificação comum do canal `chamadas`.
 
 O áudio aprovado “MotoJÁ! Bora rodar!” toca em loop com vibração enquanto existir chamada pendente autorizada. O serviço consulta o servidor a cada 3 segundos e também recebe a retirada da chamada por FCM. Aceite por qualquer motorista, cancelamento, expiração, indisponibilidade e encerramento da sessão interrompem o alerta. Uma tentativa de aceite ainda não confirmada não silencia a chamada. O modo silencioso, o modo de vibração e as permissões do aparelho são respeitados.
 

@@ -19,6 +19,9 @@
   function restartGps() {
     if (gpsWatchId !== null) navigator.geolocation.clearWatch(gpsWatchId);
     gpsWatchId = null;
+    // Com corrida/entrega em andamento mandando GPS pro cliente, a tela fica acesa.
+    if (gpsSubscribers.size && !gpsDenied) window.MotojaTelaAcesa?.ligar('gps');
+    else window.MotojaTelaAcesa?.desligar('gps');
     if (!gpsSubscribers.size || !navigator.geolocation || gpsDenied) return;
     lastGpsAt = Date.now();
     gpsWatchId = navigator.geolocation.watchPosition((position) => {

@@ -14,6 +14,7 @@ import android.os.Bundle;
 import android.provider.MediaStore;
 import android.view.View;
 import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
@@ -118,6 +119,7 @@ public class LauncherActivity extends Activity {
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 Uri page = Uri.parse(url);
                 trustedDriverPage = "https".equals(page.getScheme()) && HOST.equals(page.getHost()) && "/motoboy.html".equals(page.getPath());
+                if (!trustedDriverPage) getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                 if (NativePush.available(LauncherActivity.this)
                         && !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                     view.evaluateJavascript(capacitorShim(), null);
@@ -389,6 +391,14 @@ public class LauncherActivity extends Activity {
 
     private class Bridge {
         @JavascriptInterface public int callAlertVersion() { return trustedDriverPage ? 1 : 0; }
+        // Tela acesa enquanto o motoboy roda pelo GPS do app (o site liga e desliga).
+        @JavascriptInterface public void keepScreenOn(boolean on) {
+            if (!trustedDriverPage) return;
+            runOnUiThread(() -> {
+                if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            });
+        }
         @JavascriptInterface public boolean setCallAlertSession(String json) {
             return trustedDriverPage && CallAlertSession.save(LauncherActivity.this, json);
         }
