@@ -3186,8 +3186,9 @@
         // Tujuguaba e Iate ficam dentro de Conchal, a menos de 10 km do centro.
         // Primeiro texto opcional { origem }: a cidade de onde sai a corrida nao conta como outra cidade.
         const origem = textos[0] && typeof textos[0] === "object" ? textoBusca(textos.shift().origem) : "";
-        const distante = textos.some((t) =>
-          [...textoBusca(t).matchAll(/martinho\s*prado|engenheiro\s+coelho|artur\s+nogueira|arthur\s+nogueira|mogi\s+mirim|mogi\s+guacu|araras|americana|limeira|leme|pirassununga|rio\s+claro|campinas|cosmopolis/g)]
+        // Martinho Prado fica a ~9 km de Conchal (o mapa poe a vila em "Mogi Guacu"): nao conta como cidade distante.
+        const distante = textos.some((t) => !/martinho\s*prado/.test(textoBusca(t)) &&
+          [...textoBusca(t).matchAll(/engenheiro\s+coelho|artur\s+nogueira|arthur\s+nogueira|mogi\s+mirim|mogi\s+guacu|araras|americana|limeira|leme|pirassununga|rio\s+claro|campinas|cosmopolis/g)]
             .some(([cidade]) => !origem.includes(cidade)),
         );
         if (distante && Number(km) > 0 && Number(km) < 10)
@@ -3310,7 +3311,9 @@
       }
       // So o nome do distrito, sem rua (ex.: "Martinho Prado Jr."): vale o distrito como destino.
       const DISTRITOS_MAPA = {
-        "martinho prado": { busca: "Martinho Prado Júnior, Mogi Guaçu, SP, Brasil", nome: "Martinho Prado Júnior" },
+        // O distrito de Martinho Prado e enorme (vai ate perto de Mogi Guacu): o centro dele no mapa
+        // cai no mato, ~18 km. A vila fica ~5 km a nordeste de Conchal (R. Cipriano Barrinuevo, R. Hermínio Costa).
+        "martinho prado": { ponto: { lat: -22.2895, lon: -47.135 }, nome: "Martinho Prado Júnior (vila)" },
         tujuguaba: { busca: "Tujuguaba, Conchal, SP, Brasil", nome: "Tujuguaba" },
         iate: { busca: "Iate, Conchal, SP, Brasil", nome: "Iate" },
       };
@@ -3321,6 +3324,7 @@
       }
       async function geocodificarDistrito(local) {
         const distrito = DISTRITOS_MAPA[local];
+        if (distrito.ponto) return { ...distrito.ponto, texto: distrito.nome };
         const params = new URLSearchParams({ text: distrito.busca, original: distrito.busca, limit: "5", filter: "rect:-48.25,-23.15,-46.55,-21.70" });
         const r = await fetchMapaComRetry(`${CONFIG.backend}/api/maps/geocode?${params}`);
         if (!r.ok) return null;

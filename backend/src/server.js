@@ -485,8 +485,8 @@ function ensureDistantRouteIsPlausible(distanceKm, ...texts) {
   const origin = texts[0] && typeof texts[0] === 'object' ? normalizeText(texts.shift().origem || '') : '';
   const distance = Number(distanceKm || 0);
   // Tujuguaba e Iate ficam dentro de Conchal, a menos de 10 km do centro.
+  // Martinho Prado fica a ~9 km de Conchal e o mapa poe a vila em "Mogi Guacu": nao conta como distante.
   const distantPlaces = [
-    'martinho prado',
     'engenheiro coelho',
     'artur nogueira',
     'arthur nogueira',
@@ -503,6 +503,7 @@ function ensureDistantRouteIsPlausible(distanceKm, ...texts) {
   ];
   const hasDistantPlace = texts.some((text) => {
     const normalized = normalizeText(text);
+    if (normalized.includes('martinho prado')) return false;
     return distantPlaces.some((place) => normalized.includes(place) && !origin.includes(place));
   });
   if (hasDistantPlace && Number.isFinite(distance) && distance > 0 && distance < 10) {
