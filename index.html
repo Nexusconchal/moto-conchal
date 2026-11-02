@@ -3308,10 +3308,43 @@
         if (!(lat >= -25 && lat <= -20 && lon >= -50 && lon <= -44)) return null;
         return { lat, lon, texto: `${lat.toFixed(5)}, ${lon.toFixed(5)}` };
       }
+      // So o nome do distrito, sem rua (ex.: "Martinho Prado Jr."): vale o distrito como destino.
+      const DISTRITOS_MAPA = {
+        "martinho prado": { busca: "Martinho Prado Júnior, Mogi Guaçu, SP, Brasil", nome: "Martinho Prado Júnior" },
+        tujuguaba: { busca: "Tujuguaba, Conchal, SP, Brasil", nome: "Tujuguaba" },
+        iate: { busca: "Iate, Conchal, SP, Brasil", nome: "Iate" },
+      };
+      function distritoSemRua(base) {
+        const local = dicaLocal(base);
+        if (!DISTRITOS_MAPA[local] || /\d/.test(base)) return "";
+        return /(^|[\s,(])(rua|r\.|avenida|av\.?|estrada|rodovia|travessa|praca|praça|alameda)\s/i.test(base) ? "" : local;
+      }
+      async function geocodificarDistrito(local) {
+        const distrito = DISTRITOS_MAPA[local];
+        const params = new URLSearchParams({ text: distrito.busca, original: distrito.busca, limit: "5", filter: "rect:-48.25,-23.15,-46.55,-21.70" });
+        const r = await fetchMapaComRetry(`${CONFIG.backend}/api/maps/geocode?${params}`);
+        if (!r.ok) return null;
+        const d = await r.json().catch(() => ({}));
+        for (const feature of d.features || []) {
+          const props = feature.properties || {};
+          // So o proprio distrito (nao uma "Rua Martinho Prado Junior" de outra cidade).
+          const onde = textoBusca(`${props.name || ""} ${props.city || ""} ${props.district || ""} ${props.suburb || ""}`);
+          if (["street", "building", "amenity"].includes(props.result_type) || !onde.includes(local) || !Array.isArray(feature.geometry?.coordinates)) continue;
+          const [lon, lat] = feature.geometry.coordinates;
+          return { lat: +lat, lon: +lon, texto: props.formatted || distrito.nome };
+        }
+        return null;
+      }
       async function geocodificar(endereco, cidadePreferida = "conchal") {
-        const base = endereco.trim();
+        // "Martinho Prado Jr." -> "Martinho Prado Júnior" (o "Jr." virava lixo na busca).
+        const base = endereco.trim().replace(/\bjr\.?(?=[\s,\-]|$)/gi, "Júnior");
         const coordenadas = coordenadasDoTexto(base);
         if (coordenadas) return coordenadas;
+        const distrito = distritoSemRua(base);
+        if (distrito) {
+          const ponto = await geocodificarDistrito(distrito);
+          if (ponto) return ponto;
+        }
         const configCidade =
           CIDADES_OPERACAO[cidadePreferida] || CIDADES_OPERACAO.conchal;
         let ultimoErro = "",
