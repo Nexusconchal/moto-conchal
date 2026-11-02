@@ -96,17 +96,30 @@
       const doc = env.document;
       if (!doc?.body) return;
       // Some um instante depois, para o toque no aviso nao cair num botao embaixo dele.
-      if (!needsTap()) { if (banner && !banner.hidden) env.setTimeout(() => { if (!needsTap()) banner.hidden = true; }, 450); return; }
+      if (!needsTap()) { if (banner && !banner.hidden) env.setTimeout(() => { if (!needsTap()) { banner.hidden = true; banner.style.display = 'none'; } }, 450); return; }
       if (!banner) {
         banner = doc.createElement('button');
         banner.type = 'button';
         banner.className = 'mj-som-chamada';
-        banner.textContent = '🔊 Toque aqui para ligar o som das chamadas';
-        banner.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);top:calc(10px + env(safe-area-inset-top,0px));z-index:2147483000;' +
-          'max-width:calc(100vw - 24px);padding:12px 18px;border:0;border-radius:999px;background:#ff6b00;color:#fff;font:800 15px/1.2 system-ui,sans-serif;' +
-          'box-shadow:0 8px 24px rgba(0,0,0,.45);cursor:pointer';
+        banner.innerHTML = '<span style="font-size:20px;line-height:1">🔇</span>' +
+          '<span style="flex:1;min-width:0;text-align:left"><b style="display:block;font-size:14px">Som das chamadas desligado</b>' +
+          '<small style="display:block;font-size:12px;color:#c8cdd6;font-weight:600">Toque para ouvir “MotoJá, bora rodar”</small></span>' +
+          '<span style="flex:none;padding:8px 12px;border-radius:999px;background:#ff6b00;color:#fff;font-weight:900;font-size:13px">Ligar som</span>';
         banner.addEventListener('click', () => { unlock(true); });
-        doc.body.appendChild(banner);
+      }
+      // Na tela inicial fica logo abaixo do "Procurando chamadas" (sem cobrir o saldo);
+      // fora dela, em cima da barra de baixo; com o GPS aberto, no topo.
+      const base = 'display:flex;align-items:center;gap:10px;padding:9px 10px 9px 12px;border:1px solid rgba(255,107,0,.75);border-radius:14px;' +
+        'background:rgba(17,19,25,.95);color:#fff;font:inherit;font-family:inherit;box-shadow:0 8px 20px rgba(0,0,0,.4);cursor:pointer;z-index:2147483000;';
+      const procurando = doc.querySelector('.mjhome-searching:not([hidden])');
+      const gpsAberto = doc.documentElement.classList.contains('mjnav-aberto');
+      if (procurando && !gpsAberto && procurando.offsetParent) {
+        if (banner.previousElementSibling !== procurando) procurando.insertAdjacentElement('afterend', banner);
+        banner.style.cssText = base + `position:absolute;left:12px;right:12px;top:${procurando.offsetTop + procurando.offsetHeight + 8}px;z-index:600`;
+      } else {
+        if (banner.parentNode !== doc.body) doc.body.appendChild(banner);
+        banner.style.cssText = base + 'position:fixed;left:12px;right:12px;' +
+          (gpsAberto ? 'top:calc(10px + env(safe-area-inset-top,0px))' : 'bottom:calc(92px + env(safe-area-inset-bottom,0px))');
       }
       banner.hidden = false;
     }
@@ -177,6 +190,9 @@
     env.addEventListener('motoja:call-alert-changed', event => controller.changed(event.detail));
     env.addEventListener('motoja:availability-changed', () => controller.refresh());
     env.addEventListener('pagehide', () => { if (!native) stopWeb(); });
+    // A tela inicial muda (Procurando chamadas aparece/some, GPS abre): reposiciona o aviso.
+    env.setInterval(() => { if (needsTap()) paintBanner(); }, 1500);
+    env.addEventListener('resize', () => { if (needsTap()) paintBanner(); });
     env.document.addEventListener('visibilitychange', () => {
       if (env.document.visibilityState === 'visible' && context && context.state !== 'running') context.resume().catch(() => {}).finally(paintBanner);
       else paintBanner();
