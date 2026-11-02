@@ -2797,8 +2797,15 @@
         const horas = Math.floor(minutos / 60), resto = minutos % 60;
         return horas ? `${horas}h ${String(resto).padStart(2, "0")}min` : `${resto} min`;
       }
-      // Plano Diario: vale o expediente (ate "Finalizar expediente" ou 04:00). Ativacoes antigas sem horario
+      // Plano Diario: vale o expediente (ate "Finalizar expediente" ou meia-noite). Ativacoes antigas sem horario
       // (active sem expiraEmMs) continuam liberadas ate o servidor dizer o contrario.
+      // Meia-noite de Brasilia (o expediente fecha sozinho nesse horario).
+      function proximaMeiaNoite(agora = Date.now()) {
+        const d = new Date(agora);
+        let fim = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 3);
+        if (fim <= agora) fim += 86400000;
+        return fim;
+      }
       function definirPlanoDiario(expiraEmMs, ativoSemHorario = false) {
         planoDiarioExpiraEmMs = Number(expiraEmMs || 0);
         planoDiarioAtivo = planoDiarioExpiraEmMs > Date.now() || (ativoSemHorario && !planoDiarioExpiraEmMs);
@@ -2867,7 +2874,7 @@
         if (status) {
           status.className = "status show";
           status.textContent = planoDiarioAtivo
-            ? "✅ Expediente aberto: R$ 4,00 por entrega liberado. Quando fechar a loja, toque em Finalizar expediente (se esquecer, fecha sozinho às 04:00)."
+            ? "✅ Expediente aberto: R$ 4,00 por entrega liberado. Quando fechar a loja, toque em Finalizar expediente (se esquecer, fecha sozinho à meia-noite)."
             : "Expediente fechado.";
         }
         if (btn) {
@@ -3887,7 +3894,7 @@
         }
         if (
           !confirm(
-            "Abrir o expediente? Vai descontar R$ 70,00 agora e liberar R$ 4,00 por entrega até você finalizar o expediente.",
+            `Abrir o expediente? Vai descontar R$ 70,00 agora e liberar R$ 4,00 por entrega até você finalizar o expediente (no máximo até meia-noite — faltam ${tempoRestante(proximaMeiaNoite())}).`,
           )
         )
           return;
@@ -3908,7 +3915,7 @@
             throw new Error(
               d.message || d.error || "Nao consegui ativar o plano diario.",
             );
-          definirPlanoDiario(d.expiraEmMs || Date.now() + 6 * 3600000);
+          definirPlanoDiario(d.expiraEmMs || proximaMeiaNoite());
           definirTaxaAvulsa({ ativo: taxaAvulsa.ativo, usadas: 0, limite: taxaAvulsa.limite });
           mostrarPlanoDiarioAviso(
             "Expediente aberto. A taxa de R$ 4,00 por entrega está liberada.",

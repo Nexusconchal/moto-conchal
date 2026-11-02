@@ -223,8 +223,7 @@ const HALF_PLAN_DELIVERY_FEE = 5.5;
 const HALF_PLAN_APP_FEE = 1.5;
 const HALF_PLAN_DURATION_MS = 4 * 60 * 60 * 1000;
 // Plano Diario = o expediente da loja: abre ao ativar e fecha quando a empresa toca em
-// "Finalizar expediente". Se esquecer, fecha sozinho as 04:00 (pelo menos 6 h depois de abrir).
-const DAILY_PLAN_MIN_MS = 6 * 60 * 60 * 1000;
+// "Finalizar expediente". Se esquecer, fecha sozinho a meia-noite.
 const COMPANY_DELIVERY_RATE_PER_KM = 2.5;
 
 function todayKeySaoPaulo(date = new Date()) {
@@ -235,7 +234,7 @@ function dailyPlanRef(companyId, dayKey = todayKeySaoPaulo()) {
   return db.collection('empresas').doc(companyId).collection('planosDiarios').doc(dayKey);
 }
 
-// Plano Diario Pro vale ate a empresa finalizar o expediente (ou as 04:00). Ativacoes antigas
+// Plano Diario Pro vale ate a empresa finalizar o expediente (ou a meia-noite). Ativacoes antigas
 // (sem planoDiarioExpiraEmMs) continuam valendo ate o fim do dia delas.
 function dailyPlanActivation(company = {}, now = Date.now()) {
   const until = Number(company.planoDiarioExpiraEmMs || 0);
@@ -245,13 +244,12 @@ function dailyPlanActivation(company = {}, now = Date.now()) {
   return null;
 }
 
-// Fim automatico do expediente: proximas 04:00 de Brasilia (07:00 UTC, sem horario de verao),
-// garantindo pelo menos 6 horas de plano para quem abre de madrugada.
+// Fim automatico do expediente: a proxima meia-noite de Brasilia (03:00 UTC, sem horario de verao).
 function dailyPlanEndMs(now = Date.now()) {
   const day = new Date(now);
-  let end = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 7);
+  let end = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 3);
   if (end <= now) end += 24 * 60 * 60 * 1000;
-  return Math.max(end, now + DAILY_PLAN_MIN_MS);
+  return end;
 }
 
 function dailyPlanInactiveError(message = 'O Plano Diario MotoJa Pro nao esta ativo agora. Abra o expediente por R$ 70,00 para liberar a taxa de R$ 4,00.') {
