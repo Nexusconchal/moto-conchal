@@ -221,8 +221,10 @@ const HALF_PLAN_TYPE = 'Plano Meio Periodo MotoJa';
 const HALF_PLAN_PRICE = 25;
 const HALF_PLAN_DELIVERY_FEE = 5.5;
 const HALF_PLAN_APP_FEE = 1.5;
-const HALF_PLAN_DURATION_MS = 6 * 60 * 60 * 1000;
-const DAILY_PLAN_DURATION_MS = 12 * 60 * 60 * 1000;
+const HALF_PLAN_DURATION_MS = 4 * 60 * 60 * 1000;
+// Plano Diario = o expediente da loja: abre ao ativar e fecha quando a empresa toca em
+// "Finalizar expediente". Se esquecer, fecha sozinho as 04:00 (pelo menos 6 h depois de abrir).
+const DAILY_PLAN_MIN_MS = 6 * 60 * 60 * 1000;
 const COMPANY_DELIVERY_RATE_PER_KM = 2.5;
 
 function todayKeySaoPaulo(date = new Date()) {
@@ -233,8 +235,8 @@ function dailyPlanRef(companyId, dayKey = todayKeySaoPaulo()) {
   return db.collection('empresas').doc(companyId).collection('planosDiarios').doc(dayKey);
 }
 
-// Plano Diario Pro vale 12 horas a partir da ativacao. Ativacoes antigas (antes
-// dessa regra, sem planoDiarioExpiraEmMs) continuam valendo ate o fim do dia delas.
+// Plano Diario Pro vale ate a empresa finalizar o expediente (ou as 04:00). Ativacoes antigas
+// (sem planoDiarioExpiraEmMs) continuam valendo ate o fim do dia delas.
 function dailyPlanActivation(company = {}, now = Date.now()) {
   const until = Number(company.planoDiarioExpiraEmMs || 0);
   if (until) return until > now ? { until, planDocId: String(company.planoDiarioAtivacaoId || '') } : null;
@@ -243,7 +245,16 @@ function dailyPlanActivation(company = {}, now = Date.now()) {
   return null;
 }
 
-function dailyPlanInactiveError(message = 'O Plano Diario MotoJa Pro nao esta ativo agora. Ative por R$ 70,00 para liberar a taxa de R$ 4,00 por 12 horas.') {
+// Fim automatico do expediente: proximas 04:00 de Brasilia (07:00 UTC, sem horario de verao),
+// garantindo pelo menos 6 horas de plano para quem abre de madrugada.
+function dailyPlanEndMs(now = Date.now()) {
+  const day = new Date(now);
+  let end = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 7);
+  if (end <= now) end += 24 * 60 * 60 * 1000;
+  return Math.max(end, now + DAILY_PLAN_MIN_MS);
+}
+
+function dailyPlanInactiveError(message = 'O Plano Diario MotoJa Pro nao esta ativo agora. Abra o expediente por R$ 70,00 para liberar a taxa de R$ 4,00.') {
   const error = new Error(message);
   error.status = 403;
   error.code = 'plano_diario_inativo';
@@ -11660,7 +11671,7 @@ app.post('/api/companies/daily-plan/activate', assertCompany, assertCompanyAppro
     const dia = todayKeySaoPaulo(new Date(now));
     const companyRef = req.companySnap.ref;
     const planRef = companyRef.collection('planosDiarios').doc(`${dia}-pro-${now}`);
-    const expiraEmMs = now + DAILY_PLAN_DURATION_MS;
+    const expiraEmMs = dailyPlanEndMs(now);
     let balanceAfter = null;
     let alreadyActive = false;
     let activeUntil = expiraEmMs;
@@ -11725,6 +11736,31 @@ app.post('/api/companies/daily-plan/activate', assertCompany, assertCompanyAppro
     if (error.code === 'saldo_insuficiente') {
       return res.status(error.status || 402).json({ error: 'saldo_insuficiente', message: error.message, balance: error.balance || null });
     }
+    next(error);
+  }
+});
+
+// Finalizar expediente: fecha o Plano Diario agora. Entregas ja chamadas continuam normais;
+// novas chamadas com R$ 4,00 so depois de abrir outro expediente.
+app.post('/api/companies/daily-plan/finish', assertCompany, async (req, res, next) => {
+  try {
+    const now = Date.now();
+    const companyRef = req.companySnap.ref;
+    let closed = false;
+    await db.runTransaction(async (tx) => {
+      const companySnap = await tx.get(companyRef);
+      const company = companySnap.exists ? companySnap.data() || {} : {};
+      const current = dailyPlanActivation(company, now);
+      if (!current) return;
+      closed = true;
+      tx.set(companyRef, { planoDiarioExpiraEmMs: now, planoDiarioEncerradoEmMs: now, atualizadaEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      if (current.planDocId) {
+        tx.set(companyRef.collection('planosDiarios').doc(current.planDocId), { status: 'encerrado', expiraEmMs: now, encerradoEmMs: now }, { merge: true });
+        tx.set(planActivationRef(planActivationKey(req.companyId, current.planDocId)), { expiraEmMs: now, encerradoEmMs: now }, { merge: true });
+      }
+    });
+    res.json({ ok: true, active: false, closed, encerradoEmMs: now });
+  } catch (error) {
     next(error);
   }
 });

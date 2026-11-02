@@ -1524,36 +1524,25 @@
         </div>
       </section>
       <section class="box app-area hidden">
-        <h2>Plano Diario MotoJa Pro</h2>
+        <h2>Plano Diário MotoJá Pro</h2>
         <div
           class="status show"
           style="display: grid; gap: 8px; text-align: left"
         >
-          <p><strong>Taxa fixa por 12 horas</strong></p>
+          <p><strong>R$ 70,00 o expediente · R$ 4,00 por entrega</strong></p>
           <p>
-            Ative por R$ 70,00 e use entregas com taxa fixa de R$ 4,00 por
-            entrega/ponto durante 12 horas a partir da ativação.
-          </p>
-          <p>
-            <strong>Distritos com desconto:</strong> Martinho Prado, Tujuguaba e
-            Iate saem por R$ 10,00 (fora do plano: R$ 16,00).
-          </p>
-          <p class="muted">
-            Boa para loja que tem bastante chamada no mesmo dia. Se uma rota por
-            km ficar cara ou falhar, a empresa tem essa opcao profissional
-            liberada com seguranca.
-          </p>
-          <p class="muted">
-            <strong>Seguranca:</strong> o sistema so libera depois de descontar
-            a diaria do saldo. Depois de 12 horas, bloqueia de novo
-            automaticamente.
+            Abra quando começar a trabalhar e finalize quando fechar a loja.
+            Distritos (Martinho Prado, Tujuguaba e Iate): R$ 10,00.
           </p>
         </div>
         <div id="planoDiarioStatus" class="status show">
           Carregando plano diario...
         </div>
         <button id="ativarPlanoDiario" type="button" class="green">
-          Ativar por R$ 70,00 e liberar taxa de R$ 4,00 por 12 horas
+          Abrir expediente — R$ 70,00
+        </button>
+        <button id="finalizarPlanoDiario" type="button" class="hidden" style="background:#3a1d1d;border:1px solid #b33a3a;color:#fff">
+          Finalizar expediente
         </button>
         <div
           id="planoDiarioAviso"
@@ -1567,30 +1556,17 @@
           class="status show"
           style="display: grid; gap: 8px; text-align: left"
         >
-          <p><strong>Taxa fixa por 6 horas</strong></p>
+          <p><strong>R$ 25,00 por 4 horas · R$ 5,50 por entrega</strong></p>
           <p>
-            Ative por R$ 25,00 e use entregas com taxa fixa de R$ 5,50 por
-            entrega/ponto durante 6 horas.
-          </p>
-          <p>
-            <strong>Distritos com desconto:</strong> Martinho Prado, Tujuguaba e
-            Iate saem por R$ 12,00 (fora do plano: R$ 16,00).
-          </p>
-          <p class="muted">
-            Boa para quem trabalha só um turno (almoço ou noite) e não precisa
-            do plano do dia todo.
-          </p>
-          <p class="muted">
-            <strong>Segurança:</strong> o sistema só libera depois de descontar
-            os R$ 25,00 do saldo. Depois de 6 horas, bloqueia de novo
-            automaticamente.
+            Para um turno só (almoço ou noite). Distritos: R$ 12,00. Depois de
+            4 horas bloqueia sozinho.
           </p>
         </div>
         <div id="meioPeriodoStatus" class="status show">
           Carregando meio período...
         </div>
         <button id="ativarMeioPeriodo" type="button" class="green">
-          Ativar por R$ 25,00 e liberar taxa de R$ 5,50 por 6 horas
+          Ativar 4 horas — R$ 25,00
         </button>
         <div
           id="meioPeriodoAviso"
@@ -2056,9 +2032,9 @@
             planos da MotoJá e pague menos por entrega:
           </p>
           <p>
-            ⏱️ <strong>Plano Meio Período</strong> — R$ 25,00 por 6 horas:
+            ⏱️ <strong>Plano Meio Período</strong> — R$ 25,00 por 4 horas:
             R$ 5,50 em Conchal e R$ 12,00 nos distritos.<br />
-            📅 <strong>Plano Diário Pro</strong> — R$ 70,00 por 12 horas:
+            📅 <strong>Plano Diário Pro</strong> — R$ 70,00 o expediente:
             R$ 4,00 em Conchal e R$ 10,00 nos distritos.
           </p>
           <div class="taxa-avulsa-acoes">
@@ -2821,7 +2797,7 @@
         const horas = Math.floor(minutos / 60), resto = minutos % 60;
         return horas ? `${horas}h ${String(resto).padStart(2, "0")}min` : `${resto} min`;
       }
-      // Plano Diario: vale 12 horas a partir da ativacao. Ativacoes antigas sem horario
+      // Plano Diario: vale o expediente (ate "Finalizar expediente" ou 04:00). Ativacoes antigas sem horario
       // (active sem expiraEmMs) continuam liberadas ate o servidor dizer o contrario.
       function definirPlanoDiario(expiraEmMs, ativoSemHorario = false) {
         planoDiarioExpiraEmMs = Number(expiraEmMs || 0);
@@ -2839,7 +2815,7 @@
         if (!box) return;
         const itens = [];
         if (planoDiarioAtivo && planoDiarioExpiraEmMs)
-          itens.push(`📅 <strong>Plano Diário Pro ativo</strong> · faltam <strong>${tempoRestante(planoDiarioExpiraEmMs)}</strong> (até ${horaCurta(planoDiarioExpiraEmMs)})`);
+          itens.push(`📅 <strong>Expediente aberto</strong> (Plano Diário Pro) · R$ 4,00 por entrega até você finalizar`);
         if (meioPeriodoAtivo && meioPeriodoExpiraEmMs)
           itens.push(`⏱️ <strong>Plano Meio Período ativo</strong> · faltam <strong>${tempoRestante(meioPeriodoExpiraEmMs)}</strong> (até ${horaCurta(meioPeriodoExpiraEmMs)})`);
         box.innerHTML = itens.join("<br />");
@@ -2867,13 +2843,13 @@
           status.className = "status show";
           status.textContent = meioPeriodoAtivo
             ? `Plano Meio Período MotoJá ativo até ${horaCurta(meioPeriodoExpiraEmMs)} · faltam ${tempoRestante(meioPeriodoExpiraEmMs)}. A opção de R$ 5,50 está liberada.`
-            : "Plano Meio Período MotoJá bloqueado. Ative por R$ 25,00 para liberar R$ 5,50 por entrega/ponto durante 6 horas.";
+            : "Meio Período desligado.";
         }
         if (btn) {
           btn.disabled = meioPeriodoAtivo;
           btn.textContent = meioPeriodoAtivo
             ? `Meio período ativo até ${horaCurta(meioPeriodoExpiraEmMs)}`
-            : "Ativar por R$ 25,00 e liberar taxa de R$ 5,50 por 6 horas";
+            : "Ativar 4 horas — R$ 25,00";
         }
         if (meioPeriodoAtivo) mostrarMeioPeriodoAviso("");
         if (!meioPeriodoAtivo && $("tipoEntrega").value === MEIO_PERIODO_TIPO)
@@ -2891,15 +2867,15 @@
         if (status) {
           status.className = "status show";
           status.textContent = planoDiarioAtivo
-            ? `Plano Diario MotoJa Pro ativo${planoDiarioExpiraEmMs ? ` até ${horaCurta(planoDiarioExpiraEmMs)} · faltam ${tempoRestante(planoDiarioExpiraEmMs)}` : ""}. A opcao de R$ 4,00 esta liberada.`
-            : "Plano Diario MotoJa Pro bloqueado. Ative por R$ 70,00 para liberar R$ 4,00 por entrega/ponto durante 12 horas.";
+            ? "✅ Expediente aberto: R$ 4,00 por entrega liberado. Quando fechar a loja, toque em Finalizar expediente (se esquecer, fecha sozinho às 04:00)."
+            : "Expediente fechado.";
         }
         if (btn) {
           btn.disabled = planoDiarioAtivo;
-          btn.textContent = planoDiarioAtivo
-            ? `Plano ativo${planoDiarioExpiraEmMs ? ` até ${horaCurta(planoDiarioExpiraEmMs)}` : ""}`
-            : "Ativar por R$ 70,00 e liberar taxa de R$ 4,00 por 12 horas";
+          btn.classList.toggle("hidden", planoDiarioAtivo);
+          btn.textContent = "Abrir expediente — R$ 70,00";
         }
+        $("finalizarPlanoDiario")?.classList.toggle("hidden", !planoDiarioAtivo);
         if (planoDiarioAtivo) mostrarPlanoDiarioAviso("");
         if (!planoDiarioAtivo && $("tipoEntrega").value === PLANO_DIARIO_TIPO)
           $("tipoEntrega").value = "";
@@ -3911,7 +3887,7 @@
         }
         if (
           !confirm(
-            "Ativar Plano Diario MotoJa Pro? Vai descontar R$ 70,00 agora e liberar taxa fixa de R$ 4,00 por entrega/ponto durante 12 horas.",
+            "Abrir o expediente? Vai descontar R$ 70,00 agora e liberar R$ 4,00 por entrega até você finalizar o expediente.",
           )
         )
           return;
@@ -3932,14 +3908,14 @@
             throw new Error(
               d.message || d.error || "Nao consegui ativar o plano diario.",
             );
-          definirPlanoDiario(d.expiraEmMs || Date.now() + 12 * 3600000);
+          definirPlanoDiario(d.expiraEmMs || Date.now() + 6 * 3600000);
           definirTaxaAvulsa({ ativo: taxaAvulsa.ativo, usadas: 0, limite: taxaAvulsa.limite });
           mostrarPlanoDiarioAviso(
-            `Plano Diario ativo até ${horaCurta(planoDiarioExpiraEmMs)}. A taxa fixa de R$ 4,00 esta liberada.`,
+            "Expediente aberto. A taxa de R$ 4,00 por entrega está liberada.",
             false,
           );
           mostrarStatus(
-            `Plano Diario MotoJa Pro ativo até ${horaCurta(planoDiarioExpiraEmMs)}. A empresa pode usar R$ 4,00 por entrega/ponto.`,
+            "Expediente aberto (Plano Diário Pro): R$ 4,00 por entrega até você finalizar.",
           );
           await carregarSaldo();
         } catch (e) {
@@ -3952,6 +3928,31 @@
           await carregarPlanoDiario();
         } finally {
           atualizarPlanoDiarioUI();
+        }
+      };
+      $("finalizarPlanoDiario").onclick = async () => {
+        mostrarPlanoDiarioAviso("");
+        if (!confirm("Finalizar o expediente agora? As entregas já chamadas continuam normais. Para usar R$ 4,00 de novo, será preciso abrir outro expediente (R$ 70,00)."))
+          return;
+        const btn = $("finalizarPlanoDiario");
+        btn.disabled = true;
+        btn.textContent = "Finalizando...";
+        try {
+          const r = await fetchComTempo(
+            `${CONFIG.backend}/api/companies/daily-plan/finish`,
+            { method: "POST", headers: { "content-type": "application/json", ...authHeaders() } },
+            18000,
+          );
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.message || "Não consegui finalizar o expediente.");
+          definirPlanoDiario(0);
+          mostrarStatus("Expediente finalizado. Até amanhã!");
+        } catch (e) {
+          mostrarPlanoDiarioAviso(e.message || "Erro ao finalizar o expediente.", true);
+          await carregarPlanoDiario();
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "Finalizar expediente";
         }
       };
       $("ativarMeioPeriodo").onclick = async () => {
@@ -3969,7 +3970,7 @@
         }
         if (
           !confirm(
-            "Ativar Plano Meio Período MotoJá? Vai descontar R$ 25,00 agora e liberar taxa fixa de R$ 5,50 por entrega/ponto durante 6 horas.",
+            "Ativar o Meio Período? Vai descontar R$ 25,00 agora e liberar R$ 5,50 por entrega durante 4 horas.",
           )
         )
           return;
@@ -5244,7 +5245,7 @@
         const taxaOk = taxaAvulsaLiberada(tipo, count);
         const valido = Number.isInteger(count) && count >= 1 && count <= 30 && tipoLotePermitido(tipo) && taxaOk;
         const tarifa = tarifaLote(tipo, $("regiaoLote").value);
-        $("resumoLote").textContent = valido ? `${count} entrega(s) × ${moeda(tarifa)} = ${moeda(count * tarifa)}. Um motoboy para o lote.${tipoPlanoDiario(tipo) ? ' Plano diário ativo.' : tipoMeioPeriodo(tipo) ? ' Meio período ativo.' : ''}` : "Selecione um tipo com tarifa fixa e uma quantidade de 1 a 30 entregas. O plano diário exige ativação de R$ 70,00 por 12 horas e o meio período, de R$ 25,00 por 6 horas. Para cobrança por km, use Entrega com endereço.";
+        $("resumoLote").textContent = valido ? `${count} entrega(s) × ${moeda(tarifa)} = ${moeda(count * tarifa)}. Um motoboy para o lote.${tipoPlanoDiario(tipo) ? ' Plano diário ativo.' : tipoMeioPeriodo(tipo) ? ' Meio período ativo.' : ''}` : "Selecione um tipo com tarifa fixa e uma quantidade de 1 a 30 entregas. O plano diário exige abrir o expediente (R$ 70,00) e o meio período, ativar 4 horas (R$ 25,00). Para cobrança por km, use Entrega com endereço.";
         if (!taxaOk) $("resumoLote").textContent = mensagemTaxaAvulsa(count);
         $("chamarLote").disabled = !valido || enviando;
       }
@@ -5338,14 +5339,14 @@
         }
         if (tipoPlanoDiario(tipoEntrega) && !planoDiarioAtivo) {
           mostrarStatus(
-            "Plano Diario MotoJa Pro bloqueado. Ative por R$ 70,00 para usar R$ 4,00 por 12 horas.",
+            "Expediente fechado. Abra o expediente (R$ 70,00) para usar R$ 4,00 por entrega.",
             true,
           );
           return;
         }
         if (tipoMeioPeriodo(tipoEntrega) && !meioPeriodoAtivo) {
           mostrarStatus(
-            "Plano Meio Período MotoJá bloqueado. Ative por R$ 25,00 para usar R$ 5,50 por 6 horas.",
+            "Meio Período desligado. Ative por R$ 25,00 para usar R$ 5,50 por entrega durante 4 horas.",
             true,
           );
           return;

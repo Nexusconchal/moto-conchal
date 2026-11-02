@@ -299,7 +299,7 @@ test('half period batch renewals stop after the 6 hours expire', async () => {
   await ctx.assertQuickDailyPlanRenewable(tx, { ...halfRaw(), meioPeriodoExpiraEmMs: Date.now() + 1000 }, '11999999999');
   await assert.rejects(ctx.assertQuickDailyPlanRenewable(tx, { ...halfRaw(), meioPeriodoExpiraEmMs: Date.now() - 1 }, '11999999999'), /venceu/);
 });
-test('half period activation debits R$ 25 once, lasts 6 hours and refuses insufficient balance', async () => {
+test('half period activation debits R$ 25 once, lasts 4 hours and refuses insufficient balance', async () => {
   const docs = new Map();
   const ref = path => ({ path, id: path.split('/').at(-1), collection: name => ({ doc: id => ref(`${path}/${name}/${id}`) }) });
   const ctx = vm.createContext({ Date, money: n => Math.round(Number(n || 0) * 100) / 100, onlyDigits: v => String(v || '').replace(/\D/g, ''), cleanText: v => String(v || '').trim(),
@@ -322,7 +322,7 @@ test('half period activation debits R$ 25 once, lasts 6 hours and refuses insuff
   const before = Date.now();
   const first = await call();
   assert.equal(first.data.active, true); assert.equal(docs.get('empresas/c1').saldo, 75);
-  assert.ok(first.data.expiraEmMs >= before + 6 * 3600000 && first.data.expiraEmMs <= Date.now() + 6 * 3600000);
+  assert.ok(first.data.expiraEmMs >= before + 4 * 3600000 && first.data.expiraEmMs <= Date.now() + 4 * 3600000);
   const second = await call();
   assert.equal(second.data.alreadyActive, true); assert.equal(docs.get('empresas/c1').saldo, 75);
   docs.set('empresas/c1', { ...docs.get('empresas/c1'), meioPeriodoExpiraEmMs: Date.now() - 1 });
@@ -426,7 +426,7 @@ test('taxa avulsa: activating either plan resets the counter and opens a new cyc
     dailyPlanRef: (id, day) => ref(`empresas/${id}/planosDiarios/${day}`),
     db: { collection: name => ({ doc: id => ref(`${name}/${id}`) }), runTransaction: async fn => { const pending = []; await fn({ get: async r => ({ exists: docs.has(r.path), data: () => docs.get(r.path) }), set: (r, data, opt) => pending.push([r, data, opt]) }); for (const [r, data, opt] of pending) docs.set(r.path, opt?.merge ? { ...docs.get(r.path), ...data } : data); } },
     assertCompany: 0, assertCompanyApproved: 0, createRideLimiter: 0, app: { post: (path, ...h) => { ctx.handlers[path] = h.at(-1); } }, handlers: {} });
-  for (const name of ['DAILY_PLAN_TYPE', 'DAILY_PLAN_PRICE', 'DAILY_PLAN_DELIVERY_FEE', 'DAILY_PLAN_APP_FEE', 'HALF_PLAN_TYPE', 'HALF_PLAN_PRICE', 'HALF_PLAN_DELIVERY_FEE', 'HALF_PLAN_APP_FEE', 'HALF_PLAN_DURATION_MS', 'DAILY_PLAN_DURATION_MS']) {
+  for (const name of ['DAILY_PLAN_TYPE', 'DAILY_PLAN_PRICE', 'DAILY_PLAN_DELIVERY_FEE', 'DAILY_PLAN_APP_FEE', 'HALF_PLAN_TYPE', 'HALF_PLAN_PRICE', 'HALF_PLAN_DELIVERY_FEE', 'HALF_PLAN_APP_FEE', 'HALF_PLAN_DURATION_MS', 'DAILY_PLAN_MIN_MS']) {
     const line = source.split('\n').find(l => l.startsWith(`const ${name} =`)); vm.runInContext(line.replace('const ', 'var '), ctx);
   }
   vm.runInContext(source.slice(source.indexOf('function halfPlanActiveUntil('), source.indexOf('const TAXA_AVULSA_LIMITE')), ctx);
@@ -478,7 +478,7 @@ test('plan deliveries created while the owner reserved a motoboy carry that moto
   assert.equal(open.records.get('entregas/quick-test').motoboyExclusivoCpf, undefined);
 });
 
-test('Plano Diario lasts 12 hours from activation, does not charge twice while valid and renewals stop after it', async () => {
+test('Plano Diario lasts until the shop closes the day (04:00 at the latest), does not charge twice while valid and renewals stop after it', async () => {
   const docs = new Map();
   const ref = path => ({ path, id: path.split('/').at(-1), collection: name => ({ doc: id => ref(`${path}/${name}/${id}`) }) });
   const ctx = vm.createContext({ Date, money: n => Math.round(Number(n || 0) * 100) / 100, onlyDigits: v => String(v || '').replace(/\D/g, ''), cleanText: v => String(v || '').trim(),
@@ -486,7 +486,7 @@ test('Plano Diario lasts 12 hours from activation, does not charge twice while v
     ledgerRef: () => ref(`ledger/${docs.size}`), admin: { firestore: { FieldValue: { serverTimestamp: () => 'TIME' } } },
     db: { collection: name => ({ doc: id => ref(`${name}/${id}`) }), runTransaction: async fn => { const pending = []; await fn({ get: async r => ({ exists: docs.has(r.path), data: () => docs.get(r.path) }), set: (r, data, opt) => pending.push([r, data, opt]) }); for (const [r, data, opt] of pending) docs.set(r.path, opt?.merge ? { ...docs.get(r.path), ...data } : data); } },
     assertCompany: 0, assertCompanyApproved: 0, createRideLimiter: 0, app: { post: (path, ...h) => { ctx.handler = h.at(-1); } } });
-  for (const name of ['DAILY_PLAN_TYPE', 'DAILY_PLAN_PRICE', 'DAILY_PLAN_DELIVERY_FEE', 'DAILY_PLAN_APP_FEE', 'DAILY_PLAN_DURATION_MS']) {
+  for (const name of ['DAILY_PLAN_TYPE', 'DAILY_PLAN_PRICE', 'DAILY_PLAN_DELIVERY_FEE', 'DAILY_PLAN_APP_FEE', 'DAILY_PLAN_MIN_MS']) {
     const line = source.split('\n').find(l => l.startsWith(`const ${name} =`)); vm.runInContext(line.replace('const ', 'var '), ctx);
   }
   vm.runInContext(source.slice(source.indexOf('function dailyPlanActivation('), source.indexOf('function dailyPlanInactiveError(')), ctx);
@@ -499,7 +499,12 @@ test('Plano Diario lasts 12 hours from activation, does not charge twice while v
   const first = await call();
   const company = docs.get('empresas/19999990000');
   assert.equal(company.saldo, 130);
-  assert.ok(company.planoDiarioExpiraEmMs >= before + 12 * 3600000 && company.planoDiarioExpiraEmMs <= Date.now() + 12 * 3600000);
+  assert.ok(company.planoDiarioExpiraEmMs >= before + 6 * 3600000 && company.planoDiarioExpiraEmMs <= before + 24 * 3600000);
+  // Abriu as 10:00 -> fecha sozinho as 04:00 do dia seguinte; de madrugada vale no minimo 6 h.
+  assert.equal(ctx.dailyPlanEndMs(Date.parse('2026-11-03T10:00:00-03:00')), Date.parse('2026-11-04T04:00:00-03:00'));
+  assert.equal(ctx.dailyPlanEndMs(Date.parse('2026-11-03T17:00:00-03:00')), Date.parse('2026-11-04T04:00:00-03:00'));
+  assert.equal(ctx.dailyPlanEndMs(Date.parse('2026-11-03T23:30:00-03:00')), Date.parse('2026-11-04T05:30:00-03:00'));
+  assert.equal(ctx.dailyPlanEndMs(Date.parse('2026-11-04T05:00:00-03:00')), Date.parse('2026-11-05T04:00:00-03:00'));
   assert.equal(first.data.expiraEmMs, company.planoDiarioExpiraEmMs);
   assert.equal(docs.get(`empresas/19999990000/planosDiarios/${company.planoDiarioAtivacaoId}`).expiraEmMs, company.planoDiarioExpiraEmMs);
   assert.equal(docs.get(`planosAtivados/19999990000_${company.planoDiarioAtivacaoId}`).expiraEmMs, company.planoDiarioExpiraEmMs);
