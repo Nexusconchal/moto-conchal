@@ -99,6 +99,41 @@
     </ol></details>`;
   }
 
+  // Pelo link (app da tela inicial) a notificacao com o app fechado usa o som do Android.
+  // O motoboy pode trocar esse som pela voz do MotoJa nas configuracoes do celular.
+  function guiaSomVoz() {
+    return `<details><summary>🔊 Ouvir “MotoJá, bora rodar” com o app fechado</summary>
+      <p class="mjx-sub">Com o app aberto a voz já toca sozinha. Com o celular bloqueado, a notificação usa o som do Android — dá para trocar pela voz do MotoJá:</p>
+      <audio controls preload="none" src="./audio/motoja-bora-rodar.mp3" style="width:100%;margin-top:8px"></audio>
+      <a class="secondary mjx-grupo" href="./audio/motoja-bora-rodar.mp3" download="motoja-bora-rodar.mp3" style="margin-top:8px">⬇️ Baixar o som</a>
+      <ol>
+        <li>Toque em <b>Baixar o som</b> (vai para a pasta <b>Downloads</b>).</li>
+        <li>Abra <b>Configurações</b> do Android → <b>Apps</b> → <b>Nexus MotoJÁ Motorista</b> (o ícone da tela inicial; se não aparecer, abra o <b>Chrome</b>) → <b>Notificações</b>.</li>
+        <li>Toque na categoria das notificações (ex.: <b>Geral</b> ou <b>nexusmotoja.com.br</b>) → <b>Som</b>.</li>
+        <li>Escolha <b>Adicionar</b> / <b>+</b> / <b>Do armazenamento</b> (Samsung) ou <b>Escolher arquivo</b> (Xiaomi) e selecione <b>motoja-bora-rodar</b>.</li>
+        <li>Deixe a importância em <b>Urgente</b> / <b>Pop-up</b> e o celular no <b>modo som</b>. Depois toque em <b>Testar aviso agora</b> com a tela bloqueada.</li>
+      </ol></details>`;
+  }
+
+  // Opcional: tela acesa enquanto esta Disponivel esperando chamada (pelo link a voz
+  // so toca com o app aberto na tela). Gasta bateria: melhor no carregador da moto.
+  const CHAVE_ESPERANDO = "motojaTelaAcesaEsperando";
+  function querTelaEsperando() {
+    try { return localStorage.getItem(CHAVE_ESPERANDO) === "1"; } catch (_) { return false; }
+  }
+  function aplicarTelaEsperando() {
+    const disponivel = window.MotojaDriverAvailability?.canAlert?.() === true;
+    if (querTelaEsperando() && disponivel) window.MotojaTelaAcesa?.ligar("esperando");
+    else window.MotojaTelaAcesa?.desligar("esperando");
+  }
+  window.addEventListener("motoja:availability-changed", aplicarTelaEsperando);
+  function opcaoTelaEsperando() {
+    return `<label style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:12px;background:#0c0f16;border:1px solid #232a38;cursor:pointer">
+      <input type="checkbox" data-mjx-tela ${querTelaEsperando() ? "checked" : ""} style="width:22px;height:22px;margin:2px 0 0;accent-color:#ff6b00">
+      <span><b>📱 Tela acesa esperando chamada</b><small class="mjx-sub">Enquanto você estiver Disponível a tela não apaga, então a voz “MotoJá, bora rodar” toca na hora. Gasta bateria: use com o celular no carregador.</small></span>
+    </label>`;
+  }
+
   // Grupos dos motoboys no Telegram: toda corrida e entrega da cidade chega neles.
   const GRUPOS_TELEGRAM = [
     ["conchal", "Conchal", "https://t.me/+M49aycYVf_kyZjUx"],
@@ -119,8 +154,10 @@
         <span class="${devices ? "ok" : "no"}">${devices ? `✅ Notificação em ${devices} aparelho${devices > 1 ? "s" : ""}` : "⚠️ Notificação do aparelho desligada"}</span>
       </div>
       ${GRUPOS_TELEGRAM.map(([id, nome, link]) => `<a class="secondary mjx-grupo${id === cidade ? " sua" : ""}" href="${link}" target="_blank" rel="noopener">✈️ Grupo de ${nome}${id === cidade ? " (sua cidade)" : ""}</a>`).join("")}
+      ${opcaoTelaEsperando()}
       <button type="button" class="secondary" data-mjx-teste>Testar aviso agora</button>
       <p class="mjx-sub" data-mjx-msg></p>
+      ${guiaSomVoz()}
       ${guiaBateria()}`;
   }
 
@@ -155,9 +192,16 @@
         const teste = event.target.closest("[data-mjx-teste]");
         if (teste) test(teste);
       });
+      $("avisosMotoboy").addEventListener("change", (event) => {
+        const caixa = event.target.closest("[data-mjx-tela]");
+        if (!caixa) return;
+        try { localStorage.setItem(CHAVE_ESPERANDO, caixa.checked ? "1" : "0"); } catch (_) {}
+        aplicarTelaEsperando();
+      });
     }
     loadRatings();
     loadAlerts();
+    aplicarTelaEsperando();
   }
 
   // Ao abrir a aba Perfil, atualiza a media e o status dos avisos.
