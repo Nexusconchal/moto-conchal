@@ -12437,6 +12437,52 @@ app.post('/api/admin/deliveries/:deliveryId/renew', assertOwner, async (req, res
   }
 });
 
+// Dono chama de novo uma corrida que expirou sem motoboy (como o "Chamar novamente" das entregas).
+app.post('/api/admin/rides/:rideId/renew', assertOwner, async (req, res, next) => {
+  try {
+    const ref = db.collection('corridas').doc(String(req.params.rideId || ''));
+    let renewedRide = null;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        const error = new Error('Corrida nao encontrada.');
+        error.status = 404;
+        error.code = 'corrida_nao_encontrada';
+        throw error;
+      }
+      const ride = snap.data() || {};
+      if (!['pendente', 'expirada'].includes(ride.status)) {
+        const error = new Error('Essa corrida nao pode ser chamada novamente agora.');
+        error.status = 409;
+        error.code = 'corrida_nao_renovavel';
+        throw error;
+      }
+      // Prazo novo a partir de agora (o alerta do app conta os 10 min por criadaEm).
+      renewedRide = { ...ride, status: 'pendente', criadaEm: { seconds: Math.floor(Date.now() / 1000) } };
+      tx.update(ref, {
+        status: 'pendente',
+        renovacoes: Number(ride.renovacoes || 0) + 1,
+        expiradaEm: null,
+        renovadaPeloDonoEm: admin.firestore.FieldValue.serverTimestamp(),
+        criadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    rideStatusCache.delete(ref.id);
+    const push = await notifyDriversAboutRide(ref.id, renewedRide).catch((error) => {
+      console.error('push admin ride renew notify failed', error);
+      return { sent: 0, failed: 1 };
+    });
+    const telegram = await notifyTelegramAboutRide(ref.id, renewedRide).catch((error) => {
+      console.error('telegram admin ride renew notify failed', error);
+      return { sent: false, failed: true };
+    });
+    res.json({ ok: true, rideId: ref.id, push, telegram });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/rides/:rideId/accept', async (req, res, next) => {
   try {
     const driverCpf = onlyDigits(req.body.driverCpf);
