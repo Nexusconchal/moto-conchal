@@ -194,17 +194,22 @@
   const lojaNome = (id) => estado?.stores?.find((s) => s.id === id)?.name || estado?.empresas?.find((s) => s.id === id)?.name || "Loja";
   const whats = (tel) => { const n = String(tel || "").replace(/\D/g, ""); return n ? ` <a href="https://wa.me/55${n}" target="_blank" rel="noopener">WhatsApp</a>` : ""; };
 
+  // Quanto ainda dá para devolver de um pedido pago pelo app (cartão ou Pix).
+  const devolvido = (o) => (o.refunds || []).reduce((s, r) => s + r.amount, 0) + (o.refund && o.refund.status !== "erro" ? o.total : 0);
+  const podeDevolver = (o) => !o.isDemo && o.onlinePaid && (o.cardPayment || o.pixPayment) && o.total - devolvido(o) > 0;
+
   function renderPedidos() {
     const filtro = $("fdPedidosFiltro")?.value || "abertos";
     const lista = (estado.orders || []).filter((o) => filtro === "todos" || (filtro === "abertos" ? ABERTOS.includes(o.status) : o.status === filtro));
     const opcao = (v, t) => `<option value="${v}" ${filtro === v ? "selected" : ""}>${t}</option>`;
-    return `<div class="fd-linha"><label>Mostrar<select id="fdPedidosFiltro">${opcao("abertos", "Em andamento")}${opcao("todos", "Últimos 100")}${opcao("entregue", "Entregues")}${opcao("cancelado", "Cancelados")}</select></label></div>
-      ${lista.length ? tabela(["Pedido", "Loja", "Cliente", "Situação", "Entrega", "Total", "Feito em"], lista.map((o) => {
+    return `<p class="muted">Pedido pago pelo app (cartão ou Pix) tem o botão <b>Devolver dinheiro</b>: devolve tudo ou uma parte para o cliente, e você escolhe quem paga (a loja, no acerto, ou a MotoJá).</p><div class="fd-linha"><label>Mostrar<select id="fdPedidosFiltro">${opcao("abertos", "Em andamento")}${opcao("todos", "Últimos 100")}${opcao("entregue", "Entregues")}${opcao("cancelado", "Cancelados")}</select></label></div>
+      ${lista.length ? tabela(["Pedido", "Loja", "Cliente", "Situação", "Entrega", "Total", "Feito em", ""], lista.map((o) => {
         const entrega = o.mode === "retirada" ? "Retirada" : `${o.deliveryBy === "loja" ? "Motoboy da loja" : "Motoboy MotoJá"}${o.driver ? `<br><small>${esc(o.driver)}</small>` : o.status === "pronto" ? '<br><small class="warn">esperando motoboy</small>' : ""}`;
         return `<tr><td><b>#${esc(o.code)}</b>${o.isDemo ? " <small>teste</small>" : ""}</td><td>${esc(o.storeName || lojaNome(o.store))}<br><small>${whats(o.shopPhone)}</small></td>
           <td>${esc(o.profile?.name || "Cliente")}<br><small>${esc(o.profile?.district || "")}${whats(o.profile?.phone)}</small></td>
           <td>${STATUS[o.status] || esc(o.status)}${o.scheduledFor ? `<br><small>agendado ${hora(o.scheduledFor)}</small>` : ""}</td><td>${entrega}</td>
-          <td>${reais(o.total)}<br><small>${PAGAMENTO[o.payment] || esc(o.payment)}${o.paid ? " • pago" : ""}${o.refund ? (o.refund.status === "erro" ? " • ⚠️ devolver no Mercado Pago" : " • devolvido") : ""}${o.campaign ? " • promoção" : ""}</small></td><td>${hora(o.created)}</td></tr>`;
+          <td>${reais(o.total)}<br><small>${PAGAMENTO[o.payment] || esc(o.payment)}${o.paid ? " • pago" : ""}${o.refund ? (o.refund.status === "erro" ? " • ⚠️ devolver no Mercado Pago" : " • devolvido") : ""}${o.campaign ? " • promoção" : ""}${(o.refunds || []).map((r) => `<br>↩ devolvido ${reais(r.amount)} (${r.chargeTo === "loja" ? "a loja paga" : "a MotoJá paga"})`).join("")}</small></td><td>${hora(o.created)}</td>
+          <td class="actions">${podeDevolver(o) ? `<button type="button" class="sec" data-fd-devolver="${esc(o.id)}">Devolver dinheiro</button>` : ""}</td></tr>`;
       })) : vazio("Nenhum pedido aqui agora.")}`;
   }
 
@@ -221,11 +226,18 @@
         const situacao = e.approval === "pendente" ? '<span class="fd-tag amarela">Em análise</span>' : e.approval === "recusada" ? '<span class="fd-tag vermelha">Recusada</span>' : '<span class="fd-tag verde">Aprovada</span>';
         const agora = !s.id ? "-" : s.manuallyPaused ? '<span class="fd-tag vermelha">Pausada</span>' : s.openNow ? '<span class="fd-tag verde">Aberta</span>' : '<span class="fd-tag">Fechada (horário)</span>';
         const id = esc(e.id);
-        return `<tr><td><b>${esc(e.name)}</b>${e.isDemo ? " <small>exemplo</small>" : ""}<br><small>${esc(e.category || "")} • ${e.deliveryBy === "loja" ? "motoboy próprio" : "motoboy MotoJá"}${e.partner ? ` • ${esc(e.partner.responsible)} (${esc(e.partner.email)})` : ""}${s.rating ? ` • ⭐ ${s.rating.average} (${s.rating.count})` : ""}</small></td>
-          <td>${esc(CIDADES[e.city] || e.city)}</td><td>${situacao}${gratis ? '<br><span class="fd-tag verde">entrega grátis</span>' : ""}${e.mercadoPago ? '<br><span class="fd-tag verde">Mercado Pago vinculado</span>' : ""}</td><td>${agora}</td>
-          <td class="actions">${e.approval === "pendente" ? `<button type="button" data-fd-aprovar="${id}">Aprovar</button><button type="button" class="perigo" data-fd-recusar="${id}">Recusar</button>` : ""}
+        const foto = (url, nome) => url && url.startsWith("/media/") ? `<a href="${esc((estado.customerUrl || "") + url)}" target="_blank" rel="noopener">${nome}</a>` : `<span class="fd-erro">${nome}: falta</span>`;
+        const cnpj = e.partner?.cnpj;
+        const confere = e.isDemo ? "" : `<br><small>📷 ${foto(e.photos?.logo, "Logo")} • ${foto(e.photos?.capa, "Capa")} • ${foto(e.photos?.fachada, "Fachada")} • ${e.products} produto(s)</small>
+          <br><small>${!cnpj ? '<span class="fd-erro">CNPJ não conferido</span>' : cnpj.ok ? `<span class="fd-ok">CNPJ ativo</span> ${esc(cnpj.number)} • ${esc(cnpj.fantasia || cnpj.razao)} • ${esc(cnpj.municipio)}${cnpj.inicio ? ` • aberto em ${esc(cnpj.inicio.split("-").reverse().join("/"))}` : ""}` : `<span class="fd-erro">⚠️ ${esc(cnpj.problem)}</span>`}</small>
+          ${e.missing?.length ? `<br><small class="fd-erro">Falta: ${esc(e.missing.join(", "))}</small>` : ""}
+          ${(e.cheap || []).map((p) => `<br><small class="fd-erro">⚠️ Preço baixo demais: ${esc(p.name)} ${reais(p.price)} (o normal na cidade é ${reais(p.median)})</small>`).join("")}`;
+        return `<tr><td><b>${esc(e.name)}</b>${e.isDemo ? " <small>exemplo</small>" : ""}<br><small>${esc(e.category || "")} • ${e.deliveryBy === "loja" ? "motoboy próprio" : "motoboy MotoJá"}${e.partner ? ` • ${esc(e.partner.responsible)} (${esc(e.partner.email)})` : ""}${s.rating ? ` • ⭐ ${s.rating.average} (${s.rating.count})` : ""}</small>${confere}</td>
+          <td>${esc(CIDADES[e.city] || e.city)}</td><td>${situacao}${gratis ? '<br><span class="fd-tag verde">entrega grátis</span>' : ""}${e.mercadoPago ? '<br><span class="fd-tag verde">Mercado Pago vinculado</span>' : ""}${e.partner ? (e.trusted ? '<br><span class="fd-tag verde">Confiável</span>' : '<br><span class="fd-tag amarela">Loja nova: dinheiro retido</span>') : ""}</td><td>${agora}</td>
+          <td class="actions">${e.approval === "pendente" ? `<button type="button" data-fd-aprovar="${id}" data-falta="${esc((e.missing || []).join(", "))}">${e.missing?.length ? "Aprovar mesmo assim" : "Aprovar"}</button><button type="button" class="perigo" data-fd-recusar="${id}">Recusar</button>` : ""}
             ${s.id ? `<button type="button" class="sec" data-fd-pausar="${id}" data-pausa="${s.manuallyPaused ? "0" : "1"}">${s.manuallyPaused ? "Reabrir" : "Pausar"}</button>
             <button type="button" class="sec" data-fd-gratis="${id}" data-liga="${gratis ? "0" : "1"}">${gratis ? "Tirar entrega grátis" : "Entrega grátis hoje"}</button>` : ""}
+            ${e.partner && e.approval === "aprovada" ? `<button type="button" class="sec" data-fd-confiar="${id}" data-liga="${e.trusted ? "0" : "1"}">${e.trusted ? "Tirar confiança" : "Marcar como confiável"}</button>` : ""}
             ${e.payout ? `<button type="button" class="sec" data-fd-pix="${id}">Pix</button>` : "<small>sem Pix</small>"}</td></tr>`;
       }))}`;
   }
@@ -331,8 +343,10 @@
 
   // Saldo de cada loja e motoboy com a MotoJá: quem recebeu do cliente fica com dinheiro dos outros.
   function saldoTexto(p) {
-    if (Math.abs(p.balance) < 1) return '<span class="fd-tag verde">em dia</span>';
-    return p.balance < 0 ? `<span class="fd-tag vermelha">deve ${reais(-p.balance)} à MotoJá</span>` : `<span class="fd-tag amarela">MotoJá deve ${reais(p.balance)}</span>`;
+    // Loja nova: o que ela tem para receber fica em espera até 2 dias depois da entrega (dá tempo de devolver ao cliente).
+    const espera = p.held > 0 ? `<br><small>+ ${reais(p.held)} em espera (loja nova: libera 2 dias depois da entrega)</small>` : "";
+    if (Math.abs(p.balance) < 1) return '<span class="fd-tag verde">em dia</span>' + espera;
+    return (p.balance < 0 ? `<span class="fd-tag vermelha">deve ${reais(-p.balance)} à MotoJá</span>` : `<span class="fd-tag amarela">MotoJá deve ${reais(p.balance)}</span>`) + espera;
   }
 
   function renderAcerto() {
@@ -363,7 +377,7 @@
     const p = (estado.acerto?.parties || []).find((x) => x.type === tipo && x.id === id) || { name: "" };
     try {
       const d = await food("GET", `settlements/${tipo}/${encodeURIComponent(id)}`);
-      box.innerHTML = `<h3 class="fd-sub">Pedidos de ${esc(p.name)}</h3>${d.orders.length ? tabela(["Pedido", "Quem recebeu", "Total", tipo === "loja" ? "Parte da loja" : "Ganho do motoboy", "Acerto"], d.orders.map((o) => `<tr><td>#${esc(o.code)}<br><small>${hora(o.at)}${tipo === "motoboy" ? " • " + esc(o.storeName || "") : o.driver ? " • " + esc(o.driver) : ""}</small></td><td>${QUEM[o.collector] || ""}<br><small>${PAGAMENTO[o.payment] || ""}</small></td><td>${reais(o.total)}</td><td>${reais(o.share)}</td><td>${o.balance > 0 ? "MotoJá paga " + reais(o.balance) : o.balance < 0 ? "passa " + reais(-o.balance) : "-"}</td></tr>`)) : vazio("Sem pedidos.")}
+      box.innerHTML = `<h3 class="fd-sub">Pedidos de ${esc(p.name)}</h3>${d.orders.length ? tabela(["Pedido", "Quem recebeu", "Total", tipo === "loja" ? "Parte da loja" : "Ganho do motoboy", "Acerto"], d.orders.map((o) => `<tr><td>#${esc(o.code)}<br><small>${hora(o.at)}${tipo === "motoboy" ? " • " + esc(o.storeName || "") : o.driver ? " • " + esc(o.driver) : ""}</small></td><td>${QUEM[o.collector] || ""}<br><small>${PAGAMENTO[o.payment] || ""}</small></td><td>${reais(o.total)}</td><td>${reais(o.share)}</td><td>${o.balance > 0 ? "MotoJá paga " + reais(o.balance) : o.balance < 0 ? "passa " + reais(-o.balance) : "-"}${o.held ? "<br><small>em espera</small>" : ""}${o.refunded ? `<br><small>↩ devolvido ${reais(o.refunded)}</small>` : ""}</td></tr>`)) : vazio("Sem pedidos.")}
         ${d.payouts.length ? `<h3 class="fd-sub">Pagamentos</h3>${tabela(["Quando", "Quem pagou", "Valor", "Situação"], d.payouts.map((x) => `<tr><td>${hora(x.createdAt)}</td><td>${x.amount > 0 ? "MotoJá" : esc(p.name)}</td><td>${reais(Math.abs(x.amount))}</td><td>${x.status === "informado" ? "esperando conferir" : x.status === "recusado" ? "não caiu" : "confirmado"}${x.note ? `<br><small>${esc(x.note)}</small>` : ""}</td></tr>`))}` : ""}`;
       box.scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (error) {
@@ -405,7 +419,32 @@
       return;
     }
     const loja = (id) => estado.stores.find((x) => x.id === id);
-    if (b.dataset.fdAprovar) acao(b, () => food("POST", `stores/${b.dataset.fdAprovar}/approval`, { approved: true }), "Empresa aprovada. A loja já aparece para os clientes.");
+    if (b.dataset.fdAprovar && !b.dataset.falta) acao(b, () => food("POST", `stores/${b.dataset.fdAprovar}/approval`, { approved: true }), "Empresa aprovada. A loja já aparece para os clientes.");
+    if (b.dataset.fdAprovar && b.dataset.falta) {
+      // Loja incompleta: só aprova escrevendo o motivo (ex.: MEI sem CNPJ que você conhece). O dinheiro continua retido.
+      const motivo = prompt(`Esta loja ainda não tem: ${b.dataset.falta}.\n\nPara aprovar mesmo assim, escreva o motivo (ex.: "MEI, conferi a loja pessoalmente"). O dinheiro dela continua retido até você marcar como confiável.`);
+      if (motivo !== null) acao(b, () => food("POST", `stores/${b.dataset.fdAprovar}/approval`, { approved: true, force: true, note: motivo }), "Empresa aprovada. A loja já aparece para os clientes.");
+    }
+    if (b.dataset.fdConfiar) {
+      const liga = b.dataset.liga === "1";
+      if (confirm(liga ? `Marcar ${lojaNome(b.dataset.fdConfiar)} como confiável?\n\nO Pix pelo app passa a cair direto na conta Mercado Pago dela (se vinculada) e o acerto paga sem esperar 2 dias. Faça isso só depois de algumas semanas sem reclamação.` : `Tirar a confiança de ${lojaNome(b.dataset.fdConfiar)}?\n\nO dinheiro dos próximos pedidos volta a ficar com a MotoJá e o acerto espera 2 dias depois da entrega.`))
+        acao(b, () => food("POST", `stores/${b.dataset.fdConfiar}/trust`, { trusted: liga }), liga ? "Loja marcada como confiável." : "Confiança retirada: o dinheiro dela volta a ficar retido.");
+    }
+    if (b.dataset.fdDevolver) {
+      const o = (estado.orders || []).find((x) => x.id === b.dataset.fdDevolver);
+      if (!o) return;
+      const resta = o.total - devolvido(o);
+      const valor = prompt(`Devolver quanto para ${o.profile?.name || "o cliente"} no pedido #${o.code}? (até ${reais(resta)})`, (resta / 100).toFixed(2).replace(".", ","));
+      if (valor === null) return;
+      let quanto = 0;
+      try { quanto = centavos(valor); } catch (error) { aviso(error.message, true); return; }
+      const motivo = prompt("Motivo da devolução (o cliente vê):", "Pedido atrasou muito");
+      if (motivo === null) return;
+      const quem = prompt("Quem paga esta devolução?\n\nL = a LOJA (sai da parte dela no acerto)\nM = a MOTOJÁ", "L");
+      if (quem === null) return;
+      if (!/^[lm]$/i.test(quem.trim())) { aviso("Digite L para a loja ou M para a MotoJá.", true); return; }
+      acao(b, () => food("POST", `orders/${o.id}/refund`, { amount: quanto, reason: motivo, chargeTo: /^l$/i.test(quem.trim()) ? "loja" : "motoja" }), `Devolução de ${reais(quanto)} feita. O cliente foi avisado.`);
+    }
     if (b.dataset.fdRecusar) {
       const motivo = prompt("Motivo da recusa (aparece para a empresa):");
       if (motivo !== null) acao(b, () => food("POST", `stores/${b.dataset.fdRecusar}/approval`, { approved: false, note: motivo }), "Cadastro recusado.");
