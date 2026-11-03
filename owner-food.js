@@ -234,21 +234,25 @@
 
   function renderPromocoes() {
     const lojas = (estado.stores || []).filter((s) => { const e = estado.empresas.find((x) => x.id === s.id); return !e || e.approval === "aprovada"; });
-    const ini = new Date(); ini.setHours(19, 0, 0, 0); if (ini < new Date()) ini.setDate(ini.getDate() + 1);
-    const fim = new Date(ini.getTime() + 3 * 3600000);
+    // Cupom já vale agora, por 7 dias (dá para mudar).
+    const ini = new Date(Math.floor(Date.now() / 300000) * 300000);
+    const fim = new Date(ini.getTime() + 7 * 86400000);
     const lista = estado.campanhas || [];
-    return `<form id="fdPromo" class="fd-form"><h3>Nova promoção paga pela MotoJá <small class="muted">a loja recebe o valor cheio; a MotoJá cobre a diferença</small></h3>
-        <div class="fd-linha"><label>Nome que o cliente vê<input name="title" required maxlength="60" value="1º lanche por R$ 10"></label>
-          <label>Tipo<select name="type"><option value="item">Preço especial num produto</option><option value="frete">Entrega grátis</option></select></label></div>
-        <div class="fd-linha"><label>Loja<select name="storeId"><option value="">Todas as lojas da cidade (só entrega grátis)</option>${lojas.map((s, i) => `<option value="${esc(s.id)}" ${i === 0 ? "selected" : ""}>${esc(s.name)}${s.isDemo === false ? "" : " (exemplo)"}</option>`).join("")}</select></label>
-          <label data-fd-cidade hidden>Cidade<select name="city">${cidadeOpcoes()}</select></label></div>
-        <div class="fd-linha" data-fd-item><label>Produto<select name="productId">${lojas[0] ? produtosDe(lojas[0].id) : ""}</select></label><label>Preço para o cliente (R$)<input name="price" inputmode="decimal" value="10,00"></label></div>
+    return `<form id="fdPromo" class="fd-form"><h3>Nova promoção ou cupom pago pela MotoJá <small class="muted">a loja recebe o valor cheio; a MotoJá cobre a diferença</small></h3>
+        <div class="fd-linha"><label>Como o cliente recebe<select name="kind"><option value="cupom">🎟️ Cupom: o cliente vê no app e toca em Usar</option><option value="auto">🔥 Promoção: vale sozinha no horário</option></select></label>
+          <label>Para quem<select name="audience"><option value="todos">Todos os clientes</option><option value="novos">Só quem nunca pediu (primeira compra)</option></select></label></div>
+        <div class="fd-linha"><label>Nome que o cliente vê<input name="title" required maxlength="60" value="Frete grátis no seu pedido"></label>
+          <label>Tipo<select name="type"><option value="frete">Entrega grátis</option><option value="desconto">R$ de desconto nos produtos (só cupom)</option><option value="item">Preço especial num produto</option></select></label></div>
+        <div class="fd-linha" data-fd-desconto hidden><label>Desconto (R$)<input name="value" inputmode="decimal" value="5,00"></label><label>Pedido mínimo em produtos (R$)<input name="minimum" inputmode="decimal" value="20,00"></label></div>
+        <div class="fd-linha"><label>Loja<select name="storeId"><option value="" selected>Todas as lojas da cidade (entrega grátis ou desconto)</option>${lojas.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}${s.isDemo === false ? "" : " (exemplo)"}</option>`).join("")}</select></label>
+          <label data-fd-cidade>Cidade<select name="city">${cidadeOpcoes()}</select></label></div>
+        <div class="fd-linha" data-fd-item hidden><label>Produto<select name="productId"></select></label><label>Preço para o cliente (R$)<input name="price" inputmode="decimal" value="10,00"></label></div>
         <div class="fd-linha"><label>Começa<input name="starts" type="datetime-local" required value="${local(ini)}"></label><label>Termina<input name="ends" type="datetime-local" required value="${local(fim)}"></label></div>
         <div class="fd-linha"><label>Quantas vezes no total<input name="maxUses" inputmode="numeric" required value="30"></label><label>Por cliente<input name="perCustomer" inputmode="numeric" required value="1"></label></div>
         <label class="fd-check"><input type="checkbox" name="notify" checked> Avisar agora no celular os clientes da cidade que aceitam promoções</label>
-        <p class="muted" data-fd-custo></p><p class="fd-erro" role="alert"></p><button type="submit">Criar promoção</button></form>
-      <h3 class="fd-sub">Promoções</h3>
-      ${lista.length ? tabela(["Promoção", "Quando", "Usos", "Gasto", ""], lista.map((k) => `<tr><td><b>${esc(k.title)}</b><br><small>${k.type === "frete" ? "entrega grátis" : `${esc(k.productName || "")} por ${reais(k.price)}`} • ${esc(k.storeId ? lojaNome(k.storeId) : CIDADES[k.city] || "")}</small></td>
+        <p class="muted" data-fd-custo></p><p class="fd-erro" role="alert"></p><button type="submit">Liberar</button></form>
+      <h3 class="fd-sub">Cupons e promoções</h3>
+      ${lista.length ? tabela(["Cupom / promoção", "Quando", "Usos", "Gasto", ""], lista.map((k) => `<tr><td>${k.kind === "cupom" ? "🎟️" : "🔥"} <b>${esc(k.title)}</b><br><small>${k.type === "frete" ? "entrega grátis" : k.type === "desconto" ? `${reais(k.value)} de desconto${k.minimum ? " acima de " + reais(k.minimum) : ""}` : `${esc(k.productName || "")} por ${reais(k.price)}`} • ${esc(k.storeId ? lojaNome(k.storeId) : CIDADES[k.city] || "")}${k.audience === "novos" ? " • só primeira compra" : ""}</small></td>
           <td>${hora(k.starts)} até ${hora(k.ends)}</td><td>${k.uses}/${k.maxUses}</td><td>${reais(k.spent)}</td>
           <td>${k.active && Date.parse(k.ends) > Date.now() ? `<button type="button" class="perigo" data-fd-encerrar="${esc(k.id)}">Encerrar</button>` : "<small>encerrada</small>"}</td></tr>`)) : vazio("Nenhuma promoção criada ainda.")}`;
   }
@@ -256,14 +260,22 @@
   function custoPromo() {
     const f = $("fdPromo");
     if (!f) return;
-    const item = f.type.value === "item";
+    const tipo = f.type.value, item = tipo === "item", desconto = tipo === "desconto", usos = Number(f.maxUses.value) || 0;
+    if (desconto && f.kind.value !== "cupom") f.kind.value = "cupom";
     f.querySelector("[data-fd-item]").hidden = !item;
+    f.querySelector("[data-fd-desconto]").hidden = !desconto;
     f.querySelector("[data-fd-cidade]").hidden = !!f.storeId.value;
-    const p = (estado.products || []).find((x) => x.id === f.productId.value);
-    let preco = 0;
-    try { preco = centavos(f.price.value); } catch (_) {}
-    const custo = p ? Math.max(0, p.price - preco) : 0;
-    f.querySelector("[data-fd-custo]").textContent = item && p ? `Cada uso custa para a MotoJá ${reais(custo)}. Gasto máximo: ${reais(custo * (Number(f.maxUses.value) || 0))}.` : "Cada uso custa para a MotoJá o valor do frete daquele pedido.";
+    if (item && !f.productId.options.length && f.storeId.value) f.productId.innerHTML = produtosDe(f.storeId.value);
+    let texto = "Cada uso custa para a MotoJá o valor do frete daquele pedido (R$ 6,50 ou mais, pela distância).";
+    if (item) {
+      const p = (estado.products || []).find((x) => x.id === f.productId.value);
+      let preco = 0;
+      try { preco = centavos(f.price.value); } catch (_) {}
+      const custo = p ? Math.max(0, p.price - preco) : 0;
+      texto = p ? `Cada uso custa para a MotoJá ${reais(custo)}. Gasto máximo: ${reais(custo * usos)}.` : "Escolha a loja e o produto.";
+    }
+    if (desconto) { let v = 0; try { v = centavos(f.value.value); } catch (_) {} texto = `Cada uso custa para a MotoJá ${reais(v)}. Gasto máximo: ${reais(v * usos)}.`; }
+    f.querySelector("[data-fd-custo]").textContent = texto + (f.kind.value === "cupom" ? " O cliente vê o cupom no início do app e na sacola, e só vale quando ele toca em Usar." : "");
   }
 
   function renderAvisos() {
@@ -456,16 +468,19 @@
         const tipo = d.get("type"), s = estado.stores.find((x) => x.id === d.get("storeId"));
         if (tipo === "item" && !s) throw new Error("Escolha a loja do produto.");
         const r = await food("POST", "campaigns", {
+          kind: d.get("kind"), audience: d.get("audience"),
           type: tipo, title: d.get("title"), storeId: d.get("storeId") || undefined, city: d.get("city"),
           productId: tipo === "item" ? d.get("productId") : undefined, price: tipo === "item" ? centavos(d.get("price")) : undefined,
+          value: tipo === "desconto" ? centavos(d.get("value")) : undefined, minimum: tipo === "desconto" ? centavos(d.get("minimum")) : undefined,
           starts: new Date(d.get("starts")).toISOString(), ends: new Date(d.get("ends")).toISOString(),
           maxUses: Number(d.get("maxUses")), perCustomer: Number(d.get("perCustomer")),
         });
+        const k = r.campaign, cupom = k.kind === "cupom";
+        const oque = k.type === "frete" ? "Entrega grátis" : k.type === "desconto" ? `${reais(k.value)} de desconto${k.minimum ? " acima de " + reais(k.minimum) : ""}` : `${k.productName} por ${reais(k.price)}`;
         if (d.has("notify")) {
-          const k = r.campaign;
-          await food("POST", "push/promo", { title: "🔥 " + k.title, body: `${k.type === "frete" ? "Entrega grátis" : `${k.productName} por ${reais(k.price)}`}${s ? " na " + s.name : ""} • ${hora(k.starts)}. Toque para pedir!`, storeId: k.storeId || undefined, city: k.city }).catch(() => {});
+          await food("POST", "push/promo", { title: (cupom ? "🎟️ Cupom liberado: " : "🔥 ") + k.title, body: `${oque}${s ? " na " + s.name : ""}${k.audience === "novos" ? " na sua primeira compra" : ""}. ${cupom ? "Abra o app e toque em Usar." : hora(k.starts) + ". Toque para pedir!"}`, storeId: k.storeId || undefined, city: k.city }).catch(() => {});
         }
-        aviso("Promoção criada! Ela aparece para os clientes no horário marcado.");
+        aviso(cupom ? "Cupom liberado! Os clientes já veem no início do app e na sacola." : "Promoção criada! Ela aparece para os clientes no horário marcado.");
       }
       if (f.id === "fdAviso") {
         const r = await food("POST", "push/promo", { city: d.get("city"), title: d.get("title"), body: d.get("body") });
