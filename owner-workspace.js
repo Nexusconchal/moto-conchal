@@ -8,6 +8,24 @@
       description: "Acompanhe a saúde da operação e resolva primeiro o que exige atenção.",
       targets: ["visao-section"],
     },
+    plans: {
+      title: "Planos das empresas",
+      eyebrow: "Plano Diário Pro e Meio Período",
+      description: "Veja qual empresa ativou cada plano e escolha o motoboy que roda sozinho as entregas desse plano.",
+      targets: ["planos-section"],
+    },
+    ratings: {
+      title: "Avaliações dos clientes",
+      eyebrow: "Qualidade",
+      description: "Notas de 1 a 5 estrelas, etiquetas e comentários que os clientes deixam para cada motoboy depois da corrida.",
+      targets: ["avaliacoes-section"],
+    },
+    referrals: {
+      title: "Indique e ganhe",
+      eyebrow: "Clientes",
+      description: "Cada amigo indicado que faz a primeira corrida vale 1 participação no sorteio de 1 corrida grátis do mês.",
+      targets: ["indicacoes-section"],
+    },
     deliveries: {
       title: "Entregas de empresas",
       eyebrow: "Operação",
@@ -30,7 +48,7 @@
       title: "Depósitos e créditos",
       eyebrow: "Financeiro",
       description: "Confira comprovantes, aprove valores e controle créditos das empresas.",
-      targets: ["depositos-section"],
+      targets: ["depositos-section", "repasses-section"],
     },
     companies: {
       title: "Empresas",
@@ -56,18 +74,28 @@
       description: "Identifique em qual etapa os clientes desistem antes de confirmar.",
       targets: ["funil-section"],
     },
+    food: {
+      title: "MotoJÁ Food",
+      eyebrow: "App de comida",
+      description: "Pedidos, empresas, promoções pagas pela MotoJá, avisos para os clientes, equipe e atendimento do Food.",
+      targets: ["food-section"],
+    },
   };
 
   const navConfig = [
     ["Visão geral", "overview", "01", ""],
-    ["Entregas", "deliveries", "02", "Operação"],
-    ["Corridas", "rides", "03", ""],
-    ["CarroJÁ", "cars", "04", ""],
-    ["Depósitos", "deposits", "05", "Financeiro"],
-    ["Empresas", "companies", "06", "Gestão"],
-    ["Motoboys", "drivers", "07", ""],
-    ["Equipe suporte", "support", "08", ""],
-    ["Funil", "funnel", "09", "Análise"],
+    ["Planos", "plans", "02", ""],
+    ["Entregas", "deliveries", "03", "Operação"],
+    ["Corridas", "rides", "04", ""],
+    ["CarroJÁ", "cars", "05", ""],
+    ["Depósitos", "deposits", "06", "Financeiro"],
+    ["Empresas", "companies", "07", "Gestão"],
+    ["Motoboys", "drivers", "08", ""],
+    ["Avaliações", "ratings", "09", ""],
+    ["Indicações", "referrals", "10", ""],
+    ["Equipe suporte", "support", "11", ""],
+    ["Funil", "funnel", "12", "Análise"],
+    ["🍔 Food", "food", "13", "MotoJÁ Food"],
   ];
 
   const DEFAULT_BACKEND = "https://motoboy-conchal.onrender.com";
@@ -149,6 +177,7 @@
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button id="btnRecarregarSuporte" type="button" class="secondary" style="min-height:36px;padding:0 14px;font-size:.82rem">Recarregar contas</button>
           <a href="./suporte/" target="_blank" rel="noopener">Abrir site do suporte</a>
+          <a href="./atendimento.html" target="_blank" rel="noopener">Atendimento automático e fila humana</a>
         </div>
       </div>
       <div class="owner-support-security"><strong>Acesso protegido</strong><span>CPF, nascimento e foto ficam disponíveis somente nesta área do dono. O suporte não recebe dados financeiros.</span></div>
@@ -181,6 +210,289 @@
         button.disabled = false;
       }
     });
+  }
+
+  function planDate(ms) {
+    const value = Number(ms || 0);
+    if (!value) return "-";
+    return new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  }
+
+  function ensurePlansSection(panel) {
+    if (document.getElementById("planos-section")) return;
+    const section = document.createElement("section");
+    section.id = "planos-section";
+    section.className = "box owner-plans";
+    section.innerHTML = `
+      <div class="owner-plans-head"><div><h2>Planos ativados</h2><p class="muted">Últimos 30 dias. Ao escolher um motoboy, ele fica fixo no plano: cada entrega desse plano é aceita automaticamente por ele, ele recebe o aviso no WhatsApp dele; a notificação do app e os grupos do Telegram e do WhatsApp avisam todo mundo, mas só ele vê e pega a entrega e a entrega finaliza sozinha em 1 minuto (o ganho aparece em Ver ganhos). A empresa continua chamando pelo app normalmente.</p></div></div>
+      <div class="owner-plans-filter" role="group" aria-label="Filtrar planos"><button type="button" data-plans-filter="ativos" aria-pressed="true">Valendo agora</button><button type="button" data-plans-filter="todos" aria-pressed="false">Todos</button></div>
+      <div id="ownerPlansList" class="owner-plans-list"><div class="owner-support-empty">Aguardando dados do painel...</div></div>`;
+    panel.appendChild(section);
+    section.addEventListener("click", handlePlanAction);
+  }
+
+  // Avaliacoes dos clientes: o dono ve tudo (cliente, corrida, nota e comentario).
+  function ensureRatingsSection(panel) {
+    if (document.getElementById("avaliacoes-section")) return;
+    const section = document.createElement("section");
+    section.id = "avaliacoes-section";
+    section.className = "box owner-ratings";
+    section.innerHTML = `
+      <div class="owner-plans-head"><div><h2>Avaliações dos motoboys</h2><p class="muted">Depois de cada corrida o cliente pode dar de 1 a 5 estrelas, marcar etiquetas e deixar um comentário. O motoboy vê a média e os comentários sem o nome do cliente; aqui você vê tudo.</p></div></div>
+      <div id="ownerRatingsSummary" class="owner-ratings-summary"></div>
+      <h3 class="owner-ratings-title">Ranking por motoboy</h3>
+      <div id="ownerRatingsRanking" class="owner-ratings-ranking"></div>
+      <h3 class="owner-ratings-title">Últimas avaliações</h3>
+      <div class="owner-plans-filter" role="group" aria-label="Filtrar avaliações">
+        <button type="button" data-ratings-filter="todas" aria-pressed="true">Todas</button>
+        <button type="button" data-ratings-filter="baixas" aria-pressed="false">Notas 1 a 3</button>
+        <button type="button" data-ratings-filter="comentario" aria-pressed="false">Com comentário</button>
+        <select data-ratings-driver aria-label="Motoboy"><option value="">Todos os motoboys</option></select>
+      </div>
+      <div id="ownerRatingsList" class="owner-ratings-list"><div class="owner-support-empty">Aguardando dados do painel...</div></div>`;
+    panel.appendChild(section);
+    section.addEventListener("click", (event) => {
+      const filter = event.target.closest("[data-ratings-filter]");
+      if (!filter) return;
+      ratingsFilter = filter.dataset.ratingsFilter;
+      renderRatingsSection();
+    });
+    section.addEventListener("change", (event) => {
+      if (!event.target.matches("[data-ratings-driver]")) return;
+      ratingsDriver = event.target.value;
+      renderRatingsSection();
+    });
+  }
+
+  let ratingsFilter = "todas", ratingsDriver = "";
+  // Estrelas preenchidas na proporcao da nota (4,67 mostra quase 5 cheias).
+  const ratingStars = (nota) => `<span class="owner-stars" style="--p:${Math.max(0, Math.min(100, (Number(nota) || 0) * 20))}%" aria-label="${Number(nota || 0).toFixed(1)} de 5">★★★★★</span>`;
+  function renderRatingsSection() {
+    const list = document.getElementById("ownerRatingsList");
+    if (!list) return;
+    const ratings = Array.isArray(carAdminState.avaliacoes) ? carAdminState.avaliacoes : [];
+    const drivers = Array.isArray(carAdminState.motoboys) ? carAdminState.motoboys : [];
+    const now = Date.now();
+    const last30 = ratings.filter((r) => now - Number(r.criadoEmMs || 0) < 30 * 864e5);
+    const media30 = last30.length ? last30.reduce((t, r) => t + Number(r.nota || 0), 0) / last30.length : 0;
+    const baixas30 = last30.filter((r) => Number(r.nota) <= 3).length;
+    document.getElementById("ownerRatingsSummary").innerHTML = `
+      <div><span>Média (30 dias)</span><strong>${media30 ? media30.toFixed(2).replace(".", ",") : "-"}</strong><small>${media30 ? ratingStars(media30) : "sem avaliações"}</small></div>
+      <div><span>Avaliações (30 dias)</span><strong>${last30.length}</strong><small>de corridas finalizadas</small></div>
+      <div><span>Notas 1 a 3 (30 dias)</span><strong class="${baixas30 ? "owner-ratings-bad" : ""}">${baixas30}</strong><small>${baixas30 ? "confira os comentários" : "nenhuma reclamação"}</small></div>`;
+
+    const lowByDriver = {};
+    ratings.forEach((r) => { if (Number(r.nota) <= 3) lowByDriver[r.motoboyCpf] = (lowByDriver[r.motoboyCpf] || 0) + 1; });
+    const ranking = drivers
+      .filter((d) => Number(d.notaQtd || 0) > 0)
+      .map((d) => ({ cpf: String(d.id || d.cpf || ""), nome: d.nome || "Motoboy", total: Number(d.notaQtd || 0), media: Number(d.notaSoma || 0) / Number(d.notaQtd || 1) }))
+      .sort((a, b) => b.media - a.media || b.total - a.total);
+    document.getElementById("ownerRatingsRanking").innerHTML = ranking.length
+      ? ranking.map((d, i) => `<article class="${d.media < 4.5 ? "attention" : ""}"><b>${i + 1}º</b><div><strong>${escapeHtml(d.nome)}</strong><small>CPF ${formatCpf(d.cpf)}</small></div><div><strong class="owner-ratings-stars">${d.media.toFixed(2).replace(".", ",")} ${ratingStars(d.media)}</strong><small>${d.total} avaliaç${d.total === 1 ? "ão" : "ões"}${lowByDriver[d.cpf] ? ` · ${lowByDriver[d.cpf]} nota(s) baixa(s) recentes` : ""}</small></div></article>`).join("")
+      : `<div class="owner-support-empty">Nenhum motoboy avaliado ainda.</div>`;
+
+    const select = document.querySelector("[data-ratings-driver]");
+    if (select) {
+      const names = new Map(ratings.map((r) => [r.motoboyCpf, r.motoboy || formatCpf(r.motoboyCpf)]));
+      select.innerHTML = `<option value="">Todos os motoboys</option>${[...names].sort((a, b) => String(a[1]).localeCompare(String(b[1]), "pt-BR")).map(([cpf, nome]) => `<option value="${escapeHtml(cpf)}" ${cpf === ratingsDriver ? "selected" : ""}>${escapeHtml(nome)}</option>`).join("")}`;
+    }
+    document.querySelectorAll("[data-ratings-filter]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.ratingsFilter === ratingsFilter)));
+    const shown = ratings.filter((r) => (!ratingsDriver || r.motoboyCpf === ratingsDriver)
+      && (ratingsFilter !== "baixas" || Number(r.nota) <= 3)
+      && (ratingsFilter !== "comentario" || String(r.comentario || "").trim()));
+    list.innerHTML = shown.length
+      ? shown.slice(0, 200).map((r) => `<article class="${Number(r.nota) <= 3 ? "low" : ""}"><div><span>${planDate(r.criadoEmMs)}</span><strong class="owner-ratings-stars">${ratingStars(r.nota)}</strong><small>${Number(r.nota)} de 5</small></div><div><span>Motoboy</span><strong>${escapeHtml(r.motoboy || "-")}</strong><small>CPF ${formatCpf(r.motoboyCpf)}</small></div><div><span>Cliente</span><strong>${escapeHtml(r.clienteNome || "Cliente")}</strong><small>Corrida ${escapeHtml(String(r.rideId || r.id || "").slice(0, 10))}</small></div><div class="owner-ratings-text">${(r.tags || []).length ? `<em>${r.tags.map(escapeHtml).join(" · ")}</em>` : ""}${r.comentario ? `<p>“${escapeHtml(r.comentario)}”</p>` : (r.tags || []).length ? "" : `<small>Sem comentário</small>`}</div></article>`).join("")
+      : `<div class="owner-support-empty">${ratings.length ? "Nenhuma avaliação com esse filtro." : "Ainda não chegou nenhuma avaliação. Elas aparecem aqui assim que os clientes avaliarem as corridas."}</div>`;
+  }
+
+  // Indique e ganhe: participacoes do mes por cliente e sorteio da corrida gratis.
+  function ensureReferralsSection(panel) {
+    if (document.getElementById("indicacoes-section")) return;
+    const section = document.createElement("section");
+    section.id = "indicacoes-section";
+    section.className = "box owner-ratings";
+    section.innerHTML = `
+      <div class="owner-plans-head"><div><h2>Indicações qualificadas</h2><p class="muted">Conta quando o amigo se cadastra pelo link de quem indicou e faz a primeira corrida finalizada. Cada amigo vale 1 participação no sorteio do mês.</p></div></div>
+      <div class="owner-plans-filter" role="group" aria-label="Mês"><button type="button" data-ref-mes="atual" aria-pressed="true">Este mês</button><button type="button" data-ref-mes="anterior" aria-pressed="false">Mês passado</button><button type="button" class="approve" data-ref-sortear>🎲 Sortear ganhador</button></div>
+      <div id="ownerReferralWinner"></div>
+      <h3 class="owner-ratings-title">Participações por cliente</h3>
+      <div id="ownerReferralRanking" class="owner-ratings-ranking"></div>
+      <h3 class="owner-ratings-title">Amigos que fizeram a primeira corrida</h3>
+      <div id="ownerReferralList" class="owner-ratings-ranking"></div>`;
+    panel.appendChild(section);
+    section.addEventListener("click", (event) => {
+      const mes = event.target.closest("[data-ref-mes]");
+      if (mes) { referralMonth = mes.dataset.refMes; referralWinner = null; renderReferralsSection(); return; }
+      if (event.target.closest("[data-ref-sortear]")) drawReferralWinner();
+    });
+  }
+
+  let referralMonth = "atual", referralWinner = null;
+  function referralMonthKey() {
+    const now = new Date();
+    const date = referralMonth === "anterior" ? new Date(now.getFullYear(), now.getMonth() - 1, 15) : now;
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  }
+  function referralRanking() {
+    const mes = referralMonthKey();
+    const list = (Array.isArray(carAdminState.indicacoes) ? carAdminState.indicacoes : []).filter((item) => item.mes === mes);
+    const byReferrer = new Map();
+    list.forEach((item) => {
+      const current = byReferrer.get(item.indicadorId) || { id: item.indicadorId, nome: item.indicadorNome || "Cliente", total: 0 };
+      current.total += 1;
+      byReferrer.set(item.indicadorId, current);
+    });
+    return { list, ranking: [...byReferrer.values()].sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome, "pt-BR")) };
+  }
+  function drawReferralWinner() {
+    const { ranking } = referralRanking();
+    const tickets = ranking.flatMap((person) => Array(person.total).fill(person));
+    if (!tickets.length) return alert("Ninguém tem participação neste mês ainda.");
+    const random = new Uint32Array(1);
+    crypto.getRandomValues(random);
+    referralWinner = tickets[random[0] % tickets.length];
+    renderReferralsSection();
+  }
+  function renderReferralsSection() {
+    const rankingRoot = document.getElementById("ownerReferralRanking");
+    if (!rankingRoot) return;
+    const { list, ranking } = referralRanking();
+    document.querySelectorAll("[data-ref-mes]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.refMes === referralMonth)));
+    const tickets = ranking.reduce((total, person) => total + person.total, 0);
+    document.getElementById("ownerReferralWinner").innerHTML = referralWinner
+      ? `<div class="owner-ratings-summary" style="grid-template-columns:1fr"><div><span>🎉 Ganhador sorteado (${tickets} participações)</span><strong>${escapeHtml(referralWinner.nome)}</strong><small>WhatsApp ${escapeHtml(formatPhone(referralWinner.id))} · ${referralWinner.total} participação(ões). Combine a corrida grátis com ele.</small></div></div>`
+      : "";
+    rankingRoot.innerHTML = ranking.length
+      ? ranking.map((person, index) => `<article><b>${index + 1}º</b><div><strong>${escapeHtml(person.nome)}</strong><small>${escapeHtml(formatPhone(person.id))}</small></div><div><strong>${person.total} participaç${person.total > 1 ? "ões" : "ão"}</strong><small>${Math.round((person.total / tickets) * 100)}% de chance</small></div></article>`).join("")
+      : `<div class="owner-support-empty">Nenhuma indicação qualificada neste mês ainda.</div>`;
+    document.getElementById("ownerReferralList").innerHTML = list.length
+      ? list.sort((a, b) => Number(b.qualificadaEmMs || 0) - Number(a.qualificadaEmMs || 0)).map((item) => `<article><b>✅</b><div><strong>${escapeHtml(item.indicadoNome || "Cliente")}</strong><small>final ${escapeHtml(item.indicadoFinal || "")} · ${planDate(item.qualificadaEmMs)}</small></div><div><strong>indicado por ${escapeHtml(item.indicadorNome || "Cliente")}</strong><small>${escapeHtml(formatPhone(item.indicadorId))}</small></div></article>`).join("")
+      : `<div class="owner-support-empty">Quando um amigo indicado fizer a primeira corrida, ele aparece aqui.</div>`;
+  }
+
+  // Corridas que o motoboy avisou que o cliente pagou em dinheiro: o dono confere e finaliza.
+  function renderCashRides() {
+    const section = document.getElementById("corridas-section");
+    if (!section) return;
+    let box = document.getElementById("ownerCashRides");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "ownerCashRides";
+      box.className = "owner-ratings";
+      section.insertBefore(box, section.children[1] || null);
+      box.addEventListener("click", finishCashRide);
+    }
+    const lista = (Array.isArray(carAdminState.corridas) ? carAdminState.corridas : [])
+      .filter((c) => c.dinheiroInformado && c.status === "aceita" && c.pagamento?.status !== "approved")
+      .sort((a, b) => Number(b.dinheiroInformado.emMs || 0) - Number(a.dinheiroInformado.emMs || 0));
+    box.hidden = !lista.length;
+    if (!lista.length) { box.innerHTML = ""; return; }
+    box.innerHTML = `<h3 class="owner-ratings-title">💵 Pagos em dinheiro, aguardando você: ${lista.length}</h3>
+      <div class="owner-ratings-list">${lista.map((c) => `<article><div><span>${planDate(c.dinheiroInformado.emMs)}</span><strong>${Number(c.valor || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong><small>${c.modalidade === "entrega_avulsa" ? "📦 Entrega avulsa" : "🏍️ Mototáxi"}${c.dinheiroInformado.codigoConferido ? " · código conferido" : ""}</small></div><div><span>Motoboy</span><strong>${escapeHtml(c.motoboy || "-")}</strong><small>CPF ${formatCpf(c.motoboyCpf || "")}</small></div><div><span>Cliente</span><strong>${escapeHtml(c.nome || "Cliente")}</strong><small>${escapeHtml(formatPhone(c.telefoneCliente || ""))}</small></div><div><button class="approve" type="button" data-cash-finish="${escapeHtml(c.id)}">Confirmar e finalizar</button></div></article>`).join("")}</div>`;
+  }
+
+  async function finishCashRide(event) {
+    const botao = event.target.closest("[data-cash-finish]");
+    if (!botao) return;
+    if (!confirm("Confirmar que o cliente pagou em dinheiro ao motoboy e finalizar? O ganho do motoboy é registrado e ele fica devendo a parte do app no fechamento.")) return;
+    botao.disabled = true;
+    botao.textContent = "Finalizando...";
+    try {
+      const response = await fetch(`${getBackendUrl()}/api/admin/rides/${encodeURIComponent(botao.dataset.cashFinish)}/force-finish`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-owner-password": getOwnerPassword() },
+        body: JSON.stringify({ reason: "Pago em dinheiro ao motoboy (informado pelo app do motoboy)" }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || "Não consegui finalizar agora.");
+      if (typeof window.carregarPainel === "function") await window.carregarPainel();
+    } catch (error) {
+      alert(error.message);
+      botao.disabled = false;
+      botao.textContent = "Confirmar e finalizar";
+    }
+  }
+
+  // Corridas canceladas pelo motoboy depois de esperar 10 min no local (cliente nao apareceu).
+  function renderWaitCancels() {
+    const section = document.getElementById("corridas-section");
+    if (!section) return;
+    let box = document.getElementById("ownerWaitCancels");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "ownerWaitCancels";
+      box.className = "owner-ratings";
+      section.insertBefore(box, section.children[1] || null);
+    }
+    const desde = Date.now() - 30 * 864e5;
+    const lista = (Array.isArray(carAdminState.corridas) ? carAdminState.corridas : [])
+      .filter((c) => c.cancelamentoEspera && Number(c.cancelamentoEspera.canceladoEmMs || 0) >= desde)
+      .sort((a, b) => Number(b.cancelamentoEspera.canceladoEmMs) - Number(a.cancelamentoEspera.canceladoEmMs));
+    box.innerHTML = `<h3 class="owner-ratings-title">⏱️ Canceladas pelo motoboy por espera (30 dias): ${lista.length}</h3>
+      ${lista.length ? `<div class="owner-ratings-list">${lista.slice(0, 50).map((c) => {
+        const e = c.cancelamentoEspera;
+        return `<article class="low"><div><span>${planDate(e.canceladoEmMs)}</span><strong>Esperou ${Number(e.esperouMin || 0)} min</strong><small>chegou ${planDate(e.chegouEmMs)} · ${e.chegadaPor === "gps" ? "pelo GPS" : "pelo botão"}</small></div><div><span>Motoboy</span><strong>${escapeHtml(c.motoboy || c.canceladoPor || "-")}</strong><small>CPF ${formatCpf(c.canceladoPorCpf || c.motoboyCpf || "")}</small></div><div><span>Cliente</span><strong>${escapeHtml(c.nome || "Cliente")}</strong><small>${escapeHtml(formatPhone(c.telefoneCliente || ""))}</small></div><div class="owner-ratings-text"><em>${escapeHtml(e.motivo || "-")}</em>${e.detalhe ? `<p>“${escapeHtml(e.detalhe)}”</p>` : ""}<small>aceitou ${planDate(e.aceitaEmMs)}</small></div></article>`;
+      }).join("")}</div>` : `<div class="owner-support-empty">Nenhuma corrida cancelada por espera do cliente nos últimos 30 dias.</div>`}`;
+  }
+
+  let plansFilter = "ativos";
+  function renderPlansSection() {
+    const root = document.getElementById("ownerPlansList");
+    if (!root) return;
+    const now = Date.now();
+    const plans = (Array.isArray(carAdminState.planosAtivados) ? carAdminState.planosAtivados : [])
+      .filter((plan) => plansFilter === "todos" || Number(plan.expiraEmMs || 0) > now);
+    document.querySelectorAll("[data-plans-filter]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.plansFilter === plansFilter)));
+    const drivers = (Array.isArray(carAdminState.motoboys) ? carAdminState.motoboys : [])
+      .filter((driver) => driver.status !== "bloqueado" && String(driver.id || driver.cpf || "").replace(/\D/g, "").length === 11)
+      .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || ""), "pt-BR"));
+    if (!plans.length) {
+      root.innerHTML = `<div class="owner-support-empty">${plansFilter === "todos" ? "Nenhuma empresa ativou plano nos últimos 30 dias." : "Nenhum plano valendo agora. Toque em Todos para ver os anteriores."}</div>`;
+      return;
+    }
+    root.innerHTML = plans.map((plan) => {
+      const active = Number(plan.expiraEmMs || 0) > now;
+      const daily = plan.tipo !== "meio_periodo";
+      const chosen = String(plan.motoboyExclusivoCpf || "");
+      const options = drivers.map((driver) => {
+        const cpf = String(driver.id || driver.cpf || "").replace(/\D/g, "");
+        return `<option value="${cpf}" ${cpf === chosen ? "selected" : ""}>${escapeHtml(driver.nome || "Motoboy")} · CPF ${formatCpf(cpf)}</option>`;
+      }).join("");
+      const choice = active
+        ? `<div class="owner-plan-driver"><label>Motoboy do plano<select data-plan-driver="${escapeHtml(plan.id)}"><option value="">Todos os motoboys (sem reserva)</option>${options}</select></label><button class="approve" type="button" data-plan-save="${escapeHtml(plan.id)}">Salvar motoboy</button></div>`
+        : `<div class="owner-plan-driver"><span>Motoboy do plano</span><strong>${chosen ? escapeHtml(plan.motoboyExclusivoNome || formatCpf(chosen)) : "Todos os motoboys"}</strong></div>`;
+      return `<article class="owner-plan ${active ? "active" : ""}"><div><span>Empresa</span><strong>${escapeHtml(plan.empresa || plan.empresaId || "-")}</strong><small>${escapeHtml(formatPhone(plan.empresaId || ""))}</small></div><div><span>Modalidade</span><strong>${daily ? "Plano Diário Pro" : "Plano Meio Período"}</strong><small>${Number(plan.valor || (daily ? 70 : 25)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} · ${daily ? "R$ 4,00 / R$ 10,00 por entrega" : "R$ 5,50 / R$ 12,00 por entrega"}</small></div><div><span>Escolheu em</span><strong>${planDate(plan.ativadoEmMs)}</strong><small>${active ? `Vale até ${planDate(plan.expiraEmMs)}` : `Encerrou ${planDate(plan.expiraEmMs)}`}</small></div><div><span>Situação</span><strong class="${active ? "state-aprovada" : ""}">${active ? "Valendo agora" : "Encerrado"}</strong><small>${chosen ? `Só ${escapeHtml(plan.motoboyExclusivoNome || "o motoboy escolhido")}` : "Aberto para todos"}</small></div>${choice}</article>`;
+    }).join("");
+  }
+
+  async function handlePlanAction(event) {
+    const filter = event.target.closest("[data-plans-filter]");
+    if (filter) {
+      plansFilter = filter.dataset.plansFilter;
+      renderPlansSection();
+      return;
+    }
+    const save = event.target.closest("[data-plan-save]");
+    if (!save) return;
+    const key = save.dataset.planSave;
+    const select = [...document.querySelectorAll("[data-plan-driver]")].find((item) => item.dataset.planDriver === key);
+    const cpf = select?.value || "";
+    const label = cpf ? select.options[select.selectedIndex].textContent : "todos os motoboys";
+    if (!confirm(cpf ? `Deixar ${label} fixo neste plano? As entregas serão aceitas automaticamente por ele e finalizadas sozinhas em 1 minuto.` : "Liberar as entregas deste plano para todos os motoboys?")) return;
+    save.disabled = true;
+    save.textContent = "Salvando...";
+    try {
+      const response = await fetch(`${getBackendUrl()}/api/admin/plans/${encodeURIComponent(key)}/driver`, { method: "POST", headers: { "content-type": "application/json", "x-owner-password": getOwnerPassword() }, body: JSON.stringify({ cpf }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || data.error || "Não consegui salvar o motoboy do plano.");
+      alert(cpf ? `Pronto: ${data.motoboy?.nome || "o motoboy escolhido"} ficou fixo neste plano. Cada entrega nova é aceita por ele na hora, ele recebe aviso no WhatsApp, todos veem a notificação e os grupos (mas só ele pega) e ela finaliza sozinha em 1 minuto.${data.entregasAceitas ? ` ${data.entregasAceitas} entrega(s) que estavam esperando já ficaram com ele.` : ""}` : "Pronto: as entregas deste plano voltaram a aparecer para todos os motoboys.");
+      if (typeof window.carregarPainel === "function") await window.carregarPainel();
+    } catch (error) {
+      alert(error.message || "Não consegui salvar o motoboy do plano.");
+    } finally {
+      save.disabled = false;
+      save.textContent = "Salvar motoboy";
+    }
   }
 
   function carStatusLabel(status) {
@@ -344,6 +656,12 @@
     shell.querySelectorAll("[data-owner-page]").forEach((link) => {
       const active = link.dataset.ownerPage === name;
       link.classList.toggle("active", active);
+      // No celular as abas rolam de lado: mantem a aba escolhida visivel.
+      const nav = link.parentElement;
+      if (active && nav && nav.scrollWidth > nav.clientWidth) {
+        const offset = link.getBoundingClientRect().left - nav.getBoundingClientRect().left;
+        if (offset < 0 || offset + link.offsetWidth > nav.clientWidth) nav.scrollBy({ left: offset - 8, behavior: "smooth" });
+      }
       if (active) link.setAttribute("aria-current", "page");
       else link.removeAttribute("aria-current");
     });
@@ -361,6 +679,10 @@
     }
     if (name === "support") loadSupportAccounts();
     if (name === "cars") renderCarSection();
+    if (name === "plans") renderPlansSection();
+    if (name === "ratings") renderRatingsSection();
+    if (name === "referrals") renderReferralsSection();
+    if (name === "rides") { renderWaitCancels(); renderCashRides(); }
   }
 
   function buildNavigation(nav) {
@@ -392,6 +714,9 @@
     if (!panel || !nav || !overview || document.getElementById("ownerWorkspace")) return;
     ensureSupportSection(panel);
     ensureCarSection(panel);
+    ensurePlansSection(panel);
+    ensureRatingsSection(panel);
+    ensureReferralsSection(panel);
 
     const originalChildren = [...panel.children];
     const globalFilters = originalChildren.find((element) => element.querySelector?.("#periodo"));
@@ -460,6 +785,11 @@
   window.addEventListener("motoja:admin-state", (event) => {
     carAdminState = event.detail || carAdminState;
     renderCarSection();
+    renderPlansSection();
+    renderRatingsSection();
+    renderReferralsSection();
+    renderWaitCancels();
+    renderCashRides();
     if (Array.isArray(event.detail?.contasSuporte) && event.detail.contasSuporte.length) {
       renderSupportAccounts(event.detail.contasSuporte);
     } else if (getOwnerPassword()) {

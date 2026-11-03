@@ -8,6 +8,15 @@
     />
     <title>Nexus Entregas - Empresas</title>
     <meta name="theme-color" content="#ff6b00" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Nexus MotoJá" />
+    <meta property="og:title" content="Nexus MotoJá — entregas para empresas" />
+    <meta property="og:description" content="Peça entregas pelo app Nexus MotoJá e acompanhe seus pedidos." />
+    <meta property="og:url" content="https://nexusmotoja.com.br/empresa.html" />
+    <meta property="og:image" content="https://nexusmotoja.com.br/nexus-motoja-site-logo.png?v=202" />
+    <meta property="og:image:secure_url" content="https://nexusmotoja.com.br/nexus-motoja-site-logo.png?v=202" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:alt" content="Logo Nexus MotoJá" />
     <link rel="manifest" href="./empresa.webmanifest" />
     <link
       rel="icon"
@@ -269,6 +278,41 @@
         border: 1px solid rgba(79, 195, 247, 0.25);
         color: #d8f4ff;
       }
+      .taxa-avulsa-card {
+        display: none;
+        margin: 12px 0;
+        padding: 18px 16px;
+        border-radius: 18px;
+        background: linear-gradient(135deg, rgba(255, 128, 0, 0.22), rgba(255, 172, 79, 0.08));
+        border: 1px solid rgba(255, 128, 0, 0.55);
+        color: #fff4e6;
+        line-height: 1.45;
+      }
+      .taxa-avulsa-card.show { display: block; }
+      .taxa-avulsa-card h3 { margin: 0 0 6px; font-size: 1.12rem; color: #ffac4f; }
+      .taxa-avulsa-card p { margin: 0 0 10px; }
+      .taxa-avulsa-card .taxa-avulsa-acoes { display: grid; gap: 8px; margin-top: 12px; }
+      .taxa-avulsa-card .taxa-avulsa-acoes button { width: 100%; }
+      .taxa-avulsa-card small { display: block; margin-top: 8px; color: #ffd9b0; }
+      .taxa-avulsa-dica {
+        display: none;
+        margin: 10px 0;
+        font-size: 0.86rem;
+        color: #ffd9b0;
+      }
+      .taxa-avulsa-dica.show { display: block; }
+      .plano-contagem {
+        display: none;
+        margin: 10px 0;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: rgba(37, 211, 102, 0.12);
+        border: 1px solid rgba(37, 211, 102, 0.4);
+        color: #d9ffe6;
+        font-size: 0.9rem;
+        line-height: 1.5;
+      }
+      .plano-contagem.show { display: block; }
       .status.error {
         background: rgba(255, 82, 82, 0.1);
         border-color: rgba(255, 82, 82, 0.28);
@@ -448,6 +492,20 @@
         display: grid;
         gap: 8px;
       }
+      /* Lote pela nota: andamento, chat e alerta do motoboy */
+      .mj-lote { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid #35424b; border-radius: 8px; }
+      .mj-lote ol { margin: 0; padding-left: 4px; list-style: none; display: grid; gap: 4px; font-size: 0.85rem; }
+      .mj-lote li small { color: #9fb0bb; margin-left: 4px; }
+      .mj-lote li.problema { color: #ffd27a; }
+      .mj-lote button { justify-self: start; }
+      .mj-chat-alerta { position: fixed; top: 16px; right: 16px; z-index: 9999; width: min(360px, calc(100vw - 32px)); display: grid; gap: 6px;
+        padding: 14px 16px; border-radius: 14px; background: #2a1e08; color: #fff; border: 2px solid #ff9a00; box-shadow: 0 12px 40px rgba(0,0,0,.45);
+        animation: mjChatPulse 1s ease-in-out 3; }
+      .mj-chat-alerta span { color: #ffe2b0; font-size: 0.9rem; overflow-wrap: anywhere; }
+      .mj-chat-alerta div { display: flex; gap: 8px; }
+      .mj-chat-alerta button { flex: 1; }
+      .mj-chat-alerta [data-chat-responder] { background: #ff9a00; color: #111; font-weight: 800; }
+      @keyframes mjChatPulse { 50% { transform: scale(1.03); } }
       .tracking-delivery {
         min-height: 0;
         border-radius: 14px;
@@ -900,7 +958,12 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
       }
+      #modoEntrega button { min-height: 68px; }
+      #chamadaSemEndereco { gap: 12px; }
+      #chamadaSemEndereco .quick-order-note { margin: 0; }
       .delivery-form > #editarCadastroLoja,
+      .delivery-form > #modoEntrega,
+      .delivery-form > #chamadaSemEndereco,
       .delivery-form > #cadastroLoja,
       .delivery-form > #tipoEntregaAviso,
       .delivery-form > .grid2,
@@ -1429,6 +1492,23 @@
           Deposito minimo: R$ 10,00. O saldo so entra depois que o dono conferir
           o pagamento e aprovar no painel.
         </p>
+        <div id="recargaValores" class="recarga-valores" style="display:none" aria-label="Valores sugeridos de recarga">
+          <button type="button" class="secondary" data-recarga-valor="10">R$ 10</button>
+          <button type="button" class="secondary" data-recarga-valor="30">R$ 30</button>
+          <button type="button" class="secondary" data-recarga-valor="50">R$ 50</button>
+          <button type="button" class="secondary" data-recarga-valor="100">R$ 100</button>
+        </div>
+        <div id="recargaAutomatica" class="status show" style="display:none;gap:12px;text-align:left" aria-live="polite">
+          <strong id="recargaTitulo">Recarga automática</strong>
+          <span id="recargaTexto"></span>
+          <small id="recargaCodigo" style="overflow-wrap:anywhere"></small>
+          <div class="recarga-acoes">
+            <a id="continuarRecarga" class="recarga-link" hidden rel="noreferrer">Continuar pagamento</a>
+            <button id="conferirRecarga" class="green" type="button" hidden>Conferir pagamento</button>
+            <button id="novaRecarga" class="secondary" type="button" hidden>Nova recarga</button>
+          </div>
+          <span id="recargaFeedback"></span>
+        </div>
         <div id="pixManualBox" class="status show" style="display: none; gap: 10px; text-align: left">
           <span class="muted">Chave Pix aleatória - Bradesco</span>
           <div class="pix-key-row">
@@ -1444,35 +1524,52 @@
         </div>
       </section>
       <section class="box app-area hidden">
-        <h2>Plano Diario MotoJa Pro</h2>
+        <h2>Plano Diário MotoJá Pro</h2>
         <div
           class="status show"
           style="display: grid; gap: 8px; text-align: left"
         >
-          <p><strong>Taxa fixa para o dia todo</strong></p>
+          <p><strong>R$ 70,00 o expediente · R$ 4,00 por entrega</strong></p>
           <p>
-            Ative por R$ 70,00 e use entregas com taxa fixa de R$ 4,00 por
-            entrega/ponto ate virar o dia.
-          </p>
-          <p class="muted">
-            Boa para loja que tem bastante chamada no mesmo dia. Se uma rota por
-            km ficar cara ou falhar, a empresa tem essa opcao profissional
-            liberada com seguranca.
-          </p>
-          <p class="muted">
-            <strong>Seguranca:</strong> o sistema so libera depois de descontar
-            a diaria do saldo. No dia seguinte, bloqueia de novo
-            automaticamente.
+            Abra quando começar a trabalhar e finalize quando fechar a loja.
+            Distritos (Martinho Prado, Tujuguaba e Iate): R$ 10,00.
           </p>
         </div>
         <div id="planoDiarioStatus" class="status show">
           Carregando plano diario...
         </div>
         <button id="ativarPlanoDiario" type="button" class="green">
-          Ativar por R$ 70,00 e liberar taxa de R$ 4,00 hoje
+          Abrir expediente — R$ 70,00
+        </button>
+        <button id="finalizarPlanoDiario" type="button" class="hidden" style="background:#3a1d1d;border:1px solid #b33a3a;color:#fff">
+          Finalizar expediente
         </button>
         <div
           id="planoDiarioAviso"
+          class="status error"
+          aria-live="polite"
+        ></div>
+      </section>
+      <section class="box app-area hidden">
+        <h2>Plano Meio Período MotoJá</h2>
+        <div
+          class="status show"
+          style="display: grid; gap: 8px; text-align: left"
+        >
+          <p><strong>R$ 25,00 por 4 horas · R$ 5,50 por entrega</strong></p>
+          <p>
+            Para um turno só (almoço ou noite). Distritos: R$ 12,00. Depois de
+            4 horas bloqueia sozinho.
+          </p>
+        </div>
+        <div id="meioPeriodoStatus" class="status show">
+          Carregando meio período...
+        </div>
+        <button id="ativarMeioPeriodo" type="button" class="green">
+          Ativar 4 horas — R$ 25,00
+        </button>
+        <div
+          id="meioPeriodoAviso"
           class="status error"
           aria-live="polite"
         ></div>
@@ -1635,6 +1732,68 @@
                 </button>
               </div>
               <div class="status show capture-secret" data-status="beefood">
+                Carregando configuracao...
+              </div>
+            </div>
+          </article>
+          <article class="integration-card" data-platform="seucomercio">
+            <button
+              class="integration-head"
+              type="button"
+              data-expand="seucomercio"
+            >
+              <span class="integration-icon">S</span
+              ><strong class="integration-title">SeuComércioAqui</strong
+              ><span class="integration-badge" data-badge="seucomercio"
+                >Inativo</span
+              ><span class="integration-arrow">⌄</span>
+            </button>
+            <div class="integration-body">
+              <p class="muted">
+                Os pedidos de entrega do seu cardápio SeuComércioAqui chegam aqui
+                sozinhos. Com o envio automático ligado, o motoboy é chamado e o
+                valor sai do seu saldo.
+              </p>
+              <label class="switch-row"
+                ><input
+                  type="checkbox"
+                  data-field="active"
+                  data-platform="seucomercio"
+                />
+                Receber pedidos do SeuComércioAqui</label
+              >
+              <label class="switch-row"
+                ><input
+                  type="checkbox"
+                  data-field="autoDispatch"
+                  data-platform="seucomercio"
+                />
+                Chamar motoboy automaticamente quando estiver tudo certo</label
+              >
+              <label
+                >Tipo da entrega<select
+                  data-field="deliveryType"
+                  data-platform="seucomercio"
+                >
+                  <option>Lanche / pizza / pastel / marmita</option>
+                  <option>Acai / pote de sorvete</option>
+                  <option>Encomendas</option>
+                  <option>Farmacia</option>
+                </select></label
+              >
+              <p class="muted">
+                1. Salve e clique em Gerar chave. 2. No SeuComércioAqui, abra
+                Integrações › MotoJá e cole o endereço e a chave. 3. Mantenha saldo
+                na carteira para as corridas.
+              </p>
+              <div class="grid2 compact-buttons">
+                <button type="button" class="secondary" data-save="seucomercio">
+                  Salvar</button
+                ><button type="button" class="secondary" data-key="seucomercio">
+                  Gerar chave
+                </button>
+              </div>
+              <div class="status show capture-secret" data-status="seucomercio">
                 Carregando configuracao...
               </div>
             </div>
@@ -1816,43 +1975,96 @@
           Editar cadastro da loja
         </button>
         <div id="cadastroLoja" class="hidden">
+          <style>
+            #salvarCadastroLoja { background: #15803d; color: #fff; border: 1px solid #22c55e; }
+            #salvarCadastroLoja:hover { background: #166534; }
+            #cancelarCadastroLoja { background: #ff8000; color: #111827; border: 1px solid #ff9f32; }
+            #cancelarCadastroLoja:hover { background: #ea7500; }
+            .cadastro-actions { margin-top: 12px; gap: 10px; }
+            #cadastroFeedback:empty { display: none; }
+          </style>
           <div class="grid2">
             <label
               >Empresa<input
                 id="empresa"
+                maxlength="120"
                 placeholder="Ex: Empresa Tal"
                 autocomplete="organization"
             /></label>
             <label
               >Responsavel<input
                 id="responsavel"
+                maxlength="120"
                 placeholder="Ex: Joao"
                 autocomplete="name"
             /></label>
           </div>
           <label
-            >WhatsApp da empresa<input
-              id="telefoneEmpresa"
+            >WhatsApp de contato da empresa<input
+              id="telefoneContato"
               inputmode="tel"
               placeholder="Ex: 19999999999"
               autocomplete="tel"
+              maxlength="11"
           /></label>
+          <input id="telefoneEmpresa" type="hidden" />
           <label
             >Endereco de retirada<input
               id="retirada"
+              maxlength="300"
               placeholder="Rua, numero, bairro"
           /></label>
           <p class="small">
-            Os dados da empresa ficam salvos neste aparelho para facilitar os
-            proximos pedidos.
+            O WhatsApp de contato será usado nas novas entregas. Seu acesso,
+            saldo e histórico continuam na mesma conta.
           </p>
+          <div class="grid2 cadastro-actions">
+            <button id="salvarCadastroLoja" type="button">Salvar alterações</button>
+            <button id="cancelarCadastroLoja" type="button">Cancelar</button>
+          </div>
+          <p id="cadastroFeedback" class="small" role="status" aria-live="polite"></p>
+        </div>
+        <div id="taxaAvulsaBloqueio" class="taxa-avulsa-card" role="alert" aria-live="polite">
+          <h3>🚀 Sua loja está a todo vapor!</h3>
+          <p>
+            Você já usou as <strong>5 entregas na taxa avulsa</strong>
+            (R$ 6,50 / R$ 16,00). Para continuar chamando motoboy, ative um dos
+            planos da MotoJá e pague menos por entrega:
+          </p>
+          <p>
+            ⏱️ <strong>Plano Meio Período</strong> — R$ 25,00 por 4 horas:
+            R$ 5,50 em Conchal e R$ 12,00 nos distritos.<br />
+            📅 <strong>Plano Diário Pro</strong> — R$ 70,00 o expediente:
+            R$ 4,00 em Conchal e R$ 10,00 nos distritos.
+          </p>
+          <div class="taxa-avulsa-acoes">
+            <button id="taxaAvulsaMeioPeriodo" type="button" class="green">
+              Ativar Plano Meio Período — R$ 25,00
+            </button>
+            <button id="taxaAvulsaDiario" type="button">
+              Ativar Plano Diário Pro — R$ 70,00
+            </button>
+          </div>
+          <small id="taxaAvulsaFeedback"></small>
+          <small>
+            Depois do plano, você ganha mais 5 entregas na taxa avulsa.
+          </small>
+        </div>
+        <p id="taxaAvulsaDica" class="taxa-avulsa-dica"></p>
+        <p id="planoContagem" class="plano-contagem" role="status" aria-live="polite"></p>
+        <div id="modoEntrega" class="grid2" role="group" aria-label="Modo da entrega">
+          <button id="modoComEndereco" type="button" aria-pressed="true">Entrega com endereço</button>
+          <button id="modoSemEndereco" type="button" class="secondary" aria-pressed="false">Só chamar motoboy<br><small>Endereços nas notas</small></button>
         </div>
         <label
           >Tipo de entrega
           <select id="tipoEntrega">
             <option value="" selected>Selecione o tipo de entrega</option>
             <option value="Plano Diario MotoJa Pro" disabled>
-              Plano Diario MotoJa Pro - R$ 4,00 por entrega/ponto
+              Plano Diario MotoJa Pro - R$ 4,00 ou R$ 10,00 nos distritos (ative por R$ 70,00)
+            </option>
+            <option value="Plano Meio Periodo MotoJa" disabled>
+              Plano Meio Período MotoJá - R$ 5,50 ou R$ 12,00 nos distritos (ative por R$ 25,00)
             </option>
             <option value="Lanche / pizza / pastel / marmita">
               Lanche / pizza / pastel / marmita - R$ 6,50 ou R$ 16,00
@@ -1874,6 +2086,7 @@
           aria-live="polite"
         ></div>
         <label id="campoEntregaPrincipal"
+          data-modo="endereco"
           >Endereco de entrega<input
             id="entrega"
             placeholder="Rua, numero, bairro"
@@ -1945,6 +2158,20 @@
             ></textarea>
           </label>
         </div>
+        <div id="chamadaSemEndereco" style="display:none">
+          <div class="grid2">
+            <label>Quantidade de entregas<input id="quantidadeLote" type="number" min="1" max="30" step="1" value="1"></label>
+            <label>Região das entregas<select id="regiaoLote">
+              <option value="conchal">Conchal — área urbana</option>
+              <option value="martinho_prado">Martinho Prado</option>
+              <option value="tujuguaba">Tujuguaba</option>
+              <option value="iate">Iate</option>
+            </select></label>
+          </div>
+          <p class="quick-order-note">Um motoboy retira o lote na loja. Entregue as notas com os endereços. Todos os pedidos deste lote devem ser da região selecionada.</p>
+          <div id="resumoLote" class="result show" aria-live="polite"></div>
+          <button id="chamarLote" type="button">Chamar motoboy</button>
+        </div>
         <div id="status" class="status"></div>
         <div id="resultado" class="result"></div>
         <button id="calcular" type="button">Calcular entrega</button>
@@ -1964,17 +2191,28 @@
         </p>
       </section>
       <section class="box app-area hidden">
-        <h2>Relatorio da empresa</h2>
+        <h2>Relatório da empresa</h2>
         <p class="muted">
-          Use no fim do turno para conferir as entregas de hoje deste WhatsApp
-          da empresa.
+          Confira as chamadas, entregas e cobranças da sua empresa por período.
         </p>
-        <button id="verRelatorioDia" type="button">Ver relatorio do dia</button>
+        <div class="report-controls">
+          <label>Período<select id="periodoRelatorio"><option value="today">Hoje</option><option value="7days">Últimos 7 dias</option><option value="month">Este mês</option><option value="custom">Escolher período</option></select></label>
+          <label>De<input type="date" id="inicioRelatorio"></label><label>Até<input type="date" id="fimRelatorio"></label>
+        </div><div class="report-actions"><button id="verRelatorioDia" type="button">Ver relatório</button><button id="baixarRelatorioExcel" type="button" class="secondary" disabled>Baixar Excel</button><button id="baixarRelatorioPdf" type="button" class="secondary" disabled>Baixar PDF</button></div>
+        <p class="small">Até 31 dias e 500 chamadas por consulta. Downloads usam os mesmos dados do relatório carregado.</p>
         <div id="relatorioEmpresa" class="result show">
-          Clique em Ver relatorio do dia quando quiser conferir.
+          Escolha o período e clique em Ver relatório.
         </div>
       </section>
     </main>
+    <style>
+      .recarga-valores,.recarga-acoes{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}.recarga-valores button{width:auto;flex:1;padding:10px}.recarga-acoes button,.recarga-link{flex:1;min-width:160px}.recarga-link{display:flex;align-items:center;justify-content:center;background:#ff8000;border-radius:8px;color:#fff;padding:12px;text-decoration:none;font-weight:700}.recarga-acoes [hidden]{display:none!important}
+      .report-controls{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin:14px 0}.report-controls label{display:grid;gap:7px;font-weight:600}.report-actions{display:flex;gap:10px;flex-wrap:wrap}.report-actions button{flex:1;min-width:130px}.report-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px;margin:16px 0}.report-metric{padding:14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:10px}.report-metric span{display:block;font-size:13px;color:#b9c6d3}.report-metric strong{display:block;font-size:22px;margin-top:5px}.report-table{overflow-x:auto;margin:16px 0}.report-table table{width:100%;border-collapse:collapse;min-width:860px}.report-table th,.report-table td{text-align:left;padding:12px 10px;border-bottom:1px solid rgba(255,255,255,.12);vertical-align:top}.report-table th{color:#ffac4f}.report-table small{color:#bcc7d1}#relatorioEmpresa{background:#11181e;color:#f3f6fa} @media(max-width:650px){.report-controls{grid-template-columns:1fr 1fr}.report-controls label:first-child{grid-column:1/-1}.report-actions button:first-child{flex-basis:100%}}
+    </style>
+    <script src="./report-export.js?v=207"></script>
+    <script src="./company-reports.js?v=207"></script>
+    <script src="./company-profile.js?v=208"></script>
+    <script src="./company-deposits.js?v=214"></script>
     <script>
       (() => {
         const originalFetch = window.fetch.bind(window);
@@ -2010,6 +2248,7 @@
         $ = (id) => document.getElementById(id),
         statusBox = $("status"),
         resultadoBox = $("resultado");
+      let modoChamadaSemEndereco = false;
       let entregaCalculada = null,
         enviando = false,
         ultimoDepositoWhatsapp = "",
@@ -2028,10 +2267,17 @@
         pediplusProtegido = false,
         pagamentoModo = "pix_manual",
         planoDiarioAtivo = false,
+        meioPeriodoAtivo = false,
+        meioPeriodoExpiraEmMs = 0,
+        meioPeriodoTimer = 0,
+        planoDiarioExpiraEmMs = 0,
+        planoDiarioTimer = 0,
+        taxaAvulsa = { usadas: 0, limite: 5, restantes: Infinity },
         empresaStatus = "aprovada",
         empresaAprovada = false,
         contaTela = "login";
       const PLANO_DIARIO_TIPO = "Plano Diario MotoJa Pro";
+      const MEIO_PERIODO_TIPO = "Plano Meio Periodo MotoJa";
       const MEMORIA_EMPRESA = "nexusEmpresaDados",
         MEMORIA_PEDIDOS_PREPARADOS = "nexusEmpresaPedidosPreparados",
         TOKEN_EMPRESA = "nexusEmpresaToken";
@@ -2265,6 +2511,12 @@
         box.textContent = t;
         box.className = `status show${e ? " error" : ""}`;
       }
+      function mostrarMeioPeriodoAviso(t, e = true) {
+        const box = $("meioPeriodoAviso");
+        if (!box) return;
+        box.textContent = t || "";
+        box.className = t ? `status show${e ? " error" : ""}` : "status error";
+      }
       function mostrarTipoEntregaAviso(t) {
         const box = $("tipoEntregaAviso");
         if (!box) return;
@@ -2292,15 +2544,15 @@
         if (status) {
           status.className = "status show";
           status.textContent = mp
-            ? "Modo Mercado Pago ativo. O deposito abre checkout e o saldo entra automatico quando o pagamento for aprovado. Atenção: o Mercado Pago desconta taxa do pagamento. O saldo creditado sera o valor liquido que cair depois da taxa."
+            ? "Recarga automática: pague no checkout do Mercado Pago e acompanhe a confirmação aqui. No saldo entra o valor recebido após as taxas do pagamento."
             : "Modo manual ativo. A empresa paga no Pix, envia comprovante e o dono aprova o saldo no painel.";
         }
         if (ajuda) {
           ajuda.textContent = mp
-            ? "Deposito minimo: R$ 10,00. Taxas oficiais do Mercado Pago podem mudar: Pix aprox. 0,99%; cartao na hora aprox. 4,98%. Quem paga essa taxa e a empresa; no saldo entra somente o liquido recebido."
+            ? "Recarga de R$ 10,00 a R$ 5.000,00. As taxas dependem da forma de pagamento e da conta Mercado Pago. Após a confirmação, mostramos o valor pago, a taxa e o saldo creditado."
             : "Deposito minimo: R$ 10,00. O saldo so entra depois que o dono conferir o pagamento e aprovar no painel.";
         }
-        if (depositoBtn) {
+        if (depositoBtn && !depositoBtn.disabled) {
           depositoBtn.textContent = mp
             ? "Pagar deposito no Mercado Pago"
             : "Solicitar deposito";
@@ -2318,49 +2570,25 @@
         if (typeof atualizarIntegracaoUI === "function") atualizarIntegracaoUI();
         if (typeof atualizarPediplusUI === "function") atualizarPediplusUI();
       }
-      function renderRelatorioEmpresa(d = {}) {
-        const box = $("relatorioEmpresa");
-        if (!d.ok) {
-          box.innerHTML =
-            "Preencha o WhatsApp da empresa e clique em Ver relatorio do dia.";
-          return;
+      let companyReport = null;
+      let perfilCadastro = null;
+      const companyDeposits = window.MotojaCompanyDeposits.create({
+        account: () => soNumeros($("telefoneEmpresa").value), authenticated: () => !!empresaToken && empresaAprovada,
+        mode: () => pagamentoModo, balance: atualizarSaldoUI, navigate: url => { location.href = url; },
+        api: async (path, body) => {
+          const response = await fetchComTempo(`${CONFIG.backend}${path}`, {
+            method: body ? "POST" : "GET", cache: "no-store",
+            headers: { "content-type": "application/json", ...authHeaders() },
+            ...(body ? { body: JSON.stringify(body) } : {})
+          }, 20000);
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) { const error = new Error(data.message || "Não consegui consultar a recarga. Tente novamente."); error.depositId = data.depositId; throw error; }
+          return data;
         }
-        const bairros =
-          (d.porBairro || [])
-            .slice(0, 6)
-            .map(
-              (b) =>
-                `${esc(b.bairro)}: <strong>${Number(b.quantidade || 0)}</strong> entrega(s) - ${moeda(b.total)}`,
-            )
-            .join("<br>") || "Nenhuma entrega ainda.";
-        const fotoMotoboy = (e) =>
-          safeImg(e.motoboyFoto)
-            ? ` <img src="${esc(safeImg(e.motoboyFoto))}" style="width:24px;height:24px;border-radius:50%;object-fit:cover;border:1px solid #ff9a00;vertical-align:middle" alt="Foto">`
-            : "";
-        const primeiras =
-          (d.ultimas || [])
-            .slice(0, 5)
-            .map(
-              (e) =>
-                `${fotoMotoboy(e)} ${new Date(e.criadaEm || Date.now()).toLocaleDateString("pt-BR")} - ${esc(e.bairroEntrega || "bairro nao informado")} - ${moeda(e.valor)} - ${esc(e.status)}${e.motoboy ? " - " + esc(e.motoboy) : ""}`,
-            )
-            .join("<br>") || "Nenhuma entrega registrada.";
-        const todas = (d.ultimas || [])
-          .map(
-            (e) =>
-              `${fotoMotoboy(e)} ${new Date(e.criadaEm || Date.now()).toLocaleDateString("pt-BR")} - ${esc(e.bairroEntrega || "bairro nao informado")} - ${moeda(e.valor)} - ${esc(e.status)}${e.motoboy ? " - Motoboy: " + esc(e.motoboy) : ""} - ${esc(e.entrega || "-")}${Array.isArray(e.pontosExtras) && e.pontosExtras.length ? `<br><span class="muted">Pontos extras:<br>${e.pontosExtras.map((p) => `${Number(p.ordem || 0) || ""}. ${esc(p.digitado || "-")} - ${esc(p.recebedor || "-")} - ${esc(p.telefoneRecebedor || "-")}`).join("<br>")}</span>` : e.enderecosExtras ? `<br><span class="muted">Pontos extras: ${esc(e.enderecosExtras)}</span>` : ""}`,
-          )
-          .join("<br><br>");
-        box.innerHTML = `Relatorio de hoje<br>Total de chamadas: <strong>${d.totalEntregas || 0}</strong><br>Entregas cobradas: <strong>${d.faturaveis || 0}</strong><br>Total usado: <strong>${moeda(d.totalGasto || 0)}</strong><br>Motoboys receberam: <strong>${moeda(d.totalMotoboy || 0)}</strong><br>App MotoJa ficou: <strong>${moeda(d.totalApp || 0)}</strong><br><br><strong>Por entrega:</strong><br>${bairros}<br><br><strong>Ultimas entregas:</strong><br>${primeiras}<br><br>${(d.ultimas || []).length > 5 ? '<button type="button" id="toggleDetalhesRelatorio" class="secondary">Ver detalhes</button><div id="detalhesRelatorio" style="display:none;margin-top:10px"><strong>Detalhes do dia:</strong><br>' + todas + "</div>" : ""}`;
-        const toggle = $("toggleDetalhesRelatorio");
-        if (toggle)
-          toggle.onclick = () => {
-            const det = $("detalhesRelatorio"),
-              aberto = det.style.display !== "none";
-            det.style.display = aberto ? "none" : "block";
-            toggle.textContent = aberto ? "Ver detalhes" : "Ocultar detalhes";
-          };
-      }
+      });
+      window.addEventListener("motoja:balance-refresh", carregarSaldo);
+      window.addEventListener("motoja:finance-load", () => companyDeposits.load());
+      function renderRelatorioEmpresa(d = {}) { if (companyReport) companyReport.render(d); }
       async function carregarSaldo() {
         const tel = soNumeros($("telefoneEmpresa").value);
         if (!empresaToken && tel.length < 10) {
@@ -2383,39 +2611,7 @@
           if (r.ok) atualizarSaldoUI(d);
         } catch {}
       }
-      async function carregarRelatorioDia() {
-        const tel = soNumeros($("telefoneEmpresa").value);
-        if (tel.length < 10) {
-          renderRelatorioEmpresa({});
-          return;
-        }
-        const inicio = new Date();
-        inicio.setHours(0, 0, 0, 0);
-        const fim = new Date();
-        fim.setHours(23, 59, 59, 999);
-        const btn = $("verRelatorioDia");
-        btn.disabled = true;
-        btn.textContent = "Carregando relatorio...";
-        try {
-          const rr = await fetchComTempo(
-            `${CONFIG.backend}/api/companies/${tel}/delivery-report?sinceMs=${inicio.getTime()}&untilMs=${fim.getTime()}`,
-            { cache: "no-store", headers: authHeaders() },
-            12000,
-          );
-          const rd = await rr.json().catch(() => ({}));
-          if (!rr.ok)
-            throw new Error(
-              rd.message || rd.error || "Nao consegui carregar o relatorio.",
-            );
-          renderRelatorioEmpresa(rd);
-        } catch (e) {
-          $("relatorioEmpresa").innerHTML =
-            e.message || "Erro ao carregar relatorio.";
-        } finally {
-          btn.disabled = false;
-          btn.textContent = "Ver relatorio do dia";
-        }
-      }
+      async function carregarRelatorioDia() { if (companyReport) await companyReport.load(); }
       function valorDecimal(v) {
         return (
           Number(
@@ -2437,7 +2633,7 @@
         ultimoDepositoPix = pixKey;
         pixManualVisivel = false;
         const box = $("pixManualBox");
-        if (box) box.style.display = link && pixKey ? "grid" : "none";
+        if (box) box.style.display = pagamentoModo === "pix_manual" && link && pixKey ? "grid" : "none";
         if ($("pixManualKey")) {
           $("pixManualKey").value = pixKey;
           $("pixManualKey").type = "password";
@@ -2449,7 +2645,7 @@
         if ($("pixManualFeedback")) $("pixManualFeedback").textContent = "";
         if ($("pixManualCodigo"))
           $("pixManualCodigo").textContent = depositId
-            ? `Pedido de deposito: ${depositId}. Envie o comprovante para liberar o saldo.`
+            ? `Depósito solicitado: ${moeda(dados.valor)}. Código: ${depositId}. Envie o comprovante para liberar o saldo.`
             : "";
       }
       async function copiarTextoSeguro(texto) {
@@ -2478,6 +2674,7 @@
               empresa: $("empresa").value.trim(),
               responsavel: $("responsavel").value.trim(),
               telefoneEmpresa: $("telefoneEmpresa").value.trim(),
+              telefoneContato: $("telefoneContato").value.trim(),
               retirada: $("retirada").value.trim(),
             }),
           );
@@ -2489,6 +2686,7 @@
           if (d.empresa) $("empresa").value = d.empresa;
           if (d.responsavel) $("responsavel").value = d.responsavel;
           if (d.telefoneEmpresa) $("telefoneEmpresa").value = d.telefoneEmpresa;
+          if (d.telefoneContato) $("telefoneContato").value = d.telefoneContato;
           if (d.retirada) $("retirada").value = d.retirada;
         } catch (e) {}
       }
@@ -2507,8 +2705,164 @@
           clearTimeout(timer);
         }
       }
+      function erroDeConexao(e) {
+        return (
+          e instanceof TypeError ||
+          /failed to fetch|networkerror|load failed|network connection was lost/i.test(
+            String((e && e.message) || ""),
+          )
+        );
+      }
+      // Login: em alguns iPhones a primeira conexao falha ("Load failed").
+      // Tenta de novo com conexao nova antes de mostrar erro.
+      async function fetchLoginComRetry(url, opcoes = {}, ms = 15000) {
+        const esperas = [0, 1200, 2500];
+        for (let i = 0; i < esperas.length; i++) {
+          if (esperas[i]) await new Promise((r) => setTimeout(r, esperas[i]));
+          try {
+            return await fetchComTempo(
+              i === 0 ? url : `${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`,
+              { ...opcoes, cache: "no-store" },
+              ms,
+            );
+          } catch (e) {
+            if (!erroDeConexao(e)) throw e;
+          }
+        }
+        throw new Error(
+          "Nao consegui conectar ao servidor da MotoJA por este celular. Troque entre Wi-Fi e 4G, desative VPN/bloqueador de anuncios e tente de novo.",
+        );
+      }
       function tipoPlanoDiario(tipo) {
         return tipo === PLANO_DIARIO_TIPO;
+      }
+      function tipoMeioPeriodo(tipo) {
+        return tipo === MEIO_PERIODO_TIPO;
+      }
+      function planoAtivoAgora() {
+        return planoDiarioAtivo || meioPeriodoAtivo;
+      }
+      function usaTaxaAvulsa(tipo) {
+        return comidaFixa(tipo) && !tipoPlanoDiario(tipo) && !tipoMeioPeriodo(tipo);
+      }
+      // Taxa avulsa: 5 entregas; depois so com plano ativo (o servidor confere de novo).
+      function taxaAvulsaLiberada(tipo, paradas = 1) {
+        if (!usaTaxaAvulsa(tipo) || planoAtivoAgora()) return true;
+        return Math.max(1, Number(paradas) || 1) <= taxaAvulsa.restantes;
+      }
+      function mensagemTaxaAvulsa(paradas = 1) {
+        return taxaAvulsa.restantes > 0
+          ? `Restam ${taxaAvulsa.restantes} entrega(s) na taxa avulsa e esta chamada tem ${paradas}. Diminua os pontos ou ative o Plano Meio Período ou o Plano Diário Pro.`
+          : "Você já usou as 5 entregas na taxa avulsa. Para continuar, ative o Plano Meio Período (R$ 25,00) ou o Plano Diário Pro (R$ 70,00).";
+      }
+      function definirTaxaAvulsa(dados) {
+        if (!dados) return;
+        const limite = Number(dados.limite || 5),
+          usadas = Math.max(0, Number(dados.usadas || 0));
+        // Limite desligado no servidor (padrao): taxa avulsa sempre liberada.
+        taxaAvulsa = dados.ativo === true
+          ? { ativo: true, usadas, limite, restantes: Math.max(0, limite - usadas) }
+          : { ativo: false, usadas: 0, limite, restantes: Infinity };
+        atualizarTaxaAvulsaUI();
+      }
+      function atualizarTaxaAvulsaUI() {
+        const select = $("tipoEntrega"),
+          bloqueado = !!empresaToken && !planoAtivoAgora() && taxaAvulsa.restantes <= 0;
+        if (select) {
+          Array.from(select.options).forEach((o) => {
+            if (usaTaxaAvulsa(o.value)) o.disabled = bloqueado;
+          });
+          if (bloqueado && usaTaxaAvulsa(select.value)) select.value = "";
+        }
+        const card = $("taxaAvulsaBloqueio"),
+          dica = $("taxaAvulsaDica");
+        if (card) card.classList.toggle("show", bloqueado);
+        if (dica) {
+          const mostrar = !!empresaToken && !bloqueado && !planoAtivoAgora() && taxaAvulsa.usadas > 0;
+          dica.classList.toggle("show", mostrar);
+          dica.textContent = mostrar
+            ? `Você usou ${taxaAvulsa.usadas} de ${taxaAvulsa.limite} entregas na taxa avulsa (R$ 6,50 / R$ 16,00). Depois disso, a taxa avulsa só libera com o Plano Meio Período ou o Plano Diário Pro.`
+            : "";
+        }
+        if (typeof atualizarResumoLote === "function") atualizarResumoLote();
+      }
+      function horaCurta(ms) {
+        return new Date(ms).toLocaleTimeString("pt-BR", {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
+      function tempoRestante(ms) {
+        const minutos = Math.max(0, Math.ceil((Number(ms) - Date.now()) / 60000));
+        const horas = Math.floor(minutos / 60), resto = minutos % 60;
+        return horas ? `${horas}h ${String(resto).padStart(2, "0")}min` : `${resto} min`;
+      }
+      // Plano Diario: vale o expediente (ate "Finalizar expediente" ou meia-noite). Ativacoes antigas sem horario
+      // (active sem expiraEmMs) continuam liberadas ate o servidor dizer o contrario.
+      // Meia-noite de Brasilia (o expediente fecha sozinho nesse horario).
+      function proximaMeiaNoite(agora = Date.now()) {
+        const d = new Date(agora);
+        let fim = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 3);
+        if (fim <= agora) fim += 86400000;
+        return fim;
+      }
+      function definirPlanoDiario(expiraEmMs, ativoSemHorario = false) {
+        planoDiarioExpiraEmMs = Number(expiraEmMs || 0);
+        planoDiarioAtivo = planoDiarioExpiraEmMs > Date.now() || (ativoSemHorario && !planoDiarioExpiraEmMs);
+        clearTimeout(planoDiarioTimer);
+        if (planoDiarioExpiraEmMs > Date.now())
+          planoDiarioTimer = setTimeout(
+            () => definirPlanoDiario(0),
+            Math.min(planoDiarioExpiraEmMs - Date.now() + 1000, 2147483000),
+          );
+        atualizarPlanoDiarioUI();
+      }
+      function atualizarContagemPlanos() {
+        const box = $("planoContagem");
+        if (!box) return;
+        const itens = [];
+        if (planoDiarioAtivo && planoDiarioExpiraEmMs)
+          itens.push(`📅 <strong>Expediente aberto</strong> (Plano Diário Pro) · R$ 4,00 por entrega até você finalizar`);
+        if (meioPeriodoAtivo && meioPeriodoExpiraEmMs)
+          itens.push(`⏱️ <strong>Plano Meio Período ativo</strong> · faltam <strong>${tempoRestante(meioPeriodoExpiraEmMs)}</strong> (até ${horaCurta(meioPeriodoExpiraEmMs)})`);
+        box.innerHTML = itens.join("<br />");
+        box.classList.toggle("show", itens.length > 0);
+      }
+      function definirMeioPeriodo(expiraEmMs) {
+        meioPeriodoExpiraEmMs = Number(expiraEmMs || 0);
+        meioPeriodoAtivo = meioPeriodoExpiraEmMs > Date.now();
+        clearTimeout(meioPeriodoTimer);
+        if (meioPeriodoAtivo)
+          meioPeriodoTimer = setTimeout(
+            () => definirMeioPeriodo(0),
+            Math.min(meioPeriodoExpiraEmMs - Date.now() + 1000, 2147483000),
+          );
+        atualizarMeioPeriodoUI();
+      }
+      function atualizarMeioPeriodoUI() {
+        const opt = Array.from($("tipoEntrega").options).find(
+            (o) => o.value === MEIO_PERIODO_TIPO,
+          ),
+          status = $("meioPeriodoStatus"),
+          btn = $("ativarMeioPeriodo");
+        if (opt) opt.disabled = !meioPeriodoAtivo;
+        if (status) {
+          status.className = "status show";
+          status.textContent = meioPeriodoAtivo
+            ? `Plano Meio Período MotoJá ativo até ${horaCurta(meioPeriodoExpiraEmMs)} · faltam ${tempoRestante(meioPeriodoExpiraEmMs)}. A opção de R$ 5,50 está liberada.`
+            : "Meio Período desligado.";
+        }
+        if (btn) {
+          btn.disabled = meioPeriodoAtivo;
+          btn.textContent = meioPeriodoAtivo
+            ? `Meio período ativo até ${horaCurta(meioPeriodoExpiraEmMs)}`
+            : "Ativar 4 horas — R$ 25,00";
+        }
+        if (meioPeriodoAtivo) mostrarMeioPeriodoAviso("");
+        if (!meioPeriodoAtivo && $("tipoEntrega").value === MEIO_PERIODO_TIPO)
+          $("tipoEntrega").value = "";
+        atualizarContagemPlanos();
+        atualizarTaxaAvulsaUI();
       }
       function atualizarPlanoDiarioUI() {
         const opt = Array.from($("tipoEntrega").options).find(
@@ -2520,23 +2874,25 @@
         if (status) {
           status.className = "status show";
           status.textContent = planoDiarioAtivo
-            ? "Plano Diario MotoJa Pro ativo hoje. A opcao de R$ 4,00 esta liberada ate virar o dia."
-            : "Plano Diario MotoJa Pro bloqueado. Ative por R$ 70,00 para liberar R$ 4,00 por entrega/ponto hoje.";
+            ? "✅ Expediente aberto: R$ 4,00 por entrega liberado. Quando fechar a loja, toque em Finalizar expediente (se esquecer, fecha sozinho à meia-noite)."
+            : "Expediente fechado.";
         }
         if (btn) {
           btn.disabled = planoDiarioAtivo;
-          btn.textContent = planoDiarioAtivo
-            ? "Plano ativo hoje"
-            : "Ativar por R$ 70,00 e liberar taxa de R$ 4,00 hoje";
+          btn.classList.toggle("hidden", planoDiarioAtivo);
+          btn.textContent = "Abrir expediente — R$ 70,00";
         }
+        $("finalizarPlanoDiario")?.classList.toggle("hidden", !planoDiarioAtivo);
         if (planoDiarioAtivo) mostrarPlanoDiarioAviso("");
         if (!planoDiarioAtivo && $("tipoEntrega").value === PLANO_DIARIO_TIPO)
           $("tipoEntrega").value = "";
+        atualizarContagemPlanos();
+        atualizarTaxaAvulsaUI();
       }
       async function carregarPlanoDiario() {
         if (!empresaToken) {
-          planoDiarioAtivo = false;
-          atualizarPlanoDiarioUI();
+          definirPlanoDiario(0);
+          definirMeioPeriodo(0);
           return;
         }
         try {
@@ -2546,11 +2902,13 @@
             12000,
           );
           const d = await r.json().catch(() => ({}));
-          planoDiarioAtivo = !!(r.ok && d.active);
+          definirPlanoDiario(r.ok && d.active ? d.expiraEmMs || 0 : 0, r.ok && d.active);
+          definirMeioPeriodo(r.ok && d.meioPeriodo?.active ? d.meioPeriodo.expiraEmMs : 0);
+          if (r.ok) definirTaxaAvulsa(d.taxaAvulsa);
         } catch {
-          planoDiarioAtivo = false;
+          definirPlanoDiario(0);
+          definirMeioPeriodo(0);
         }
-        atualizarPlanoDiarioUI();
       }
       function tipoPrecificado(tipo) {
         return !!tipo && tipo !== "Delivery / encomendas";
@@ -2567,6 +2925,7 @@
       function cidadesAtendidas() {
         return [
           "conchal",
+          "aguai",
           "martinho prado",
           "tujuguaba",
           "iate",
@@ -2582,12 +2941,15 @@
           "pirassununga",
           "rio claro",
           "campinas",
+          "cosmopolis",
         ];
       }
       function dicaLocal(v) {
-        const t = textoBusca(v);
+        const raw = String(v || "").trim(), partes = separarRuaNumeroMapa(raw);
+        const local = partes ? raw.slice(partes.rua.length) : /^(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+/i.test(raw) ? raw.split(",").slice(1).join(",") : raw;
+        const t = textoBusca(local);
         if (t.includes("arthur nogueira")) return "artur nogueira";
-        return cidadesAtendidas().find((x) => t.includes(x)) || "";
+        return ["martinho prado", "tujuguaba", "iate", ...cidadesAtendidas()].find((x) => new RegExp(`\\b${x}\\b`).test(t)) || "";
       }
       function localEsperado(origem) {
         return dicaLocal(origem) || "";
@@ -2630,27 +2992,71 @@
       function localConfereDica(origem, resultado, esperadoTentativa = "") {
         const esperado =
           localEsperado(origem) || esperadoTentativa || "conchal";
-        return textoBusca(resultado).includes(esperado);
+        // "engenheiro_coelho" (chave da cidade) vira "engenheiro coelho" para comparar com o mapa.
+        return textoBusca(resultado).includes(esperado.replace(/_/g, " "));
       }
       function resultadoEnderecoConfiavel(entrada, props, formatado) {
-        const texto = textoBusca(entrada),
-          resultado = textoBusca(formatado),
-          pediuRuaOuNumero =
-            /\d|\br\.?\b|rua|avenida|av\.?|estrada|rodovia|travessa/.test(
-              texto,
-            );
-        if (!pediuRuaOuNumero) return true;
-        if (props.street || props.housenumber) return true;
-        return /rua|avenida|av\.?|estrada|rodovia|travessa/.test(resultado);
+        // Mesma palavra do nome da rua, tolerando letra dobrada (Pradela/Pradella),
+        // y/i, ph/f, th/t e, em nomes de 5+ letras, uma letra trocada/faltando.
+        function mesmaPalavraRua(a, b) {
+          if (a === b) return true;
+          const simples = (p) => p.replace(/ph/g, "f").replace(/th/g, "t").replace(/y/g, "i").replace(/(.)\1+/g, "$1");
+          const x = simples(a), y = simples(b);
+          if (x === y) return true;
+          if (/\d/.test(x) || /\d/.test(y) || Math.min(x.length, y.length) < 5 || x[0] !== y[0] || Math.abs(x.length - y.length) > 1) return false;
+          let i = 0, j = 0, diferencas = 0;
+          while (i < x.length && j < y.length) {
+            if (x[i] === y[j]) { i++; j++; continue; }
+            if (++diferencas > 1) return false;
+            if (x.length > y.length) i++;
+            else if (y.length > x.length) j++;
+            else { i++; j++; }
+          }
+          return diferencas + (x.length - i) + (y.length - j) <= 1;
+        }
+        // Rua conferida no cadastro oficial de Conchal (IBGE + OSM) pelo servidor.
+        if (props && props.match_confirmed === true && ["ibge-cnefe-2022", "osm", "manual", "aprendido"].includes(props.match_source)) return true;
+        const normalizar = normalizarNomeRuaMapa;
+        const texto = normalizar(entrada);
+        if (["city", "county", "state", "country", "postcode", "district", "suburb"].includes(props.result_type)) return false;
+        const partes = separarRuaNumeroMapa(texto);
+        const textoRua = partes?.rua || texto;
+        const rua = textoRua.match(/(?:^|\s)(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+([^,]+)/) || (partes ? [textoRua, textoRua] : null);
+        if (partes && props.housenumber && String(props.housenumber).trim().toLowerCase() !== partes.numero) return false;
+        if (!rua) return !!(props.street || props.housenumber || props.name);
+        if (!props.street) return false;
+        const palavras = rua[1].split(/[^a-z0-9]+/)
+          .filter((p) => (p.length > 1 || /^\d+$/.test(p)) && !["de", "da", "do", "das", "dos", "dr", "dra", "doutor", "doutora", "vereador", "professor", "professora", "prefeito", "presbitero"].includes(p));
+        const encontrada = normalizar(props.street).replace(/^(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+/, "").split(/[^a-z0-9]+/)
+          .filter((p) => (p.length > 1 || /^\d+$/.test(p)) && !["de", "da", "do", "das", "dos", "dr", "dra", "doutor", "doutora", "vereador", "professor", "professora", "prefeito", "presbitero"].includes(p));
+        const iniciais = rua[1].split(/[^a-z0-9]+/).filter((p) => /^[a-z]$/.test(p));
+        const restantes = encontrada.filter((p) => !palavras.some((w) => mesmaPalavraRua(w, p)));
+        return palavras.length > 0 && palavras.every((p) => encontrada.some((f) => mesmaPalavraRua(p, f))) && restantes.length <= iniciais.length && restantes.every((p) => iniciais.includes(p[0]));
+      }
+      function normalizarNomeRuaMapa(valor) {
+        return textoBusca(valor)
+          .replace(/\bzanochett?a\b|\bzanchett?a\b/g, "zancheta")
+          .replace(/\b15 de novembro\b/g, "xv de novembro")
+          .replace(/\b9 de julho\b/g, "nove de julho")
+          .replace(/\b7 de setembro\b/g, "sete de setembro")
+          .replace(/\bvisconde de indaiatuba\b/g, "visconde indatuba")
+          .replace(/\bbenedito novo\b/g, "bendito novo")
+          .replace(/\btiradentes\b/g, "tirandentes")
+          .replace(/\bmaria chiavegatto corte\b/g, "maria chiavegato corte")
+          .replace(/\bvicente vigano\b/g, "vicende vigano")
+          .replace(/\bdos battel\b/g, "dos batel")
+          .replace(/\bdos paulo\b/g, "dos paulos");
       }
       function destinoComidaEspecial(v) {
         return /martinho\s*prado|tujuguaba|iate/.test(textoBusca(v));
       }
       function rotaDistantePlausivel(km, ...textos) {
+        // Tujuguaba e Iate ficam dentro de Conchal, a menos de 10 km do centro.
+        // Primeiro texto opcional { origem }: a cidade de onde sai a entrega nao conta como outra cidade.
+        const origem = textos[0] && typeof textos[0] === "object" ? textoBusca(textos.shift().origem) : "";
         const distante = textos.some((t) =>
-          /martinho\s*prado|tujuguaba|iate|engenheiro\s+coelho|artur\s+nogueira|arthur\s+nogueira|mogi\s+mirim|mogi\s+guacu|araras|americana|limeira|leme|pirassununga|rio\s+claro|campinas/.test(
-            textoBusca(t),
-          ),
+          [...textoBusca(t).matchAll(/martinho\s*prado|engenheiro\s+coelho|artur\s+nogueira|arthur\s+nogueira|mogi\s+mirim|mogi\s+guacu|araras|americana|limeira|leme|pirassununga|rio\s+claro|campinas/g)]
+            .some(([cidade]) => !origem.includes(cidade)),
         );
         if (distante && Number(km) > 0 && Number(km) < 10)
           throw new Error(
@@ -2668,7 +3074,24 @@
         texto = texto
           .replace(/\bzanochett?a\b/gi, "Zancheta")
           .replace(/\bzanchett?a\b/gi, "Zancheta");
-        return texto;
+        return texto
+          .replace(/\b15 de novembro\b/gi, "XV de Novembro")
+          .replace(/\b9 de julho\b/gi, "Nove de Julho")
+          .replace(/\b7 de setembro\b/gi, "Sete de Setembro")
+          .replace(/\bvisconde de indaiatuba\b/gi, "Visconde Indatuba")
+          .replace(/\bbenedito novo\b/gi, "Bendito Novo")
+          .replace(/\btiradentes\b/gi, "Tirandentes")
+          .replace(/\bMaria Chiavegatto Corte\b/gi, "Maria Chiavegato Corte")
+          .replace(/\bVicente Vigan[oó]\b/gi, "Vicende Vigano")
+          .replace(/\bdos Battel\b/gi, "dos Batel")
+          .replace(/\bdos Paulo\b/gi, "dos Paulos");
+      }
+      function separarRuaNumeroMapa(base) {
+        const m = String(base || "").trim().replace(/[–—]|\s+-\s+/g, ",").match(/^(.+?)(?:,\s*|\s+)(?:n[ºo°.]*\s*)?(\d+[a-z]?)(?=\s*(?:[,;]|$|\b(?:jd\.?|jardim|bairro|vila|parque|centro|residencial|conjunto|desmembramento|chacara|chácaras?|distrito|polo|nucleo|núcleo|terra\s+nobre|santa\s+rita|noventa|conchal|agua[ií]?|martinho\s+prado|tujuguaba|iate|engenheiro\s+coelho|art?h?ur\s+nogueira|mogi\s+(?:mirim|gua[cç]u)|araras|americana|limeira|leme|pirassununga|rio\s+claro|campinas|cosm[oó]polis|estiva\s+gerbi|sp|casa|apto|apartamento|bloco|fundos|ref|referencia)\b))/i);
+        if (!m || /^(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)$/i.test(m[1].trim())) return null;
+        // "Rua dos Colleta, Esperanca 2": o numero pertence ao bairro, nao a casa.
+        if (m[1].includes(",") && /[a-z]/i.test(m[1].split(",").pop())) return null;
+        return { rua: m[1].trim().replace(/,$/, ""), numero: m[2] };
       }
       function variantesEnderecoMapa(base) {
         const principal = textoMapa(base),
@@ -2681,10 +3104,11 @@
               /\b(rua|r\.?|avenida|av\.?)\s+d[ao]s?\s+([a-záàâãéèêíóôõúç])/i,
               "$1 $2",
             );
-        const partes = [principal];
+        const numerado = separarRuaNumeroMapa(principal);
+        const partes = numerado ? [`${numerado.rua}, ${numerado.numero}`, principal] : [principal];
         if (limpo && limpo !== principal) partes.push(limpo);
         const trechoEndereco = principal.match(
-          /((?:av(?:enida)?\.?|rua|r\.?|rodovia|estrada|travessa)\s+[^,.;]+(?:,\s*\d+)?)/i,
+          /((?:av(?:enida)?\.?|rua|r\.?|rodovia|estrada|travessa)\s+[^,;]+(?:,\s*\d+)?)/i,
         );
         if (trechoEndereco && !partes.includes(trechoEndereco[1]))
           partes.push(trechoEndereco[1]);
@@ -2707,9 +3131,7 @@
                 : cidade === "artur nogueira"
                   ? "Artur Nogueira"
                   : cidade.replace(/\b\w/g, (l) => l.toUpperCase());
-            add(`${baseMapa}, ${cidadeNome}, SP, Brasil`, broad, cidade);
-            add(`${baseMapa}, SP, Brasil`, broad, cidade);
-            add(`${baseMapa}, Brasil`, broad, cidade);
+            add(dicaLocal(baseMapa) ? `${baseMapa}, SP, Brasil` : `${baseMapa}, ${cidadeNome}, SP, Brasil`, broad, cidade);
             continue;
           }
           add(`${baseMapa}, Conchal, SP, Brasil`, local, "conchal");
@@ -2727,7 +3149,13 @@
       }
       function precoEntrega(km, paradas, tipo, pontos = []) {
         const qtd = Math.max(1, paradas);
-        if (tipoPlanoDiario(tipo)) return Math.round(qtd * 4 * 100) / 100;
+        if (tipoPlanoDiario(tipo) || tipoMeioPeriodo(tipo)) {
+          const [conchal, distrito] = tarifasPlano(tipo);
+          let total = 0;
+          for (let i = 0; i < qtd; i++)
+            total += destinoComidaEspecial(pontos[i] || "") ? distrito : conchal;
+          return Math.round(total * 100) / 100;
+        }
         if (comidaFixa(tipo)) {
           let total = 0;
           for (let i = 0; i < qtd; i++) {
@@ -2737,9 +3165,16 @@
         }
         return Math.ceil(Number(km || 0)) * ENTREGA_EMPRESA_VALOR_KM;
       }
+      function tarifasPlano(tipo) {
+        return tipoMeioPeriodo(tipo) ? [5.5, 12] : [4, 10];
+      }
       function labelPreco(tipo, paradas, pontos = []) {
-        if (tipoPlanoDiario(tipo))
-          return "Plano Diario MotoJa Pro ativo: R$ 4,00 por entrega/ponto";
+        if (tipoPlanoDiario(tipo) || tipoMeioPeriodo(tipo)) {
+          const [conchal, distrito] = tarifasPlano(tipo),
+            especiais = pontos.filter(destinoComidaEspecial).length,
+            normais = Math.max(0, Math.max(1, paradas) - especiais);
+          return `${tipoMeioPeriodo(tipo) ? "Plano Meio Periodo MotoJa" : "Plano Diario MotoJa Pro"} ativo: ${moeda(conchal)} por entrega${especiais ? ` + ${especiais} ponto(s) em distrito a ${moeda(distrito)}` : ""} (${normais} Conchal / ${especiais} distrito)`;
+        }
         if (!comidaFixa(tipo)) return "R$ 2,50 por km";
         const especiais = pontos.filter(destinoComidaEspecial).length,
           normais = Math.max(0, Math.max(1, paradas) - especiais);
@@ -2754,6 +3189,7 @@
         return Number(valor || 1);
       }
       function atualizarCampoManual() {
+        if (modoChamadaSemEndereco) { $("campoParadasManual").style.display = "none"; return; }
         const manual = $("paradas").value === "manual";
         $("campoParadasManual").style.display = manual ? "grid" : "none";
         if (!manual) $("paradasManual").value = "";
@@ -2796,9 +3232,10 @@
             ? salvos.slice(0, 30).map((pedido, index) => ({
                 ...pedidoPreparadoVazio(index + 1),
                 ...pedido,
+                ...(pedido.status === "enviado" ? pedidoPreparadoVazio(index + 1) : {}),
                 ordem: index + 1,
-                telefoneRecebedor: soNumeros(pedido.telefoneRecebedor).slice(0, 11),
-                status: pedido.status === "enviado" ? "enviado" : "rascunho",
+                telefoneRecebedor: pedido.status === "enviado" ? "" : soNumeros(pedido.telefoneRecebedor).slice(0, 11),
+                status: "rascunho",
               }))
             : [];
         } catch (_) {
@@ -2930,6 +3367,11 @@
         );
       }
       function atualizarCampoExtras() {
+        if (modoChamadaSemEndereco) {
+          ["campoEnderecosExtras", "campoEntregaPrincipal", "avisoChamadaRapida", "toggleDetalhesEntrega", "calcular"].forEach(id => $(id).style.display = "none");
+          mostrarDetalhesEntrega(false);
+          return;
+        }
         carregarPedidosPreparados();
         const pontos = quantidadePontos();
         const mostrar = Number.isFinite(pontos) && pontos > 1;
@@ -2966,10 +3408,12 @@
       }
       async function geocodificar(endereco) {
         const base = endereco.trim();
-        let ultimoErro = "";
+        let ultimoErro = "",
+          mensagemServidor = "";
         for (const tentativa of tentativasGeocode(base)) {
           const params = new URLSearchParams({
               text: tentativa.texto,
+              original: base,
               limit: "5",
               filter: tentativa.area,
               bias: "proximity:-47.172,-22.330",
@@ -2982,6 +3426,8 @@
             continue;
           }
           const d = await r.json();
+          if (d.message && !(d.features || []).some((f) => f.properties && f.properties.match_confirmed === true))
+            mensagemServidor = d.message;
           for (const feature of d.features || []) {
             const props = feature.properties || {},
               cidadeResultado = String(
@@ -3001,20 +3447,17 @@
               continue;
             }
             if (
-              !resultadoEnderecoConfiavel(base, props, formatado) &&
-              !textoBusca(formatado).includes(
-                localEsperado(base) || tentativa.esperado || "conchal",
-              )
+              !resultadoEnderecoConfiavel(base, props, formatado)
             ) {
               ultimoErro =
-                "O mapa achou apenas a cidade, nao o endereco. Digite rua, numero, bairro e cidade para evitar preco errado.";
+                "O mapa nao confirmou a rua informada. Digite rua, numero, bairro e cidade para evitar preco errado.";
               continue;
             }
             const [lon, lat] = feature.geometry.coordinates;
             return { lat: +lat, lon: +lon, texto: formatado };
           }
         }
-        throw new Error(ultimoErro || `Endereco nao encontrado: ${endereco}`);
+        throw new Error(mensagemServidor || ultimoErro || `Endereco nao encontrado: ${endereco}`);
       }
       async function calcularRota(pontos) {
         const r = await fetchMapaComRetry(
@@ -3130,6 +3573,8 @@
         preencherCampo("responsavel", c.responsavel);
         preencherCampo("loginResponsavel", c.responsavel);
         preencherCampo("telefoneEmpresa", c.telefoneEmpresa);
+        preencherCampo("telefoneContato", c.telefoneContato || c.telefoneEmpresa);
+        if (perfilCadastro) perfilCadastro.sync(c);
         preencherCampo("loginTelefoneEmpresa", c.telefoneEmpresa);
         preencherCampo("retirada", c.retirada);
         preencherCampo("loginRetirada", c.retirada);
@@ -3140,6 +3585,7 @@
         pagamentoModo =
           c.pagamentoModo === "mercadopago" ? "mercadopago" : "pix_manual";
         atualizarPagamentoModoUI();
+        companyDeposits.load();
         integracaoAtiva = !!c.integracaoAtiva;
         integracaoProtegida = !!c.integracaoProtegida;
         preencherCampo("integracaoNome", c.integracaoNome);
@@ -3205,6 +3651,8 @@
         } catch (e) {
           if (e.status === 401 || e.status === 403) {
             empresaToken = "";
+            if (companyReport) companyReport.reset();
+            companyDeposits.reset();
             empresaAprovada = false;
             localStorage.removeItem(TOKEN_EMPRESA);
             atualizarTelaEmpresa();
@@ -3286,7 +3734,7 @@
             modo === "login"
               ? "/api/companies/login"
               : "/api/companies/register";
-          const r = await fetchComTempo(
+          const r = await (modo === "login" ? fetchLoginComRetry : fetchComTempo)(
             `${CONFIG.backend}${rota}`,
             {
               method: "POST",
@@ -3306,6 +3754,8 @@
           }
           if (cadastro) {
             empresaToken = "";
+            if (companyReport) companyReport.reset();
+            companyDeposits.reset();
             empresaAprovada = false;
             localStorage.removeItem(TOKEN_EMPRESA);
             $("tituloCadastroEnviado").textContent = "Cadastro enviado";
@@ -3355,12 +3805,32 @@
       atualizarIntegracaoUI();
       atualizarPagamentoModoUI();
       carregarEmpresa();
+      perfilCadastro = window.MotojaCompanyProfile.create({
+        identity: () => empresaToken,
+        notice: message => mostrarStatus(message, true),
+        changed: () => {
+          entregaCalculada = null;
+          $("confirmar").style.display = "none";
+        },
+        saved: company => {
+          salvarEmpresa();
+          if ($("companyTopName")) $("companyTopName").textContent = company.empresa;
+          if (companyReport) companyReport.reset();
+        },
+        save: async draft => {
+          const response = await fetchComTempo(`${CONFIG.backend}/api/companies/me/profile`, {
+            method: "POST", headers: { "content-type": "application/json", ...authHeaders() },
+            body: JSON.stringify(draft)
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.message || data.error || "Não consegui salvar o cadastro.");
+          return data.company;
+        }
+      });
       carregarMinhaEmpresa();
       atualizarPlanoDiarioUI();
+      atualizarMeioPeriodoUI();
       [
-        "empresa",
-        "responsavel",
-        "retirada",
         "loginEmpresa",
         "loginResponsavel",
         "loginRetirada",
@@ -3380,45 +3850,28 @@
             }
           }),
       );
-      $("editarCadastroLoja").onclick = () => {
-        const box = $("cadastroLoja"),
-          aberto = !box.classList.contains("hidden");
-        box.classList.toggle("hidden", aberto);
-        $("editarCadastroLoja").textContent = aberto
-          ? "Editar cadastro da loja"
-          : "Ocultar cadastro da loja";
-      };
+      let salvandoPagamentoModo = false;
       async function definirPagamentoModo(modo) {
-        if (!empresaToken) {
-          mostrarStatus(
-            "Entre na conta da empresa antes de mudar pagamento.",
-            true,
-          );
-          return;
-        }
-        pagamentoModo = modo === "mercadopago" ? "mercadopago" : "pix_manual";
-        atualizarPagamentoModoUI();
+        if (!empresaToken || !empresaAprovada) { mostrarStatus("Entre em uma conta aprovada antes de mudar o pagamento.", true); return; }
+        if (salvandoPagamentoModo) return;
+        const session = empresaToken;
+        salvandoPagamentoModo = true;
+        $("modoPixManual").disabled = $("modoMercadoPago").disabled = true;
         try {
-          const r = await fetchComTempo(
-            `${CONFIG.backend}/api/companies/me/payment-mode`,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json", ...authHeaders() },
-              body: JSON.stringify({ modo: pagamentoModo }),
-            },
-            12000,
-          );
+          const r = await fetchComTempo(`${CONFIG.backend}/api/companies/me/payment-mode`, {
+            method: "POST", headers: { "content-type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ modo })
+          }, 12000);
           const d = await r.json().catch(() => ({}));
-          if (!r.ok)
-            throw new Error(
-              d.message ||
-                d.error ||
-                "Nao consegui salvar o modo de pagamento.",
-            );
+          if (!r.ok) throw new Error(d.message || "Não consegui salvar o modo de pagamento.");
+          if (session !== empresaToken) return;
+          pagamentoModo = d.pagamentoModo === "mercadopago" ? "mercadopago" : "pix_manual";
+          atualizarPagamentoModoUI(); mostrarBotaoPix();
+          companyDeposits.refreshMode();
+          if (pagamentoModo === "mercadopago") companyDeposits.load();
           mostrarStatus(d.message || "Modo de pagamento atualizado.");
-        } catch (e) {
-          mostrarStatus(e.message || "Erro ao salvar modo de pagamento.", true);
-        }
+        } catch (e) { if (session === empresaToken) mostrarStatus(e.message, true); }
+        finally { salvandoPagamentoModo = false; $("modoPixManual").disabled = $("modoMercadoPago").disabled = false; }
       }
       $("modoPixManual").onclick = () => definirPagamentoModo("pix_manual");
       $("modoMercadoPago").onclick = () => definirPagamentoModo("mercadopago");
@@ -3441,7 +3894,7 @@
         }
         if (
           !confirm(
-            "Ativar Plano Diario MotoJa Pro? Vai descontar R$ 70,00 agora e liberar taxa fixa de R$ 4,00 por entrega/ponto ate virar o dia.",
+            `Abrir o expediente? Vai descontar R$ 70,00 agora e liberar R$ 4,00 por entrega até você finalizar o expediente (no máximo até meia-noite — faltam ${tempoRestante(proximaMeiaNoite())}).`,
           )
         )
           return;
@@ -3462,14 +3915,14 @@
             throw new Error(
               d.message || d.error || "Nao consegui ativar o plano diario.",
             );
-          planoDiarioAtivo = true;
-          atualizarPlanoDiarioUI();
+          definirPlanoDiario(d.expiraEmMs || proximaMeiaNoite());
+          definirTaxaAvulsa({ ativo: taxaAvulsa.ativo, usadas: 0, limite: taxaAvulsa.limite });
           mostrarPlanoDiarioAviso(
-            "Plano Diario ativo hoje. A taxa fixa de R$ 4,00 esta liberada.",
+            "Expediente aberto. A taxa de R$ 4,00 por entrega está liberada.",
             false,
           );
           mostrarStatus(
-            "Plano Diario MotoJa Pro ativo. Hoje a empresa pode usar R$ 4,00 por entrega/ponto.",
+            "Expediente aberto (Plano Diário Pro): R$ 4,00 por entrega até você finalizar.",
           );
           await carregarSaldo();
         } catch (e) {
@@ -3484,6 +3937,116 @@
           atualizarPlanoDiarioUI();
         }
       };
+      $("finalizarPlanoDiario").onclick = async () => {
+        mostrarPlanoDiarioAviso("");
+        if (!confirm("Finalizar o expediente agora? As entregas já chamadas continuam normais. Para usar R$ 4,00 de novo, será preciso abrir outro expediente (R$ 70,00)."))
+          return;
+        const btn = $("finalizarPlanoDiario");
+        btn.disabled = true;
+        btn.textContent = "Finalizando...";
+        try {
+          const r = await fetchComTempo(
+            `${CONFIG.backend}/api/companies/daily-plan/finish`,
+            { method: "POST", headers: { "content-type": "application/json", ...authHeaders() } },
+            18000,
+          );
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.message || "Não consegui finalizar o expediente.");
+          definirPlanoDiario(0);
+          mostrarStatus("Expediente finalizado. Até amanhã!");
+        } catch (e) {
+          mostrarPlanoDiarioAviso(e.message || "Erro ao finalizar o expediente.", true);
+          await carregarPlanoDiario();
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "Finalizar expediente";
+        }
+      };
+      $("ativarMeioPeriodo").onclick = async () => {
+        mostrarMeioPeriodoAviso("");
+        if (!empresaToken) {
+          mostrarMeioPeriodoAviso("Entre na conta da empresa antes de ativar essa opção.");
+          return;
+        }
+        if (saldoEmpresa.disponivel < 25) {
+          const falta = Math.max(0, 25 - saldoEmpresa.disponivel);
+          mostrarMeioPeriodoAviso(
+            `Saldo insuficiente para essa opção. Disponível: ${moeda(saldoEmpresa.disponivel)}. Falta ${moeda(falta)} para ativar o Plano Meio Período.`,
+          );
+          return;
+        }
+        if (
+          !confirm(
+            "Ativar o Meio Período? Vai descontar R$ 25,00 agora e liberar R$ 5,50 por entrega durante 4 horas.",
+          )
+        )
+          return;
+        const btn = $("ativarMeioPeriodo");
+        btn.disabled = true;
+        btn.textContent = "Ativando meio período...";
+        try {
+          const r = await fetchComTempo(
+            `${CONFIG.backend}/api/companies/half-plan/activate`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json", ...authHeaders() },
+            },
+            18000,
+          );
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok)
+            throw new Error(
+              d.message || d.error || "Não consegui ativar o meio período.",
+            );
+          definirMeioPeriodo(d.expiraEmMs);
+          definirTaxaAvulsa({ ativo: taxaAvulsa.ativo, usadas: 0, limite: taxaAvulsa.limite });
+          mostrarMeioPeriodoAviso(
+            `Plano Meio Período ativo até ${horaCurta(meioPeriodoExpiraEmMs)}. A taxa fixa de R$ 5,50 está liberada.`,
+            false,
+          );
+          mostrarStatus(
+            `Plano Meio Período MotoJá ativo até ${horaCurta(meioPeriodoExpiraEmMs)}. A empresa pode usar R$ 5,50 por entrega/ponto.`,
+          );
+          await carregarSaldo();
+        } catch (e) {
+          if (String(e.message || "").includes("Saldo insuficiente"))
+            carregarSaldo();
+          mostrarMeioPeriodoAviso(e.message || "Erro ao ativar meio período.");
+          await carregarPlanoDiario();
+        } finally {
+          atualizarMeioPeriodoUI();
+        }
+      };
+      async function ativarPlanoPeloAviso(botao, aviso) {
+        $("taxaAvulsaFeedback").textContent = "";
+        await $(botao).onclick();
+        const texto = $(aviso)?.textContent || "";
+        if (!planoAtivoAgora() && texto) $("taxaAvulsaFeedback").textContent = texto;
+      }
+      $("taxaAvulsaMeioPeriodo").onclick = () =>
+        ativarPlanoPeloAviso("ativarMeioPeriodo", "meioPeriodoAviso");
+      $("taxaAvulsaDiario").onclick = () =>
+        ativarPlanoPeloAviso("ativarPlanoDiario", "planoDiarioAviso");
+      window.addEventListener("delivery:created", () => carregarPlanoDiario());
+      setInterval(() => {
+        if (planoDiarioAtivo || meioPeriodoAtivo) {
+          atualizarPlanoDiarioUI();
+          atualizarMeioPeriodoUI();
+        }
+      }, 30000);
+      companyReport = window.MotojaCompanyReports.create({
+        identity: () => empresaToken ? empresaToken + ':' + soNumeros($("telefoneEmpresa").value) : '',
+        escapeHtml: esc, money: moeda,
+        fetchReport: async (sinceMs, untilMs) => {
+          const tel = soNumeros($("telefoneEmpresa").value);
+          const r = await fetchComTempo(
+            CONFIG.backend + '/api/companies/' + tel + '/delivery-report?sinceMs=' + sinceMs + '&untilMs=' + untilMs,
+            { cache: 'no-store', headers: authHeaders() }, 20000);
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.message || d.error || 'Não consegui carregar o relatório.');
+          return d;
+        }
+      });
       $("verRelatorioDia").onclick = carregarRelatorioDia;
       $("abrirCadastroEmpresa").onclick = () =>
         mostrarTelaConta("cadastro");
@@ -3551,6 +4114,8 @@
       };
       $("sairContaEmpresa").onclick = () => {
         empresaToken = "";
+            if (companyReport) companyReport.reset();
+            companyDeposits.reset();
         localStorage.removeItem(TOKEN_EMPRESA);
         atualizarTelaEmpresa();
         $("contaStatus").textContent =
@@ -3713,6 +4278,7 @@
           .join(", ");
       }
       function preencherPedidoIntegracao(o) {
+        if (modoChamadaSemEndereco) selecionarModoEntrega(false);
         pedidoPreparadoAtivoId = "";
         $("paradas").value = "1";
         atualizarCampoManual();
@@ -3795,6 +4361,7 @@
           20000,
         );
         const data = await r.json().catch(() => ({}));
+        if (data.error === "taxa_avulsa_bloqueada") carregarPlanoDiario();
         if (!r.ok)
           throw new Error(
             data.message || data.error || "Nao consegui chamar motoboy.",
@@ -4513,6 +5080,7 @@
 
       $("tipoEntrega").addEventListener("change", () => {
         mostrarTipoEntregaAviso("");
+        atualizarResumoLote();
       });
       $("integracaoTipoEntrega").addEventListener("change", atualizarIntegracaoUI);
       $("paradas").addEventListener("change", () => {
@@ -4562,46 +5130,19 @@
           );
           return;
         }
-        if (valor < 10) {
-          mostrarStatus("Deposito minimo: R$ 10,00.", true);
+        if (!Number.isFinite(valor) || valor < 10 || valor > 5000) {
+          mostrarStatus("Informe entre R$ 10,00 e R$ 5.000,00.", true);
           return;
         }
         const btn = $("pedirDeposito"),
-          modo = pagamentoModo;
+          modo = pagamentoModo, session = empresaToken;
         btn.disabled = true;
         btn.textContent =
           modo === "mercadopago" ? "Abrindo Mercado Pago..." : "Solicitando...";
         try {
           salvarEmpresa();
           if (modo === "mercadopago") {
-            if (!empresaToken)
-              throw new Error(
-                "Entre na conta da empresa para pagar pelo Mercado Pago.",
-              );
-            const r = await fetchComTempo(
-              `${CONFIG.backend}/api/companies/deposit-preference`,
-              {
-                method: "POST",
-                headers: {
-                  "content-type": "application/json",
-                  ...authHeaders(),
-                },
-                body: JSON.stringify({ valor }),
-              },
-              18000,
-            );
-            const d = await r.json().catch(() => ({}));
-            if (!r.ok)
-              throw new Error(
-                d.message ||
-                  d.error ||
-                  "Nao consegui criar o pagamento Mercado Pago.",
-              );
-            mostrarStatus(
-              `Pagamento criado no Mercado Pago. Codigo: ${d.depositId}. Depois de aprovado, o saldo entra automatico.`,
-            );
-            mostrarBotaoPix();
-            location.href = d.initPoint || d.sandboxInitPoint;
+            await companyDeposits.start(valor);
             return;
           }
           const r = await fetchComTempo(
@@ -4622,10 +5163,11 @@
             throw new Error(
               d.message || d.error || "Nao consegui solicitar deposito.",
             );
+          if (session !== empresaToken || pagamentoModo !== modo) return;
           mostrarStatus(
             `Pedido de deposito criado. Copie a chave Pix abaixo, pague e depois envie o comprovante para liberar o saldo.`,
           );
-          mostrarBotaoPix(d);
+          mostrarBotaoPix({ ...d, valor });
         } catch (e) {
           mostrarStatus(e.message || "Erro ao pedir deposito.", true);
         } finally {
@@ -4696,7 +5238,67 @@
           $("confirmar").style.display = "none";
         }),
       );
+      function tipoLotePermitido(tipo) {
+        if (tipoMeioPeriodo(tipo)) return meioPeriodoAtivo;
+        return tipoPlanoDiario(tipo) ? planoDiarioAtivo : comidaFixa(tipo);
+      }
+      function tarifaLote(tipo, regiao) {
+        if (tipoMeioPeriodo(tipo)) return regiao === "conchal" ? 5.5 : 12;
+        if (tipoPlanoDiario(tipo)) return regiao === "conchal" ? 4 : 10;
+        return regiao === "conchal" ? 6.5 : 16;
+      }
+      function atualizarResumoLote() {
+        const count = Number($("quantidadeLote").value), tipo = $("tipoEntrega").value;
+        const taxaOk = taxaAvulsaLiberada(tipo, count);
+        const valido = Number.isInteger(count) && count >= 1 && count <= 30 && tipoLotePermitido(tipo) && taxaOk;
+        const tarifa = tarifaLote(tipo, $("regiaoLote").value);
+        $("resumoLote").textContent = valido ? `${count} entrega(s) × ${moeda(tarifa)} = ${moeda(count * tarifa)}. Um motoboy para o lote.${tipoPlanoDiario(tipo) ? ' Plano diário ativo.' : tipoMeioPeriodo(tipo) ? ' Meio período ativo.' : ''}` : "Selecione um tipo com tarifa fixa e uma quantidade de 1 a 30 entregas. O plano diário exige abrir o expediente (R$ 70,00) e o meio período, ativar 4 horas (R$ 25,00). Para cobrança por km, use Entrega com endereço.";
+        if (!taxaOk) $("resumoLote").textContent = mensagemTaxaAvulsa(count);
+        $("chamarLote").disabled = !valido || enviando;
+      }
+      function selecionarModoEntrega(semEndereco) {
+        if (enviando) return;
+        modoChamadaSemEndereco = semEndereco;
+        entregaCalculada = null;
+        pedidoPreparadoAtivoId = "";
+        pedidoIntegracaoAtual = null;
+        $("confirmar").style.display = "none";
+        resultadoBox.className = "result";
+        resultadoBox.textContent = "";
+        $("chamadaSemEndereco").style.display = semEndereco ? "grid" : "none";
+        $("tipoEntrega").parentElement.style.gridColumn = semEndereco ? "1 / -1" : "";
+        $("paradas").parentElement.style.display = semEndereco ? "none" : "grid";
+        $("campoParadasManual").style.display = !semEndereco && $("paradas").value === "manual" ? "grid" : "none";
+        $("modoComEndereco").className = semEndereco ? "secondary" : "";
+        $("modoSemEndereco").className = semEndereco ? "" : "secondary";
+        $("modoComEndereco").setAttribute("aria-pressed", String(!semEndereco));
+        $("modoSemEndereco").setAttribute("aria-pressed", String(semEndereco));
+        atualizarCampoExtras();
+        atualizarResumoLote();
+      }
+      $("modoComEndereco").onclick = () => selecionarModoEntrega(false);
+      $("modoSemEndereco").onclick = () => selecionarModoEntrega(true);
+      $("quantidadeLote").oninput = atualizarResumoLote;
+      $("regiaoLote").onchange = atualizarResumoLote;
+      $("chamarLote").onclick = async () => {
+        if (enviando || !modoChamadaSemEndereco) return;
+        if (!perfilCadastro.canRequest()) return;
+        limparStatus();
+        const count = Number($("quantidadeLote").value), tipo = $("tipoEntrega").value;
+        if (!tipoLotePermitido(tipo) || !Number.isInteger(count) || count < 1 || count > 30) return atualizarResumoLote();
+        const retiradaTxt = $("retirada").value.trim(), empresa = $("empresa").value.trim(), responsavel = $("responsavel").value.trim(), telefoneEmpresa = soNumeros($("telefoneEmpresa").value);
+        if (!retiradaTxt || !empresa || !responsavel || telefoneEmpresa.length < 10) return mostrarStatus("Confira o cadastro e o endereço de retirada da loja.", true);
+        const regiaoEntrega = $("regiaoLote").value, valor = count * tarifaLote(tipo, regiaoEntrega);
+        entregaCalculada = { entregaNaNota: true, regiaoEntrega, empresa, responsavel, telefoneEmpresa, tipoEntrega: tipo, retiradaTxt,
+          retirada: { texto: retiradaTxt, lat: null, lon: null }, retiradaMapa: "", entregaTxt: "Endereços nas notas", entrega: { texto: "Endereços nas notas", lat: null, lon: null },
+          paradas: count, km: 0, valor, precoLabel: "Tarifa fixa por região", recebedor: "", telefoneRecebedor: "", descricao: "", observacao: "", extras: [], enderecosExtras: "",
+          assinatura: `${empresa}|lote|${tipo}|${regiaoEntrega}|${count}|${retiradaTxt}` };
+        $("chamarLote").disabled = true;
+        try { await $("confirmar").onclick(); } finally { atualizarResumoLote(); }
+      };
+      atualizarResumoLote();
       $("calcular").onclick = async () => {
+        if (!perfilCadastro.canRequest()) return;
         limparStatus();
         resultadoBox.className = "result";
         const pedidoPreparadoAtivo = pedidosPreparados.find(
@@ -4744,9 +5346,21 @@
         }
         if (tipoPlanoDiario(tipoEntrega) && !planoDiarioAtivo) {
           mostrarStatus(
-            "Plano Diario MotoJa Pro bloqueado. Ative por R$ 70,00 para usar R$ 4,00 hoje.",
+            "Expediente fechado. Abra o expediente (R$ 70,00) para usar R$ 4,00 por entrega.",
             true,
           );
+          return;
+        }
+        if (tipoMeioPeriodo(tipoEntrega) && !meioPeriodoAtivo) {
+          mostrarStatus(
+            "Meio Período desligado. Ative por R$ 25,00 para usar R$ 5,50 por entrega durante 4 horas.",
+            true,
+          );
+          return;
+        }
+        if (!taxaAvulsaLiberada(tipoEntrega, paradas)) {
+          mostrarStatus(mensagemTaxaAvulsa(paradas), true);
+          atualizarTaxaAvulsaUI();
           return;
         }
         if (!tipoPrecificado(tipoEntrega)) {
@@ -4821,7 +5435,7 @@
               ...extras.map((e) => `${e.digitado} ${e.mapa.texto || ""}`),
             ],
             km = await calcularRota(pontosRota);
-          rotaDistantePlausivel(km, ...pontosCobranca);
+          rotaDistantePlausivel(km, { origem: `${retiradaTxt} ${retirada.texto || ""}` }, ...pontosCobranca);
           const valor = precoEntrega(km, paradas, tipoEntrega, pontosCobranca),
             precoLabel = labelPreco(tipoEntrega, paradas, pontosCobranca),
             retiradaMapa = `https://www.google.com/maps?q=${retirada.lat},${retirada.lon}`;
@@ -4881,6 +5495,12 @@
       };
       $("confirmar").onclick = async () => {
         if (!entregaCalculada || enviando) return;
+        if (!perfilCadastro.canRequest()) return;
+        if (!taxaAvulsaLiberada(entregaCalculada.tipoEntrega, entregaCalculada.paradas)) {
+          mostrarStatus(mensagemTaxaAvulsa(entregaCalculada.paradas), true);
+          atualizarTaxaAvulsaUI();
+          return;
+        }
         enviando = true;
         $("confirmar").disabled = true;
         $("confirmar").textContent = "Chamando motoboy...";
@@ -4892,6 +5512,8 @@
               headers: { "content-type": "application/json", ...authHeaders() },
               body: JSON.stringify({
                 clientRequestId,
+                entregaNaNota: d.entregaNaNota === true,
+                regiaoEntrega: d.regiaoEntrega || "",
                 integracaoOrigem: pedidoIntegracaoAtual?.origem || "",
                 integracaoPedidoId: pedidoIntegracaoAtual?.externalId || "",
                 integracaoPedidoRecebidoEm:
@@ -4939,6 +5561,7 @@
               }),
             });
           const data = await r.json().catch(() => ({}));
+          if (data.error === "taxa_avulsa_bloqueada") carregarPlanoDiario();
           if (!r.ok)
             throw new Error(
               data.message || data.error || "Nao consegui chamar motoboy.",
@@ -4953,8 +5576,14 @@
               )
             : null;
           if (pedidoPreparadoEnviado) {
-            pedidoPreparadoEnviado.status = "enviado";
-            pedidoPreparadoEnviado.deliveryId = data.deliveryId || "";
+            Object.assign(pedidoPreparadoEnviado, pedidoPreparadoVazio(pedidoPreparadoEnviado.ordem), {
+              id: pedidoPreparadoEnviado.id,
+              ordem: pedidoPreparadoEnviado.ordem,
+            });
+            ["entrega", "recebedor", "telefoneRecebedor", "descricao", "observacao", "enderecosExtras"].forEach((id) => {
+              if ($(id)) $(id).value = "";
+            });
+            pedidoIntegracaoAtual = null;
             pedidoPreparadoAtivoId = "";
             entregaCalculada = null;
             enviando = false;
@@ -4965,6 +5594,7 @@
             renderizarPedidosPreparados();
           } else {
             prepararNovaEntrega();
+            if (d.entregaNaNota) { $("quantidadeLote").value = "1"; atualizarResumoLote(); }
           }
           resultadoBox.innerHTML = `${pedidoPreparadoEnviado ? `Pedido ${pedidoPreparadoEnviado.ordem} enviado separadamente.<br>` : "Entrega enviada para os motoboys.<br>"}Codigo: <strong>${data.deliveryId}</strong><br>A entrega fica disponivel por ate 15 minutos para os motoboys aceitarem.<br><button id="novaEntrega" type="button" class="green" style="margin-top:12px">${pedidoPreparadoEnviado ? "Continuar com os outros pedidos" : "Fazer outra entrega"}</button>`;
           resultadoBox.className = "result show";
@@ -4998,7 +5628,7 @@
       };
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker
-          .register("./sw.js?v=193", { updateViaCache: "none" })
+          .register("./sw.js?v=194", { updateViaCache: "none" })
           .then((r) => r.update())
           .catch(() => {});
       }
@@ -5025,8 +5655,9 @@
           }
         };
     </script>
-    <script src="./empresa-tracking.js?v=187" defer></script>
-    <script src="./empresa-pedidos.js?v=134" defer></script>
+    <script src="./ride-chat.js?v=234" defer></script>
+    <script src="./empresa-tracking.js?v=212" defer></script>
+    <script src="./empresa-pedidos.js?v=135" defer></script>
     <script>
       (() => {
         const main = document.querySelector("main.app");
@@ -5040,6 +5671,7 @@
         const payment = document.getElementById("modoPixManual")?.closest("section");
         const wallet = document.querySelector("section.wallet");
         const dailyPlan = document.getElementById("ativarPlanoDiario")?.closest("section");
+        const halfPlan = document.getElementById("ativarMeioPeriodo")?.closest("section");
         const integrations = document.getElementById("integracoesPedidosSection");
         const captured = document.getElementById("pedidosCapturadosLista")?.closest("section");
         const delivery = document.getElementById("calcular")?.closest("section");
@@ -5101,7 +5733,7 @@
         delivery.classList.add("delivery-form");
         const deliveryTitle = document.createElement("div");
         deliveryTitle.className = "section-title";
-        deliveryTitle.innerHTML = '<div><h2>Nova entrega</h2><p class="muted">Preencha o destino, calcule o valor e chame um motoboy.</p></div>';
+        deliveryTitle.innerHTML = '<div><h2>Nova entrega</h2><p class="muted">Escolha entrega com endereço ou chame um motoboy com os endereços nas notas.</p></div>';
         delivery.prepend(deliveryTitle);
         operationsView.append(delivery, tracking);
         if (autoCardapio) operationsView.append(autoCardapio);
@@ -5114,7 +5746,7 @@
         integrationsView.append(lead("Integracoes", "Gerencie Anota AI, BeeFood, Cardápio Web e as capturas automaticas da loja."), integrations);
 
         const financeView = makeView("finance", "finance-grid");
-        financeView.append(lead("Financeiro", "Adicione saldo, confira a forma de pagamento e gerencie o plano diario."), wallet, payment, dailyPlan);
+        financeView.append(lead("Financeiro", "Adicione saldo, confira a forma de pagamento e gerencie o plano diario e o plano meio periodo."), wallet, payment, dailyPlan, ...(halfPlan ? [halfPlan] : []));
 
         const reportsView = makeView("reports");
         reportsView.append(lead("Relatorios", "Confira os valores e entregas realizadas pela empresa."), report);
@@ -5151,7 +5783,10 @@
           }
         }
         navButtons.forEach((button) => button.addEventListener("click", () => showView(button.dataset.companyView, button.hasAttribute("data-focus-delivery"), button)));
-        showView("operations", false, navButtons[0]);
+        window.addEventListener("motoja:finance-open", () => showView("finance"));
+        navButtons.filter(button => button.dataset.companyView === "finance").forEach(button =>
+          button.addEventListener("click", () => window.dispatchEvent(new Event("motoja:finance-load"))));
+        showView(new URLSearchParams(location.search).has("deposito") ? "finance" : "operations", false);
 
         const syncTopbar = () => {
           let saved = {};
@@ -5165,5 +5800,6 @@
         syncTopbar();
       })();
     </script>
+    <script src="./app-versao.js?v=1" defer></script>
   </body>
 </html>

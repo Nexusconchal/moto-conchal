@@ -19,6 +19,9 @@
   function restartGps() {
     if (gpsWatchId !== null) navigator.geolocation.clearWatch(gpsWatchId);
     gpsWatchId = null;
+    // Com corrida/entrega em andamento mandando GPS pro cliente, a tela fica acesa.
+    if (gpsSubscribers.size && !gpsDenied) window.MotojaTelaAcesa?.ligar('gps');
+    else window.MotojaTelaAcesa?.desligar('gps');
     if (!gpsSubscribers.size || !navigator.geolocation || gpsDenied) return;
     lastGpsAt = Date.now();
     gpsWatchId = navigator.geolocation.watchPosition((position) => {
@@ -70,6 +73,7 @@
       driverCpf: String(driver.cpf || '').replace(/\D/g, ''),
       driverCnh: String(driver.cnh || '').replace(/\D/g, ''),
       driverTelefone: String(driver.telefone || '').replace(/\D/g, ''),
+      driverToken: String(driver.driverToken || ''),
       driverName: String(driver.nome || '').trim()
     };
   }
@@ -119,7 +123,8 @@
     const state = { watchId: 0, lastSentAt: 0, lastLocation: null, sending: false };
     state.watchId = subscribeGps(async (position) => {
       const currentJob = jobs.get(deliveryId);
-      if (!currentJob || currentJob.status !== 'retirada') {
+      // GPS desde o aceite: a empresa ve o motoboy indo retirar e depois indo entregar.
+      if (!currentJob || !['aceita', 'retirada'].includes(currentJob.status) || currentJob.conclusaoStatus) {
         stopTracking(deliveryId);
         return;
       }
@@ -234,7 +239,7 @@
   }
 
   function decorateCards() {
-    jobs.forEach((job, id) => { if (job.status === 'retirada') startTracking(id); });
+    jobs.forEach((job, id) => { if (['aceita', 'retirada'].includes(job.status) && !job.conclusaoStatus) startTracking(id); else stopTracking(id); });
     document.querySelectorAll('[data-finalizar]').forEach((finishButton) => {
       const deliveryId = finishButton.dataset.finalizar;
       const job = jobs.get(deliveryId);
@@ -253,7 +258,7 @@
         actions.insertBefore(pickupButton, finishButton);
         pickupButton.addEventListener('click', async () => {
           pickupButton.disabled = true;
-          pickupButton.textContent = 'Ativando GPS...';
+          pickupButton.textContent = 'Confirmando...';
           try {
             await post(`/api/deliveries/${encodeURIComponent(deliveryId)}/pickup`, proof());
             job.status = 'retirada';
@@ -262,16 +267,22 @@
           } catch (error) {
             alert(error.message || 'Nao consegui confirmar a retirada.');
             pickupButton.disabled = false;
-            pickupButton.textContent = 'Confirmei a retirada e iniciar GPS';
+            pickupButton.textContent = 'Confirmei a retirada';
           }
         });
       }
 
       if (exclusive) return;
-      if (job.status === 'aceita') {
-        setButtonState(pickupButton, false, 'Confirmei a retirada e iniciar GPS');
+      if (job.conclusaoStatus) {
+        setButtonState(pickupButton, true, 'Retirada registrada');
+        setButtonState(finishButton, true, job.conclusaoStatus === 'contestada' ? 'Em conferência pelo dono' : 'Aguardando confirmação da empresa');
+        stopTracking(deliveryId);
+        setTrackingMessage(deliveryId, job.conclusaoStatus === 'contestada' ? 'Problema registrado. O dono vai conferir o serviço. Você pode aceitar outras chamadas.' : 'Conclusão solicitada. O ganho será registrado após confirmação da empresa ou decisão do dono. Você pode aceitar outras chamadas.', false);
+      } else if (job.status === 'aceita') {
+        setButtonState(pickupButton, false, 'Confirmei a retirada');
         if (!finishButton.disabled) finishButton.disabled = true;
-        setTrackingMessage(deliveryId, 'Ao retirar o pedido, confirme aqui para liberar a entrega e o rastreamento.', false);
+        startTracking(deliveryId);
+        setTrackingMessage(deliveryId, job.confirmacaoEmpresaVersao === 1 ? 'GPS ativo: a loja vê você chegando. Peça à loja para confirmar a retirada no app da empresa e depois toque aqui.' : 'GPS ativo: a loja vê você chegando. Ao retirar o pedido, confirme aqui para liberar a entrega.', false);
       } else if (job.status === 'retirada') {
         setButtonState(pickupButton, true, 'Pedido retirado - GPS ativo');
         if (finishButton.disabled) finishButton.disabled = false;
@@ -320,7 +331,7 @@
         (data.jobs || []).forEach((job) => jobs.set(job.id, job));
         mineDeliveriesLoaded = true;
         for (const deliveryId of watches.keys()) {
-          if (jobs.get(deliveryId)?.status !== 'retirada') stopTracking(deliveryId);
+          if (!['aceita', 'retirada'].includes(jobs.get(deliveryId)?.status) || jobs.get(deliveryId)?.conclusaoStatus) stopTracking(deliveryId);
         }
         decorateCards();
       }
@@ -383,7 +394,7 @@
         jobs.clear();
         incoming.forEach((job) => jobs.set(job.id, job));
         for (const deliveryId of watches.keys()) {
-          if (jobs.get(deliveryId)?.status !== 'retirada') stopTracking(deliveryId);
+          if (!['aceita', 'retirada'].includes(jobs.get(deliveryId)?.status) || jobs.get(deliveryId)?.conclusaoStatus) stopTracking(deliveryId);
         }
         decorateCards();
         return;
@@ -398,6 +409,14 @@
         }
         decorateRideCards();
       }
+    });
+    window.addEventListener('motoja:delivery-gps-start', (event) => {
+      const deliveryId = String(event.detail?.deliveryId || '');
+      if (!deliveryId) return;
+      const job = jobs.get(deliveryId) || { id: deliveryId, tipo: 'entrega_empresarial' };
+      job.status = job.status === 'retirada' ? 'retirada' : 'aceita';
+      jobs.set(deliveryId, job);
+      startTracking(deliveryId);
     });
     window.addEventListener('motoja:ride-gps-start', (event) => {
       const rideId = String(event.detail?.rideId || '');

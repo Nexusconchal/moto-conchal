@@ -41,6 +41,7 @@
       driverCpf: digits(profile?.cpf),
       driverCnh: digits(profile?.cnh),
       driverTelefone: digits(profile?.telefone),
+      driverToken: String(profile?.driverToken || ""),
       ...extra,
     };
   }

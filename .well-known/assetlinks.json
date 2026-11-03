@@ -1,0 +1,24 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "br.com.nexusconchal.motoja.cliente",
+      "sha256_cert_fingerprints": [
+        "E6:22:D0:34:0F:17:16:EA:6B:11:01:87:62:B5:4D:78:4E:E4:31:3B:EB:CA:4F:1E:55:55:81:41:1D:D5:1C:D4",
+        "4C:8A:EB:1F:7E:63:63:84:BA:E0:B7:94:C2:B0:AD:22:50:6B:F7:66:3D:23:60:CF:E8:64:97:ED:88:1D:93:A3"
+      ]
+    }
+  },
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "br.com.nexusconchal.motoja.motorista",
+      "sha256_cert_fingerprints": [
+        "D9:5E:22:A6:87:AE:05:62:5E:0F:56:D4:10:0E:5A:37:93:26:3B:F4:37:E9:B6:F6:B7:2E:9C:C4:E5:D7:D9:E3",
+        "DB:56:FE:CD:08:3E:CE:25:2A:74:9C:3C:30:4C:B4:86:A2:5C:47:DF:BC:9E:0B:E2:79:77:6B:12:6E:55:0C:D3"
+      ]
+    }
+  }
+]

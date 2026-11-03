@@ -36,3 +36,16 @@ outputs/
 # OS/editor files
 .DS_Store
 Thumbs.db
+
+# credentials that must never reach the public repo
+*service-account*.json
+*serviceAccount*.json
+*firebase-adminsdk*.json
+google-services.json
+*.pem
+*.p12
+*.pfx
+
+# local browser profiles used in tests (cookies and logins)
+.chrome-*/
+.edge-*/

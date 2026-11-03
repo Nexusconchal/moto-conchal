@@ -12,6 +12,18 @@
       content="Peça sua corrida em Conchal, Aguaí ou Engenheiro Coelho pelo app Nexus MotoJá."
     />
     <meta name="theme-color" content="#ff6b00" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Nexus MotoJá" />
+    <meta property="og:title" content="Nexus MotoJá — peça sua corrida" />
+    <meta property="og:description" content="Corridas em Conchal, Aguaí e Engenheiro Coelho. Peça pelo app e acompanhe o atendimento." />
+    <meta property="og:url" content="https://nexusmotoja.com.br/" />
+    <meta property="og:image" content="https://nexusmotoja.com.br/nexus-motoja-site-logo.png?v=202" />
+    <meta property="og:image:secure_url" content="https://nexusmotoja.com.br/nexus-motoja-site-logo.png?v=202" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:alt" content="Logo Nexus MotoJá" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Nexus MotoJá — peça sua corrida" />
+    <meta name="twitter:image" content="https://nexusmotoja.com.br/nexus-motoja-site-logo.png?v=202" />
     <link rel="manifest" href="./cliente.webmanifest" />
     <link
       rel="icon"
@@ -1190,7 +1202,7 @@
           0 1px 4px rgba(0, 0, 0, 0.35) !important;
       }
       #btn-confirmar-corrida:before {
-        content: "MotoJa";
+        content: "MotoJ\00E1";
         font-size: 0.7rem;
         padding: 0.15rem 0.42rem;
         border-radius: 999px;
@@ -1319,7 +1331,7 @@
         color: #fff;
       }
       .map-brand strong:after {
-        content: "Ja";
+        content: "J\00C1";
         color: #ff6b00;
       }
       .map-city {
@@ -1475,12 +1487,146 @@
       .pin-shape:after {
         display: none;
       }
+      .cta-entrega {
+        background: linear-gradient(135deg, #ff8a00, #ff6a00) !important;
+        box-shadow: 0 10px 28px rgba(255, 122, 0, 0.34) !important;
+      }
+      .cta-entrega .cta-ico {
+        background: rgba(120, 40, 0, 0.28);
+      }
+      .box-shape {
+        position: relative;
+        width: 30px;
+        height: 26px;
+        border-radius: 5px;
+        background: #fff3e0;
+        box-shadow: inset 0 9px 0 #ffd18a;
+      }
+      .box-shape:before {
+        content: "";
+        position: absolute;
+        left: 12px;
+        top: 0;
+        width: 6px;
+        height: 26px;
+        background: #c96a12;
+        opacity: 0.55;
+      }
+      .entrega-extra {
+        display: none;
+        gap: 0.55rem;
+        grid-column: 1/-1;
+      }
+      .entrega-extra.show {
+        display: grid;
+      }
+      .entrega-duo {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.55rem;
+      }
+      #form-corrida [hidden] {
+        display: none !important;
+      }
+      .conta-pedido {
+        grid-column: 1 / -1;
+        padding: 0.7rem 0.85rem;
+        border-radius: 14px;
+        background: rgba(53, 201, 121, 0.1);
+        border: 1px solid rgba(53, 201, 121, 0.35);
+        font-size: 0.85rem;
+        color: #d7f5e3;
+      }
+      .entrega-aviso {
+        font-size: 0.74rem;
+        font-weight: 800;
+        color: #ffd38a;
+        background: rgba(255, 138, 0, 0.12);
+        border: 1px solid rgba(255, 138, 0, 0.35);
+        border-radius: 12px;
+        padding: 0.55rem 0.7rem;
+      }
       .cta-arrow {
         margin-left: auto;
         font-size: 1.85rem;
         font-weight: 900;
         color: #fff;
         text-shadow: none;
+      }
+      /* Corrida e entrega lado a lado, em blocos. */
+      .cta-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.6rem;
+      }
+      .cta-row .cta-gps {
+        position: relative;
+        width: auto;
+        margin: 0;
+        min-height: 104px;
+        padding: 0.75rem 0.8rem;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.45rem;
+        text-align: left;
+      }
+      .cta-row .cta-ico {
+        width: 42px;
+        height: 42px;
+        flex: 0 0 42px;
+        border-radius: 12px;
+      }
+      .cta-row .pin-shape {
+        transform: scale(0.72) rotate(-45deg);
+      }
+      .cta-row .cta-emoji {
+        font-size: 1.55rem;
+        line-height: 1;
+      }
+      .cta-row .cta-gps strong {
+        font-size: 1rem;
+        line-height: 1.1;
+      }
+      .cta-row .cta-gps small {
+        font-size: 0.68rem;
+        line-height: 1.2;
+      }
+      .cta-row .cta-arrow {
+        position: absolute;
+        top: 0.7rem;
+        right: 0.8rem;
+      }
+      @media (max-width: 340px) {
+        .cta-row .cta-gps strong {
+          font-size: 0.9rem;
+        }
+        .cta-row .cta-gps small {
+          font-size: 0.62rem;
+        }
+      }
+      /* Faixa de confianca da tela inicial (avaliacao, chat e GPS). */
+      .home-trust {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.5rem;
+      }
+      .home-trust div {
+        padding: 0.65rem 0.4rem;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.04));
+        color: #e6e9ef;
+        text-align: center;
+        font-size: 0.72rem;
+        font-weight: 800;
+        line-height: 1.15;
+      }
+      .home-trust span {
+        display: block;
+        font-size: 1.25rem;
+        margin-bottom: 0.25rem;
       }
       .home-mini-actions {
         display: grid;
@@ -1578,6 +1724,7 @@
       }
     </style>
     <script src="./tracking-map.js?v=187" defer></script>
+    <link rel="stylesheet" href="./availability.css?v=224" />
   </head>
   <body>
     <section id="customer-auth" class="customer-auth" data-required="false" aria-hidden="true">
@@ -1597,6 +1744,25 @@
             <p>Para continuar usando a Nexus MotoJá, confirme seus dados e proteja sua conta.</p>
             <button id="auth-start-register" class="auth-secondary" type="button">Fazer meu cadastro</button>
           </div>
+        </div>
+
+        <div class="auth-view" data-auth-view="forgot">
+          <h2>Criar uma nova senha</h2>
+          <p class="auth-lead">Digite o CPF da sua conta. Vamos enviar um código para o WhatsApp que você cadastrou.</p>
+          <label class="auth-field">CPF<input id="auth-forgot-cpf" inputmode="numeric" autocomplete="username" placeholder="000.000.000-00" maxlength="14" /></label>
+          <button id="auth-forgot-send" class="auth-whatsapp" type="button">Enviar código pelo WhatsApp</button>
+          <button class="auth-link" data-auth-back="login" type="button">Lembrei a senha</button>
+        </div>
+
+        <div class="auth-view" data-auth-view="forgot-code">
+          <h2>Digite o código e a nova senha</h2>
+          <p class="auth-lead">O código chegou no WhatsApp da sua conta e vence em 10 minutos.</p>
+          <label class="auth-field">Código de 6 números<input id="auth-forgot-code" inputmode="numeric" autocomplete="one-time-code" placeholder="000000" maxlength="6" /></label>
+          <label class="auth-field">Nova senha<input id="auth-forgot-password" type="password" autocomplete="new-password" placeholder="Mínimo de 6 caracteres" /></label>
+          <label class="auth-field">Confirme a nova senha<input id="auth-forgot-password-confirm" type="password" autocomplete="new-password" placeholder="Digite novamente" /></label>
+          <button id="auth-forgot-confirm" class="auth-primary" type="button">Salvar nova senha e entrar</button>
+          <button id="auth-forgot-resend" class="auth-link" type="button">Enviar outro código</button>
+          <button class="auth-link" data-auth-back="login" type="button">Voltar para o login</button>
         </div>
 
         <div class="auth-view" data-auth-view="phone">
@@ -1675,6 +1841,8 @@
           <span class="mi">⌖</span>Pedir corrida</button
         ><button class="drawer-link" data-menu-action="minhas" type="button">
           <span class="mi">◴</span>Minhas corridas</button
+        ><button class="drawer-link" data-menu-action="cartoes" type="button">
+          <span class="mi">💳</span>Meus cartões</button
         ><button
           class="drawer-link"
           data-menu-action="motoristas"
@@ -1697,6 +1865,9 @@
     <canvas id="cv"></canvas>
     <main class="app">
       <header class="header">
+        <div id="motoboys-available" class="availability-public" data-state="unknown" data-backend="https://motoboy-conchal.onrender.com" role="status" aria-live="polite">
+          <span class="availability-dot" aria-hidden="true"></span><strong>Consultando…</strong><small>A disponibilidade será confirmada no aceite.</small>
+        </div>
         <div class="logo site-logo">
           <img src="./nexus-motoja-site-logo.png?v=132" alt="Nexus MotoJÁ" />
         </div>
@@ -1769,13 +1940,27 @@
         </div>
       </section>
       <section class="actions home-actions">
+        <div class="cta-row">
         <button id="btn-pedir" class="btn-main cta-gps" type="button">
           <span class="cta-ico"><span class="pin-shape"></span></span
           ><span
-            ><strong>Pedir Corrida pelo GPS</strong
-            ><small>Calcule o valor e chame um motoboy</small></span
+            ><strong>Pedir Corrida</strong
+            ><small>Calcule o valor pelo GPS</small></span
           ><span class="cta-arrow">›</span>
         </button>
+        <button id="btn-entrega" class="btn-main cta-gps cta-entrega" type="button">
+          <span class="cta-ico cta-emoji" aria-hidden="true">📦</span
+          ><span
+            ><strong>Enviar Entrega</strong
+            ><small>Mesmo preço da corrida</small></span
+          ><span class="cta-arrow">›</span>
+        </button>
+        </div>
+        <div class="home-trust" aria-label="Segurança da MotoJá">
+          <div><span aria-hidden="true">⭐</span>Motoboys avaliados</div>
+          <div><span aria-hidden="true">💬</span>Chat no app</div>
+          <div><span aria-hidden="true">🛰️</span>GPS ao vivo</div>
+        </div>
         <div class="home-mini-actions">
           <button id="btn-lembretes" class="mini-action" type="button">
             <span class="mini-ico">!</span
@@ -1792,7 +1977,7 @@
           </button>
         </div>
         <p class="hint">
-          Calcula a distância e abre o WhatsApp com a mensagem pronta
+          Calcula a distância e você acompanha o motoboy pelo app até chegar
         </p>
       </section>
       <footer>2026 Nexus MotoJá - Conchal, Aguaí e Engenheiro Coelho, SP</footer>
@@ -1828,7 +2013,7 @@
         <div class="panel-head">
           <div>
             <div id="modal-title" class="panel-title">Calcular corrida</div>
-            <p class="panel-sub">
+            <p id="modal-sub" class="panel-sub">
               Use sua localização atual ou digite o endereço. O Pix só vai
               depois que um motoboy aceitar a corrida.
             </p>
@@ -1843,13 +2028,16 @@
           </button>
         </div>
         <form id="form-corrida">
-          <label
+          <div id="conta-pedido" class="conta-pedido" hidden>
+            👤 Pedindo como <b id="conta-pedido-nome"></b> · WhatsApp <b id="conta-pedido-whats"></b>
+          </div>
+          <label id="campo-nome"
             >Seu nome<input
               id="nome"
               autocomplete="name"
               placeholder="Ex: Rafael"
               required /></label
-          ><label
+          ><label id="campo-telefone"
             >Seu WhatsApp<input
               id="telefoneCliente"
               autocomplete="tel"
@@ -1859,7 +2047,7 @@
           /></label>
           <div class="origin">
             <label
-              >Onde você está<input
+              ><span id="lbl-origem">Onde você está</span><input
                 id="origem"
                 autocomplete="street-address"
                 placeholder="Rua, número, bairro"
@@ -1869,12 +2057,39 @@
             </button>
           </div>
           <label
-            >Para onde você vai<input
+            ><span id="lbl-destino">Para onde você vai</span><input
               id="destino"
               autocomplete="street-address"
               placeholder="Rua, número, bairro ou ponto conhecido"
               required
           /></label>
+          <div id="entrega-extra" class="entrega-extra">
+            <label
+              >O que vai ser enviado<input
+                id="itemEntrega"
+                maxlength="120"
+                placeholder="Ex: celular na caixa"
+            /></label>
+            <div class="entrega-duo">
+              <label
+                >Quem recebe<input
+                  id="nomeRecebedor"
+                  maxlength="80"
+                  placeholder="Ex: Maria"
+              /></label>
+            </div>
+            <label
+              >Observação (opcional)<input
+                id="observacaoEntrega"
+                maxlength="200"
+                placeholder="Ex: portão azul, deixar com o porteiro"
+            /></label>
+            <div class="entrega-aviso">
+              Proibido enviar dinheiro, itens ilegais, animais ou volumes que
+              não cabem na mochila. Você recebe um código de entrega: envie
+              para quem vai receber, para confirmar a entrega.
+            </div>
+          </div>
           <div id="status" class="status"></div>
           <div id="resultado" class="result"></div>
           <div class="actions">
@@ -2172,6 +2387,10 @@
         return "";
       }
       function cidadeOperacaoPorOrigem(origem, endereco = "") {
+        // Estiva Gerbi fica quase a mesma distancia de Conchal e de Aguai;
+        // quem chama de la e atendido pelos motoboys de Conchal.
+        if (textoBusca(`${endereco} ${origem?.texto || ""}`).includes("estiva gerbi")) return "conchal";
+        if (coordenadaValida(origem) && distanciaKmMapa({ lat: Number(origem.lat), lon: Number(origem.lon) }, { lat: -22.2708, lon: -46.9478 }) <= 8) return "conchal";
         if (coordenadaValida(origem)) {
           const ponto = { lat: Number(origem.lat), lon: Number(origem.lon) },
             cidadeMaisProxima = Object.entries(CIDADES_OPERACAO)
@@ -2200,6 +2419,7 @@
         if (t.includes("campinas")) return "Campinas - SP";
         if (t.includes("americana")) return "Americana - SP";
         if (t.includes("araras")) return "Araras - SP";
+        if (t.includes("estiva gerbi")) return "Estiva Gerbi - SP";
         if (t.includes("conchal")) return "Conchal - SP";
         return "";
       }
@@ -2216,6 +2436,7 @@
             ["Campinas - SP", -22.9056, -47.0608, 30],
             ["Americana - SP", -22.7392, -47.3314, 24],
             ["Araras - SP", -22.3572, -47.3842, 24],
+            ["Estiva Gerbi - SP", -22.2708, -46.9478, 6],
           ]
             .map((c) => ({
               nome: c[0],
@@ -2559,12 +2780,28 @@
         }
         return true;
       }
+      // Conta conectada: o pedido usa o nome e o WhatsApp confirmado da conta; os campos somem.
+      function travarWhatsappDaConta(telefone, nome = "") {
+        const campoTel = $("telefoneCliente"), campoNome = $("nome");
+        if (!campoTel || !campoNome) return;
+        const numero = String(telefone || "").replace(/\D/g, "").slice(0, 11);
+        const conectado = numero.length >= 10;
+        if (conectado) {
+          campoTel.value = numero;
+          if (nome) campoNome.value = nome;
+        }
+        campoTel.readOnly = conectado;
+        campoTel.required = campoNome.required = !conectado;
+        $("campo-nome").hidden = $("campo-telefone").hidden = conectado;
+        $("conta-pedido").hidden = !conectado;
+        if (conectado) {
+          $("conta-pedido-nome").textContent = campoNome.value || "você";
+          $("conta-pedido-whats").textContent = numero.length === 11 ? `(${numero.slice(0, 2)}) ${numero.slice(2, 7)}-${numero.slice(7)}` : numero;
+        }
+      }
       function aplicarCliente(d = {}) {
         if (d.nome) $("nome").value = d.nome;
-        if (d.telefoneCliente)
-          $("telefoneCliente").value = String(d.telefoneCliente)
-            .replace(/\D/g, "")
-            .slice(0, 11);
+        if (d.telefoneCliente) travarWhatsappDaConta(d.telefoneCliente, d.nome);
         if (d.origem) $("origem").value = d.origem;
         try {
           const antigo = JSON.parse(
@@ -2664,7 +2901,9 @@
       function mensagemIndicacao() {
         return `Use o Nexus MotoJá em Conchal, Aguaí ou Engenheiro Coelho para pedir corrida rápido pelo celular. Meu link de indicação: ${linkIndicacao()}`;
       }
+      // Indique e ganhe com conta: codigo, link e amigos que ja andaram (cliente-menu.js).
       function indicarApp() {
+        if (window.MotojaClienteMenu) return window.MotojaClienteMenu.abrir("indique");
         const texto = mensagemIndicacao(),
           url = linkIndicacao();
         if (window.motoJaTrackFunil)
@@ -2678,6 +2917,29 @@
         } else {
           window.location.href = `https://api.whatsapp.com/send?text=${encodeURIComponent(texto)}`;
         }
+      }
+      let modoPedido = "corrida";
+      function aplicarModoPedido(modo) {
+        const entrega = modo === "entrega";
+        if (modoPedido !== modo) {
+          corridaCalculada = null;
+          $("btn-confirmar-corrida").style.display = "none";
+          const b = document.querySelector("#form-corrida .btn-primary");
+          if (b) b.textContent = "Calcular valor";
+          resultadoBox.className = "result";
+          resultadoBox.textContent = "";
+        }
+        modoPedido = entrega ? "entrega" : "corrida";
+        $("modal-title").textContent = entrega ? "Enviar entrega" : "Calcular corrida";
+        $("modal-sub").textContent = entrega
+          ? "Diga onde buscar e onde entregar. O preço é o mesmo da tabela e o Pix só vai depois que um motoboy aceitar."
+          : "Use sua localização atual ou digite o endereço. O Pix só vai depois que um motoboy aceitar a corrida.";
+        $("lbl-origem").textContent = entrega ? "Onde buscar" : "Onde você está";
+        $("lbl-destino").textContent = entrega ? "Onde entregar" : "Para onde você vai";
+        $("btn-localizacao").textContent = entrega
+          ? "Buscar na minha localização atual"
+          : "Usar minha localização atual";
+        $("entrega-extra").classList.toggle("show", entrega);
       }
       function abrirModal() {
         modal.classList.add("open");
@@ -2813,12 +3075,16 @@
           "pirassununga",
           "rio claro",
           "campinas",
+          "cosmopolis",
+          "estiva gerbi",
         ];
       }
       function dicaLocal(v) {
-        const t = textoBusca(v);
+        const raw = String(v || "").trim(), partes = separarRuaNumeroMapa(raw);
+        const local = partes ? raw.slice(partes.rua.length) : /^(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+/i.test(raw) ? raw.split(",").slice(1).join(",") : raw;
+        const t = textoBusca(local);
         if (t.includes("arthur nogueira")) return "artur nogueira";
-        return cidadesAtendidas().find((x) => t.includes(x)) || "";
+        return ["martinho prado", "tujuguaba", "iate", ...cidadesAtendidas()].find((x) => new RegExp(`\\b${x}\\b`).test(t)) || "";
       }
       function localEsperado(origem) {
         return dicaLocal(origem) || "";
@@ -2834,11 +3100,11 @@
       }
       function mensagemErroAmigavel(e) {
         const m = String((e && e.message) || e || "");
-        if (/failed to fetch|networkerror|load failed/i.test(m))
+        if (/failed to fetch|networkerror|load failed|abort|timeout/i.test(m))
           return "Nao consegui conectar ao mapa agora. Verifique a internet e tente de novo em alguns segundos.";
         return m || "Nao consegui calcular agora.";
       }
-      async function fetchMapaComRetry(url, opcoes = {}, ms = 12000) {
+      async function fetchMapaComRetry(url, opcoes = {}, ms = 20000) {
         let ultimo;
         for (let i = 0; i < 2; i++) {
           const ctrl = new AbortController(),
@@ -2861,24 +3127,69 @@
       function localConfereDica(origem, resultado, esperadoTentativa = "") {
         const esperado =
           localEsperado(origem) || esperadoTentativa || "conchal";
-        return textoBusca(resultado).includes(esperado);
+        // "engenheiro_coelho" (chave da cidade) vira "engenheiro coelho" para comparar com o mapa.
+        return textoBusca(resultado).includes(esperado.replace(/_/g, " "));
       }
       function resultadoEnderecoConfiavel(entrada, props, formatado) {
-        const texto = textoBusca(entrada),
-          resultado = textoBusca(formatado),
-          pediuRuaOuNumero =
-            /\d|\br\.?\b|rua|avenida|av\.?|estrada|rodovia|travessa/.test(
-              texto,
-            );
-        if (!pediuRuaOuNumero) return true;
-        if (props.street || props.housenumber) return true;
-        return /rua|avenida|av\.?|estrada|rodovia|travessa/.test(resultado);
+        // Mesma palavra do nome da rua, tolerando letra dobrada (Pradela/Pradella),
+        // y/i, ph/f, th/t e, em nomes de 5+ letras, uma letra trocada/faltando.
+        function mesmaPalavraRua(a, b) {
+          if (a === b) return true;
+          const simples = (p) => p.replace(/ph/g, "f").replace(/th/g, "t").replace(/y/g, "i").replace(/(.)\1+/g, "$1");
+          const x = simples(a), y = simples(b);
+          if (x === y) return true;
+          if (/\d/.test(x) || /\d/.test(y) || Math.min(x.length, y.length) < 5 || x[0] !== y[0] || Math.abs(x.length - y.length) > 1) return false;
+          let i = 0, j = 0, diferencas = 0;
+          while (i < x.length && j < y.length) {
+            if (x[i] === y[j]) { i++; j++; continue; }
+            if (++diferencas > 1) return false;
+            if (x.length > y.length) i++;
+            else if (y.length > x.length) j++;
+            else { i++; j++; }
+          }
+          return diferencas + (x.length - i) + (y.length - j) <= 1;
+        }
+        // Rua conferida no cadastro oficial de Conchal (IBGE + OSM) pelo servidor.
+        if (props && props.match_confirmed === true && ["ibge-cnefe-2022", "osm", "manual", "aprendido"].includes(props.match_source)) return true;
+        const normalizar = normalizarNomeRuaMapa;
+        const texto = normalizar(entrada);
+        if (["city", "county", "state", "country", "postcode", "district", "suburb"].includes(props.result_type)) return false;
+        const partes = separarRuaNumeroMapa(texto);
+        const textoRua = partes?.rua || texto;
+        const rua = textoRua.match(/(?:^|\s)(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+([^,]+)/) || (partes ? [textoRua, textoRua] : null);
+        if (partes && props.housenumber && String(props.housenumber).trim().toLowerCase() !== partes.numero) return false;
+        if (!rua) return !!(props.street || props.housenumber || props.name);
+        if (!props.street) return false;
+        const palavras = rua[1].split(/[^a-z0-9]+/)
+          .filter((p) => (p.length > 1 || /^\d+$/.test(p)) && !["de", "da", "do", "das", "dos", "dr", "dra", "doutor", "doutora", "vereador", "professor", "professora", "prefeito", "presbitero"].includes(p));
+        const encontrada = normalizar(props.street).replace(/^(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)\s+/, "").split(/[^a-z0-9]+/)
+          .filter((p) => (p.length > 1 || /^\d+$/.test(p)) && !["de", "da", "do", "das", "dos", "dr", "dra", "doutor", "doutora", "vereador", "professor", "professora", "prefeito", "presbitero"].includes(p));
+        const iniciais = rua[1].split(/[^a-z0-9]+/).filter((p) => /^[a-z]$/.test(p));
+        const restantes = encontrada.filter((p) => !palavras.some((w) => mesmaPalavraRua(w, p)));
+        return palavras.length > 0 && palavras.every((p) => encontrada.some((f) => mesmaPalavraRua(p, f))) && restantes.length <= iniciais.length && restantes.every((p) => iniciais.includes(p[0]));
+      }
+      function normalizarNomeRuaMapa(valor) {
+        return textoBusca(valor)
+          .replace(/\bzanochett?a\b|\bzanchett?a\b/g, "zancheta")
+          .replace(/\b15 de novembro\b/g, "xv de novembro")
+          .replace(/\b9 de julho\b/g, "nove de julho")
+          .replace(/\b7 de setembro\b/g, "sete de setembro")
+          .replace(/\bvisconde de indaiatuba\b/g, "visconde indatuba")
+          .replace(/\bbenedito novo\b/g, "bendito novo")
+          .replace(/\btiradentes\b/g, "tirandentes")
+          .replace(/\bmaria chiavegatto corte\b/g, "maria chiavegato corte")
+          .replace(/\bvicente vigano\b/g, "vicende vigano")
+          .replace(/\bdos battel\b/g, "dos batel")
+          .replace(/\bdos paulo\b/g, "dos paulos");
       }
       function rotaDistantePlausivel(km, ...textos) {
-        const distante = textos.some((t) =>
-          /martinho\s*prado|tujuguaba|iate|engenheiro\s+coelho|artur\s+nogueira|arthur\s+nogueira|mogi\s+mirim|mogi\s+guacu|araras|americana|limeira|leme|pirassununga|rio\s+claro|campinas/.test(
-            textoBusca(t),
-          ),
+        // Tujuguaba e Iate ficam dentro de Conchal, a menos de 10 km do centro.
+        // Primeiro texto opcional { origem }: a cidade de onde sai a corrida nao conta como outra cidade.
+        const origem = textos[0] && typeof textos[0] === "object" ? textoBusca(textos.shift().origem) : "";
+        // Martinho Prado fica a ~9 km de Conchal (o mapa poe a vila em "Mogi Guacu"): nao conta como cidade distante.
+        const distante = textos.some((t) => !/martinho\s*prado/.test(textoBusca(t)) &&
+          [...textoBusca(t).matchAll(/engenheiro\s+coelho|artur\s+nogueira|arthur\s+nogueira|mogi\s+mirim|mogi\s+guacu|araras|americana|limeira|leme|pirassununga|rio\s+claro|campinas|cosmopolis/g)]
+            .some(([cidade]) => !origem.includes(cidade)),
         );
         if (distante && Number(km) > 0 && Number(km) < 10)
           throw new Error(
@@ -2891,14 +3202,30 @@
           .replace(/https?:\/\/\S+/gi, " ")
           .replace(/\s+/g, " ")
           .trim();
+        texto = texto.replace(/\bzanochett?a\b/gi, "Zancheta").replace(/\bzanchett?a\b/gi, "Zancheta");
         const busca = textoBusca(texto);
         if (busca.includes("arthur nogueira"))
           texto = texto.replace(/arthur nogueira/gi, "Artur Nogueira");
         if (/\besp\s*2\b|espirito\s+santo\s*(ii|2)/.test(busca))
           texto = texto + ", Jardim Espirito Santo II, Conchal";
-        if (/\bpalmeiras\b/.test(busca))
-          texto = texto + ", Jardim Palmeiras, Conchal";
-        return texto;
+        return texto
+          .replace(/\b15 de novembro\b/gi, "XV de Novembro")
+          .replace(/\b9 de julho\b/gi, "Nove de Julho")
+          .replace(/\b7 de setembro\b/gi, "Sete de Setembro")
+          .replace(/\bvisconde de indaiatuba\b/gi, "Visconde Indatuba")
+          .replace(/\bbenedito novo\b/gi, "Bendito Novo")
+          .replace(/\btiradentes\b/gi, "Tirandentes")
+          .replace(/\bMaria Chiavegatto Corte\b/gi, "Maria Chiavegato Corte")
+          .replace(/\bVicente Vigan[oó]\b/gi, "Vicende Vigano")
+          .replace(/\bdos Battel\b/gi, "dos Batel")
+          .replace(/\bdos Paulo\b/gi, "dos Paulos");
+      }
+      function separarRuaNumeroMapa(base) {
+        const m = String(base || "").trim().replace(/[–—]|\s+-\s+/g, ",").match(/^(.+?)(?:,\s*|\s+)(?:n[ºo°.]*\s*)?(\d+[a-z]?)(?=\s*(?:[,;]|$|\b(?:jd\.?|jardim|bairro|vila|parque|centro|residencial|conjunto|desmembramento|chacara|chácaras?|distrito|polo|nucleo|núcleo|terra\s+nobre|santa\s+rita|noventa|conchal|agua[ií]?|martinho\s+prado|tujuguaba|iate|engenheiro\s+coelho|art?h?ur\s+nogueira|mogi\s+(?:mirim|gua[cç]u)|araras|americana|limeira|leme|pirassununga|rio\s+claro|campinas|cosm[oó]polis|estiva\s+gerbi|sp|casa|apto|apartamento|bloco|fundos|ref|referencia)\b))/i);
+        if (!m || /^(?:rua|r\.?|avenida|av\.?|estrada|rodovia|travessa)$/i.test(m[1].trim())) return null;
+        // "Rua dos Colleta, Esperanca 2": o numero pertence ao bairro, nao a casa.
+        if (m[1].includes(",") && /[a-z]/i.test(m[1].split(",").pop())) return null;
+        return { rua: m[1].trim().replace(/,$/, ""), numero: m[2] };
       }
       function variantesEnderecoMapa(base) {
         const principal = textoMapa(base),
@@ -2911,10 +3238,11 @@
               /\b(rua|r\.?|avenida|av\.?)\s+d[ao]s?\s+([a-záàâãéèêíóôõúç])/i,
               "$1 $2",
             );
-        const partes = [principal];
+        const numerado = separarRuaNumeroMapa(principal);
+        const partes = numerado ? [`${numerado.rua}, ${numerado.numero}`, principal] : [principal];
         if (limpo && limpo !== principal) partes.push(limpo);
         const trechoEndereco = principal.match(
-          /((?:av(?:enida)?\.?|rua|r\.?|rodovia|estrada|travessa)\s+[^,.;]+(?:,\s*\d+)?)/i,
+          /((?:av(?:enida)?\.?|rua|r\.?|rodovia|estrada|travessa)\s+[^,;]+(?:,\s*\d+)?)/i,
         );
         if (trechoEndereco && !partes.includes(trechoEndereco[1]))
           partes.push(trechoEndereco[1]);
@@ -2922,8 +3250,8 @@
       }
       function tentativasGeocode(base, cidadePreferida = "conchal") {
         const cidade = dicaLocal(base),
-          basesMapa = variantesEnderecoMapa(base),
           cidadeExplicita = buscaCidadeExplicitada(base),
+          basesMapa = variantesEnderecoMapa(base).sort((a, b) => cidadeExplicita ? a.length - b.length : 0),
           broad = "rect:-48.25,-23.15,-46.55,-21.70",
           configCidade =
             CIDADES_OPERACAO[cidadePreferida] || CIDADES_OPERACAO.conchal,
@@ -2939,7 +3267,7 @@
                 : cidade === "artur nogueira"
                   ? "Artur Nogueira"
                   : cidade.replace(/\b\w/g, (l) => l.toUpperCase());
-            add(`${baseMapa}, ${cidadeNome}, SP, Brasil`, broad, cidade);
+            if (!dicaLocal(baseMapa)) add(`${baseMapa}, ${cidadeNome}, SP, Brasil`, broad, cidade);
             add(`${baseMapa}, SP, Brasil`, broad, cidade);
             add(`${baseMapa}, Brasil`, broad, cidade);
             continue;
@@ -2965,14 +3293,70 @@
             ) === i,
         );
       }
+      // Coordenadas coladas do Google Maps ou do WhatsApp, por exemplo
+      // "22,28896° S, 46,96437° O", "-22.28896, -46.96437" ou um link com @-22.2,-46.9.
+      function coordenadasDoTexto(txt) {
+        const numeros = [...String(txt || "").matchAll(/(-?\d{1,3}[.,]\d{3,})\s*°?\s*([NSLOEW](?![a-z]))?/gi)];
+        if (numeros.length < 2) return null;
+        const valor = ([, n, h]) => {
+          const v = Math.abs(Number(n.replace(",", "."))),
+            hem = String(h || "").toUpperCase();
+          return hem === "S" || hem === "O" || hem === "W" || (!hem && n.startsWith("-")) ? -v : v;
+        };
+        const lat = valor(numeros[0]),
+          lon = valor(numeros[1]);
+        // So aceita pontos da regiao atendida (interior de SP).
+        if (!(lat >= -25 && lat <= -20 && lon >= -50 && lon <= -44)) return null;
+        return { lat, lon, texto: `${lat.toFixed(5)}, ${lon.toFixed(5)}` };
+      }
+      // So o nome do distrito, sem rua (ex.: "Martinho Prado Jr."): vale o distrito como destino.
+      const DISTRITOS_MAPA = {
+        // O distrito de Martinho Prado e enorme (vai ate perto de Mogi Guacu): o centro dele no mapa
+        // cai no mato, ~18 km. A vila fica ~5 km a nordeste de Conchal (R. Cipriano Barrinuevo, R. Hermínio Costa).
+        "martinho prado": { ponto: { lat: -22.2895, lon: -47.135 }, nome: "Martinho Prado Júnior (vila)" },
+        tujuguaba: { busca: "Tujuguaba, Conchal, SP, Brasil", nome: "Tujuguaba" },
+        iate: { busca: "Iate, Conchal, SP, Brasil", nome: "Iate" },
+      };
+      function distritoSemRua(base) {
+        const local = dicaLocal(base);
+        if (!DISTRITOS_MAPA[local] || /\d/.test(base)) return "";
+        return /(^|[\s,(])(rua|r\.|avenida|av\.?|estrada|rodovia|travessa|praca|praça|alameda)\s/i.test(base) ? "" : local;
+      }
+      async function geocodificarDistrito(local) {
+        const distrito = DISTRITOS_MAPA[local];
+        if (distrito.ponto) return { ...distrito.ponto, texto: distrito.nome };
+        const params = new URLSearchParams({ text: distrito.busca, original: distrito.busca, limit: "5", filter: "rect:-48.25,-23.15,-46.55,-21.70" });
+        const r = await fetchMapaComRetry(`${CONFIG.backend}/api/maps/geocode?${params}`);
+        if (!r.ok) return null;
+        const d = await r.json().catch(() => ({}));
+        for (const feature of d.features || []) {
+          const props = feature.properties || {};
+          // So o proprio distrito (nao uma "Rua Martinho Prado Junior" de outra cidade).
+          const onde = textoBusca(`${props.name || ""} ${props.city || ""} ${props.district || ""} ${props.suburb || ""}`);
+          if (["street", "building", "amenity"].includes(props.result_type) || !onde.includes(local) || !Array.isArray(feature.geometry?.coordinates)) continue;
+          const [lon, lat] = feature.geometry.coordinates;
+          return { lat: +lat, lon: +lon, texto: props.formatted || distrito.nome };
+        }
+        return null;
+      }
       async function geocodificar(endereco, cidadePreferida = "conchal") {
-        const base = endereco.trim();
+        // "Martinho Prado Jr." -> "Martinho Prado Júnior" (o "Jr." virava lixo na busca).
+        const base = endereco.trim().replace(/\bjr\.?(?=[\s,\-]|$)/gi, "Júnior");
+        const coordenadas = coordenadasDoTexto(base);
+        if (coordenadas) return coordenadas;
+        const distrito = distritoSemRua(base);
+        if (distrito) {
+          const ponto = await geocodificarDistrito(distrito);
+          if (ponto) return ponto;
+        }
         const configCidade =
           CIDADES_OPERACAO[cidadePreferida] || CIDADES_OPERACAO.conchal;
-        let ultimoErro = "";
+        let ultimoErro = "",
+          mensagemServidor = "";
         for (const tentativa of tentativasGeocode(base, cidadePreferida)) {
           const params = new URLSearchParams({
               text: tentativa.texto,
+              original: base,
               limit: "5",
               filter: tentativa.area,
               bias: configCidade.bias,
@@ -2985,6 +3369,8 @@
             continue;
           }
           const d = await r.json();
+          if (d.message && !(d.features || []).some((f) => f.properties && f.properties.match_confirmed === true))
+            mensagemServidor = d.message;
           for (const feature of d.features || []) {
             const props = feature.properties || {},
               cidadeResultado = String(
@@ -3000,24 +3386,21 @@
                 ? cidadeResultado
                 : alvo;
             if (!localConfereDica(base, alvoValidacao, tentativa.esperado)) {
-              ultimoErro = `Endereço encontrado não parece ser em ${localEsperado(base) || tentativa.esperado || "Conchal"}. Digite rua, número, bairro e cidade.`;
+              ultimoErro = `Endereço encontrado não parece ser em ${localEsperado(base) || CIDADES_OPERACAO[tentativa.esperado]?.nome || tentativa.esperado || "Conchal"}. Digite rua, número, bairro e cidade.`;
               continue;
             }
             if (
-              !resultadoEnderecoConfiavel(base, props, formatado) &&
-              !textoBusca(formatado).includes(
-                localEsperado(base) || tentativa.esperado || "conchal",
-              )
+              !resultadoEnderecoConfiavel(base, props, formatado)
             ) {
               ultimoErro =
-                "O mapa achou apenas a cidade, não o endereço. Digite rua, número, bairro e cidade para evitar preço errado.";
+                "O mapa não confirmou a rua informada. Digite rua, número, bairro e cidade para evitar preço errado.";
               continue;
             }
             const [lon, lat] = feature.geometry.coordinates;
             return { lat: +lat, lon: +lon, texto: formatado };
           }
         }
-        throw new Error(ultimoErro || `Endereço não encontrado: ${endereco}`);
+        throw new Error(mensagemServidor || ultimoErro || `Endereço não encontrado: ${endereco}`);
       }
       async function enderecoDoGps(ponto) {
         try {
@@ -3056,12 +3439,15 @@
             return;
           }
           navigator.geolocation.getCurrentPosition(
-            (p) =>
-              ok({
-                lat: p.coords.latitude,
-                lon: p.coords.longitude,
-                texto: "Localização atual pelo GPS",
-              }),
+            (p) => {
+              const accuracy = Number(p.coords.accuracy), age = Date.now() - Number(p.timestamp);
+              if (typeof p.coords.accuracy !== "number" || !Number.isFinite(accuracy) || accuracy < 0 || accuracy > 100 || typeof p.timestamp !== "number" || !Number.isFinite(age) || age > 30000 || age < -10000 || !Number.isFinite(p.coords.latitude) || Math.abs(p.coords.latitude) > 90 || !Number.isFinite(p.coords.longitude) || Math.abs(p.coords.longitude) > 180) {
+                const error = new Error("O GPS está muito aproximado ou desatualizado. Tente em local aberto ou digite seu endereço completo para localizar a saída correta.");
+                error.code = "gps_impreciso"; erro(error); return;
+              }
+              ok({ lat: p.coords.latitude, lon: p.coords.longitude, accuracy, timestamp: p.timestamp,
+                texto: "Localização atual pelo GPS" });
+            },
             (e) => {
               let msg = "Não consegui pegar sua localização. ";
               if (e && e.code === 1)
@@ -3093,10 +3479,10 @@
             return await pegarGps({
               enableHighAccuracy: false,
               timeout: 10000,
-              maximumAge: 120000,
+              maximumAge: 0,
             });
-          } catch {
-            return Promise.reject(e);
+          } catch (fallbackError) {
+            return Promise.reject(fallbackError.code === "gps_impreciso" ? fallbackError : e);
           }
         }
       }
@@ -3127,11 +3513,14 @@
         destinoEncontrado,
         km,
         preco,
+        entrega,
       }) {
         const dist = km
           ? `${km.toFixed(2).replace(".", ",")} km`
           : "Não calculada";
-        let txt = `Olá! Quero pedir uma corrida.\n\nNome: ${nome}\nWhatsApp: ${telefoneCliente || "Não informado"}\nEstou em: ${origemTexto}\nDestino digitado: ${destinoTexto}\nDestino encontrado no mapa: ${destinoEncontrado || destinoTexto}\nDistância calculada: ${dist}\n`;
+        let txt = entrega
+          ? `Olá! Quero enviar uma entrega.\n\nNome: ${nome}\nWhatsApp: ${telefoneCliente || "Não informado"}\nO que vai: ${entrega.itemEntrega}\nBuscar em: ${origemTexto}\nEntregar em: ${destinoTexto}\nEndereço encontrado no mapa: ${destinoEncontrado || destinoTexto}\nQuem recebe: ${entrega.nomeRecebedor}\n${entrega.observacaoEntrega ? `Observação: ${entrega.observacaoEntrega}\n` : ""}Distância calculada: ${dist}\n`
+          : `Olá! Quero pedir uma corrida.\n\nNome: ${nome}\nWhatsApp: ${telefoneCliente || "Não informado"}\nEstou em: ${origemTexto}\nDestino digitado: ${destinoTexto}\nDestino encontrado no mapa: ${destinoEncontrado || destinoTexto}\nDistância calculada: ${dist}\n`;
         txt += `Valor: ${formatarValor(preco.valor)} (${preco.label})\n`;
         if (preco.porKm)
           txt += `Cálculo: ${km.toFixed(2).replace(".", ",")} km x R$ ${formatarValorKm(preco)} por km.\n`;
@@ -3140,8 +3529,8 @@
             preco.periodo === "noite"
               ? "Tarifa especial de noite ativada automaticamente das 18:00 até 00:00.\n"
               : "Tarifa especial de madrugada ativada automaticamente das 00:00 até 06:00.\n";
-        txt += `\nPagamento:\nPague somente depois que um motoboy aceitar a corrida e chamar você no WhatsApp.\n\nA chamada fica disponível para os motoboys por até 5 minutos. Se nenhum motoboy aceitar nesse tempo, peça a corrida novamente ou aguarde nosso retorno aqui no WhatsApp.\n\nDepois do pagamento, envie o comprovante aqui e mostre para o motoboy o comprovante do pagamento efetuado antes de iniciar a corrida.\n`;
-        return txt + "\nPode confirmar a corrida, por favor?";
+        txt += `\nPagamento:\nPague somente depois que um motoboy aceitar a corrida e chamar você no WhatsApp.\n\nA chamada fica disponível para os motoboys por até 10 minutos. Se nenhum motoboy aceitar nesse tempo, peça a corrida novamente ou aguarde nosso retorno aqui no WhatsApp.\n\nDepois do pagamento, envie o comprovante aqui e mostre para o motoboy o comprovante do pagamento efetuado antes de iniciar a corrida.\n`;
+        return txt + (entrega ? "\nPode confirmar a entrega, por favor?" : "\nPode confirmar a corrida, por favor?");
       }
       function lembrarLembretesNaSegundaAbertura() {
         try {
@@ -3150,8 +3539,10 @@
             aberturas =
               Number(localStorage.getItem("motoJaAberturas") || 0) + 1;
           localStorage.setItem("motoJaAberturas", String(aberturas));
-          if (ja || aberturas < 2 || Notification.permission === "granted")
-            return;
+          const jaPermitido =
+            typeof Notification !== "undefined" &&
+            Notification.permission === "granted";
+          if (ja || aberturas < 2 || jaPermitido) return;
           localStorage.setItem(chave, "mostrado");
           setTimeout(() => {
             if (
@@ -3163,27 +3554,62 @@
           }, 1200);
         } catch (e) {}
       }
+      // App Android da Play Store (WebView): usa a notificacao nativa do celular,
+      // pela mesma interface PushNotifications que o painel do motoboy usa.
+      function pushNativoCliente() {
+        const cap = window.Capacitor;
+        return cap?.isNativePlatform?.() && cap.Plugins?.PushNotifications
+          ? cap.Plugins.PushNotifications
+          : null;
+      }
+      async function tokenPushNativoCliente(push) {
+        let perm = await push.checkPermissions();
+        if (perm.receive !== "granted") perm = await push.requestPermissions();
+        if (perm.receive !== "granted")
+          throw new Error(
+            "Libere as notificações do app MotoJá nas configurações do Android.",
+          );
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error("O Android não liberou a notificação agora. Tente de novo.")),
+            15000,
+          );
+          push.addListener("registration", ({ value }) => {
+            clearTimeout(timer);
+            resolve(value);
+          });
+          push.addListener("registrationError", () => {
+            clearTimeout(timer);
+            reject(new Error("O Android não liberou a notificação agora. Tente de novo."));
+          });
+          push.register();
+        });
+      }
       async function ativarLembretesCliente() {
         try {
-          const ua = navigator.userAgent.toLowerCase(),
-            isIos = /iphone|ipad|ipod/.test(ua),
-            isChrome = /crios|chrome/.test(ua);
-          if (isIos) {
-            alert(
-              "No iPhone as notificações web podem não funcionar bem. No Android pelo app da Play Store funciona melhor.",
-            );
-            return;
-          }
-          if (!isChrome && !/wv|android/.test(ua)) {
-            alert(
-              "Para ativar lembretes, use o app instalado ou Chrome no Android.",
-            );
-            return;
-          }
-          const firebase = await carregarFirebaseMessaging();
-          if (!messaging || !firebase) {
-            alert("Este celular não suporta notificações push agora.");
-            return;
+          const pushNativo = pushNativoCliente();
+          let firebase = null;
+          if (!pushNativo) {
+            const ua = navigator.userAgent.toLowerCase(),
+              isIos = /iphone|ipad|ipod/.test(ua),
+              isChrome = /crios|chrome/.test(ua);
+            if (isIos) {
+              alert(
+                "No iPhone as notificações web podem não funcionar bem. No Android pelo app da Play Store funciona melhor.",
+              );
+              return;
+            }
+            if (!isChrome && !/wv|android/.test(ua)) {
+              alert(
+                "Para ativar lembretes, use o app instalado ou Chrome no Android.",
+              );
+              return;
+            }
+            firebase = await carregarFirebaseMessaging();
+            if (!messaging || !firebase) {
+              alert("Este celular não suporta notificações push agora.");
+              return;
+            }
           }
           let d = {};
           try {
@@ -3203,28 +3629,33 @@
             abrirModal();
             return;
           }
-          const perm = await Notification.requestPermission();
-          if (perm !== "granted") {
-            alert("Permissão de notificação não liberada.");
-            return;
+          let token;
+          if (pushNativo) {
+            token = await tokenPushNativoCliente(pushNativo);
+          } else {
+            const perm = await Notification.requestPermission();
+            if (perm !== "granted") {
+              alert("Permissão de notificação não liberada.");
+              return;
+            }
+            const swScope = new URL("./", location.href).pathname;
+            await navigator.serviceWorker
+              .getRegistration(swScope)
+              .then(function (reg) {
+                return reg && reg.unregister ? reg.unregister() : false;
+              })
+              .catch(function () {});
+            const swReg = await navigator.serviceWorker.register(
+              `${swScope}firebase-messaging-sw.js?v=135`,
+              { scope: swScope, updateViaCache: "none" },
+            );
+            await swReg.update().catch(function () {});
+            token = await firebase.getToken(messaging, {
+              vapidKey:
+                "BBAc8wjH-aMr3NFRG7zglJxcLgkWk7osJR_FvZ_C3nA9nH8mlKc-pW4LPFPB_9NZfJhlxLyOyTXBeMnGN3CsWRY",
+              serviceWorkerRegistration: swReg,
+            });
           }
-          const swScope = new URL("./", location.href).pathname;
-          await navigator.serviceWorker
-            .getRegistration(swScope)
-            .then(function (reg) {
-              return reg && reg.unregister ? reg.unregister() : false;
-            })
-            .catch(function () {});
-          const swReg = await navigator.serviceWorker.register(
-            `${swScope}firebase-messaging-sw.js?v=135`,
-            { scope: swScope, updateViaCache: "none" },
-          );
-          await swReg.update().catch(function () {});
-          const token = await firebase.getToken(messaging, {
-            vapidKey:
-              "BBAc8wjH-aMr3NFRG7zglJxcLgkWk7osJR_FvZ_C3nA9nH8mlKc-pW4LPFPB_9NZfJhlxLyOyTXBeMnGN3CsWRY",
-            serviceWorkerRegistration: swReg,
-          });
           const r = await fetch(`${CONFIG.backend}/api/customers/push-token`, {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -3245,7 +3676,7 @@
             JSON.stringify({ ...d, nome, telefoneCliente }),
           );
           atualizarPerfilCliente();
-          alert("Lembretes ativados: 06:40 e 16:50.");
+          alert("Lembretes ativados: 06:40, 11:30 e 16:50.");
         } catch (e) {
           alert(e.message || "Erro ao ativar lembretes.");
         }
@@ -3371,6 +3802,69 @@
         corridaAcompanhadaId = "";
       }
 
+      // Motoboy atrasado: o botao "Cancelar motoboy" so aparece depois de 15 minutos
+      // do aceite sem ele chegar. Antes disso, so o aviso de quando ele vai aparecer.
+      function atualizarAtrasoMotoboy(pedido, dados) {
+        const box = $("atraso-motoboy-box");
+        if (!box) return;
+        const liberaEm = Number(dados.cancelarMotoboyEmMs || 0);
+        const esperaAte = Number(dados.esperaAteMs || 0);
+        const estado = dados.motoboyChegou ? (esperaAte > Date.now() ? `chegou-${esperaAte}` : "nada") : !liberaEm ? "nada" : dados.podeCancelarMotoboy ? "pode" : `espera-${Math.max(1, Math.ceil((liberaEm - Date.now()) / 60000))}`;
+        if (box.dataset.estado === estado) return;
+        box.dataset.estado = estado;
+        if (estado === "nada") { box.innerHTML = ""; return; }
+        // Motoboy no local: ele espera 10 minutos; depois disso pode cancelar a corrida.
+        if (estado.startsWith("chegou-")) {
+          const ate = new Date(esperaAte).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+          box.innerHTML = `<div style="margin-top:10px;padding:12px 14px;border-radius:14px;background:rgba(37,211,102,.12);border:1px solid rgba(37,211,102,.45);text-align:left"><strong style="color:#7ee2a8">🏍️ Seu motoboy chegou ao local de embarque!</strong><div class="small" style="color:#cbd5e1;margin-top:4px;text-align:left">Ele espera por você até <strong style="color:#fff">${ate}</strong>. Depois disso ele pode cancelar a corrida. Se for demorar, avise pelo chat.</div></div>`;
+          return;
+        }
+        if (estado !== "pode") {
+          const hora = new Date(liberaEm).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+          const faltam = Math.max(1, Math.ceil((liberaEm - Date.now()) / 60000));
+          box.innerHTML = `<div class="small" style="margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.04);border:1px dashed rgba(255,255,255,.18);color:#aeb4c3;text-align:left">⏱️ O motoboy tem até <strong style="color:#fff">${hora}</strong> para chegar (faltam ${faltam} min). Se ele atrasar mais de 15 minutos, aparece aqui o botão <strong style="color:#fff">Cancelar motoboy</strong>.</div>`;
+          return;
+        }
+        box.innerHTML = `<div style="margin-top:10px;padding:12px 14px;border-radius:14px;background:rgba(255,82,82,.12);border:1px solid rgba(255,82,82,.45);text-align:left">
+          <strong style="color:#ff8a80">⏰ O motoboy passou de 15 minutos e ainda não chegou.</strong>
+          <div class="small" style="color:#cbd5e1;margin:4px 0 10px;text-align:left">Se preferir, cancele este motoboy. Você pode chamar outro sem pagar nada a mais.</div>
+          <div data-atraso-passo="1"><button type="button" data-atraso="abrir" style="width:100%;padding:12px;border-radius:12px;border:0;background:#ff5252;color:#fff;font-weight:900;font-size:1rem;cursor:pointer;font-family:inherit">Cancelar motoboy</button></div>
+          <div data-atraso-passo="2" style="display:none;gap:8px">
+            <button type="button" data-atraso="trocar" style="padding:12px;border-radius:12px;border:0;background:#25d366;color:#08210f;font-weight:900;cursor:pointer;font-family:inherit">Chamar outro motoboy</button>
+            <button type="button" data-atraso="cancelar" style="padding:12px;border-radius:12px;border:1px solid rgba(255,82,82,.6);background:transparent;color:#ff8a80;font-weight:900;cursor:pointer;font-family:inherit">Cancelar a corrida</button>
+            <button type="button" data-atraso="voltar" style="padding:8px;border:0;background:none;color:#aeb4c3;font-weight:800;cursor:pointer;font-family:inherit">Voltar, vou esperar</button>
+          </div>
+        </div>`;
+        box.onclick = async (event) => {
+          const botao = event.target.closest("[data-atraso]");
+          if (!botao) return;
+          const acao = botao.dataset.atraso;
+          const passo2 = box.querySelector('[data-atraso-passo="2"]');
+          if (acao === "abrir" || acao === "voltar") {
+            box.querySelector('[data-atraso-passo="1"]').style.display = acao === "abrir" ? "none" : "";
+            passo2.style.display = acao === "abrir" ? "grid" : "none";
+            return;
+          }
+          passo2.querySelectorAll("button").forEach((b) => (b.disabled = true));
+          botao.textContent = acao === "trocar" ? "Chamando outro motoboy..." : "Cancelando...";
+          try {
+            const r = await fetch(`${CONFIG.backend}/api/rides/${encodeURIComponent(pedido.id)}/late-cancel`, {
+              method: "POST",
+              headers: { "content-type": "application/json", ...cabecalhosCliente() },
+              body: JSON.stringify({ acao }),
+            });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(d.message || "Não consegui cancelar agora. Tente de novo.");
+            box.dataset.estado = "";
+            if (acao === "trocar") mostrarStatus("Pronto! Estamos chamando outro motoboy para você.");
+            verificarPedidoAtivo(true);
+          } catch (error) {
+            alert(error.message);
+            box.dataset.estado = "";
+            atualizarAtrasoMotoboy(pedido, dados);
+          }
+        };
+      }
       function mostrarCorridaAceita(pedido, dados) {
         modal.classList.add("open");
         modal.setAttribute("aria-hidden", "false");
@@ -3381,16 +3875,19 @@
         const valorTxt = `R$ ${Number(dados.valor || 0).toFixed(2).replace('.', ',')}`;
         let pagHtml = "";
         if (pag.status === "approved") {
-          pagHtml = `<div id="pagamento-cliente-box" style="margin:12px 0;padding:12px;border-radius:14px;background:rgba(37,211,102,.15);border:1px solid rgba(37,211,102,.35);color:#bfffd2;font-weight:800;text-align:center">Pagamento aprovado pelo Mercado Pago!</div>`;
+          const pagoTxt = pag.metodo === "cartao_app" && pag.cartaoFinal ? `✅ Pago no cartão final ${escHtml(pag.cartaoFinal)}!` : "Pagamento aprovado pelo Mercado Pago!";
+          pagHtml = `<div id="pagamento-cliente-box" style="margin:12px 0;padding:12px;border-radius:14px;background:rgba(37,211,102,.15);border:1px solid rgba(37,211,102,.35);color:#bfffd2;font-weight:800;text-align:center">${pagoTxt}</div>`;
         } else if (pag.initPoint) {
-          pagHtml = `<div id="pagamento-cliente-box" style="margin:12px 0;padding:14px;border-radius:14px;background:linear-gradient(135deg,rgba(0,158,227,.18),rgba(0,158,227,.08));border:1px solid rgba(0,158,227,.4);text-align:center"><div class="small" style="font-weight:800;color:#75d1ff;margin-bottom:8px">Pagar corrida online</div><a href="${escHtml(pag.initPoint)}" target="_blank" rel="noopener" class="btn-main" style="display:inline-block;padding:11px 22px;text-decoration:none;border-radius:999px;background:linear-gradient(135deg,#009ee3,#007eb5);color:#fff;font-weight:900;font-size:1.02rem;box-shadow:0 8px 22px rgba(0,158,227,.35)">Pagar com Pix / Cartão (${valorTxt})</a><div class="small" style="margin-top:8px;color:#aeb4c3">Ou pague direto ao motoboy em dinheiro ou Pix.</div></div>`;
+          // Cartao salvo (Meus cartoes): so com conta conectada e quando o servidor liberou.
+          const cartaoBtn = window.MotojaCartoes?.disponivel()
+            ? `<button type="button" data-pagar-cartao="${escHtml(pedido.id)}" data-valor="${Number(dados.valor || 0)}" style="display:block;width:100%;margin:0 0 10px;padding:12px 18px;border-radius:999px;border:0;background:linear-gradient(135deg,#ff9a00,#ff7a00);color:#111;font-weight:900;font-size:1.02rem;cursor:pointer;box-shadow:0 8px 22px rgba(255,154,0,.3);font-family:inherit">💳 Pagar com cartão salvo (${valorTxt})</button>`
+            : "";
+          pagHtml = `<div id="pagamento-cliente-box" style="margin:12px 0;padding:14px;border-radius:14px;background:linear-gradient(135deg,rgba(0,158,227,.18),rgba(0,158,227,.08));border:1px solid rgba(0,158,227,.4);text-align:center"><div class="small" style="font-weight:800;color:#75d1ff;margin-bottom:8px">Pagar corrida online</div>${cartaoBtn}<a href="${escHtml(pag.initPoint)}" target="_blank" rel="noopener" class="btn-main" style="display:inline-block;padding:11px 22px;text-decoration:none;border-radius:999px;background:linear-gradient(135deg,#009ee3,#007eb5);color:#fff;font-weight:900;font-size:1.02rem;box-shadow:0 8px 22px rgba(0,158,227,.35)">Pagar com Pix / Cartão (${valorTxt})</a><div class="small" style="margin-top:8px;color:#aeb4c3">Ou pague direto ao motoboy em dinheiro ou Pix.</div></div>`;
         }
 
-        let driverWaBtn = "";
-        if (dados.motoboyTelefone) {
-          const waLink = `https://wa.me/55${dados.motoboyTelefone}?text=${encodeURIComponent("Olá! Estou acompanhando sua localização na corrida MotoJá.")}`;
-          driverWaBtn = `<a href="${waLink}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:5px;padding:7px 12px;border-radius:999px;background:#25d366;color:#090911;text-decoration:none;font-weight:900;font-size:12px;box-shadow:0 4px 12px rgba(37,211,102,.35)">💬 WhatsApp</a>`;
-        }
+        // Conversa com o motoboy pelo chat do app (sem trocar WhatsApp), como no 99.
+        const chatNovo = !!window.MotojaRideChat?.hasUnread(pedido.id, dados.chatUltimaEmMs, dados.chatUltimoAutor, "cliente");
+        const driverWaBtn = `<button type="button" id="abrir-chat-corrida" data-ride="${escHtml(pedido.id)}" data-modalidade="${escHtml(dados.modalidade || "corrida")}" data-motoboy="${escHtml(dados.motoboy || "Motoboy")}" style="display:inline-flex;align-items:center;gap:5px;padding:8px 13px;border-radius:999px;border:0;background:#ff9a00;color:#111;font-weight:900;font-size:12.5px;box-shadow:0 4px 12px rgba(255,154,0,.35);cursor:pointer">💬 Chat${chatNovo ? '<span class="mjchat-badge" aria-label="mensagem nova"></span>' : ""}</button>`;
 
         if (!$("mapa-acompanhamento") || corridaAcompanhadaId !== pedido.id) {
           if (mapaAcompanhamento) mapaAcompanhamento.remove();
@@ -3411,12 +3908,13 @@
                 <div>
                   <div style="color:#ff9a00;font-size:11px;font-weight:900;letter-spacing:1px;text-transform:uppercase">Nexus MotoJá Conchal</div>
                   <strong style="font-size:1.15rem;color:#fff">${escHtml(dados.motoboy || "MotoJá")}</strong><br>
-                  <span class="small" style="text-align:left;color:#94a3b8">Seu motoboy aceitou a corrida</span>
+                  <span class="small" style="text-align:left;color:#94a3b8">Seu motoboy aceitou a ${dados.modalidade === "entrega_avulsa" ? "entrega" : "corrida"}</span>
                 </div>
               </div>
               <div id="driver-contact-box">${driverWaBtn}</div>
             </div>
             ${pagHtml}
+            ${dados.modalidade === "entrega_avulsa" && dados.codigoEntrega ? `<div style="margin:12px 0;padding:12px 14px;border-radius:14px;background:rgba(255,138,0,.12);border:1px solid rgba(255,138,0,.4);text-align:center"><div class="small" style="font-weight:800;color:#ffd38a">Código de entrega para ${escHtml(dados.nomeRecebedor || "quem recebe")}</div><div style="font-size:28px;font-weight:900;letter-spacing:8px;color:#fff;margin:4px 0">${escHtml(dados.codigoEntrega)}</div><div class="small" style="color:#cbd5e1">Envie esse código para quem vai receber: a pessoa passa o código para o motoboy na hora da entrega.</div></div>` : ""}
             <div id="gps-cliente-status" style="margin:12px 0 8px;padding:12px 14px;border-radius:14px;background:rgba(255,154,0,.12);border:1px solid rgba(255,154,0,.35);font-weight:800;display:flex;align-items:center;justify-content:space-between;gap:8px">
               <span id="gps-status-txt">Aguardando o motoboy iniciar o GPS...</span>
               <span id="gps-live-dot" style="display:none;width:8px;height:8px;border-radius:50%;background:#25d366;box-shadow:0 0 10px #25d366"></span>
@@ -3445,6 +3943,7 @@
             </div>
             <div id="gps-cliente-enderecos" style="font-size:12px;color:#94a3b8;margin:6px 0 10px;line-height:1.4"></div>
             <div id="gps-cliente-hora" class="small" style="margin-top:8px">Confira também seu WhatsApp para pagamento e contato.</div>
+            <div id="atraso-motoboy-box"></div>
           </div>`;
           resultadoBox.className = "result show";
         } else {
@@ -3454,11 +3953,12 @@
           } else if (!existingPag && pagHtml && $("gps-cliente-status")) {
             $("gps-cliente-status").insertAdjacentHTML("beforebegin", pagHtml);
           }
-          if ($("driver-contact-box") && driverWaBtn && !$("driver-contact-box").innerHTML.trim()) {
+          if ($("driver-contact-box") && driverWaBtn && $("driver-contact-box").innerHTML !== driverWaBtn) {
             $("driver-contact-box").innerHTML = driverWaBtn;
           }
         }
 
+        atualizarAtrasoMotoboy(pedido, dados);
         const location = dados.motoboyLocalizacao;
         const lat = Number(location?.latitude), lon = Number(location?.longitude);
         const mapEl = $("mapa-acompanhamento");
@@ -3606,11 +4106,11 @@
       function mostrarPedidoExpirado(pedido) {
         modal.classList.add("open");
         modal.setAttribute("aria-hidden", "false");
-        resultadoBox.innerHTML = `<div style="text-align:left"><strong style="font-size:1.15rem">Ainda não encontramos um motoboy</strong><br><span class="small">Ninguém aceitou automaticamente nesses 5 minutos, mas você ainda pode continuar o atendimento agora.</span><div style="margin:14px 0;padding:14px;border-radius:16px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18)"><strong>Quer que a gente tente resolver rápido?</strong><br><span class="small">Chame o suporte no WhatsApp ou peça novamente por mais 5 minutos.</span></div><div class="actions" style="margin-top:12px"><button id="btn-suporte-expirado" class="btn-main" type="button">Abrir WhatsApp do suporte</button><button id="btn-renovar-corrida" class="btn-secondary" type="button">Pedir novamente</button><button id="btn-cancelar-pedido" class="btn-secondary" type="button">Cancelar pedido</button></div></div>`;
+        resultadoBox.innerHTML = `<div style="text-align:left"><strong style="font-size:1.15rem">Ainda não encontramos um motoboy</strong><br><span class="small">Ninguém aceitou automaticamente nesses 10 minutos, mas você ainda pode continuar o atendimento agora.</span><div style="margin:14px 0;padding:14px;border-radius:16px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18)"><strong>Quer que a gente tente resolver rápido?</strong><br><span class="small">Chame o suporte no WhatsApp ou peça novamente por mais 10 minutos.</span></div><div class="actions" style="margin-top:12px"><button id="btn-suporte-expirado" class="btn-main" type="button">Abrir WhatsApp do suporte</button><button id="btn-renovar-corrida" class="btn-secondary" type="button">Pedir novamente</button><button id="btn-cancelar-pedido" class="btn-secondary" type="button">Cancelar pedido</button></div></div>`;
         resultadoBox.className = "result show";
         $("btn-suporte-expirado").onclick = () =>
           abrirWhatsApp(
-            "Olá, minha corrida no Nexus MotoJá ficou 5 minutos aguardando e nenhum motoboy aceitou. Pode me ajudar a encontrar um motoboy?",
+            "Olá, minha corrida no Nexus MotoJá ficou 10 minutos aguardando e nenhum motoboy aceitou. Pode me ajudar a encontrar um motoboy?",
           );
         $("btn-renovar-corrida").onclick = () => renovarPedidoAtivo(pedido);
         $("btn-cancelar-pedido").onclick = () => cancelarPedidoAtivo(pedido);
@@ -3683,6 +4183,19 @@
           }
         }
       }
+      // Avaliacao do motoboy ao terminar a corrida (ride-rating.js), como na 99.
+      function cabecalhosCliente() {
+        return {
+          "x-customer-device": clienteDeviceId(),
+          ...(localStorage.getItem(TOKEN_CLIENTE) ? { authorization: `Bearer ${localStorage.getItem(TOKEN_CLIENTE)}` } : {}),
+        };
+      }
+      function abrirAvaliacaoMotoboy(rideId, d) {
+        window.MotojaRideRating?.open({ rideId, backend: CONFIG.backend, motoboy: d.motoboy, foto: d.motoboyFoto, auth: cabecalhosCliente });
+      }
+      window.addEventListener("load", () => {
+        setTimeout(() => window.MotojaRideRating?.resume({ backend: CONFIG.backend, auth: cabecalhosCliente }), 1200);
+      });
       async function verificarPedidoAtivo(forcar = false) {
         let pedido = null;
         try {
@@ -3710,6 +4223,7 @@
               pedidoTimer = setTimeout(() => verificarPedidoAtivo(true), pollMs);
               return;
             } else if (d.status === "finalizada") {
+              if (d.podeAvaliar && d.motoboy) abrirAvaliacaoMotoboy(pedido.id, d);
               resultadoBox.innerHTML = `<div style="text-align:left"><strong style="font-size:1.12rem">Corrida finalizada. Obrigado por usar a MotoJá!</strong><br><span class="small">Gostou do atendimento? Indique para um amigo e concorra a 1 corrida grátis.</span><div class="actions" style="margin-top:12px"><button id="btn-indicar-finalizada" class="btn-main" type="button">Indicar e concorrer</button><button id="btn-pedir-novamente-finalizada" class="btn-secondary" type="button">Pedir outra corrida</button></div></div>`;
               setTimeout(() => {
                 $("btn-indicar-finalizada") &&
@@ -3726,8 +4240,8 @@
             mostrarPedidoExpirado(pedido);
             return;
           }
-          const base = Number(d.criadaEmMs || pedido.criadaEmMs || Date.now()),
-            restante = 5 * 60 * 1000 - (Date.now() - base);
+          const base = Number(d.buscaDesdeMs || d.criadaEmMs || pedido.criadaEmMs || Date.now()),
+            restante = 10 * 60 * 1000 - (Date.now() - base);
           if (restante <= 0) {
             mostrarPedidoExpirado(pedido);
             return;
@@ -3779,7 +4293,7 @@
       document.querySelectorAll("[data-auth-back]").forEach((button) =>
         button.addEventListener("click", () => authView(button.dataset.authBack)),
       );
-      [$("auth-login-cpf"), $("auth-register-cpf")].forEach((input) =>
+      [$("auth-login-cpf"), $("auth-register-cpf"), $("auth-forgot-cpf")].forEach((input) =>
         input?.addEventListener("input", () => {
           input.value = mascaraCpf(input.value);
         }),
@@ -3885,13 +4399,15 @@
             ...authDraft,
             deviceId: clienteDeviceId(),
             origem: $("origem")?.value?.trim() || "",
+            indicacao: window.MotojaClienteMenu?.indicacaoPendente() || "",
           }, false);
+          window.MotojaClienteMenu?.limparIndicacao();
           localStorage.setItem(TOKEN_CLIENTE, data.token);
           aplicarCliente(data.customer || { ...authDraft, telefoneCliente: authDraft.telefoneCliente });
           clienteAutenticado = true;
           cadastroClienteObrigatorio = false;
           authStatus("Cadastro concluído!", true);
-          setTimeout(encerrarAuthCliente, 500);
+          setTimeout(() => { encerrarAuthCliente(); abrirTelaAposLogin(); }, 500);
         } catch (e) {
           authStatus(e.message);
         } finally {
@@ -3913,6 +4429,7 @@
           clienteAutenticado = true;
           cadastroClienteObrigatorio = false;
           encerrarAuthCliente();
+          abrirTelaAposLogin();
         } catch (e) {
           authStatus(e.message);
         } finally {
@@ -3920,11 +4437,81 @@
           button.textContent = "Entrar";
         }
       });
-      $("auth-forgot")?.addEventListener("click", () =>
-        abrirWhatsApp("Olá, esqueci a senha da minha conta de cliente Nexus MotoJá e preciso de ajuda."),
-      );
+      document.addEventListener("click", (event) => {
+        const botao = event.target.closest?.("#abrir-chat-corrida");
+        if (!botao || !window.MotojaRideChat) return;
+        botao.querySelector(".mjchat-badge")?.remove();
+        const entrega = botao.dataset.modalidade === "entrega_avulsa";
+        window.MotojaRideChat.open({
+          rideId: botao.dataset.ride,
+          backend: CONFIG.backend,
+          titulo: botao.dataset.motoboy || "Motoboy",
+          subtitulo: `Seu motoboy da ${entrega ? "entrega" : "corrida"} · conversa pelo app`,
+          voce: "cliente",
+          servico: entrega ? "entrega" : "corrida",
+          auth: () => ({ headers: {
+            "x-customer-device": clienteDeviceId(),
+            ...(localStorage.getItem(TOKEN_CLIENTE) ? { authorization: `Bearer ${localStorage.getItem(TOKEN_CLIENTE)}` } : {}),
+          } }),
+          rapidas: ["Estou te esperando", "Já estou saindo", "Pode buzinar quando chegar", "Estou na frente"],
+        });
+      });
+      let cpfRecuperacao = "";
+      $("auth-forgot")?.addEventListener("click", () => {
+        const cpfLogin = String($("auth-login-cpf")?.value || "");
+        if (cpfLogin && $("auth-forgot-cpf")) $("auth-forgot-cpf").value = cpfLogin;
+        authView("forgot");
+      });
+      async function enviarCodigoRecuperacao(button) {
+        const cpf = String($("auth-forgot-cpf")?.value || "").replace(/\D/g, "");
+        if (cpf.length !== 11) return authStatus("Digite o CPF da sua conta.");
+        const texto = button.textContent;
+        button.disabled = true;
+        button.textContent = "Enviando código...";
+        try {
+          const data = await customerApi("/api/customers/password-reset/request", { cpf, deviceId: clienteDeviceId() }, false);
+          cpfRecuperacao = cpf;
+          authView("forgot-code");
+          authStatus(data.message || "Enviamos o código para o WhatsApp da sua conta.", true);
+        } catch (e) {
+          authStatus(e.message);
+        } finally {
+          button.disabled = false;
+          button.textContent = texto;
+        }
+      }
+      $("auth-forgot-send")?.addEventListener("click", (e) => enviarCodigoRecuperacao(e.currentTarget));
+      $("auth-forgot-resend")?.addEventListener("click", (e) => enviarCodigoRecuperacao(e.currentTarget));
+      $("auth-forgot-confirm")?.addEventListener("click", async () => {
+        const code = String($("auth-forgot-code")?.value || "").replace(/\D/g, ""),
+          password = String($("auth-forgot-password")?.value || ""),
+          confirmacao = String($("auth-forgot-password-confirm")?.value || "");
+        if (!cpfRecuperacao) return authView("forgot");
+        if (code.length !== 6) return authStatus("Digite o código de 6 números.");
+        if (password.length < 6) return authStatus("A nova senha precisa ter pelo menos 6 caracteres.");
+        if (password !== confirmacao) return authStatus("As senhas digitadas não são iguais.");
+        const button = $("auth-forgot-confirm");
+        button.disabled = true;
+        button.textContent = "Salvando...";
+        try {
+          const data = await customerApi("/api/customers/password-reset/confirm", { cpf: cpfRecuperacao, code, password, deviceId: clienteDeviceId() }, false);
+          localStorage.setItem(TOKEN_CLIENTE, data.token);
+          aplicarCliente(data.customer || {});
+          clienteAutenticado = true;
+          cadastroClienteObrigatorio = false;
+          ["auth-forgot-code", "auth-forgot-password", "auth-forgot-password-confirm"].forEach((id) => { if ($(id)) $(id).value = ""; });
+          cpfRecuperacao = "";
+          encerrarAuthCliente();
+          alert("Senha alterada com sucesso. Você já está conectado.");
+        } catch (e) {
+          authStatus(e.message);
+        } finally {
+          button.disabled = false;
+          button.textContent = "Salvar nova senha e entrar";
+        }
+      });
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js?v=171", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+        navigator.serviceWorker.register("./sw.js?v=199", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
       }
       verificarAcessoCliente(true);
       verificarPedidoAtivo(false);
@@ -3946,16 +4533,15 @@
               perfil?.scrollIntoView({ behavior: "smooth", block: "start" });
             }
           }
-          if (a === "minhas")
-            mostrarHistoricoCliente().catch((err) =>
-              alert(err.message || "Não consegui abrir suas corridas."),
-            );
-          if (a === "motoristas") alert("Lista de motoboys em breve.");
+          if (a === "minhas") window.MotojaClienteMenu?.abrir("corridas");
+          if (a === "cartoes") window.MotojaCartoes?.abrir();
+          if (a === "motoristas") window.MotojaClienteMenu?.abrir("motoristas");
           if (a === "indicar") indicarApp();
           if (a === "promocoes")
             location.href =
               "https://chat.whatsapp.com/InGnbbCtBlvGhjb56KlXVs?s=cl&p=i&mlu=4&ilr=4";
-          if (a === "ajuda" || a === "falar")
+          if (a === "ajuda") window.MotojaClienteMenu?.abrir("ajuda");
+          if (a === "falar")
             abrirWhatsApp("Olá, preciso de ajuda no app MotoJá.");
           if (a === "sair") {
             const token = localStorage.getItem(TOKEN_CLIENTE) || "";
@@ -3966,6 +4552,7 @@
               }).catch(() => {});
             localStorage.removeItem(TOKEN_CLIENTE);
             clienteAutenticado = false;
+            travarWhatsappDaConta("");
             verificarAcessoCliente(true);
           }
         }),
@@ -3975,9 +4562,61 @@
         else alert("Sua conta está conectada e protegida neste aparelho.");
       });
       $("btn-indicar")?.addEventListener("click", indicarApp);
+      // Telas do menu (cliente-menu.js). Minhas corridas e Indique pedem conta:
+      // sem login, abre o login e depois volta para a tela pedida.
+      let telaAposLogin = "";
+      function abrirTelaAposLogin() {
+        const tela = telaAposLogin;
+        telaAposLogin = "";
+        if (tela) setTimeout(() => window.MotojaClienteMenu?.abrir(tela), 300);
+      }
+      window.MotojaClienteMenu?.configurar({
+        backend: CONFIG.backend,
+        token: () => localStorage.getItem(TOKEN_CLIENTE) || "",
+        authHeaders: cabecalhosCliente,
+        tabelas: TABELAS,
+        whatsapp: abrirWhatsApp,
+        pedirLogin: (motivo, tela) => {
+          telaAposLogin = tela || "";
+          abrirAuthCliente("login", false);
+          authStatus(motivo);
+        },
+        pedirDeNovo: (r = {}) => {
+          aplicarModoPedido(r.modalidade === "entrega_avulsa" ? "entrega" : "corrida");
+          if (r.origem && $("origem")) $("origem").value = r.origem;
+          if ((r.destino || r.destinoEncontrado) && $("destino")) $("destino").value = r.destino || r.destinoEncontrado;
+          abrirModal();
+        },
+      });
+      // Meus cartoes e pagar a corrida com cartao salvo (cliente-cartoes.js).
+      window.MotojaCartoes?.configurar({
+        backend: CONFIG.backend,
+        authHeaders: cabecalhosCliente,
+        logado: () => clienteAutenticado,
+        pedirLogin: (motivo) => {
+          abrirAuthCliente("login", false);
+          authStatus(motivo);
+        },
+      });
+      document.addEventListener("click", (e) => {
+        const botao = e.target.closest("[data-pagar-cartao]");
+        if (!botao) return;
+        window.MotojaCartoes?.pagar({
+          rideId: botao.dataset.pagarCartao,
+          valor: Number(botao.dataset.valor || 0),
+          aoPagar: () => verificarPedidoAtivo(true),
+        });
+      });
       $("btn-instalar").addEventListener("click", salvarNaTelaInicial);
       $("btn-lembretes")?.addEventListener("click", ativarLembretesCliente);
-      $("btn-pedir").addEventListener("click", abrirModal);
+      $("btn-pedir").addEventListener("click", () => {
+        aplicarModoPedido("corrida");
+        abrirModal();
+      });
+      $("btn-entrega").addEventListener("click", () => {
+        aplicarModoPedido("entrega");
+        abrirModal();
+      });
       $("btn-fechar").addEventListener("click", fecharModal);
       modal.addEventListener("click", (e) => {
         if (e.target === modal) fecharModal();
@@ -4059,6 +4698,21 @@
           mostrarStatus("Digite o WhatsApp com DDD.", true);
           return;
         }
+        const entrega =
+          modoPedido === "entrega"
+            ? {
+                itemEntrega: $("itemEntrega").value.trim(),
+                nomeRecebedor: $("nomeRecebedor").value.trim(),
+                observacaoEntrega: $("observacaoEntrega").value.trim(),
+              }
+            : null;
+        if (
+          entrega &&
+          (!entrega.itemEntrega || !entrega.nomeRecebedor)
+        ) {
+          mostrarStatus("Diga o que vai ser enviado e quem vai receber.", true);
+          return;
+        }
         if (corridaRepetida(assinatura)) {
           mostrarStatus(
             "Essa corrida já foi enviada agora. Aguarde alguns segundos antes de pedir igual novamente.",
@@ -4079,12 +4733,14 @@
               ? "Localização atual pronta. Buscando endereço e destino..."
               : "Localizando os endereços no mapa...",
           );
-          const cidadeOrigemDigitada =
+          // Coordenadas coladas no campo valem como o ponto do GPS.
+          const origemPonto = origemGps || coordenadasDoTexto(origemTxt),
+            cidadeOrigemDigitada =
               cidadeOperacaoPorTexto(origemTxt) || "conchal",
             origem =
-              origemGps ||
+              origemPonto ||
               (await geocodificar(origemTxt, cidadeOrigemDigitada)),
-            enderecoGps = origemGps ? await enderecoDoGps(origem) : "",
+            enderecoGps = origemPonto ? await enderecoDoGps(origem) : "",
             cidadeOperacao = cidadeOperacaoPorOrigem(
               origem,
               enderecoGps || origem.texto || origemTxt,
@@ -4093,11 +4749,11 @@
           mostrarStatus("Calculando a distância da rota...");
           const rota = await calcularRota(origem, destino),
             km = rota.km;
-          rotaDistantePlausivel(km, destinoTxt, destino.texto);
+          rotaDistantePlausivel(km, { origem: `${origem.texto || origemTxt} ${enderecoGps} ${CIDADES_OPERACAO[cidadeOperacao].nome}` }, destinoTxt, destino.texto);
           const preco = escolherPreco(km),
             linkOrigemGps = `https://www.google.com/maps?q=${origem.lat},${origem.lon}`,
-            origemTexto = origemGps
-              ? `Minha localização atual pelo GPS\nEndereço aproximado: ${enderecoGps || "Não identificado pelo mapa"}\nMapa: ${linkOrigemGps}`
+            origemTexto = origemPonto
+              ? `${origemGps ? "Minha localização atual pelo GPS" : "Localização enviada por coordenadas"}\nEndereço aproximado: ${enderecoGps || "Não identificado pelo mapa"}\nMapa: ${linkOrigemGps}`
               : origemTxt,
             destinoEncontrado = destino.texto || destinoTxt;
           corridaCalculada = {
@@ -4116,9 +4772,10 @@
             origemTexto,
             destinoEncontrado,
             rota: rota.geometry,
+            entrega,
           };
           atualizarMapaCorrida(origem, destino, rota.geometry);
-          resultadoBox.innerHTML = `<div class="result-title">Destino encontrado</div><div class="route-summary"><div><span>Distância aprox.</span><strong>${km.toFixed(1).replace(".", ",")} km</strong></div><div><span>Valor estimado</span><strong>${formatarValor(preco.valor)}</strong></div></div><span class="route-detail">Cidade da chamada: <strong>${CIDADES_OPERACAO[cidadeOperacao].nome}</strong></span>${origemGps ? `Endereço aproximado do cliente: <strong>${enderecoGps || "Não identificado pelo mapa"}</strong><br>Mapa do cliente: <strong>${linkOrigemGps}</strong><br>` : ""}<span class="route-detail">Destino: <strong>${destinoEncontrado}</strong></span>${preco.porKm ? `Cálculo: <strong>${km.toFixed(2).replace(".", ",")} km x R$ ${formatarValorKm(preco)} por km</strong><br>` : ""}${preco.noturno ? `<strong>${preco.periodo === "noite" ? "Modo noite ativado." : "Modo madrugada ativado."}</strong><br>` : ""}<br><strong>Podemos dar andamento e chamar um motoboy agora?</strong><br>A chamada expira em 5 minutos se nenhum motoboy aceitar.`;
+          resultadoBox.innerHTML = `<div class="result-title">Destino encontrado</div><div class="route-summary"><div><span>Distância aprox.</span><strong>${km.toFixed(1).replace(".", ",")} km</strong></div><div><span>Valor estimado</span><strong>${formatarValor(preco.valor)}</strong></div></div><span class="route-detail">Cidade da chamada: <strong>${CIDADES_OPERACAO[cidadeOperacao].nome}</strong></span>${origemPonto ? `Endereço aproximado do cliente: <strong>${enderecoGps || "Não identificado pelo mapa"}</strong><br>Mapa do cliente: <strong>${linkOrigemGps}</strong><br>` : ""}<span class="route-detail">Destino: <strong>${destinoEncontrado}</strong></span>${preco.porKm ? `Cálculo: <strong>${km.toFixed(2).replace(".", ",")} km x R$ ${formatarValorKm(preco)} por km</strong><br>` : ""}${preco.noturno ? `<strong>${preco.periodo === "noite" ? "Modo noite ativado." : "Modo madrugada ativado."}</strong><br>` : ""}<br><strong>Podemos dar andamento e chamar um motoboy agora?</strong><br>A chamada expira em 10 minutos se nenhum motoboy aceitar.`;
           resultadoBox.className = "result show";
           $("btn-confirmar-corrida").style.display = "flex";
           $("btn-confirmar-corrida").textContent = "Chamar motoboy";
@@ -4186,6 +4843,7 @@
             telefoneCliente: d.telefoneCliente,
             pagamento: "pix_apos_aceite",
             pix: CONFIG.pix,
+            ...(d.entrega ? { modalidade: "entrega_avulsa", ...d.entrega } : {}),
           });
           marcarCorridaEnviada(d.assinatura, corridaRef.id || clientRequestId);
           salvarPedidoAtivo(
@@ -4202,7 +4860,8 @@
               destinoEncontrado: d.destinoEncontrado,
               km: d.km,
               preco: d.preco,
-            }) + (corridaRef ? `\n\nCódigo da corrida: ${corridaRef.id}` : ""),
+              entrega: d.entrega,
+            }) + (corridaRef ? `\n\nCódigo do pedido: ${corridaRef.id}` : ""),
           );
         } catch (err) {
           enviandoCorrida = false;
@@ -4402,5 +5061,12 @@
         );
       })();
     </script>
+    <script src="./customer-availability.js?v=224" defer></script>
+    <script src="./ride-chat.js?v=234" defer></script>
+    <script src="./ride-rating.js?v=234" defer></script>
+    <script src="./cliente-menu.js?v=2"></script>
+    <script src="./cartao-scan.js?v=1"></script>
+    <script src="./cliente-cartoes.js?v=1"></script>
+    <script src="./app-versao.js?v=1" defer></script>
   </body>
 </html>

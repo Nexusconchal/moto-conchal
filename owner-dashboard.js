@@ -103,8 +103,17 @@
     );
   }
 
+  function deliveryQuantity(item) {
+    if (item.tipo === 'servico_exclusivo') return Math.max(0, Number(item.quantidadeEntregasExclusivo || 0));
+    return Math.max(1, Math.min(30, Number(item.paradas || 1)));
+  }
   function deliveryAppValue(item) {
     const value = Number(item.valor || 0);
+    if (item.ganhoApp != null || item.valorApp != null) return Number(item.ganhoApp ?? item.valorApp);
+    if (item.planoAppFee != null && Number.isFinite(Number(item.planoAppFee))) return Math.min(value, Number(item.planoAppFee));
+    if (/plano.*diario/i.test(String(item.tipoEntrega || "").normalize("NFD").replace(/[\u0300-\u036f]/g, ""))) return Math.min(value, deliveryQuantity(item));
+    if (/meio periodo motoja/i.test(String(item.tipoEntrega || "").normalize("NFD").replace(/[\u0300-\u036f]/g, ""))) return Math.min(value, deliveryQuantity(item) * 1.5);
+    if (item.entregaNaNota) return Math.min(value, deliveryQuantity(item) * (item.regiaoEntrega === "conchal" ? 1.5 : 2));
     if (item.tipo === "servico_exclusivo" || /exclusivo/i.test(String(item.tipoEntrega || ""))) {
       return Number(item.ganhoApp || item.valorApp || item.ganhoAppPrevisto || 20);
     }
@@ -126,7 +135,11 @@
 
   function appValue(item, type) {
     if (type === "delivery") return deliveryAppValue(item);
-    return Number(item.valor || 0) * (Number(item.km || 0) > 8 ? 0.2 : 0.25);
+    const value = Number(item.valor || 0);
+    const app = value * (Number(item.km || 0) > 8 ? 0.2 : 0.25);
+    // Desde 26/10/2026 o motoboy recebe pelo menos R$ 5,00 por corrida (ate 3 km: app R$ 1,50).
+    const created = Number(item.criadaEm?.seconds || 0) * 1000;
+    return created >= Date.UTC(2026, 9, 26, 3) && value >= 5 ? Math.min(app, value - 5) : app;
   }
 
   function periodLabel() {
@@ -170,6 +183,29 @@
   function metric(label, value, detail, tone = "") {
     return `<div class="owner-metric ${tone}"><span>${label}</span><strong>${value}</strong><small>${detail}</small></div>`;
   }
+
+  // Contas do app do cliente (mototaxi). Filtro proprio: Hoje, 7 dias, 30 dias ou Total.
+  const CUSTOMER_RANGES = [
+    ["hoje", "Hoje", "cadastros hoje"],
+    ["ultimos7", "7 dias", "cadastros nos últimos 7 dias"],
+    ["ultimos30", "30 dias", "cadastros nos últimos 30 dias"],
+    ["total", "Total", "contas criadas desde o início"],
+  ];
+  let customerRange = "total";
+  function customerMetric(counts) {
+    if (!counts || !Number.isFinite(Number(counts.total))) return metric("Clientes cadastrados", "—", "Contagem indisponível agora", "info");
+    const [, , detail] = CUSTOMER_RANGES.find(([key]) => key === customerRange) || CUSTOMER_RANGES[3];
+    const buttons = CUSTOMER_RANGES.map(([key, label]) =>
+      `<button type="button" data-customer-range="${key}" aria-pressed="${key === customerRange}">${label}</button>`).join("");
+    return `<div class="owner-metric info customers"><div class="owner-customer-head"><span>Clientes cadastrados</span><div class="owner-customer-filter" role="group" aria-label="Período dos cadastros">${buttons}</div></div><strong>${number(counts[customerRange])}</strong><small>${detail} · total ${number(counts.total)}</small></div>`;
+  }
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest?.("[data-customer-range]");
+    if (!button) return;
+    customerRange = button.dataset.customerRange;
+    const card = button.closest(".owner-metric.customers");
+    if (card && adminState) card.outerHTML = customerMetric(adminState.clientesCadastrados);
+  });
 
   function alertItem(label, detail, count, href, severity = "warn") {
     return `<a class="owner-alert ${severity}" href="${href}"><span class="owner-alert-count">${count}</span><span><strong>${label}</strong><small>${detail}</small></span><b>Ver</b></a>`;
@@ -260,7 +296,7 @@
     if (!entries.length) return `<div class="owner-empty">${emptyText}</div>`;
     return entries
       .map(
-        (item, index) => `<div class="owner-rank-row"><span>${index + 1}</span><div><strong>${escapeHtml(item.name)}</strong><small>${item.count} serviço${item.count === 1 ? "" : "s"}</small></div><b>${money(item.value)}</b></div>`,
+        (item, index) => `<div class="owner-rank-row"><span>${index + 1}</span><div><strong>${escapeHtml(item.name)}</strong><small>${item.count} ${item.unit || "serviço(s)"}${item.deliveries ? " · " + item.deliveries + " entregas" : ""}</small></div><b>${money(item.value)}</b></div>`,
       )
       .join("");
   }
@@ -280,8 +316,8 @@
       .filter((item) => item.status === "finalizada")
       .forEach((item) => {
         const name = item.empresa || "Empresa não informada";
-        const row = companies.get(name) || { name, count: 0, value: 0 };
-        row.count += 1;
+        const row = companies.get(name) || { name, count: 0, value: 0, unit: "entrega(s)" };
+        row.count += deliveryQuantity(item);
         row.value += Number(item.valor || 0);
         companies.set(name, row);
       });
@@ -290,6 +326,7 @@
       const name = item.motoboy || "Sem motoboy";
       const row = drivers.get(name) || { name, count: 0, value: 0 };
       row.count += 1;
+      row.deliveries = (row.deliveries || 0) + (item.serviceType === "delivery" ? deliveryQuantity(item) : 0);
       row.value += Number(item.valor || 0) - appValue(item, item.serviceType);
       drivers.set(name, row);
     });
@@ -325,12 +362,13 @@
     document.getElementById("ownerPeriodLabel").textContent = periodLabel();
     document.getElementById("ownerUpdatedAt").textContent = `Atualizado às ${new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(new Date())}`;
     document.getElementById("ownerMetrics").innerHTML = [
-      metric("Solicitações", summary.jobs.length, `${summary.rides.length} corridas e ${summary.deliveries.length} entregas`),
+      metric("Solicitações", summary.jobs.length, `${summary.rides.length} corridas e ${summary.deliveries.length} chamadas de entrega (${summary.deliveries.reduce((n, item) => n + deliveryQuantity(item), 0)} entregas)`),
       metric("Finalizadas", summary.finished.length, `${number(summary.completionRate)}% de conclusão`, "good"),
       metric("Em operação", summary.jobs.filter((item) => ["aceita", "retirada"].includes(item.status)).length, "Aceitas ou retiradas", "info"),
       metric("Pendentes", summary.jobs.filter((item) => item.status === "pendente").length, "Aguardando motoboy", "attention"),
       metric("Receita MotoJÁ", money(summary.app), `Bruto finalizado: ${money(summary.gross)}`, "money"),
       metric("Cancelamentos", `${number(summary.cancellationRate)}%`, `${summary.jobs.filter((item) => item.status === "cancelada").length} cancelados`, "danger"),
+      customerMetric(adminState.clientesCadastrados),
     ].join("");
     renderAlerts(adminState, summary);
     renderStatusBars(summary);

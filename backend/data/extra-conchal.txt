@@ -1,0 +1,9 @@
+# Ruas e lugares novos que o IBGE (Censo 2022) e o OpenStreetMap ainda nao tem.
+# Coordenada: copie do Google Maps (clique no lugar; o primeiro numero e a latitude).
+#
+#   rua|Nome da rua|Bairro|latitude,longitude
+#   lugar|Nome do lugar;outro nome;outro nome|Bairro|latitude,longitude
+#
+# "lugar" e achado quando o cliente digita qualquer um dos nomes (ex.: "portaria do condominio monte real").
+rua|Rua Eduardo Rogério Barbosa|Residencial Monte Real|-22.3261229,-47.1702352
+lugar|Residencial Monte Real;Condomínio Monte Real;Condominio Residencial Monte Real;Loteamento Monte Real;Monte Real|Conchal Velho|-22.326705,-47.1702117

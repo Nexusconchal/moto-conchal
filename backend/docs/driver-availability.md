@@ -1,0 +1,27 @@
+# Disponibilidade voluntária dos motoboys
+
+Sem uma escolha confirmada salva, o motorista inicia indisponível e escolhe Disponível no topo. A preferência local não expira pelo tempo, por fechar o app ou editar o cadastro: ao reabrir, o mesmo motorista recupera a escolha até alterá-la manualmente. Ela é separada por CPF e não concede autenticação nem conexão. Apenas sessões autenticadas pelo mesmo mecanismo do painel podem confirmar essa escolha no servidor. O cliente recebe somente a quantidade por cidade de atendimento; nenhum identificador, telefone, documento ou coordenada é publicado. A bolha no canto superior direito, ao lado da logo, é verde quando há motoboys disponíveis para Conchal; com zero, é cinza e menor. Falha de consulta é apresentada como disponibilidade não confirmada.
+
+O contador exclui motoristas sem sessão conectada, sem heartbeat nos últimos 90 segundos, indisponíveis ou com corrida/entrega aceita ou retirada. Abas do mesmo CPF são deduplicadas e compartilham a escolha. Bloqueio do dono revoga as sessões de disponibilidade imediatamente. A preferência não cancela trabalhos já aceitos, não muda valores, reservas ou confirmação das entregas.
+
+Presença, heartbeats e contagem ficam na memória do processo Render. Não há escrita no Firestore. Ao conectar um motorista, três consultas já indexadas verificam os trabalhos ativos (corridas aceitas, entregas aceitas e retiradas); sessões simultâneas compartilham a inicialização. A autenticação reaproveita o cache existente de cinco minutos e é revalidada nesse intervalo. Não há consulta de trabalhos em cada heartbeat. Os eventos do fluxo existente atualizam a ocupação após sucesso no servidor.
+
+O cliente atualiza a contagem a cada 20 segundos enquanto a página está visível. Falha de conexão nunca mantém uma contagem antiga. Alternar para WhatsApp ou outro app não desconecta voluntariamente a disponibilidade: heartbeats continuam enquanto o navegador permitir. Se o sistema suspender a conexão, o motorista sai da contagem após a expiração normal, preservando a escolha local confirmada sem limite de 24 horas. Ao voltar/reabrir, a escolha só é restaurada após autenticação e leitura dos serviços ativos, pelo mesmo setter validado e limitado. Uma preferência ainda presente no servidor tem precedência, inclusive se outra aba escolheu Indisponível. Sair da conta ou entrar na edição do cadastro interrompe a conexão, preservando apenas a preferência local sem credenciais. Um reset explícito da preferência ou limpeza dos dados do navegador remove essa lembrança. Sem suporte a armazenamento local, a lembrança funciona apenas na mesma aba. Avisos dos grupos de Telegram/WhatsApp continuam independentes da preferência individual do painel.
+
+Esta implementação pressupõe a instância única atual do Render. Se o backend passar a várias instâncias, será necessário um armazenamento de presença compartilhado com TTL (por exemplo Redis) antes de escalar, para agregar todas as conexões. Reiniciar a instância zera a presença: os painéis novos restauram a preferência salva apenas depois de autenticar e verificar trabalhos ativos, nunca restauram uma contagem antiga. Clientes antigos continuam operando, mas só quem usa o controle novo aparece na contagem.
+
+Os controles novos filtram a lista de serviços pendentes no painel atualizado; Minhas corridas, Minhas entregas e ganhos permanecem acessíveis. Não há distribuição exclusiva de ofertas, recusa com prazo ou alteração do modelo de aceitação nesta entrega.
+
+Validação: testes de presença, autenticação e isolamento Socket.IO, abas simultâneas, rate limiting, concorrência com aceite/conclusão, revogação e expiração; regressão de pagamentos e conclusão; navegador real em celular e desktop.
+
+## Regra atual: a escolha manda (substitui as regras de conexão acima)
+
+O motoboy aparece como disponível para o cliente enquanto a escolha dele for **Disponível**, mesmo com o app fechado, o celular reiniciado ou perdido. Ele só sai da contagem quando:
+
+1. marca **Indisponível** no app do motoboy;
+2. está em serviço (corrida ou entrega aceita/retirada) — volta sozinho ao terminar;
+3. é bloqueado pelo dono (a escolha passa para Indisponível).
+
+A escolha fica salva no cadastro do motoboy (`motoboys/{cpf}.disponivelApp`), uma gravação só quando ele troca. Quando o Render reinicia, o servidor lê quem está com `disponivelApp == true` (ignorando bloqueados), confere os serviços ativos de cada um e volta a contá-los. Sessões e heartbeats continuam existindo apenas para o painel do motoboy conversar com o servidor; não afetam mais a contagem pública.
+
+Para aceitar um serviço no painel, o motoboy ainda precisa estar com o app aberto e conectado.
