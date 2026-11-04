@@ -7672,6 +7672,30 @@ app.post('/api/food/notify', async (req, res, next) => {
   }
 });
 
+// O Food pede um WhatsApp para os motoboys da própria loja (números que a loja cadastrou no painel dela).
+// Vai pelo mesmo WhatsApp do MotoJá (Evolution). Até 5 números por aviso e 60 mensagens por minuto.
+const foodWhatsappSent = [];
+app.post('/api/food/whatsapp', async (req, res, next) => {
+  try {
+    if (!chaveFoodConfere(req.get('x-motoja-key'))) return res.status(403).json({ error: 'chave_invalida' });
+    const to = Array.isArray(req.body?.to) ? req.body.to.slice(0, 5) : [];
+    const text = String(req.body?.text || '').slice(0, 1200).trim();
+    const numbers = [...new Set(to.map((n) => String(n || '').replace(/\D/g, '')).filter((n) => /^\d{10,11}$/.test(n)).map((n) => '55' + n))];
+    if (!numbers.length || text.length < 5) return res.status(400).json({ error: 'aviso_invalido' });
+    const now = Date.now();
+    while (foodWhatsappSent.length && now - foodWhatsappSent[0] > 60000) foodWhatsappSent.shift();
+    if (foodWhatsappSent.length + numbers.length > 60) return res.status(429).json({ error: 'muitos_avisos' });
+    let sent = 0;
+    for (const number of numbers) {
+      foodWhatsappSent.push(now);
+      try { const r = await sendEvolutionText(number, text); if (r.sent) sent += 1; } catch (error) { console.error('food whatsapp failed', error.message); }
+    }
+    return res.json({ ok: true, sent });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.get('/api/admin/repasses', assertOwner, async (_req, res, next) => {
   try {
     res.set('cache-control', 'no-store');
