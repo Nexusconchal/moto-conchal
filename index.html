@@ -4546,7 +4546,10 @@
           if (a === "falar")
             abrirWhatsApp("Olá, preciso de ajuda no app MotoJá.");
           if (a === "excluir-conta") {
-            if (!clienteAutenticado) return;
+            if (!clienteAutenticado) {
+              alert("Entre na sua conta para excluir.");
+              return;
+            }
             if (!confirm("Excluir sua conta? Seus cartões salvos e seu cadastro são apagados. O histórico de corridas fica guardado pelo prazo legal.")) return;
             const token = localStorage.getItem(TOKEN_CLIENTE) || "";
             fetch(`${CONFIG.backend}/api/customers/me/excluir-conta`, {

@@ -46,7 +46,7 @@ function fakeFirestore(records) {
   return { collection };
 }
 
-function build({ records, purgeAccount = async () => {}, getDriverWithProof = async () => ({}), cardCustomerSession }) {
+function build({ records, purgeAccount = async () => {}, getDriverWithProof = async () => ({}), findCustomerSession = async () => null }) {
   const routes = new Map();
   const db = fakeFirestore(records);
   const context = vm.createContext({
@@ -59,7 +59,8 @@ function build({ records, purgeAccount = async () => {}, getDriverWithProof = as
     driverProofCache: { clear() {} },
     adminStateCache: null,
     getDriverWithProof,
-    cardCustomerSession,
+    findCustomerSession,
+    clearCarDriverCache: () => {},
     customerCards: { purgeAccount },
     console,
   });
@@ -68,13 +69,13 @@ function build({ records, purgeAccount = async () => {}, getDriverWithProof = as
   return routes;
 }
 
-async function call(routes, url, { params = {}, body = {} } = {}) {
+async function call(routes, url, { params = {}, body = {}, token = '' } = {}) {
   const handlers = routes.get(url);
   let status = 200;
   let data;
   const res = { status(v) { status = v; return res; }, json(v) { data = v; return res; } };
   let error;
-  const req = { params, body, header: () => '' };
+  const req = { params, body, header: name => (name === 'authorization' && token ? `Bearer ${token}` : '') };
   for (const handler of handlers) {
     let advanced = false;
     await handler(req, res, err => { advanced = true; error = err; });
@@ -135,9 +136,9 @@ test('cliente com corrida pendente: nao exclui e nao toca nos cartoes', async ()
   const routes = build({
     records,
     purgeAccount: async () => { purged = true; },
-    cardCustomerSession: async () => ({ customerId: CUSTOMER_ID, customer: {}, customerSnap: { ref: { delete: async () => {} } } }),
+    findCustomerSession: async () => ({ customerId: CUSTOMER_ID, customer: {}, customerSnap: { ref: { delete: async () => {} } } }),
   });
-  const r = await call(routes, '/api/customers/me/excluir-conta');
+  const r = await call(routes, '/api/customers/me/excluir-conta', { token: 'tok' });
   assert.equal(r.status, 409);
   assert.equal(purged, false);
   assert.equal(records.has(`clientes/${CUSTOMER_ID}`), true);
@@ -152,15 +153,57 @@ test('cliente sem corrida ativa: apaga cartoes, CPF e cadastro', async () => {
   const routes = build({
     records,
     purgeAccount: async () => { purged = true; },
-    cardCustomerSession: async () => ({
+    findCustomerSession: async () => ({
       customerId: CUSTOMER_ID,
       customer: { cpfHash: 'abc' },
       customerSnap: { ref: { delete: async () => { records.delete(`clientes/${CUSTOMER_ID}`); } } },
     }),
   });
-  const r = await call(routes, '/api/customers/me/excluir-conta');
+  const r = await call(routes, '/api/customers/me/excluir-conta', { token: 'tok' });
   assert.equal(r.status, 200);
   assert.equal(purged, true);
   assert.equal(records.has(`customerCpf/abc`), false);
   assert.equal(records.has(`clientes/${CUSTOMER_ID}`), false);
+});
+
+test('motoboy com corrida de carro em andamento: nao exclui', async () => {
+  const records = new Map([
+    [`motoboys/${DRIVER}`, { nome: 'Teste' }],
+    ['corridasCarro/k1', { motoristaCpf: DRIVER, status: 'em_andamento' }],
+  ]);
+  const routes = build({ records });
+  const r = await call(routes, '/api/drivers/:cpf/excluir-conta', { params: { cpf: DRIVER }, body: {} });
+  assert.equal(r.status, 409);
+  assert.equal(records.has(`motoboys/${DRIVER}`), true);
+});
+
+test('motoboy excluido: cadastro do CarroJa do mesmo CPF sai junto', async () => {
+  const records = new Map([
+    [`motoboys/${DRIVER}`, { nome: 'Teste' }],
+    [`carroMotoristas/${DRIVER}`, { placa: 'ABC1D23' }],
+    ['corridasCarro/k2', { motoristaCpf: DRIVER, status: 'finalizada' }],
+  ]);
+  const routes = build({ records });
+  const r = await call(routes, '/api/drivers/:cpf/excluir-conta', { params: { cpf: DRIVER }, body: {} });
+  assert.equal(r.status, 200);
+  assert.equal(records.has(`carroMotoristas/${DRIVER}`), false);
+  assert.equal(records.has('corridasCarro/k2'), true);
+});
+
+test('sessao do motoboy invalida: nada e apagado', async () => {
+  const records = new Map([[`motoboys/${DRIVER}`, { nome: 'Teste' }]]);
+  const routes = build({
+    records,
+    getDriverWithProof: async () => { const e = new Error('sessao'); e.status = 401; throw e; },
+  });
+  await assert.rejects(call(routes, '/api/drivers/:cpf/excluir-conta', { params: { cpf: DRIVER }, body: { driverToken: 'x' } }), /sessao/);
+  assert.equal(records.has(`motoboys/${DRIVER}`), true);
+});
+
+test('cliente sem login: 401 e nada apagado', async () => {
+  const records = new Map([[`clientes/${CUSTOMER_ID}`, { nome: 'Cliente' }]]);
+  const routes = build({ records });
+  const r = await call(routes, '/api/customers/me/excluir-conta');
+  assert.equal(r.status, 401);
+  assert.equal(records.has(`clientes/${CUSTOMER_ID}`), true);
 });
