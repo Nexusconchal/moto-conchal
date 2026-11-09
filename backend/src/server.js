@@ -218,10 +218,10 @@ const DAILY_PLAN_PRICE = 70;
 const DAILY_PLAN_DELIVERY_FEE = 4;
 const DAILY_PLAN_APP_FEE = 1;
 const HALF_PLAN_TYPE = 'Plano Meio Periodo MotoJa';
-const HALF_PLAN_PRICE = 25;
+const HALF_PLAN_PRICE = 40;
 const HALF_PLAN_DELIVERY_FEE = 5.5;
 const HALF_PLAN_APP_FEE = 1.5;
-const HALF_PLAN_DURATION_MS = 4 * 60 * 60 * 1000;
+const HALF_PLAN_DURATION_MS = 5 * 60 * 60 * 1000;
 // Plano Diario = o expediente da loja: abre ao ativar e fecha quando a empresa toca em
 // "Finalizar expediente". Se esquecer, fecha sozinho a meia-noite.
 const COMPANY_DELIVERY_RATE_PER_KM = 2.5;
@@ -361,7 +361,7 @@ function consumeTaxaAvulsa(company, delivery) {
   const stops = deliveryStopCount(delivery.paradas);
   if (stops > status.restantes) {
     const error = new Error(status.restantes === 0
-      ? 'Voce ja usou as 5 entregas na taxa avulsa. Para continuar chamando motoboy, ative o Plano Meio Periodo (R$ 25,00) ou o Plano Diario Pro (R$ 70,00).'
+      ? 'Voce ja usou as 5 entregas na taxa avulsa. Para continuar chamando motoboy, ative o Plano Meio Periodo (R$ 40,00) ou o Plano Diario Pro (R$ 70,00).'
       : `Restam ${status.restantes} entrega(s) na taxa avulsa e esta chamada tem ${stops}. Diminua os pontos ou ative o Plano Meio Periodo ou o Plano Diario Pro.`);
     error.status = 403;
     error.code = 'taxa_avulsa_bloqueada';
@@ -416,7 +416,7 @@ function deliveryReservedForOther(delivery = {}, driverCpf = '') {
   return reserved.length === 11 && reserved !== onlyDigits(driverCpf);
 }
 
-function halfPlanInactiveError(message = 'O Plano Meio Periodo MotoJa nao esta ativo agora. Ative por R$ 25,00 para liberar a taxa de R$ 5,50.') {
+function halfPlanInactiveError(message = 'O Plano Meio Periodo MotoJa nao esta ativo agora. Ative por R$ 40,00 para liberar a taxa de R$ 5,50.') {
   const error = new Error(message);
   error.status = 403;
   error.code = 'plano_diario_inativo';

@@ -299,7 +299,7 @@ test('half period batch renewals stop after the 6 hours expire', async () => {
   await ctx.assertQuickDailyPlanRenewable(tx, { ...halfRaw(), meioPeriodoExpiraEmMs: Date.now() + 1000 }, '11999999999');
   await assert.rejects(ctx.assertQuickDailyPlanRenewable(tx, { ...halfRaw(), meioPeriodoExpiraEmMs: Date.now() - 1 }, '11999999999'), /venceu/);
 });
-test('half period activation debits R$ 25 once, lasts 4 hours and refuses insufficient balance', async () => {
+test('half period activation debits R$ 40 once, lasts 5 hours and refuses insufficient balance', async () => {
   const docs = new Map();
   const ref = path => ({ path, id: path.split('/').at(-1), collection: name => ({ doc: id => ref(`${path}/${name}/${id}`) }) });
   const ctx = vm.createContext({ Date, money: n => Math.round(Number(n || 0) * 100) / 100, onlyDigits: v => String(v || '').replace(/\D/g, ''), cleanText: v => String(v || '').trim(),
@@ -321,13 +321,13 @@ test('half period activation debits R$ 25 once, lasts 4 hours and refuses insuff
   docs.set('empresas/c1', { saldo: 100, reservado: 10 });
   const before = Date.now();
   const first = await call();
-  assert.equal(first.data.active, true); assert.equal(docs.get('empresas/c1').saldo, 75);
-  assert.ok(first.data.expiraEmMs >= before + 4 * 3600000 && first.data.expiraEmMs <= Date.now() + 4 * 3600000);
+  assert.equal(first.data.active, true); assert.equal(docs.get('empresas/c1').saldo, 60);
+  assert.ok(first.data.expiraEmMs >= before + 5 * 3600000 && first.data.expiraEmMs <= Date.now() + 5 * 3600000);
   const second = await call();
-  assert.equal(second.data.alreadyActive, true); assert.equal(docs.get('empresas/c1').saldo, 75);
+  assert.equal(second.data.alreadyActive, true); assert.equal(docs.get('empresas/c1').saldo, 60);
   docs.set('empresas/c1', { ...docs.get('empresas/c1'), meioPeriodoExpiraEmMs: Date.now() - 1 });
   await call();
-  assert.equal(docs.get('empresas/c1').saldo, 50);
+  assert.equal(docs.get('empresas/c1').saldo, 20);
   assert.equal([...docs.values()].filter(d => d.origem === 'meio_periodo_motoja_ativado').length, 2);
 });
 test('driver app shows R$ 1,50 app fee for half period deliveries', () => {

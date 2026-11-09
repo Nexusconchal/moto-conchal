@@ -1556,17 +1556,17 @@
           class="status show"
           style="display: grid; gap: 8px; text-align: left"
         >
-          <p><strong>R$ 25,00 por 4 horas · R$ 5,50 por entrega</strong></p>
+          <p><strong>R$ 40,00 por 5 horas · R$ 5,50 por entrega</strong></p>
           <p>
             Para um turno só (almoço ou noite). Distritos: R$ 12,00. Depois de
-            4 horas bloqueia sozinho.
+            5 horas bloqueia sozinho.
           </p>
         </div>
         <div id="meioPeriodoStatus" class="status show">
           Carregando meio período...
         </div>
         <button id="ativarMeioPeriodo" type="button" class="green">
-          Ativar 4 horas — R$ 25,00
+          Ativar 5 horas — R$ 40,00
         </button>
         <div
           id="meioPeriodoAviso"
@@ -2032,14 +2032,14 @@
             planos da MotoJá e pague menos por entrega:
           </p>
           <p>
-            ⏱️ <strong>Plano Meio Período</strong> — R$ 25,00 por 4 horas:
+            ⏱️ <strong>Plano Meio Período</strong> — R$ 40,00 por 5 horas:
             R$ 5,50 em Conchal e R$ 12,00 nos distritos.<br />
             📅 <strong>Plano Diário Pro</strong> — R$ 70,00 o expediente:
             R$ 4,00 em Conchal e R$ 10,00 nos distritos.
           </p>
           <div class="taxa-avulsa-acoes">
             <button id="taxaAvulsaMeioPeriodo" type="button" class="green">
-              Ativar Plano Meio Período — R$ 25,00
+              Ativar Plano Meio Período — R$ 40,00
             </button>
             <button id="taxaAvulsaDiario" type="button">
               Ativar Plano Diário Pro — R$ 70,00
@@ -2064,7 +2064,7 @@
               Plano Diario MotoJa Pro - R$ 4,00 ou R$ 10,00 nos distritos (ative por R$ 70,00)
             </option>
             <option value="Plano Meio Periodo MotoJa" disabled>
-              Plano Meio Período MotoJá - R$ 5,50 ou R$ 12,00 nos distritos (ative por R$ 25,00)
+              Plano Meio Período MotoJá - R$ 5,50 ou R$ 12,00 nos distritos (ative por R$ 40,00)
             </option>
             <option value="Lanche / pizza / pastel / marmita">
               Lanche / pizza / pastel / marmita - R$ 6,50 ou R$ 16,00
@@ -2753,7 +2753,7 @@
       function mensagemTaxaAvulsa(paradas = 1) {
         return taxaAvulsa.restantes > 0
           ? `Restam ${taxaAvulsa.restantes} entrega(s) na taxa avulsa e esta chamada tem ${paradas}. Diminua os pontos ou ative o Plano Meio Período ou o Plano Diário Pro.`
-          : "Você já usou as 5 entregas na taxa avulsa. Para continuar, ative o Plano Meio Período (R$ 25,00) ou o Plano Diário Pro (R$ 70,00).";
+          : "Você já usou as 5 entregas na taxa avulsa. Para continuar, ative o Plano Meio Período (R$ 40,00) ou o Plano Diário Pro (R$ 70,00).";
       }
       function definirTaxaAvulsa(dados) {
         if (!dados) return;
@@ -2856,7 +2856,7 @@
           btn.disabled = meioPeriodoAtivo;
           btn.textContent = meioPeriodoAtivo
             ? `Meio período ativo até ${horaCurta(meioPeriodoExpiraEmMs)}`
-            : "Ativar 4 horas — R$ 25,00";
+            : "Ativar 5 horas — R$ 40,00";
         }
         if (meioPeriodoAtivo) mostrarMeioPeriodoAviso("");
         if (!meioPeriodoAtivo && $("tipoEntrega").value === MEIO_PERIODO_TIPO)
@@ -3968,8 +3968,8 @@
           mostrarMeioPeriodoAviso("Entre na conta da empresa antes de ativar essa opção.");
           return;
         }
-        if (saldoEmpresa.disponivel < 25) {
-          const falta = Math.max(0, 25 - saldoEmpresa.disponivel);
+        if (saldoEmpresa.disponivel < 40) {
+          const falta = Math.max(0, 40 - saldoEmpresa.disponivel);
           mostrarMeioPeriodoAviso(
             `Saldo insuficiente para essa opção. Disponível: ${moeda(saldoEmpresa.disponivel)}. Falta ${moeda(falta)} para ativar o Plano Meio Período.`,
           );
@@ -3977,7 +3977,7 @@
         }
         if (
           !confirm(
-            "Ativar o Meio Período? Vai descontar R$ 25,00 agora e liberar R$ 5,50 por entrega durante 4 horas.",
+            "Ativar o Meio Período? Vai descontar R$ 40,00 agora e liberar R$ 5,50 por entrega durante 5 horas.",
           )
         )
           return;
@@ -5252,7 +5252,7 @@
         const taxaOk = taxaAvulsaLiberada(tipo, count);
         const valido = Number.isInteger(count) && count >= 1 && count <= 30 && tipoLotePermitido(tipo) && taxaOk;
         const tarifa = tarifaLote(tipo, $("regiaoLote").value);
-        $("resumoLote").textContent = valido ? `${count} entrega(s) × ${moeda(tarifa)} = ${moeda(count * tarifa)}. Um motoboy para o lote.${tipoPlanoDiario(tipo) ? ' Plano diário ativo.' : tipoMeioPeriodo(tipo) ? ' Meio período ativo.' : ''}` : "Selecione um tipo com tarifa fixa e uma quantidade de 1 a 30 entregas. O plano diário exige abrir o expediente (R$ 70,00) e o meio período, ativar 4 horas (R$ 25,00). Para cobrança por km, use Entrega com endereço.";
+        $("resumoLote").textContent = valido ? `${count} entrega(s) × ${moeda(tarifa)} = ${moeda(count * tarifa)}. Um motoboy para o lote.${tipoPlanoDiario(tipo) ? ' Plano diário ativo.' : tipoMeioPeriodo(tipo) ? ' Meio período ativo.' : ''}` : "Selecione um tipo com tarifa fixa e uma quantidade de 1 a 30 entregas. O plano diário exige abrir o expediente (R$ 70,00) e o meio período, ativar 5 horas (R$ 40,00). Para cobrança por km, use Entrega com endereço.";
         if (!taxaOk) $("resumoLote").textContent = mensagemTaxaAvulsa(count);
         $("chamarLote").disabled = !valido || enviando;
       }
@@ -5353,7 +5353,7 @@
         }
         if (tipoMeioPeriodo(tipoEntrega) && !meioPeriodoAtivo) {
           mostrarStatus(
-            "Meio Período desligado. Ative por R$ 25,00 para usar R$ 5,50 por entrega durante 4 horas.",
+            "Meio Período desligado. Ative por R$ 40,00 para usar R$ 5,50 por entrega durante 5 horas.",
             true,
           );
           return;
