@@ -1859,6 +1859,8 @@
           <span class="mi">☎</span>Fale conosco</button
         ><button class="drawer-link" data-menu-action="sair" type="button">
           <span class="mi">⇥</span>Sair
+        </button><button class="drawer-link" data-menu-action="excluir-conta" type="button">
+          <span class="mi">✕</span>Excluir minha conta
         </button>
       </div>
     </aside>
@@ -4543,6 +4545,27 @@
           if (a === "ajuda") window.MotojaClienteMenu?.abrir("ajuda");
           if (a === "falar")
             abrirWhatsApp("Olá, preciso de ajuda no app MotoJá.");
+          if (a === "excluir-conta") {
+            if (!clienteAutenticado) {
+              alert("Entre na sua conta para excluir.");
+              return;
+            }
+            if (!confirm("Excluir sua conta? Seus cartões salvos e seu cadastro são apagados. O histórico de corridas fica guardado pelo prazo legal.")) return;
+            const token = localStorage.getItem(TOKEN_CLIENTE) || "";
+            fetch(`${CONFIG.backend}/api/customers/me/excluir-conta`, {
+              method: "POST",
+              headers: { authorization: `Bearer ${token}` },
+            })
+              .then(async (r) => {
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(d.message || "Não consegui excluir agora. Tente de novo.");
+                localStorage.removeItem(TOKEN_CLIENTE);
+                alert("Sua conta foi excluída.");
+                location.reload();
+              })
+              .catch((error) => alert(error.message));
+            return;
+          }
           if (a === "sair") {
             const token = localStorage.getItem(TOKEN_CLIENTE) || "";
             if (token)

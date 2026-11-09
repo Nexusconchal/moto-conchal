@@ -6096,6 +6096,37 @@ app.post('/api/admin/drivers/:cpf/sessions/revoke', assertOwner, async (req, res
   }
 });
 
+// Exclusao de conta do motoboy (exigida pelo Google Play). Bloqueia se houver corrida
+// em andamento ou repasse a receber; o cadastro sai do ar e as sessoes morrem junto.
+app.post('/api/drivers/:cpf/excluir-conta', authLimiter, async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.params.cpf);
+    if (cpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    await getDriverWithProof(cpf, req.body, { requireSession: true });
+    const [corridas, entregas, corridasCarro, repasses] = await Promise.all([
+      db.collection('corridas').where('motoboyCpf', '==', cpf).where('status', 'in', ['aceita', 'retirada']).limit(1).get(),
+      db.collection('entregas').where('motoboyCpf', '==', cpf).where('status', 'in', ['aceita', 'retirada']).limit(1).get(),
+      db.collection('corridasCarro').where('motoristaCpf', '==', cpf).where('status', 'in', ['aceita', 'motorista_chegou', 'em_andamento']).limit(1).get(),
+      db.collection('repassesMotoboy').where('motoboyCpf', '==', cpf).where('status', '==', 'a_pagar').limit(1).get()
+    ]);
+    if (!corridas.empty || !entregas.empty || !corridasCarro.empty) {
+      return res.status(409).json({ error: 'exclusao_bloqueada', message: 'Você tem corrida ou entrega em andamento. Termine antes de excluir a conta.' });
+    }
+    if (!repasses.empty) {
+      return res.status(409).json({ error: 'exclusao_bloqueada', message: 'Você ainda tem repasse a receber. Espere o pagamento antes de excluir a conta.' });
+    }
+    // Cadastro de carro (CarroJá) do mesmo CPF: documentos e fotos saem junto.
+    await db.collection('carroMotoristas').doc(cpf).delete();
+    await db.collection('motoboys').doc(cpf).delete();
+    clearCarDriverCache(cpf);
+    driverProofCache.clear();
+    adminStateCache = null;
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/drivers/register', authLimiter, async (req, res, next) => {
   try {
     const cpf = onlyDigits(req.body.cpf);
@@ -7511,6 +7542,31 @@ app.post('/api/customers/me/cards/:cardId/remove', createRideLimiter, async (req
   try {
     const session = await cardCustomerSession(req);
     return res.json({ ok: true, ...await customerCards.remove(session, req.params.cardId) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Exclusao de conta do cliente (exigida pelo Google Play). Bloqueia se houver corrida
+// pendente ou aceita; apaga cartoes salvos, cadastro e sessoes. Vale tambem para
+// cadastro incompleto (por isso nao usa cardCustomerSession).
+app.post('/api/customers/me/excluir-conta', createRideLimiter, async (req, res, next) => {
+  try {
+    const header = String(req.header('authorization') || '');
+    const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+    const session = token ? await findCustomerSession(token) : null;
+    if (!session) return res.status(401).json({ error: 'cliente_login_obrigatorio', message: 'Entre na sua conta para excluir.' });
+    const ativas = await db.collection('corridas')
+      .where('telefoneCliente', '==', session.customerId)
+      .where('status', 'in', ['pendente', 'aceita', 'retirada'])
+      .limit(1).get();
+    if (!ativas.empty) {
+      return res.status(409).json({ error: 'exclusao_bloqueada', message: 'Você tem uma corrida em andamento ou procurando motoboy. Cancele ou espere terminar antes de excluir a conta.' });
+    }
+    await customerCards.purgeAccount(session);
+    if (session.customer.cpfHash) await db.collection('customerCpf').doc(session.customer.cpfHash).delete().catch(() => {});
+    await session.customerSnap.ref.delete();
+    return res.json({ ok: true });
   } catch (error) {
     return next(error);
   }
