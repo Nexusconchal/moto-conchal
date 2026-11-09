@@ -741,7 +741,7 @@
       .driver-service-group button { min-height: 46px; text-align: left; padding: 0 14px; }
       .driver-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
       .driver-tools button { min-height: 46px; font-size: 0.78rem; }
-      .driver-tools #sair-conta { grid-column: 1 / -1; }
+      .driver-tools #sair-conta, .driver-tools #excluir-conta { grid-column: 1 / -1; }
       .driver-rule { font-size: 0.78rem; line-height: 1.45; }
       #lista { min-height: 128px; }
       #lista > .card { border-color: var(--driver-line); }
@@ -1054,6 +1054,8 @@
           Ativar notificacoes neste aparelho</button
         ><button id="sair-conta" class="secondary" type="button">
           Sair da conta
+        </button><button id="excluir-conta" class="secondary" type="button">
+          Excluir minha conta
         </button>
         </div>
         <p id="dicaAvisos" class="muted">
@@ -3872,6 +3874,28 @@
             window.MotojaDriverAvailability?.stop();
             localStorage.removeItem(MEMORIA_MOTOBOY);
             location.reload();
+          };
+        const excluir = $("excluir-conta");
+        if (excluir)
+          excluir.onclick = async () => {
+            if (!confirm("Excluir sua conta de motoboy? Seu cadastro sai do app. Os registros de corridas e pagamentos ficam guardados pelo prazo legal.")) return;
+            try {
+              const r = await fetch(`${CONFIG.backend}/api/drivers/${soNumeros(motoboyCpf)}/excluir-conta`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(driverProof()),
+                cache: "no-store",
+              });
+              const d = await r.json().catch(() => ({}));
+              if (!r.ok) throw new Error(d.message || "Não consegui excluir agora. Tente de novo.");
+              window.MotojaCallAlerts?.stop();
+              window.MotojaDriverAvailability?.stop();
+              localStorage.removeItem(MEMORIA_MOTOBOY);
+              alert("Sua conta foi excluída.");
+              location.reload();
+            } catch (error) {
+              alert(error.message);
+            }
           };
         const pushDevice = $("btn-push-device");
         if (pushDevice) pushDevice.onclick = ativarNotificacoes;

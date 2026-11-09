@@ -211,6 +211,18 @@ export function createCustomerCards({
     return { cartao: publicCard(card), cartoes: cards.map(publicCard) };
   }
 
+  // Exclusao de conta: apaga os cartoes salvos no Mercado Pago (melhor esforco).
+  async function purgeAccount(session) {
+    const customerId = session.customer.mpCustomerId;
+    if (!customerId) return;
+    for (const card of session.customer.cartoesMp || []) {
+      await mp(`/v1/customers/${encodeURIComponent(customerId)}/cards/${encodeURIComponent(card.id)}`, { method: 'DELETE' })
+        .catch(error => console.warn('mercado pago card purge failed', error.message));
+    }
+    await mp(`/v1/customers/${encodeURIComponent(customerId)}`, { method: 'DELETE' })
+      .catch(error => console.warn('mercado pago customer purge failed', error.message));
+  }
+
   async function remove(session, cardId) {
     const id = String(cardId || '');
     const ref = session.customerSnap.ref;
@@ -383,5 +395,5 @@ export function createCustomerCards({
     return { ok: false, aprovado: false, status, message: rejectionMessage(payment.status_detail) };
   }
 
-  return { config, list, add, remove, payRide, enabled };
+  return { config, list, add, remove, payRide, enabled, purgeAccount };
 }
