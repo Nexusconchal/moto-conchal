@@ -187,31 +187,31 @@
         text-align: center;
         font-size: 0.85rem;
       }
-      .store-links {
-        margin: 24px 0 12px;
-        padding: 18px;
-        border-radius: 18px;
-        background: var(--panel);
+      .store-mini-title {
+        margin-top: 10px;
         text-align: center;
-        display: grid;
-        gap: 10px;
+        color: #ffb347;
+        font-size: 0.8rem;
+        font-weight: 900;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        text-shadow: 0 0 10px rgba(255, 140, 0, 0.55);
       }
-      .store-links h2 {
-        font-size: 1.1rem;
-        font-weight: 800;
+      .store-mini {
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+        margin-top: 6px;
       }
-      .store-links p {
-        color: var(--muted);
-        font-size: 0.9rem;
-      }
-      .store-btn {
-        display: block;
-        padding: 14px;
-        border-radius: 14px;
+      .store-mini a {
+        padding: 5px 11px;
+        border-radius: 999px;
         background: linear-gradient(90deg, #ff6a00, #ffa000);
         color: #111;
+        font-size: 0.72rem;
         font-weight: 800;
         text-decoration: none;
+        white-space: nowrap;
       }
       footer a {
         color: var(--muted);
@@ -1926,6 +1926,20 @@
           <img src="./nexus-motoja-site-logo.png?v=132" alt="Nexus MotoJÁ" />
         </div>
         <div class="trust">Corridas acompanhadas em tempo real</div>
+        <p class="store-mini-title">📲 Baixe o app na Play Store!</p>
+        <nav class="store-mini" aria-label="Baixe o app Nexus MotoJá na Play Store">
+          <a
+            href="https://play.google.com/store/apps/details?id=br.com.nexusconchal.motoja.cliente"
+            target="_blank"
+            rel="noopener"
+            >▶ App do cliente</a
+          ><a
+            href="https://play.google.com/store/apps/details?id=br.com.nexusconchal.motoja.motorista"
+            target="_blank"
+            rel="noopener"
+            >▶ App do motoboy</a
+          >
+        </nav>
       </header>
       <section id="perfil-cliente" class="profile-box hidden">
         <div class="profile-row">
@@ -2033,24 +2047,6 @@
         <p class="hint">
           Calcula a distância e você acompanha o motoboy pelo app até chegar
         </p>
-      </section>
-      <section class="store-links" aria-label="Baixe o app Nexus MotoJá na Play Store">
-        <h2>Baixe o app na Play Store</h2>
-        <p>Corridas em <b>Conchal, Aguaí e Engenheiro Coelho</b>.</p>
-        <a
-          class="store-btn"
-          href="https://play.google.com/store/apps/details?id=br.com.nexusconchal.motoja.cliente"
-          target="_blank"
-          rel="noopener"
-          >📱 App do cliente (pedir corrida)</a
-        >
-        <a
-          class="store-btn"
-          href="https://play.google.com/store/apps/details?id=br.com.nexusconchal.motoja.motorista"
-          target="_blank"
-          rel="noopener"
-          >🏍️ App do motoboy (só cadastrados)</a
-        >
       </section>
       <footer>
         <p>2026 Nexus MotoJá - Conchal, Aguaí e Engenheiro Coelho, SP</p>
