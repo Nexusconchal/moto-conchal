@@ -9,8 +9,31 @@
     <title>Nexus MotoJá - Corridas em Conchal, Aguaí e Engenheiro Coelho</title>
     <meta
       name="description"
-      content="Peça sua corrida em Conchal, Aguaí ou Engenheiro Coelho pelo app Nexus MotoJá."
+      content="Nexus MotoJá: peça sua corrida de moto ou mototáxi em Conchal, Aguaí e Engenheiro Coelho. Agora estamos na Google Play! Baixe em nexusmotoja.com.br"
     />
+    <link rel="canonical" href="https://nexusmotoja.com.br/" />
+    <meta property="og:title" content="Nexus MotoJá - Corridas em Conchal, Aguaí e Engenheiro Coelho" />
+    <meta property="og:description" content="Peça sua corrida em Conchal, Aguaí ou Engenheiro Coelho. Agora estamos na Google Play!" />
+    <meta property="og:url" content="https://nexusmotoja.com.br/" />
+    <meta property="og:type" content="website" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "MobileApplication",
+        "name": "Nexus MotoJá",
+        "url": "https://nexusmotoja.com.br/",
+        "operatingSystem": "ANDROID",
+        "applicationCategory": "TravelApplication",
+        "description": "Corridas de moto e mototáxi em Conchal, Aguaí e Engenheiro Coelho (SP).",
+        "areaServed": [
+          { "@type": "City", "name": "Conchal" },
+          { "@type": "City", "name": "Aguaí" },
+          { "@type": "City", "name": "Engenheiro Coelho" }
+        ],
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "BRL" },
+        "downloadUrl": "https://play.google.com/store/apps/details?id=br.com.nexusconchal.motoja.cliente"
+      }
+    </script>
     <meta name="theme-color" content="#ff6b00" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Nexus MotoJá" />
@@ -163,6 +186,35 @@
         color: var(--muted);
         text-align: center;
         font-size: 0.85rem;
+      }
+      .store-links {
+        margin: 24px 0 12px;
+        padding: 18px;
+        border-radius: 18px;
+        background: var(--panel);
+        text-align: center;
+        display: grid;
+        gap: 10px;
+      }
+      .store-links h2 {
+        font-size: 1.1rem;
+        font-weight: 800;
+      }
+      .store-links p {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      .store-btn {
+        display: block;
+        padding: 14px;
+        border-radius: 14px;
+        background: linear-gradient(90deg, #ff6a00, #ffa000);
+        color: #111;
+        font-weight: 800;
+        text-decoration: none;
+      }
+      footer a {
+        color: var(--muted);
       }
       .trust {
         display: inline-flex;
@@ -1982,7 +2034,28 @@
           Calcula a distância e você acompanha o motoboy pelo app até chegar
         </p>
       </section>
-      <footer>2026 Nexus MotoJá - Conchal, Aguaí e Engenheiro Coelho, SP</footer>
+      <section class="store-links" aria-label="Baixe o app Nexus MotoJá na Play Store">
+        <h2>Baixe o app na Play Store</h2>
+        <p>Corridas em <b>Conchal, Aguaí e Engenheiro Coelho</b>.</p>
+        <a
+          class="store-btn"
+          href="https://play.google.com/store/apps/details?id=br.com.nexusconchal.motoja.cliente"
+          target="_blank"
+          rel="noopener"
+          >📱 App do cliente (pedir corrida)</a
+        >
+        <a
+          class="store-btn"
+          href="https://play.google.com/store/apps/details?id=br.com.nexusconchal.motoja.motorista"
+          target="_blank"
+          rel="noopener"
+          >🏍️ App do motoboy (só cadastrados)</a
+        >
+      </section>
+      <footer>
+        <p>2026 Nexus MotoJá - Conchal, Aguaí e Engenheiro Coelho, SP</p>
+        <p><a href="https://nexusmotoja.com.br/">nexusmotoja.com.br</a></p>
+      </footer>
     </main>
     <div id="modal" class="modal" aria-hidden="true">
       <div
