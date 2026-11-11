@@ -5573,6 +5573,8 @@ app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
     const contasSuporte = (contasSuporteSnap.docs || [])
       .map((doc) => publicSupportAccount(doc.data() || {}, doc.id, true))
       .sort((a, b) => timestampMs(b.cadastradaEm) - timestampMs(a.cadastradaEm));
+    // O dono ve quem ja conectou o Mercado Pago (so o sim/nao; os tokens nunca saem daqui).
+    for (const motoboy of motoboys) motoboy.mercadoPagoConectado = !!motoboy.mercadoPago?.accessToken;
     const payload = withoutSecrets({ ok: true, corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil, contasSuporte, clientesCadastrados, planosAtivados, avaliacoes, indicacoes });
     adminStateCache = { payload, expiresAt: Date.now() + ADMIN_STATE_CACHE_MS };
     return res.json(payload);
