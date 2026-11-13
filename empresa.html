@@ -863,6 +863,7 @@
         gap: 10px;
       }
       .operational-chip,
+      .top-online,
       .top-balance {
         min-height: 46px;
         border: 1px solid rgba(255, 255, 255, 0.1);
@@ -898,6 +899,33 @@
       }
       .top-balance strong {
         font-size: 1rem;
+      }
+      .top-online {
+        min-width: 120px;
+        display: grid;
+        gap: 1px;
+      }
+      .top-online small {
+        color: #8f97a5;
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+      .top-online strong {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 1rem;
+      }
+      .top-online .online-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #6b7280;
+      }
+      .top-online.has-online .online-dot {
+        background: #25d366;
+        box-shadow: 0 0 10px rgba(37, 211, 102, 0.8);
       }
       .workspace-content {
         width: 100%;
@@ -1238,6 +1266,14 @@
           min-width: 116px;
           min-height: 42px;
           padding: 6px 9px;
+        }
+        .top-online {
+          min-width: 0;
+          min-height: 42px;
+          padding: 6px 9px;
+        }
+        .top-online small {
+          font-size: 0.6rem;
         }
         .workspace-content {
           padding: 10px;
@@ -5701,7 +5737,7 @@
           <div class="company-workspace">
             <header class="company-topbar">
               <div class="company-heading"><h1 id="companyViewTitle">Visao geral</h1><p id="companyTopName">Minha empresa</p></div>
-              <div class="company-top-actions"><span class="operational-chip">Operacional</span><div class="top-balance"><small>Saldo disponivel</small><strong id="saldoTopoEmpresa">R$ 0,00</strong></div></div>
+              <div class="company-top-actions"><span class="operational-chip">Operacional</span><div class="top-online" id="motoboysOnlineEmpresa" title="Motoboys que estão Disponíveis agora na sua cidade"><small>Motoboys online</small><strong><span class="online-dot" aria-hidden="true"></span><span id="motoboysOnlineNumero">--</span></strong></div><div class="top-balance"><small>Saldo disponivel</small><strong id="saldoTopoEmpresa">R$ 0,00</strong></div></div>
             </header>
             <div class="workspace-content"></div>
           </div>`;
@@ -5798,6 +5834,46 @@
         new MutationObserver(syncTopbar).observe(document.getElementById("saldoEmpresa"), { childList: true, characterData: true, subtree: true });
         document.getElementById("empresa")?.addEventListener("input", syncTopbar);
         syncTopbar();
+
+        // Motoboys online: contagem publica (Disponivel e sem corrida em andamento) da cidade da loja.
+        const onlineBox = document.getElementById("motoboysOnlineEmpresa");
+        const onlineNumero = document.getElementById("motoboysOnlineNumero");
+        const nomesCidade = { conchal: "Conchal", aguai: "Aguaí", engenheiro_coelho: "Engenheiro Coelho" };
+        const cidadeDaLoja = () => {
+          let saved = {};
+          try { saved = JSON.parse(localStorage.getItem("nexusEmpresaDados") || "{}"); } catch (_) {}
+          const texto = String(document.getElementById("retirada")?.value || saved.retirada || "")
+            .normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+          if (/engenheiro\s+coelho/.test(texto)) return "engenheiro_coelho";
+          if (/\baguai\b/.test(texto)) return "aguai";
+          return "conchal";
+        };
+        let onlineAtualizadoEm = 0;
+        const atualizarOnline = async () => {
+          if (document.hidden) return;
+          const cidade = cidadeDaLoja();
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 12000);
+          try {
+            const response = await fetch(`https://motoboy-conchal.onrender.com/api/drivers/availability?t=${Date.now()}`, { cache: "no-store", signal: controller.signal });
+            const data = await response.json();
+            const total = Number(data?.counts?.[cidade]);
+            if (!response.ok || !data?.ok || !Number.isFinite(total)) throw new Error("contagem");
+            onlineNumero.textContent = String(total);
+            onlineBox.classList.toggle("has-online", total > 0);
+            onlineBox.title = `${total} ${total === 1 ? "motoboy Disponível" : "motoboys Disponíveis"} agora em ${nomesCidade[cidade]}`;
+            onlineAtualizadoEm = Date.now();
+          } catch (_) {
+            // Servidor acordando ou sem internet: mostra "--" se a última contagem ficou velha.
+            if (Date.now() - onlineAtualizadoEm > 90000) { onlineNumero.textContent = "--"; onlineBox.classList.remove("has-online"); }
+          } finally {
+            clearTimeout(timer);
+          }
+        };
+        atualizarOnline();
+        setInterval(atualizarOnline, 30000);
+        document.addEventListener("visibilitychange", () => { if (!document.hidden) atualizarOnline(); });
+        document.getElementById("retirada")?.addEventListener("change", atualizarOnline);
       })();
     </script>
     <script src="./app-versao.js?v=1" defer></script>
