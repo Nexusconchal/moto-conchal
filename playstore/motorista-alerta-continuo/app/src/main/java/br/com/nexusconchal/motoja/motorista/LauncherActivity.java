@@ -226,6 +226,18 @@ public class LauncherActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        // Abriu o app: o alarme de reserva ("oferta_...") para; o painel assume o aviso.
+        android.app.NotificationManager manager = getSystemService(android.app.NotificationManager.class);
+        if (manager != null && Build.VERSION.SDK_INT >= 23) {
+            for (android.service.notification.StatusBarNotification n : manager.getActiveNotifications()) {
+                if (n.getTag() != null && n.getTag().startsWith("oferta_")) manager.cancel(n.getTag(), n.getId());
+            }
+        }
+    }
+
+    @Override
     protected void onPause() {
         super.onPause();
         CookieManager.getInstance().flush();
@@ -414,6 +426,26 @@ public class LauncherActivity extends Activity {
         @JavascriptInterface public void clearCallAlerts() {
             if (!trustedDriverPage) return;
             CallAlertSession.clear(LauncherActivity.this); CallAlertService.stop(LauncherActivity.this);
+        }
+
+        // Bateria "Sem restrições": sem isso, alguns celulares (Xiaomi, Samsung...) matam o app
+        // e a chamada não toca com ele fechado.
+        @JavascriptInterface public boolean batteryUnrestricted() {
+            if (Build.VERSION.SDK_INT < 23) return true;
+            android.os.PowerManager power = getSystemService(android.os.PowerManager.class);
+            return power != null && power.isIgnoringBatteryOptimizations(getPackageName());
+        }
+        @JavascriptInterface public void openBatterySettings() {
+            if (!trustedDriverPage) return;
+            runOnUiThread(() -> {
+                try {
+                    startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:" + getPackageName())));
+                } catch (Exception e) {
+                    try { startActivity(new Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); }
+                    catch (Exception ignored) { }
+                }
+            });
         }
 
         @JavascriptInterface

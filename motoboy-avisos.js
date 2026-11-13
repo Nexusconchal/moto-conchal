@@ -141,6 +141,24 @@
     ["engenheiro_coelho", "Engenheiro Coelho", "https://t.me/+hxfRgsNR1VcxYzVh"],
   ];
 
+  // App da Play Store: mostra se o alerta continuo ("MotoJa, bora rodar" ate alguem aceitar,
+  // mesmo com o app fechado) esta pronto neste celular, e o botao para liberar a bateria.
+  function nativo() {
+    try { return window.NexusNative || null; } catch (_) { return null; }
+  }
+  function statusAlertaContinuo() {
+    const app = nativo();
+    if (!app) return `<p class="mjx-sub">📲 Para a chamada tocar <b>sem parar, mesmo com o app fechado</b> (igual ligação), instale o app <b>Nexus MotoJÁ Motorista</b> pela Play Store.</p>`;
+    let continuo = false, bateria = true;
+    try { continuo = Number(app.callAlertVersion?.()) === 1; } catch (_) {}
+    try { bateria = typeof app.batteryUnrestricted === "function" ? app.batteryUnrestricted() === true : true; } catch (_) {}
+    const linhas = [`<span class="${continuo ? "ok" : "no"}">${continuo ? "✅ Alerta contínuo ligado neste celular" : "⚠️ Atualize o app pela Play Store para o alerta contínuo"}</span>`];
+    if (typeof app.batteryUnrestricted === "function") linhas.push(`<span class="${bateria ? "ok" : "no"}">${bateria ? "✅ Bateria sem restrições" : "⚠️ Bateria restringindo o app"}</span>`);
+    const botao = !bateria && typeof app.openBatterySettings === "function"
+      ? `<button type="button" class="secondary" data-mjx-bateria>🔋 Liberar bateria (toque em Bateria → Sem restrições)</button>` : "";
+    return `<div class="mjx-status">${linhas.join("")}</div>${botao}`;
+  }
+
   async function loadAlerts() {
     const box = $("avisosMotoboy");
     if (!box || !cpf()) return;
@@ -153,6 +171,7 @@
       <div class="mjx-status">
         <span class="${devices ? "ok" : "no"}">${devices ? `✅ Notificação em ${devices} aparelho${devices > 1 ? "s" : ""}` : "⚠️ Notificação do aparelho desligada"}</span>
       </div>
+      ${statusAlertaContinuo()}
       ${GRUPOS_TELEGRAM.map(([id, nome, link]) => `<a class="secondary mjx-grupo${id === cidade ? " sua" : ""}" href="${link}" target="_blank" rel="noopener">✈️ Grupo de ${nome}${id === cidade ? " (sua cidade)" : ""}</a>`).join("")}
       ${opcaoTelaEsperando()}
       <button type="button" class="secondary" data-mjx-teste>Testar aviso agora</button>
@@ -191,6 +210,9 @@
       $("avisosMotoboy").addEventListener("click", (event) => {
         const teste = event.target.closest("[data-mjx-teste]");
         if (teste) test(teste);
+        if (event.target.closest("[data-mjx-bateria]")) {
+          try { nativo()?.openBatterySettings?.(); } catch (_) {}
+        }
       });
       $("avisosMotoboy").addEventListener("change", (event) => {
         const caixa = event.target.closest("[data-mjx-tela]");
@@ -210,6 +232,11 @@
     loadRatings();
     loadAlerts();
   }
+
+  // Voltou das configuracoes da bateria: atualiza o status.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && options && $("avisosMotoboy")) loadAlerts();
+  });
 
   window.MotojaDriverExtras = { start, refresh };
 })();

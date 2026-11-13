@@ -3812,6 +3812,18 @@ function rideOfferPush(rideId, ride, tokens, repeticao = 0) {
   };
 }
 
+// App Android com alerta continuo (toca "MotoJa, bora rodar" ate alguem aceitar): a chamada
+// so vai para quem esta Disponivel e livre. Mandar para quem esta Indisponivel nao mostra nada
+// no celular, e o Android passa a atrasar as mensagens urgentes do app (ai ele deixa de tocar
+// com a tela apagada). Celulares pelo link ou com app antigo continuam recebendo como antes.
+function nativeAlertToken(info) {
+  return info?.plataforma === 'android_nativo' && Number(info?.callAlertVersion) === 1;
+}
+function driverReadyForCall(cpf) {
+  const presence = driverAvailability.state(cpf);
+  return presence.desired && !presence.busy;
+}
+
 // Tokens de quem escolheu Disponivel e nao esta em servico.
 async function availableDriverTokens(accepts = () => true) {
   const drivers = await db.collection('motoboys').where('status', '==', 'ativo').get();
@@ -3869,9 +3881,10 @@ async function notifyDriversAboutRide(rideId, ride) {
     const data = doc.data();
     if (!driverWantsRide(data, ride)) return;
     const saved = data.fcmTokens || {};
+    const ready = driverReadyForCall(doc.id);
     Object.entries(saved).forEach(([token, info]) => {
       callPush.remember(token, info);
-      if (info?.ativo !== false) tokens.push(token);
+      if (info?.ativo !== false && (ready || !nativeAlertToken(info))) tokens.push(token);
     });
   });
 
@@ -4022,15 +4035,16 @@ async function notifyDriversAboutDelivery(deliveryId, delivery, { onlyReserved =
   const drivers = onlyReserved ? [] : (await db.collection('motoboys').where('status', '==', 'ativo').get()).docs || [];
   const tokens = [];
   const reservedTokens = [];
-  const collect = (doc, list) => {
+  const collect = (doc, list, onlyReady = false) => {
+    const ready = !onlyReady || driverReadyForCall(doc.id);
     Object.entries(doc.data()?.fcmTokens || {}).forEach(([token, info]) => {
       callPush.remember(token, info);
-      if (info?.ativo !== false) list.push(token);
+      if (info?.ativo !== false && (ready || !nativeAlertToken(info))) list.push(token);
     });
   };
   const city = deliveryOperatingCity(delivery);
   const inCity = (data) => driverWantsDeliveryIn(data, city);
-  drivers.forEach((doc) => { if ((!reserved || doc.id !== reservedCpf) && inCity(doc.data() || {})) collect(doc, tokens); });
+  drivers.forEach((doc) => { if ((!reserved || doc.id !== reservedCpf) && inCity(doc.data() || {})) collect(doc, tokens, true); });
   if (reservedDriver?.exists && reservedDriver.data()?.status !== 'bloqueado') collect(reservedDriver, reservedTokens);
   // Telegram: entrega aberta vai para quem esta Disponivel; a do plano so para o dono dela.
   if (reserved) {

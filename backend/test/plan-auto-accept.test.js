@@ -89,6 +89,10 @@ test('app notification goes to every motoboy; the fixed one is told the delivery
   h.context.telegramOfferInBackground = (docs, text) => telegramDms.push([docs.length, text.split('\n')[0]]);
   h.run('function androidCallConfig(', 'function rideOfferPush(');
   h.run('function deliveryOfferPush(', 'async function repeatDeliveryAlert(');
+  // App Android com alerta continuo de quem esta Indisponivel nao recebe (nao mostraria nada).
+  h.records.set(`motoboys/${other}`, { ...h.records.get(`motoboys/${other}`), fcmTokens: { outro: { ativo: true }, velho: { ativo: false }, nativoIndisponivel: { ativo: true, plataforma: 'android_nativo', callAlertVersion: 1 } } });
+  h.context.driverAvailability = { state: () => ({ desired: false, busy: false }) };
+  h.run('function nativeAlertToken(', '// Tokens de quem escolheu Disponivel');
   h.fn('notifyDriversAboutDelivery');
 
   const result = await h.context.notifyDriversAboutDelivery('d', planDelivery());

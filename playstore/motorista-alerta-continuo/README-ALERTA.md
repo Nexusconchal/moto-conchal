@@ -1,6 +1,12 @@
-# MotoJÁ Motorista 1.0.6 — alerta contínuo e tela acesa
+# MotoJÁ Motorista 1.0.7 — alerta contínuo com o app fechado
 
-Atualização exclusiva do aplicativo Android do motoboy, pacote `br.com.nexusconchal.motoja.motorista`, versionCode 7. O projeto anterior permanece preservado.
+Atualização exclusiva do aplicativo Android do motoboy, pacote `br.com.nexusconchal.motoja.motorista`, versionCode 8 (use um número maior que o da versão que está na Play Store). O projeto anterior permanece preservado.
+
+Novidades da 1.0.7:
+- **Alarme de reserva insistente:** se o Android não deixar abrir o serviço do alerta contínuo (app fechado há muito tempo, economia de bateria), a chamada aparece no canal `chamadas` com a voz "MotoJÁ! Bora rodar!" em modo insistente (`FLAG_INSISTENT`): repete até alguém aceitar (o push `removed` cancela), a chamada expirar (`setTimeoutAfter`) ou o motoboy abrir o app.
+- **Abrir o app para o alarme de reserva** (o painel assume o aviso).
+- **Bateria:** `NexusNative.batteryUnrestricted()` e `NexusNative.openBatterySettings()`; o Perfil do motoboy mostra se o alerta contínuo está ligado e o botão para liberar a bateria.
+- **Servidor:** a chamada não vai mais para o app nativo de quem está Indisponível (não mostrava nada e fazia o Android atrasar as mensagens urgentes do app).
 
 Novidades da 1.0.6:
 - **Tela acesa no GPS:** enquanto o motoboy está com o mapa de navegação aberto ou com corrida/entrega mandando GPS para o cliente, o site chama `NexusNative.keepScreenOn(true)` e o app liga `FLAG_KEEP_SCREEN_ON` (a tela não apaga, como no Google Maps). Ao fechar o mapa/finalizar, volta ao normal.
