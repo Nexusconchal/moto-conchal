@@ -1075,7 +1075,7 @@
     <script src="./driver-availability.js?v=call-alert-1"></script>
     <script src="./motoboy-call-alerts.js?v=3"></script>
     <script src="./ride-chat.js?v=234"></script>
-    <script src="./motoboy-avisos.js?v=4"></script>
+    <script src="./motoboy-avisos.js?v=5"></script>
     <script src="./motoboy-tela-acesa.js?v=1" defer></script>
     <script src="./motoboy-nav.js?v=tela-acesa-1" defer></script>
     <script src="./motoboy-home.js?v=4" defer></script>
@@ -3551,8 +3551,9 @@
         }
         return true;
       }
-      async function ativarNotificacoes() {
-        if (await ativarPushNativo(false)) return;
+      async function ativarNotificacoes(opcoes) {
+        const silencioso = opcoes && opcoes.silencioso === true;
+        if (await ativarPushNativo(silencioso)) return;
         try {
           const ua = navigator.userAgent.toLowerCase(),
             isIos = /iphone|ipad|ipod/.test(ua);
@@ -3613,14 +3614,28 @@
             },
           );
           if (!r.ok) throw new Error("Nao consegui salvar a notificacao.");
-          alert("Notificacoes ativadas neste celular.");
+          if (!silencioso) alert("Notificacoes ativadas neste celular.");
         } catch (e) {
-          alert(
+          if (!silencioso) alert(
             (e && e.message ? e.message : "Erro ao ativar notificacoes.") +
               " Feche e abra o app de novo; se o celular segurou cache antigo, reinstale o app uma vez.",
           );
         }
       }
+      // Ficou Disponível: liga a notificação deste celular na hora, sem precisar ir no Perfil.
+      // Roda dentro do toque no botão (o navegador só pede permissão com um toque).
+      let notificacaoLigadaNaSessao = false;
+      async function ligarNotificacaoAoFicarDisponivel() {
+        if (notificacaoLigadaNaSessao) return;
+        notificacaoLigadaNaSessao = true;
+        if (await ativarPushNativo(true)) return;
+        if (!("Notification" in window) || /iphone|ipad|ipod/i.test(navigator.userAgent) || Notification.permission === "denied") return;
+        // Primeira vez pede a permissão (com aviso); se já foi liberada, só renova em silêncio.
+        await ativarNotificacoes({ silencioso: Notification.permission === "granted" });
+      }
+      document.addEventListener("click", (e) => {
+        if (motoboyCpf && e.target.closest('[data-available="true"]')) ligarNotificacaoAoFicarDisponivel();
+      }, true);
       let instalarAppEvento = null;
       window.addEventListener("beforeinstallprompt", (e) => {
         e.preventDefault();

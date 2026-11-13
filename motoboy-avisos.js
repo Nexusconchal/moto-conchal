@@ -115,11 +115,12 @@
       </ol></details>`;
   }
 
-  // Opcional: tela acesa enquanto esta Disponivel esperando chamada (pelo link a voz
+  // Tela acesa enquanto esta Disponivel esperando chamada (pelo link a voz
   // so toca com o app aberto na tela). Gasta bateria: melhor no carregador da moto.
   const CHAVE_ESPERANDO = "motojaTelaAcesaEsperando";
+  // Ligado por padrao: Disponivel com o app aberto = tela acesa (so desliga se o motoboy desmarcar).
   function querTelaEsperando() {
-    try { return localStorage.getItem(CHAVE_ESPERANDO) === "1"; } catch (_) { return false; }
+    try { return localStorage.getItem(CHAVE_ESPERANDO) !== "0"; } catch (_) { return true; }
   }
   function aplicarTelaEsperando() {
     const disponivel = window.MotojaDriverAvailability?.canAlert?.() === true;
@@ -130,7 +131,7 @@
   function opcaoTelaEsperando() {
     return `<label style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:12px;background:#0c0f16;border:1px solid #232a38;cursor:pointer">
       <input type="checkbox" data-mjx-tela ${querTelaEsperando() ? "checked" : ""} style="width:22px;height:22px;margin:2px 0 0;accent-color:#ff6b00">
-      <span><b>📱 Tela acesa esperando chamada</b><small class="mjx-sub">Enquanto você estiver Disponível a tela não apaga, então a voz “MotoJá, bora rodar” toca na hora. Gasta bateria: use com o celular no carregador.</small></span>
+      <span><b>📱 Tela acesa enquanto estiver Disponível</b><small class="mjx-sub">Ligado: com o app aberto e você Disponível, a tela não apaga e a voz “MotoJá, bora rodar” toca na hora. Gasta mais bateria: se quiser economizar, desmarque.</small></span>
     </label>`;
   }
 
