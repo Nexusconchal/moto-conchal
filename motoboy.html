@@ -1078,7 +1078,7 @@
     <script src="./motoboy-avisos.js?v=5"></script>
     <script src="./motoboy-tela-acesa.js?v=1" defer></script>
     <script src="./motoboy-nav.js?v=tela-acesa-1" defer></script>
-    <script src="./motoboy-home.js?v=4" defer></script>
+    <script src="./motoboy-home.js?v=5" defer></script>
     <script src="./motoboy-food.js?v=5"></script>
     <script type="module">
       let cidadesAtivas = {
@@ -3928,12 +3928,28 @@
             limparCache();
             atualizarTrabalho();
           },
-          abrirServicoAtivo: () => {
+          abrirServicoAtivo: async () => {
             const nav = lerNavAtiva();
-            if (!nav?.id) return;
-            modo = nav.tipo === "entrega" ? "minhas-entregas" : "minhas";
-            navRestaurada = false;
-            ouvir();
+            if (nav?.id) {
+              modo = nav.tipo === "entrega" ? "minhas-entregas" : "minhas";
+              navRestaurada = false;
+              ouvir();
+              return;
+            }
+            // Sem GPS salvo: descobre se o servico em andamento e corrida ou entrega e abre a lista.
+            let tipo = "minhas";
+            try {
+              const r = await fetch(`${CONFIG.backend}/api/drivers/${motoboyCpf}/jobs`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ ...driverProof(), kind: "deliveries", scope: "mine" }),
+                cache: "no-store",
+              });
+              const d = await r.json().catch(() => ({}));
+              if (r.ok && (d.jobs || []).some((j) => ["aceita", "retirada"].includes(j.status) && !j.conclusaoStatus)) tipo = "minhas-entregas";
+            } catch {}
+            modo = tipo;
+            $("nav-servicos")?.click();
           },
         });
       }

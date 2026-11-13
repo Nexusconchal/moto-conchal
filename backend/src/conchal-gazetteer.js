@@ -323,6 +323,19 @@ function interpolate(entry, number) {
   }
   const nearest = lower || upper;
   if (Math.abs(nearest.number - n) <= 200) return { lat: nearest.lat, lon: nearest.lon, precision: 'aproximado' };
+  // Numero alem do ultimo conhecido (ex.: Rua dos Maiochi 745, cadastro vai ate 488): segue a
+  // direcao da rua a partir da ponta mais perto, no maximo 600 m, em vez de cair no meio da rua.
+  const first = points[0], last = points[points.length - 1];
+  if (points.length >= 2 && last.number > first.number && Math.abs(nearest.number - n) <= 1200) {
+    const perLat = (last.lat - first.lat) / (last.number - first.number);
+    const perLon = (last.lon - first.lon) / (last.number - first.number);
+    let steps = n - nearest.number;
+    const km = Math.hypot(steps * perLat * 111, steps * perLon * 111 * Math.cos(nearest.lat * Math.PI / 180));
+    if (km > 0.6) steps *= 0.6 / km;
+    if (Number.isFinite(steps) && km > 0) {
+      return { lat: +(nearest.lat + steps * perLat).toFixed(6), lon: +(nearest.lon + steps * perLon).toFixed(6), precision: 'aproximado' };
+    }
+  }
   return { ...entry.center, precision: 'rua' };
 }
 

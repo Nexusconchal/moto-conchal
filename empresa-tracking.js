@@ -401,9 +401,22 @@
     updateSignalStatus();
   }
 
+  // Botoes de confirmacao com pedido em andamento (a lista pode ser redesenhada no meio).
+  const confirmando = new Set();
+  // Toque recente na lista: espera o dedo sair antes de redesenhar (senao o botao some no toque).
+  let ultimoToque = 0, renderAdiado = 0;
   function render() {
     const list = document.getElementById('entregasRastreamentoLista');
     if (!list) return;
+    if (!list.dataset.toqueOk) {
+      list.dataset.toqueOk = '1';
+      list.addEventListener('pointerdown', () => { ultimoToque = Date.now(); }, { passive: true });
+    }
+    if (Date.now() - ultimoToque < 1200) {
+      clearTimeout(renderAdiado);
+      renderAdiado = setTimeout(render, 1300 - (Date.now() - ultimoToque));
+      return;
+    }
     const active = [...deliveries.values()];
     if (!active.length) {
       selectedId = '';
@@ -416,7 +429,7 @@
       const location = locationOf(delivery);
       return `<div class="company-confirmation-card"><button type="button" class="tracking-delivery${delivery.id === selectedId ? ' active' : ''}" data-tracking-delivery="${escapeHtml(delivery.id)}">
         <span><strong>${escapeHtml(delivery.recebedor || delivery.empresa || 'Entrega')}</strong><small>${escapeHtml(delivery.entrega || delivery.entregaEncontrada || '-')}</small></span>
-        <span><b>${escapeHtml(delivery.motoboy || 'Aguardando motoboy')}</b><small>${escapeHtml(statusLabel(delivery.status))}${location ? ` - GPS ${relativeTime(location.serverTimestampMs || location.clientTimestamp)}` : ''}</small></span>
+        <span><b>${escapeHtml(delivery.motoboy || 'Aguardando motoboy')}</b><small data-gps-label="${escapeHtml(delivery.id)}">${escapeHtml(statusLabel(delivery.status))}${location ? ` - GPS ${relativeTime(location.serverTimestampMs || location.clientTimestamp)}` : ''}</small></span>
       </button>${htmlLote(delivery)}${delivery.confirmacaoEmpresaVersao === 1 ? `
         <div class="company-confirmation-actions" style="padding:12px;display:grid;gap:10px;border:1px solid #35424b;border-radius:8px">
           <strong>${Math.max(1,Number(delivery.paradas || 1))} entrega(s) · ${Number(delivery.valor || 0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</strong>
@@ -435,9 +448,14 @@
     list.querySelectorAll('[data-chat-entrega]').forEach((button) => {
       button.onclick = () => abrirChat(button.dataset.chatEntrega);
     });
+    list.querySelectorAll('[data-company-confirm]').forEach(button => {
+      if (confirmando.has(`${button.dataset.companyConfirm}:${button.dataset.id}`)) { button.disabled = true; button.textContent = 'Confirmando...'; }
+    });
     list.querySelectorAll('[data-company-confirm]').forEach(button => button.onclick = async () => {
       const action = button.dataset.companyConfirm;
       const id = button.dataset.id;
+      const chave = `${action}:${id}`;
+      if (confirmando.has(chave)) return;
       const sessionToken = token();
       let body = {};
       if (action === 'contest-completion') {
@@ -447,17 +465,32 @@
         body.reason = reason.trim();
       } else if (!confirm(action === 'confirm-pickup' ? 'Os pedidos foram entregues ao motoboy? Ao confirmar, o valor permanece reservado até a conclusão.' : 'Você conferiu todas as entregas? A confirmação desconta o saldo reservado e registra o ganho do motoboy.')) return;
       button.disabled = true;
+      confirmando.add(chave);
+      const controller = new AbortController();
+      const limite = setTimeout(() => controller.abort(), 20000);
       try {
         const response = await fetch(`${BACKEND}/api/companies/me/deliveries/${encodeURIComponent(id)}/${action}`, {
+          signal: controller.signal,
           method:'POST', headers:{'content-type':'application/json',authorization:`Bearer ${sessionToken}`}, body:JSON.stringify(body)
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.message || 'Não consegui confirmar. Tente novamente.');
         if (sessionToken !== token()) return;
+        // Atualiza na hora (sem esperar o servidor) para o botao nao voltar a aparecer.
+        const atual = deliveries.get(id);
+        if (atual && action === 'confirm-pickup') deliveries.set(id, { ...atual, retiradaLiberadaEm: { seconds: Math.floor(Date.now() / 1000) }, _eventAt: Date.now() });
+        confirmando.delete(chave);
+        render();
         alert(data.message);
         window.dispatchEvent(new Event('motoja:balance-refresh'));
         refresh();
-      } catch (error) { if (sessionToken === token()) { alert(error.message); button.disabled = false; } }
+      } catch (error) {
+        confirmando.delete(chave);
+        if (sessionToken === token()) {
+          alert(error?.name === 'AbortError' ? 'A internet ou o servidor demorou. Confira a conexão e toque de novo.' : error.message);
+          render();
+        }
+      } finally { clearTimeout(limite); }
     });
     updateMap();
   }
@@ -536,6 +569,9 @@
       }
       if (event.location && current.motoboyLocalizacao &&
           Number(event.location.clientTimestamp) <= Number(current.motoboyLocalizacao.clientTimestamp)) return;
+      const soGps = event.location && (!event.status || event.status === current.status) &&
+        event.conclusaoStatus === undefined && event.retiradaLiberadaEm === undefined && event.paradasNota === undefined &&
+        (!event.motoboy || event.motoboy === current.motoboy);
       deliveries.set(deliveryId, {
         ...current,
         status: event.status || current.status,
@@ -548,6 +584,16 @@
         ...(event.paradasNota !== undefined ? { paradasNota: event.paradasNota, paradasNotaResumo: event.paradasNotaResumo } : {}),
         _eventAt: Date.now()
       });
+      if (soGps) {
+        // Motoboy andando: atualiza so o mapa e o "GPS há X s" (os botoes ficam parados).
+        const atual = deliveries.get(deliveryId);
+        const label = document.querySelector(`[data-gps-label="${CSS.escape(deliveryId)}"]`);
+        const loc = locationOf(atual);
+        if (label) label.textContent = `${statusLabel(atual.status)}${loc ? ` - GPS ${relativeTime(loc.serverTimestampMs || loc.clientTimestamp)}` : ''}`;
+        else render();
+        updateMap();
+        return;
+      }
       render();
     });
     socket.on('delivery:chat', (event) => {

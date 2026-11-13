@@ -69,6 +69,10 @@ test('response observer ignores failed accepts, unrelated payment approval and p
   observeAvailabilityJob(p, '/api/admin/rides/a/payment/presential/approve', 200, { ok: true }); assert.equal(p.state(cpf).busy, true);
   observeAvailabilityJob(p, '/api/rides/a/finish', 200, { ok: true, pendingApproval: true }); assert.equal(p.state(cpf).busy, true);
   observeAvailabilityJob(p, '/api/admin/rides/a/force-finish', 200, { ok: true }); assert.equal(p.state(cpf).busy, false);
+  // Entrega entregue esperando a loja aprovar: o motoboy volta a ficar livre para novas chamadas.
+  p.job('deliveries', 'd', 'retirada', cpf); assert.equal(p.state(cpf).busy, true);
+  observeAvailabilityJob(p, '/api/deliveries/d/finish', 200, { ok: true, status: 'retirada', pendingApproval: true, conclusaoStatus: 'aguardando_empresa' });
+  assert.equal(p.state(cpf).busy, false);
 });
 test('company approval, owner rejection and support completion release exactly their own job', () => {
   const { p } = harness(); ready(p);

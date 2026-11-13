@@ -93,7 +93,9 @@ export function observeAvailabilityJob(presence, path, status, body, driverCpf =
   if (match) {
     const [, kind, id, action] = match;
     if (action === 'accept') presence.job(kind, id, 'aceita', driverCpf);
-    else if (!body.pendingApproval) presence.job(kind, id, 'finalizada');
+    // Entrega concluida pelo motoboy e esperando a loja aprovar: ele ja entregou, volta a
+    // receber chamadas (a aprovacao da loja so libera o valor).
+    else if (!body.pendingApproval || ['aguardando_empresa', 'contestada'].includes(body.conclusaoStatus)) presence.job(kind, id, 'finalizada');
     return true;
   } else if (support && !body.pendingApproval) { presence.job(support[1] === 'corrida' ? 'rides' : 'deliveries', support[2], 'finalizada'); return true; }
 }

@@ -230,6 +230,7 @@
       ? (d.pronto ? 'Toque no botão para receber chamadas' : d.texto || 'Conectando ao servidor…')
       : d.texto;
     desenharEu();
+    renderAtivo();
   }
 
   // ---------- Moto táxi / Entregas ----------
@@ -324,8 +325,19 @@
       nav = JSON.parse(lerLocal(NAV_ATIVA) || 'null');
     } catch (_) {}
     const card = $('[data-home-ativo]');
-    card.hidden = !nav?.id;
-    if (!nav?.id) return;
+    if (!nav?.id) {
+      // Em atendimento pelo servidor, mas sem o GPS salvo neste celular (app reaberto, outra
+      // tela...): mostra o card mesmo assim para abrir o servico e finalizar.
+      const emAtendimento = lerDisponibilidade().ocupado;
+      card.hidden = !emAtendimento;
+      if (emAtendimento) {
+        $('[data-home-ativo-ic]').textContent = '🧭';
+        $('[data-home-ativo-titulo]').textContent = 'Serviço em andamento';
+        $('[data-home-ativo-sub]').textContent = 'Toque para abrir e finalizar';
+      }
+      return;
+    }
+    card.hidden = false;
     const entrega = nav.tipo === 'entrega';
     $('[data-home-ativo-ic]').textContent = entrega ? '📦' : '🏍️';
     $('[data-home-ativo-titulo]').textContent = entrega ? 'Entrega em andamento' : 'Corrida em andamento';

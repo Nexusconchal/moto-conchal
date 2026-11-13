@@ -3140,7 +3140,8 @@ async function loadDriverActiveJobs(cpf) {
     ['corridas', 'rides', 'aceita'], ['entregas', 'deliveries', 'aceita'], ['entregas', 'deliveries', 'retirada']
   ].map(async ([collection, kind, status]) => {
     const snapshot = await db.collection(collection).where('motoboyCpf', '==', cpf).where('status', '==', status).limit(15).get();
-    return snapshot.docs.map(doc => `${kind}:${doc.id}`);
+    // Entrega ja entregue, esperando a loja aprovar: nao prende o motoboy em "Em atendimento".
+    return snapshot.docs.filter(doc => !doc.data()?.conclusaoStatus).map(doc => `${kind}:${doc.id}`);
   }));
   return groups.flat();
 }
