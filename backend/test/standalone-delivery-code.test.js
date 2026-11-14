@@ -57,16 +57,22 @@ test('standalone delivery: the code is checked before the payment and says how m
 function cashHarness(ride) {
   const records = new Map([['corridas/r1', ride]]);
   const apply = (path, d) => records.set(path, { ...records.get(path), ...Object.fromEntries(Object.entries(d).map(([k, v]) => [k, v?.inc ? Number(records.get(path)?.[k] || 0) + v.inc : v])) });
-  const ref = (path) => ({ path, id: path.split('/').at(-1), get: async () => ({ exists: records.has(path), data: () => records.get(path) }), set: async (d) => apply(path, d) });
+  const ref = (path) => ({ path, id: path.split('/').at(-1), get: async () => ({ exists: records.has(path), data: () => records.get(path) }), set: async (d) => apply(path, d),
+    collection: (name) => ({ doc: (id) => ref(`${path}/${name}/${id}`) }) });
   const db = { collection: (name) => ({ doc: (id) => ref(`${name}/${id}`) }),
     runTransaction: async (fn) => { const ops = []; await fn({ get: (r) => r.get(), set: (r, d) => ops.push([r, d]) }); ops.forEach(([r, d]) => apply(r.path, d)); } };
-  const routes = {};
-  const ctx = vm.createContext({ db, Date, Number, String, Object,
-    admin: { firestore: { FieldValue: { serverTimestamp: () => 'TS', increment: (n) => ({ inc: n }) } } },
+  const routes = {}, earnings = [], released = [];
+  const ctx = vm.createContext({ db, Date, Number, String, Object, Math,
+    admin: { firestore: { FieldValue: { serverTimestamp: () => 'TS', increment: (n) => ({ inc: n }), delete: () => undefined } } },
     onlyDigits: (v) => String(v || '').replace(/\D/g, ''), cleanText: (v) => String(v || ''), getDriverWithProof: async () => ({}),
     isStandaloneDelivery: (r) => r.modalidade === 'entrega_avulsa', STANDALONE_DELIVERY_CODE_MAX_ATTEMPTS: 5,
     rideStatusCache: new Map(), adminStateCache: {}, emitSupportOperationsRefresh() {},
+    money: (n) => Math.round(Number(n || 0) * 100) / 100, timestampMs: (v) => Number(v || 0),
+    rideSplitAmounts: (total) => ({ total: Number(total || 6.5), appFee: 1.5, driverAmount: Number(total || 6.5) - 1.5, appPercent: 0.25, driverPercent: 0.75 }),
+    driverEarningEvent: (kind, id, job) => ({ kind, id, ganho: job.ganhoMotoboy }), recordDriverEarning: async (tx, cpf, event) => earnings.push(event),
+    clearDriverProofCache() {}, driverAvailability: { job: (k, id, st) => released.push([k, id, st]) }, driverAvailabilitySocket: { publishAll() {} },
     app: { post: (p, ...h) => { routes[p] = h.at(-1); } } });
+  vm.runInContext(slice('const DEBT_MIN_DRIVER_SHARE', 'function isOutOfConchal('), ctx);
   vm.runInContext(slice('// Cliente pagou em dinheiro (ou Pix direto ao motoboy)', '// Avisa o motoboy que perdeu a corrida por atraso'), ctx);
   const call = async (body) => {
     const out = { status: 200 }; let failure;
@@ -75,14 +81,28 @@ function cashHarness(ride) {
     if (failure) { out.status = failure.status || 500; out.data = { error: failure.code }; }
     return out;
   };
-  return { records, call };
+  return { records, call, earnings, released, ctx };
 }
 
-test('cash payment: the motoboy tells support and the ride waits for the owner (avulsa needs the right code)', async () => {
-  const moto = cashHarness({ status: 'aceita', motoboyCpf: DRIVER, motoboy: 'Bruno', clienteAvisadoEm: 1, pagamento: { status: 'pending' } });
-  assert.equal((await moto.call({})).status, 200);
-  assert.equal(moto.records.get('corridas/r1').dinheiroInformado.motoboyCpf, DRIVER);
-  assert.equal(moto.records.get('corridas/r1').status, 'aceita', 'quem finaliza e o dono');
+test('cash payment finishes the ride at once, frees the motoboy and the app fee becomes his debt (avulsa needs the right code)', async () => {
+  const moto = cashHarness({ status: 'aceita', motoboyCpf: DRIVER, motoboy: 'Bruno', nome: 'Ana', valor: 6.5, clienteAvisadoEm: 1, pagamento: { status: 'pending' } });
+  const ok = await moto.call({});
+  assert.equal(ok.status, 200);
+  assert.equal(ok.data.finalizada, true);
+  const r = moto.records.get('corridas/r1');
+  assert.equal(r.dinheiroInformado.motoboyCpf, DRIVER);
+  assert.equal(r.status, 'finalizada', 'nao espera mais o dono');
+  assert.equal(r.pagoEmDinheiro, true);
+  assert.equal(r.pagamento.metodo, 'dinheiro');
+  assert.equal(moto.records.get(`motoboys/${DRIVER}`).dividaAppCentavos, 150, 'taxa de R$ 1,50 vira divida');
+  assert.equal(moto.records.get(`motoboys/${DRIVER}/dividaApp/dinheiro_r1`).centavos, 150);
+  assert.equal(moto.earnings.length, 1);
+  assert.deepEqual(moto.released, [['rides', 'r1', 'finalizada']]);
+  // Desconto na proxima corrida paga pelo app: deixa pelo menos 30% para o motoboy.
+  assert.equal(moto.ctx.debtCollectAmount(150, 6.5, 1.5), 1.5);
+  assert.equal(moto.ctx.debtCollectAmount(1000, 6.5, 1.5), 3.05);
+  assert.equal(moto.ctx.debtCollectAmount(-200, 6.5, 1.5), 0, 'credito nao cobra nada');
+  assert.equal(moto.ctx.debtCollectAmount(0, 20, 5), 0);
 
   const avulsa = cashHarness(ride({ pagamento: { status: 'pending' } }));
   assert.equal((await avulsa.call({ codigoEntrega: '0000' })).data.error, 'codigo_entrega_invalido');

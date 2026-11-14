@@ -1715,7 +1715,7 @@
           back.querySelector("[data-dinheiro]").onclick = async (ev) => {
             const botao = ev.currentTarget;
             botao.disabled = true;
-            botao.textContent = "Avisando o suporte...";
+            botao.textContent = "Finalizando...";
             try {
               fim(await avisarPagamentoDinheiro(job.id, campo.value.replace(/\D/g, "")));
             } catch (e) {
@@ -1730,7 +1730,8 @@
         });
         return dialogo.promise;
       }
-      // Cliente pagou em dinheiro (ou Pix direto): avisa o suporte; o dono confere e finaliza.
+      // Cliente pagou em dinheiro (ou Pix direto): a corrida finaliza na hora e a taxa do app
+      // fica no saldo do motoboy, descontada da proxima corrida paga pelo app (igual a 99).
       async function avisarPagamentoDinheiro(rideId, codigoEntrega = "") {
         const r = await fetch(`${CONFIG.backend}/api/rides/${encodeURIComponent(rideId)}/cash-reported`, {
           method: "POST",
@@ -1738,8 +1739,8 @@
           body: JSON.stringify({ ...driverProof(), codigoEntrega }),
         });
         const d = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(d.message || "Não consegui avisar o suporte agora. Tente de novo.");
-        return { ...d, aguardandoDono: true };
+        if (!r.ok) throw new Error(d.message || "Não consegui finalizar agora. Tente de novo.");
+        return { ...d, aguardandoDono: !d.finalizada };
       }
       function perguntarDinheiro(job) {
         return new Promise((resolve) => {
@@ -1748,7 +1749,7 @@
           back.innerHTML = `<div role="dialog" aria-modal="true" style="width:min(480px,100%);background:#11151f;color:#f3f5f8;border-radius:20px 20px 0 0;border:1px solid rgba(255,154,0,.4);padding:20px 18px 24px;display:grid;gap:12px;font-family:inherit;text-align:center">
             <div style="font-size:2rem">💳</div>
             <strong style="font-size:1.1rem">Pagamento ainda não aprovado no app</strong>
-            <span style="color:#aeb4c3;font-size:.9rem;line-height:1.4">Se ${escSeguro(job.nome || "o cliente")} vai pagar pelo link ou cartão, espere aprovar e toque em Finalizar de novo. Se ele pagou em <b>dinheiro</b> (ou Pix direto para você), avise o suporte: o dono confere e finaliza.</span>
+            <span style="color:#aeb4c3;font-size:.9rem;line-height:1.4">Se ${escSeguro(job.nome || "o cliente")} vai pagar pelo link ou cartão, espere aprovar e toque em Finalizar de novo. Se ele pagou em <b>dinheiro</b> (ou Pix direto para você), toque abaixo: a corrida finaliza na hora e a taxa do app fica no seu saldo, descontada da próxima corrida paga pelo app.</span>
             <p data-erro hidden style="margin:0;padding:10px 12px;border-radius:12px;background:rgba(255,82,82,.14);color:#ffb3ad;font-size:.88rem"></p>
             <button type="button" data-dinheiro style="padding:14px;border-radius:14px;border:0;background:#ff9a00;color:#140a00;font:inherit;font-weight:900;font-size:1.02rem">💵 Cliente pagou em dinheiro</button>
             <button type="button" data-voltar style="padding:10px;border:0;background:none;color:#aeb4c3;font:inherit;font-weight:800">Voltar</button>
@@ -1759,7 +1760,7 @@
           back.querySelector("[data-dinheiro]").onclick = async (ev) => {
             const botao = ev.currentTarget;
             botao.disabled = true;
-            botao.textContent = "Avisando o suporte...";
+            botao.textContent = "Finalizando...";
             try {
               fim(await avisarPagamentoDinheiro(job.id));
             } catch (e) {
@@ -1832,6 +1833,7 @@
         if (resultado.aguardandoDono) {
           alert(resultado.message || "Avisamos o suporte. O dono confere e finaliza.");
         } else {
+          if (resultado.finalizada && resultado.message) alert(resultado.message);
           if (lerNavAtiva()?.id === job.id) salvarNavAtiva(null);
           if (window.MotoNav.idAtual() === job.id) window.MotoNav.fechar();
         }
@@ -2018,6 +2020,7 @@
         jobsRequestController = null;
       let ganhosPeriodo = "today",
         ganhosResumo = null,
+        ganhosSaldoApp = null,
         ganhosDias = [],
         ganhosHistorico = [],
         ganhosCursor = "",
@@ -2492,7 +2495,13 @@
                 )
                 .join("")
             : '<div class="empty">Nenhum serviço finalizado no histórico.</div>';
-        lista.innerHTML = `<section class="earnings-shell"><div class="earnings-head"><div><p class="muted">Resumo do período</p><h2>Meus ganhos</h2></div><button id="atualizar-ganhos" class="secondary earnings-refresh" type="button" title="Atualizar" aria-label="Atualizar ganhos">↻</button></div><div class="earnings-periods">${["today", "7days", "30days", "all"].map((periodo) => `<button type="button" data-periodo-ganhos="${periodo}" class="${ganhosPeriodo === periodo ? "" : "secondary"}">${periodoGanhosLabel(periodo)}</button>`).join("")}</div><div class="earnings-metrics"><div class="earning-metric primary"><span>Ganhos</span><strong>${moeda(resumo.ganho)}</strong></div><div class="earning-metric"><span>Serviços</span><strong>${Number(resumo.servicos || 0)}</strong></div><div class="earning-metric"><span>Corridas</span><strong>${Number(resumo.corridas || 0)}</strong></div><div class="earning-metric"><span>Entregas</span><strong>${Number(resumo.entregas || 0)}</strong></div><div class="earning-metric"><span>Média por serviço</span><strong>${moeda(resumo.mediaPorServico)}</strong></div><div class="earning-metric"><span>Distância</span><strong>${Number(resumo.quilometros || 0).toFixed(1).replace(".", ",")} km</strong></div></div>${grafico}<div class="earnings-head"><div><p class="muted">Últimos serviços</p><h2>Histórico</h2></div></div><div class="earning-history">${historico}</div>${ganhosCursor ? '<button id="carregar-mais-ganhos" class="secondary" type="button">Carregar mais 20</button>' : ""}</section>`;
+        // Taxa das corridas pagas em dinheiro: descontada da proxima corrida paga pelo app.
+        const saldo = ganhosSaldoApp,
+          movimentos = (saldo?.historico || []).slice(0, 6).map((m) => `<div style="display:flex;justify-content:space-between;gap:10px;font-size:.82rem;padding:6px 0;border-top:1px solid rgba(255,255,255,.07)"><span>${escSeguro(m.descricao || (m.valor > 0 ? "Corrida em dinheiro" : "Desconto"))}<br><small class="muted">${m.emMs ? new Date(m.emMs).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : ""}</small></span><strong style="color:${m.valor > 0 ? "#ffb27a" : "#7ee2a8"};white-space:nowrap">${m.valor > 0 ? "+" : "−"} ${moeda(Math.abs(m.valor))}</strong></div>`).join(""),
+          cartaoSaldo = !saldo || (!saldo.devendo && !saldo.credito && !movimentos)
+            ? ""
+            : `<div style="margin:12px 0;padding:14px;border-radius:16px;background:${saldo.devendo ? "rgba(255,138,0,.10)" : "rgba(53,201,121,.10)"};border:1px solid ${saldo.devendo ? "rgba(255,138,0,.45)" : "rgba(53,201,121,.4)"}"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><div><p class="muted" style="margin:0">${saldo.devendo ? "💵 Taxa do app a descontar" : saldo.credito ? "✅ Crédito com o app" : "✅ Taxas em dia"}</p><strong style="font-size:1.4rem">${moeda(saldo.devendo || saldo.credito || 0)}</strong></div></div><p class="muted" style="margin:8px 0 0;font-size:.82rem;line-height:1.4">${saldo.devendo ? "É a parte do app das corridas que o cliente pagou em dinheiro. Ela sai sozinha da próxima corrida paga pelo app (Pix/cartão) — você fica sempre com pelo menos 30% da corrida." : saldo.credito ? "Esse valor abate as próximas taxas de corridas em dinheiro." : "Nenhuma taxa de corrida em dinheiro pendente."}</p>${movimentos ? `<div style="margin-top:8px">${movimentos}</div>` : ""}</div>`;
+        lista.innerHTML = `<section class="earnings-shell"><div class="earnings-head"><div><p class="muted">Resumo do período</p><h2>Meus ganhos</h2></div><button id="atualizar-ganhos" class="secondary earnings-refresh" type="button" title="Atualizar" aria-label="Atualizar ganhos">↻</button></div><div class="earnings-periods">${["today", "7days", "30days", "all"].map((periodo) => `<button type="button" data-periodo-ganhos="${periodo}" class="${ganhosPeriodo === periodo ? "" : "secondary"}">${periodoGanhosLabel(periodo)}</button>`).join("")}</div><div class="earnings-metrics"><div class="earning-metric primary"><span>Ganhos</span><strong>${moeda(resumo.ganho)}</strong></div><div class="earning-metric"><span>Serviços</span><strong>${Number(resumo.servicos || 0)}</strong></div><div class="earning-metric"><span>Corridas</span><strong>${Number(resumo.corridas || 0)}</strong></div><div class="earning-metric"><span>Entregas</span><strong>${Number(resumo.entregas || 0)}</strong></div><div class="earning-metric"><span>Média por serviço</span><strong>${moeda(resumo.mediaPorServico)}</strong></div><div class="earning-metric"><span>Distância</span><strong>${Number(resumo.quilometros || 0).toFixed(1).replace(".", ",")} km</strong></div></div>${cartaoSaldo}${grafico}<div class="earnings-head"><div><p class="muted">Últimos serviços</p><h2>Histórico</h2></div></div><div class="earning-history">${historico}</div>${ganhosCursor ? '<button id="carregar-mais-ganhos" class="secondary" type="button">Carregar mais 20</button>' : ""}</section>`;
         lista.querySelectorAll("[data-periodo-ganhos]").forEach(
           (button) =>
             (button.onclick = () => {
@@ -2542,6 +2551,7 @@
         if (!atualizar && cached && Date.now() - cached.t < 5 * 60 * 1000) {
           ganhosResumo = cached.summary;
           ganhosDias = cached.days;
+          ganhosSaldoApp = cached.saldoApp || null;
           renderGanhos();
           if (!ganhosHistorico.length) await carregarHistoricoGanhos(true);
           return;
@@ -2563,7 +2573,8 @@
           if (!r.ok) throw new Error(d.message || d.error || "Não consegui carregar os ganhos.");
           ganhosResumo = d.summary || {};
           ganhosDias = Array.isArray(d.days) ? d.days : [];
-          ganhosCache.set(ganhosPeriodo, { t: Date.now(), summary: ganhosResumo, days: ganhosDias });
+          ganhosSaldoApp = d.saldoApp || null;
+          ganhosCache.set(ganhosPeriodo, { t: Date.now(), summary: ganhosResumo, days: ganhosDias, saldoApp: ganhosSaldoApp });
           renderGanhos();
           if (atualizar || !ganhosHistorico.length) await carregarHistoricoGanhos(true);
         } catch (error) {
@@ -3221,6 +3232,7 @@
                   ouvir();
                   return;
                 }
+                if (d.finalizada && d.message) alert(d.message);
                 if (lerNavAtiva()?.id === btn.dataset.finalizar) salvarNavAtiva(null);
                 btn.textContent = d.pendingApproval ? "Aguardando confirmação da empresa" : `${servico[0].toUpperCase() + servico.slice(1)} finalizada`;
                 limparCache();

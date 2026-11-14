@@ -17,11 +17,13 @@
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.message || d.error || "Não consegui carregar os repasses.");
       const lista = d.motoboys || [];
-      const total = lista.reduce((s, m) => s + Number(m.total || 0), 0);
+      // Liquido: repasse menos a taxa das corridas que o motoboy recebeu em dinheiro.
+      const pagar = (m) => Number(m.liquido ?? m.total ?? 0);
+      const total = lista.reduce((s, m) => s + pagar(m), 0);
       const estornos = d.estornosAposPagamento || [];
       document.getElementById("repassesTotal").textContent = lista.length ? `Total a pagar: ${reais(total)}` : "";
       box.innerHTML = (lista.length
-        ? `<table><thead><tr><th>Motoboy</th><th>Corridas</th><th>A pagar</th><th>Desde</th><th>Ação</th></tr></thead><tbody>${lista.map((m) => `<tr><td>${esc(m.motoboyNome)}</td><td>${Number(m.corridas || 0)}</td><td><b>${reais(m.total)}</b></td><td>${m.desdeMs ? new Date(m.desdeMs).toLocaleDateString("pt-BR") : "-"}</td><td><button type="button" data-repasse-pago="${esc(m.motoboyCpf)}" data-nome="${esc(m.motoboyNome)}" data-total="${Number(m.total || 0)}">Já paguei</button></td></tr>`).join("")}</tbody></table>`
+        ? `<table><thead><tr><th>Motoboy</th><th>Corridas</th><th>Repasse</th><th>Taxa em dinheiro</th><th>A pagar</th><th>Desde</th><th>Ação</th></tr></thead><tbody>${lista.map((m) => `<tr><td>${esc(m.motoboyNome)}</td><td>${Number(m.corridas || 0)}</td><td>${reais(m.total)}</td><td>${Number(m.dividaApp || 0) > 0 ? `<span style="color:#ffb27a">− ${reais(m.dividaApp)}</span>` : "-"}</td><td><b>${reais(pagar(m))}</b></td><td>${m.desdeMs ? new Date(m.desdeMs).toLocaleDateString("pt-BR") : "-"}</td><td><button type="button" data-repasse-pago="${esc(m.motoboyCpf)}" data-nome="${esc(m.motoboyNome)}" data-total="${pagar(m)}">Já paguei</button></td></tr>`).join("")}</tbody></table><div style="padding:8px 14px;color:#aeb4c3;font-size:.8rem">"Taxa em dinheiro" é a parte do app das corridas que o motoboy recebeu em dinheiro: já sai do valor a pagar.</div>`
         : `<div style="padding:16px;color:#aeb4c3">Nenhum repasse pendente. ✅</div>`)
         + (estornos.length ? `<div style="padding:12px 14px;color:#ffb4ab;border-top:1px solid rgba(255,82,82,.3)">⚠️ ${estornos.length} corrida(s) estornada(s) depois que o repasse já tinha sido pago: ${estornos.map((e) => `${esc(e.motoboyNome)} ${reais(e.valor)}`).join(", ")}. Desconte no próximo repasse.</div>` : "");
     } catch (error) {

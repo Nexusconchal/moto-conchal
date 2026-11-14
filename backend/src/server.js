@@ -209,6 +209,36 @@ function rideSplitAmounts(total, km, createdAtMs = Date.now()) {
   };
 }
 
+// Corrida paga em dinheiro (ou Pix direto ao motoboy): a corrida finaliza na hora e a taxa
+// do app vira saldo devedor do motoboy, descontado da proxima corrida paga pelo Mercado Pago
+// (igual a 99). O motoboy fica sempre com pelo menos 30% da corrida em que o desconto entra.
+const DEBT_MIN_DRIVER_SHARE = 0.3;
+function debtCollectAmount(debtCents, total, appFee) {
+  const debt = Math.max(0, Math.round(Number(debtCents) || 0));
+  if (!debt) return 0;
+  const room = Math.floor(money(total) * (1 - DEBT_MIN_DRIVER_SHARE) * 100) - Math.round(money(appFee) * 100);
+  return money(Math.max(0, Math.min(debt, room)) / 100);
+}
+
+function driverDebtHistoryRef(driverCpf, tipo, refId) {
+  return db.collection('motoboys').doc(driverCpf).collection('dividaApp').doc(`${tipo}_${String(refId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 120)}`);
+}
+
+// writer: transacao ou batch. centavos > 0 aumenta a divida; < 0 abate.
+function recordDriverDebt(writer, driverCpf, { centavos, tipo, refId, descricao = '' }) {
+  const cpf = onlyDigits(driverCpf);
+  const value = Math.round(Number(centavos) || 0);
+  if (cpf.length !== 11 || !value) return;
+  writer.set(db.collection('motoboys').doc(cpf), {
+    dividaAppCentavos: admin.firestore.FieldValue.increment(value),
+    dividaAppAtualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
+  writer.set(driverDebtHistoryRef(cpf, tipo, refId), {
+    tipo, refId: String(refId || ''), centavos: value, descricao: cleanText(descricao, 160),
+    criadoEmMs: Date.now(), criadoEm: admin.firestore.FieldValue.serverTimestamp()
+  });
+}
+
 function isOutOfConchal(value) {
   const text = normalizeText(value);
   return !!text && !text.includes('conchal');
@@ -3374,13 +3404,15 @@ async function createPaymentPreference(rideId, ride, driverCpf) {
 
   const split = rideSplitAmounts(ride.valor, ride.km, timestampMs(ride.criadaEm));
   const { total, appFee, driverAmount } = split;
+  // Taxa de corrida em dinheiro que o motoboy ainda deve: entra junto na taxa do app.
+  const cobrancaDividaApp = debtCollectAmount(driver.dividaAppCentavos, total, appFee);
 
   const preference = await mpFetch('/checkout/preferences', {
     token: sellerToken,
     method: 'POST',
     body: {
       external_reference: rideId,
-      marketplace_fee: appFee,
+      marketplace_fee: money(appFee + cobrancaDividaApp),
       notification_url: mercadoPagoWebhookUrl({ rideId, driverCpf }),
       back_urls: {
         success: appUrl('/index.html?pagamento=ok'),
@@ -3402,7 +3434,8 @@ async function createPaymentPreference(rideId, ride, driverCpf) {
         app_percent: split.appPercent,
         driver_percent: split.driverPercent,
         app_fee: appFee,
-        driver_amount: driverAmount
+        driver_amount: driverAmount,
+        cobranca_divida: cobrancaDividaApp
       }
     }
   });
@@ -3413,7 +3446,8 @@ async function createPaymentPreference(rideId, ride, driverCpf) {
     sandboxInitPoint: preference.sandbox_init_point,
     total,
     appFee,
-    driverAmount
+    driverAmount,
+    cobrancaDividaApp
   };
 }
 
@@ -6526,11 +6560,12 @@ app.post('/api/drivers/:cpf/earnings/summary', async (req, res, next) => {
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
     await getDriverWithProof(driverCpf, req.body);
     await initializeDriverEarnings(driverCpf);
+    const saldoApp = await driverDebtSummary(driverCpf).catch(() => null);
 
     const period = ['today', '7days', '30days', 'all'].includes(req.body.period) ? req.body.period : 'today';
     if (period === 'all') {
       const totalSnap = await driverEarningsRef(driverCpf).get();
-      return res.json({ ok: true, period, summary: publicDriverEarnings(totalSnap.data()), days: [] });
+      return res.json({ ok: true, period, summary: publicDriverEarnings(totalSnap.data()), days: [], saldoApp });
     }
 
     const count = period === '30days' ? 30 : period === '7days' ? 7 : 1;
@@ -6542,11 +6577,29 @@ app.post('/api/drivers/:cpf/earnings/summary', async (req, res, next) => {
       mergeDriverEarningsSummary(total, raw);
       return { dia: dayKeys[index], ...publicDriverEarnings(raw) };
     });
-    return res.json({ ok: true, period, summary: publicDriverEarnings(total), days });
+    return res.json({ ok: true, period, summary: publicDriverEarnings(total), days, saldoApp });
   } catch (error) {
     return next(error);
   }
 });
+
+// Saldo com o app: taxa de corridas em dinheiro ainda nao descontada (devendo) ou credito.
+async function driverDebtSummary(driverCpf) {
+  const cpf = onlyDigits(driverCpf);
+  const [driverSnap, history] = await Promise.all([
+    db.collection('motoboys').doc(cpf).get(),
+    db.collection('motoboys').doc(cpf).collection('dividaApp').orderBy('criadoEmMs', 'desc').limit(15).get()
+  ]);
+  const centavos = Math.round(Number(driverSnap.data()?.dividaAppCentavos || 0));
+  return {
+    devendo: money(Math.max(0, centavos) / 100),
+    credito: money(Math.max(0, -centavos) / 100),
+    historico: history.docs.map((doc) => {
+      const item = doc.data() || {};
+      return { tipo: item.tipo, valor: money(Number(item.centavos || 0) / 100), descricao: item.descricao || '', emMs: Number(item.criadoEmMs || 0) };
+    })
+  };
+}
 
 app.post('/api/drivers/:cpf/earnings/history', async (req, res, next) => {
   try {
@@ -7793,10 +7846,18 @@ app.get('/api/admin/repasses', assertOwner, async (_req, res, next) => {
       atual.desdeMs = atual.desdeMs ? Math.min(atual.desdeMs, Number(item.criadoEmMs || 0)) : Number(item.criadoEmMs || 0);
       porMotoboy.set(cpf, atual);
     });
+    // Taxa de corrida em dinheiro que o motoboy deve: sai do repasse (paga o liquido).
+    const lista = [...porMotoboy.values()];
+    const driverDocs = lista.length ? await db.getAll(...lista.map((item) => db.collection('motoboys').doc(item.motoboyCpf))) : [];
+    driverDocs.forEach((docSnap, index) => {
+      const divida = Math.max(0, Number(docSnap.data()?.dividaAppCentavos || 0)) / 100;
+      lista[index].dividaApp = money(Math.min(divida, lista[index].total));
+      lista[index].liquido = money(lista[index].total - lista[index].dividaApp);
+    });
     const estornos = await db.collection('repassesMotoboy').where('estornoAposPagamento', '==', true).limit(50).get();
     return res.json({
       ok: true,
-      motoboys: [...porMotoboy.values()].sort((a, b) => b.total - a.total),
+      motoboys: lista.sort((a, b) => b.total - a.total),
       estornosAposPagamento: estornos.docs.map((docSnap) => ({ rideId: docSnap.id, ...docSnap.data() }))
     });
   } catch (error) {
@@ -7819,8 +7880,14 @@ app.post('/api/admin/repasses/pagar', assertOwner, async (req, res, next) => {
       total = money(total + Number(docSnap.data()?.valor || 0));
       batch.set(docSnap.ref, { status: 'pago', pagoEmMs: Date.now() }, { merge: true });
     });
+    // Abate a taxa das corridas em dinheiro: o dono paga so o liquido.
+    const driverSnap = await db.collection('motoboys').doc(motoboyCpf).get();
+    const desconto = money(Math.min(Math.max(0, Number(driverSnap.data()?.dividaAppCentavos || 0)) / 100, total));
+    if (!snap.empty && desconto > 0) {
+      recordDriverDebt(batch, motoboyCpf, { centavos: -Math.round(desconto * 100), tipo: 'repasse', refId: `${Date.now()}`, descricao: 'Descontado do repasse pago pelo dono' });
+    }
     if (!snap.empty) await batch.commit();
-    return res.json({ ok: true, corridas: snap.size, total });
+    return res.json({ ok: true, corridas: snap.size, total, descontoDividaApp: snap.empty ? 0 : desconto, liquido: money(total - (snap.empty ? 0 : desconto)) });
   } catch (error) {
     return next(error);
   }
@@ -11792,6 +11859,7 @@ app.post('/api/rides/:rideId/cash-reported', async (req, res, next) => {
     const ref = db.collection('corridas').doc(String(req.params.rideId || ''));
     let wrongCode = false;
     let attemptsUsed = 0;
+    let appFeeDevida = 0;
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       const ride = snap.data() || {};
@@ -11805,10 +11873,30 @@ app.post('/api/rides/:rideId/cash-reported', async (req, res, next) => {
         if (attemptsUsed >= STANDALONE_DELIVERY_CODE_MAX_ATTEMPTS) throw fail('Codigo de entrega bloqueado por tentativas erradas. Fale com o suporte MotoJa.', 'codigo_entrega_bloqueado', 423);
         if (!ride.codigoEntrega || onlyDigits(req.body.codigoEntrega) !== ride.codigoEntrega) { wrongCode = true; return; }
       }
+      // Pago em dinheiro (ou Pix direto): finaliza na hora, sem esperar o dono. O motoboy ficou
+      // com o valor todo, entao a taxa do app vira saldo devedor dele (descontado depois).
+      const split = rideSplitAmounts(ride.pagamento?.total || ride.valor, ride.km, timestampMs(ride.criadaEm));
+      appFeeDevida = split.appFee;
+      const agora = Date.now();
+      await recordDriverEarning(tx, driverCpf, driverEarningEvent('corrida', ref.id, { ...ride, ganhoMotoboy: split.driverAmount }, agora));
       tx.set(ref, {
-        dinheiroInformado: { emMs: Date.now(), motoboy: cleanText(ride.motoboy || '', 80), motoboyCpf: driverCpf, codigoConferido: isStandaloneDelivery(ride) },
+        status: 'finalizada',
+        finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        realizadaEm: admin.firestore.FieldValue.serverTimestamp(),
+        pagoEmDinheiro: true,
+        dinheiroInformado: { emMs: agora, motoboy: cleanText(ride.motoboy || '', 80), motoboyCpf: driverCpf, codigoConferido: isStandaloneDelivery(ride), finalizadaNaHora: true },
+        rastreamentoAtivo: false,
+        motoboyLocalizacao: admin.firestore.FieldValue.delete(),
+        ganhoContabilizadoEm: admin.firestore.FieldValue.serverTimestamp(),
+        ganhoMotoboy: split.driverAmount, ganhoApp: split.appFee,
+        valorMotoboy: split.driverAmount, valorApp: split.appFee,
+        percentualMotoboy: split.driverPercent, percentualApp: split.appPercent,
+        dividaAppRegistrada: split.appFee,
+        pagamento: { ...(ride.pagamento || {}), status: 'approved', metodo: 'dinheiro', valido: true, total: split.total, appFee: split.appFee, driverAmount: split.driverAmount },
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
+      recordDriverDebt(tx, driverCpf, { centavos: Math.round(split.appFee * 100), tipo: 'dinheiro', refId: ref.id, descricao: `Taxa da corrida de ${ride.nome || 'cliente'} paga em dinheiro` });
+      tx.set(db.collection('motoboys').doc(driverCpf), { corridaAtivaId: admin.firestore.FieldValue.delete(), atualizadoEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
     });
     if (wrongCode) {
       await ref.set({ tentativasCodigoEntrega: admin.firestore.FieldValue.increment(1), atualizadaEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
@@ -11816,8 +11904,13 @@ app.post('/api/rides/:rideId/cash-reported', async (req, res, next) => {
     }
     rideStatusCache.delete(ref.id);
     adminStateCache = null;
+    clearDriverProofCache(driverCpf);
+    driverAvailability.job('rides', ref.id, 'finalizada');
+    driverAvailabilitySocket.publishAll();
     emitSupportOperationsRefresh();
-    return res.json({ ok: true, message: 'Pronto! Avisamos o suporte. O dono confere o pagamento em dinheiro e finaliza.' });
+    const taxa = appFeeDevida.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    return res.json({ ok: true, finalizada: true, taxaApp: appFeeDevida,
+      message: `Corrida finalizada! A taxa do app (${taxa}) fica no seu saldo e é descontada da próxima corrida paga pelo app.` });
   } catch (error) {
     return next(error);
   }
@@ -12775,6 +12868,7 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
           total: payment.total,
           appFee: payment.appFee,
           driverAmount: payment.driverAmount,
+          cobrancaDividaApp: payment.cobrancaDividaApp || 0,
           criadoEm: admin.firestore.FieldValue.serverTimestamp()
         },
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
@@ -13985,6 +14079,7 @@ app.post('/api/rides/:rideId/payment/preference', assertAdmin, async (req, res, 
         total: preference.total,
         appFee: preference.appFee,
         driverAmount: preference.driverAmount,
+        cobrancaDividaApp: preference.cobrancaDividaApp || 0,
         criadoEm: admin.firestore.FieldValue.serverTimestamp()
       },
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
@@ -14306,6 +14401,14 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
       const pagamentoAprovado = payment.status === 'approved';
       const valorConfere = valorEsperado > 0 && Math.abs(totalPago - valorEsperado) <= 0.01;
       const anterior = ride.pagamento || {};
+      // Ja finalizada como paga em dinheiro: pagamento pelo link depois disso fica para o dono estornar.
+      if (ride.pagoEmDinheiro && pagamentoAprovado && anterior.paymentId !== String(payment.id)) {
+        tx.set(rideRef, {
+          pagamentoDuplicadoEm: admin.firestore.FieldValue.serverTimestamp(),
+          pagamentosDuplicados: { [String(payment.id)]: { status: payment.status, total: totalPago, conta: paymentSource, depoisDeDinheiro: true } }
+        }, { merge: true });
+        return;
+      }
       if (anterior.status === 'approved' && anterior.valido !== false && anterior.paymentId
         && anterior.paymentId !== String(payment.id)) {
         // Segundo pagamento da mesma corrida (link e cartao): nao apaga o primeiro;
@@ -14332,10 +14435,23 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
         divergencia: pagamentoAprovado && !valorConfere
           ? `Valor pago ${totalPago.toFixed(2)} diferente do esperado ${valorEsperado.toFixed(2)}`
           : null,
-        appFee: money(payment.marketplace_fee || payment.metadata?.app_fee || ride.pagamento?.appFee || 0),
+        appFee: money(payment.metadata?.app_fee || ride.pagamento?.appFee || payment.marketplace_fee || 0),
         driverAmount: money(payment.metadata?.driver_amount || ride.pagamento?.driverAmount || 0),
         atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
       };
+      // Desconto da taxa de corrida em dinheiro: so quando o pagamento aprovado trouxe a cobranca
+      // na taxa do app (conta do motoboy). Pagamento na conta MotoJa desconta no repasse.
+      const cobrancaPedida = money(payment.metadata?.cobranca_divida ?? anterior.cobrancaDividaApp ?? 0);
+      if (pagamentoAprovado && valorConfere && !anterior.dividaDescontadaEm && cobrancaPedida > 0 && rideDriverCpf.length === 11
+        && !payment.metadata?.payment_kind && money(payment.marketplace_fee || 0) + 0.01 >= money(pagamento.appFee + cobrancaPedida)) {
+        pagamento.cobrancaDividaApp = cobrancaPedida;
+        pagamento.dividaDescontadaEm = admin.firestore.FieldValue.serverTimestamp();
+        recordDriverDebt(tx, rideDriverCpf, { centavos: -Math.round(cobrancaPedida * 100), tipo: 'desconto', refId: rideId, descricao: `Descontado da corrida de ${ride.nome || 'cliente'}` });
+      } else if (anterior.dividaDescontadaEm) {
+        pagamento.cobrancaDividaApp = anterior.cobrancaDividaApp || 0;
+      } else {
+        pagamento.cobrancaDividaApp = 0;
+      }
       tx.set(usageRef, {
         target,
         paymentId: String(payment.id),
