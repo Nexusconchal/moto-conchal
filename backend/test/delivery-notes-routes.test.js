@@ -38,7 +38,7 @@ function setup(delivery) {
     io: { to: (room) => ({ emit: (name, event) => emitted.push([name, room, event]) }) },
     rideChatAllowed: () => true, RIDE_CHAT_MAX: 500, validCoordinate: (p) => Number.isFinite(p.lat) && Number.isFinite(p.lon),
     admin: { firestore: { FieldValue: { serverTimestamp: () => Date.now(), increment: (v) => v } } },
-    rateLimit: () => 'limit', createRideLimiter: 'limit', mapLimiter: 'limit',
+    rateLimit: () => 'limit', createRideLimiter: 'limit', rideChatLimiter: 'limit', mapLimiter: 'limit',
     app: { post: (url, ...handlers) => routes.set(url, handlers.at(-1)) }
   });
   const start = source.indexOf('// ---------- Lote pela nota: enderecos no servidor');

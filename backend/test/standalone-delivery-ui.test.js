@@ -35,7 +35,7 @@ function harness({ cached = true, cardPresent = true } = {}) {
     entregaAvulsa: j => j?.modalidade === 'entrega_avulsa', servicoExclusivo: () => false, servicoEhEntrega: () => false,
     escSeguro: value => String(value || ''), etapaServico: () => 'levar', pontosServico: () => ({ coleta: {}, destino: {} }),
     recursoAtual: () => 'rides', nomeServico: () => 'corrida', atualizarAbas() {}, tempoAvisoRestante: () => '', chegadaLocal: () => 0,
-    fotoClienteSegura: () => '', chatNaoLido: () => false, lerNavAtiva: () => active, salvarNavAtiva: value => active = value,
+    fotoClienteSegura: () => '', chatNaoLido: () => false, vigiarLigacao() {}, lerNavAtiva: () => active, salvarNavAtiva: value => active = value,
     limparCache: () => jobsCache.clear(), ouvir: async (silencioso = false) => { nav.forceRefresh = !silencioso; }, chaveLista: () => 'rides:mine', sincronizarTelaMapa() {},
     avisarPagamentoDinheiro: async () => ({ aguardandoDono: true }), alert: message => alerts.push(message), confirm: () => true,
     window: { MotoNav: { idAtual: () => nav.closed ? '' : job.id, fechar: () => nav.closed = true,

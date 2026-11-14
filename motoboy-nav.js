@@ -981,7 +981,7 @@
           ${avatar}
           <div><b>${esc(cliente.nome || '-')}</b><span>${esc(cliente.linha || '')}</span></div>
           <div class="mjnav-client-icons">
-            ${typeof cliente.chat === 'function' ? `<button type="button" class="mjnav-round" data-mjnav-chat aria-label="${cfg.paradas ? 'Chat com a loja' : 'Chat com o cliente'}" style="position:relative">💬${cliente.chatNaoLido ? '<span class="mjchat-badge" style="position:absolute;top:2px;right:2px;margin:0"></span>' : ''}</button>${cfg.paradas && fone ? `<a class="mjnav-round" href="tel:${esc(fone)}" aria-label="Ligar para a loja">📞</a>` : ''}` : fone ? `<a class="mjnav-round" href="https://api.whatsapp.com/send?phone=55${esc(fone)}" target="_blank" rel="noopener" aria-label="WhatsApp">💬</a><a class="mjnav-round" href="tel:${esc(fone)}" aria-label="Ligar">📞</a>` : ''}
+            ${typeof cliente.chat === 'function' ? `<button type="button" class="mjnav-round" data-mjnav-chat aria-label="${cfg.paradas ? 'Chat com a loja' : 'Chat com o cliente'}" style="position:relative">💬${cliente.chatNaoLido ? '<span class="mjchat-badge" style="position:absolute;top:2px;right:2px;margin:0"></span>' : ''}</button>${cfg.paradas && fone ? `<a class="mjnav-round" href="tel:${esc(fone)}" aria-label="Ligar para a loja">📞</a>` : ''}${typeof cliente.ligar === 'function' ? `<button type="button" class="mjnav-round" data-mjnav-ligar aria-label="Ligar pelo app" style="background:#1fbf5b;color:#fff">📞</button>` : ''}` : fone ? `<a class="mjnav-round" href="https://api.whatsapp.com/send?phone=55${esc(fone)}" target="_blank" rel="noopener" aria-label="WhatsApp">💬</a><a class="mjnav-round" href="tel:${esc(fone)}" aria-label="Ligar">📞</a>` : ''}
           </div>
         </div>
         ${htmlParadasNav(cfg)}
@@ -1030,6 +1030,8 @@
       chatBotao.querySelector('.mjchat-badge')?.remove();
       cliente.chat();
     };
+    const ligarBotao = ui().querySelector('[data-mjnav-ligar]');
+    if (ligarBotao) ligarBotao.onclick = () => cliente.ligar();
     const principal = ui().querySelector('[data-mjnav-principal]');
     if (principal) principal.onclick = () => executar(principal, cfg.principal);
     ligarParadas(cfg);

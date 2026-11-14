@@ -3958,7 +3958,9 @@
 
         // Conversa com o motoboy pelo chat do app (sem trocar WhatsApp), como no 99.
         const chatNovo = !!window.MotojaRideChat?.hasUnread(pedido.id, dados.chatUltimaEmMs, dados.chatUltimoAutor, "cliente");
-        const driverWaBtn = `<button type="button" id="abrir-chat-corrida" data-ride="${escHtml(pedido.id)}" data-modalidade="${escHtml(dados.modalidade || "corrida")}" data-motoboy="${escHtml(dados.motoboy || "Motoboy")}" style="display:inline-flex;align-items:center;gap:5px;padding:8px 13px;border-radius:999px;border:0;background:#ff9a00;color:#111;font-weight:900;font-size:12.5px;box-shadow:0 4px 12px rgba(255,154,0,.35);cursor:pointer">💬 Chat${chatNovo ? '<span class="mjchat-badge" aria-label="mensagem nova"></span>' : ""}</button>`;
+        const driverWaBtn = `<button type="button" id="abrir-chat-corrida" data-ride="${escHtml(pedido.id)}" data-modalidade="${escHtml(dados.modalidade || "corrida")}" data-motoboy="${escHtml(dados.motoboy || "Motoboy")}" style="display:inline-flex;align-items:center;gap:5px;padding:8px 13px;border-radius:999px;border:0;background:#ff9a00;color:#111;font-weight:900;font-size:12.5px;box-shadow:0 4px 12px rgba(255,154,0,.35);cursor:pointer">💬 Chat${chatNovo ? '<span class="mjchat-badge" aria-label="mensagem nova"></span>' : ""}</button>${window.MotojaRideCall ? ` <button type="button" id="ligar-motoboy" data-ride="${escHtml(pedido.id)}" data-motoboy="${escHtml(dados.motoboy || "Motoboy")}" style="display:inline-flex;align-items:center;gap:5px;padding:8px 13px;border-radius:999px;border:0;background:#1fbf5b;color:#fff;font-weight:900;font-size:12.5px;box-shadow:0 4px 12px rgba(31,191,91,.35);cursor:pointer">📞 Ligar</button>` : ""}`;
+        // Ligacao pelo app: o motoboy pode ligar e o celular do cliente toca aqui.
+        window.MotojaRideCall?.watch({ rideId: pedido.id, backend: CONFIG.backend, auth: authCorridaCliente, voce: "cliente", nomeOutro: dados.motoboy || "Motoboy" });
 
         if (!$("mapa-acompanhamento") || corridaAcompanhadaId !== pedido.id) {
           if (mapaAcompanhamento) mapaAcompanhamento.remove();
@@ -4294,6 +4296,7 @@
               pedidoTimer = setTimeout(() => verificarPedidoAtivo(true), pollMs);
               return;
             } else if (d.status === "finalizada") {
+              window.MotojaRideCall?.unwatch(pedido.id);
               if (d.podeAvaliar && d.motoboy) abrirAvaliacaoMotoboy(pedido.id, d);
               resultadoBox.innerHTML = `<div style="text-align:left"><strong style="font-size:1.12rem">Corrida finalizada. Obrigado por usar a MotoJá!</strong><br><span class="small">Gostou do atendimento? Indique para um amigo e concorra a 1 corrida grátis.</span><div class="actions" style="margin-top:12px"><button id="btn-indicar-finalizada" class="btn-main" type="button">Indicar e concorrer</button><button id="btn-pedir-novamente-finalizada" class="btn-secondary" type="button">Pedir outra corrida</button></div></div>`;
               setTimeout(() => {
@@ -4508,7 +4511,18 @@
           button.textContent = "Entrar";
         }
       });
+      function authCorridaCliente() {
+        return { headers: {
+          "x-customer-device": clienteDeviceId(),
+          ...(localStorage.getItem(TOKEN_CLIENTE) ? { authorization: `Bearer ${localStorage.getItem(TOKEN_CLIENTE)}` } : {}),
+        } };
+      }
       document.addEventListener("click", (event) => {
+        const ligar = event.target.closest?.("#ligar-motoboy");
+        if (ligar && window.MotojaRideCall) {
+          window.MotojaRideCall.call({ rideId: ligar.dataset.ride, backend: CONFIG.backend, auth: authCorridaCliente, voce: "cliente", nomeOutro: ligar.dataset.motoboy || "Motoboy" });
+          return;
+        }
         const botao = event.target.closest?.("#abrir-chat-corrida");
         if (!botao || !window.MotojaRideChat) return;
         botao.querySelector(".mjchat-badge")?.remove();
@@ -5154,7 +5168,8 @@
       })();
     </script>
     <script src="./customer-availability.js?v=224" defer></script>
-    <script src="./ride-chat.js?v=234" defer></script>
+    <script src="./ride-call-ui.js?v=1" defer></script>
+    <script src="./ride-chat.js?v=235" defer></script>
     <script src="./ride-rating.js?v=234" defer></script>
     <script src="./cliente-menu.js?v=2"></script>
     <script src="./cartao-scan.js?v=1"></script>

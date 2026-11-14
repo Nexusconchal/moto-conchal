@@ -15,6 +15,7 @@ import { createCallPushDispatcher, callOfferExpiry, reconcileCallOffers } from '
 import { createDriverTelegram } from './driver-telegram.js';
 import { publicDriverCard, publicDriverId, sortPublicDrivers, referralCode, normalizeReferralCode, monthKey } from './customer-menu.js';
 import { reachedPickup, lateCancelState, lateCancelBlocker, waitCancelState, waitCancelBlocker } from './ride-late.js';
+import { createCallStore } from './ride-call.js';
 import { parseRating, ratingBlocker, ratingSummary, driverRatingView, RATING_TAGS } from './ride-rating.js';
 import { validateLocation } from './tracking-policy.js';
 import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state.js';
@@ -3291,6 +3292,15 @@ const createRideLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'muitas_tentativas', message: 'Aguarde um pouco antes de pedir outra corrida.' }
 });
+// Chat e ligacao conferem o servidor a cada poucos segundos: limite proprio (o de pedir
+// corrida, 8 por minuto, travava o chat depois de meio minuto aberto).
+const rideChatLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'muitas_tentativas', message: 'Muitas mensagens seguidas. Aguarde alguns segundos.' }
+});
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -4732,7 +4742,7 @@ function maskDeliveryChatText(value) {
     .trim();
 }
 
-app.post('/api/deliveries/:deliveryId/chat/send', createRideLimiter, async (req, res, next) => {
+app.post('/api/deliveries/:deliveryId/chat/send', rideChatLimiter, async (req, res, next) => {
   try {
     const ref = db.collection('entregas').doc(String(req.params.deliveryId || ''));
     const snap = await ref.get();
@@ -4759,7 +4769,7 @@ app.post('/api/deliveries/:deliveryId/chat/send', createRideLimiter, async (req,
   }
 });
 
-app.post('/api/deliveries/:deliveryId/chat/list', createRideLimiter, async (req, res, next) => {
+app.post('/api/deliveries/:deliveryId/chat/list', rideChatLimiter, async (req, res, next) => {
   try {
     const ref = db.collection('entregas').doc(String(req.params.deliveryId || ''));
     const snap = await ref.get();
@@ -11350,7 +11360,7 @@ function rideChatOpen(ride = {}) {
   return ['finalizada', 'cancelada'].includes(ride.status) && closedAt && Date.now() - closedAt < 2 * 60 * 60 * 1000;
 }
 
-app.post('/api/rides/:rideId/chat/send', createRideLimiter, async (req, res, next) => {
+app.post('/api/rides/:rideId/chat/send', rideChatLimiter, async (req, res, next) => {
   try {
     const rideRef = db.collection('corridas').doc(String(req.params.rideId || ''));
     const snap = await rideRef.get();
@@ -11375,7 +11385,7 @@ app.post('/api/rides/:rideId/chat/send', createRideLimiter, async (req, res, nex
   }
 });
 
-app.post('/api/rides/:rideId/chat/list', createRideLimiter, async (req, res, next) => {
+app.post('/api/rides/:rideId/chat/list', rideChatLimiter, async (req, res, next) => {
   try {
     const rideRef = db.collection('corridas').doc(String(req.params.rideId || ''));
     const snap = await rideRef.get();
@@ -11395,6 +11405,104 @@ app.post('/api/rides/:rideId/chat/list', createRideLimiter, async (req, res, nex
   } catch (error) {
     return next(error);
   }
+});
+
+// ---------- Ligacao de voz pelo app (cliente <-> motoboy) ----------
+// O audio vai direto entre os celulares (WebRTC). Ninguem ve o numero do outro.
+// TURN (opcional, para redes que bloqueiam conexao direta): TURN_URLS, TURN_USERNAME, TURN_CREDENTIAL.
+const rideCalls = createCallStore({ randomId: () => crypto.randomBytes(8).toString('hex') });
+const CALL_TOKEN_SECRET = crypto.randomBytes(24).toString('hex');
+const CALL_TOKEN_MS = 3 * 60 * 60 * 1000;
+
+function callIceServers() {
+  const servers = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
+  const turn = String(process.env.TURN_URLS || '').split(',').map((url) => url.trim()).filter((url) => /^turns?:/.test(url));
+  if (turn.length) servers.push({ urls: turn, username: process.env.TURN_USERNAME || '', credential: process.env.TURN_CREDENTIAL || '' });
+  return servers;
+}
+
+// Ficha curta para conferir a ligacao a cada 2 s sem ler o banco toda vez.
+function callToken(rideId, role) {
+  const exp = Date.now() + CALL_TOKEN_MS;
+  const sig = crypto.createHmac('sha256', CALL_TOKEN_SECRET).update(`${rideId}|${role}|${exp}`).digest('hex').slice(0, 32);
+  return `${role}.${exp}.${sig}`;
+}
+
+function callTokenRole(rideId, token) {
+  const [role, exp, sig] = String(token || '').split('.');
+  if (!['cliente', 'motoboy'].includes(role) || !(Number(exp) > Date.now()) || !/^[a-f0-9]{32}$/.test(sig || '')) return '';
+  const expected = crypto.createHmac('sha256', CALL_TOKEN_SECRET).update(`${rideId}|${role}|${exp}`).digest('hex').slice(0, 32);
+  return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected)) ? role : '';
+}
+
+async function rideCallContext(req, { requireActive = false } = {}) {
+  const rideId = String(req.params.rideId || '').slice(0, 120);
+  const viaToken = !requireActive && callTokenRole(rideId, req.body?.callToken);
+  if (viaToken) return { rideId, role: viaToken, ride: null };
+  const snap = await db.collection('corridas').doc(rideId).get();
+  if (!snap.exists) throw Object.assign(new Error('Corrida nao encontrada.'), { status: 404, code: 'corrida_nao_encontrada' });
+  const ride = snap.data() || {};
+  const role = await rideChatParticipant(req, ride);
+  if (!role) throw Object.assign(new Error('A ligacao e so entre o cliente e o motoboy desta corrida.'), { status: 403, code: 'ligacao_nao_autorizada' });
+  if (requireActive && ride.status !== 'aceita') throw Object.assign(new Error('A ligacao pelo app funciona so enquanto a corrida esta em andamento.'), { status: 409, code: 'corrida_nao_ativa' });
+  return { rideId, role, ride };
+}
+
+// Aviso no celular de quem vai receber a ligacao (app fechado ou em segundo plano).
+async function notifyIncomingCall(ride, from) {
+  const tokens = [];
+  if (from === 'cliente' && onlyDigits(ride.motoboyCpf).length === 11) {
+    const driver = await db.collection('motoboys').doc(onlyDigits(ride.motoboyCpf)).get();
+    Object.entries(driver.data()?.fcmTokens || {}).forEach(([token, info]) => { if (info?.ativo !== false) tokens.push(token); });
+  } else if (from === 'motoboy' && ride.customerId) {
+    const customer = await db.collection('clientes').doc(String(ride.customerId)).get();
+    Object.entries(customer.data()?.fcmTokens || {}).forEach(([token, info]) => { if (info?.ativo !== false) tokens.push(token); });
+  }
+  if (!tokens.length) return;
+  const nome = from === 'cliente' ? (ride.nome || 'Cliente') : (ride.motoboy || 'Seu motoboy');
+  await admin.messaging().sendEachForMulticast({
+    tokens: tokens.slice(0, 20),
+    notification: { title: `📞 ${nome} está te ligando pelo app`, body: 'Abra o MotoJá para atender.' },
+    android: { priority: 'high', ttl: 45000, notification: { channelId: 'chamadas', tag: 'ligacao' } },
+    webpush: { headers: { Urgency: 'high', TTL: '45' }, fcmOptions: { link: appUrl(from === 'cliente' ? '/motoboy.html' : '/index.html') } },
+    data: { tipo: 'ligacao_app', rideId: String(ride.id || '') }
+  }).catch((error) => console.error('call push failed', error?.message));
+}
+
+app.get('/api/call-config', (_req, res) => res.json({ ok: true, iceServers: callIceServers() }));
+
+app.post('/api/rides/:rideId/call/start', rideChatLimiter, async (req, res, next) => {
+  try {
+    const { rideId, role, ride } = await rideCallContext(req, { requireActive: true });
+    const call = rideCalls.start(rideId, role, req.body?.offer);
+    notifyIncomingCall({ ...ride, id: rideId }, role).catch(() => {});
+    res.set('cache-control', 'no-store');
+    return res.json({ ok: true, call: rideCalls.view(rideId, role), callToken: callToken(rideId, role) });
+  } catch (error) { return next(error); }
+});
+
+app.post('/api/rides/:rideId/call/state', rideChatLimiter, async (req, res, next) => {
+  try {
+    const { rideId, role } = await rideCallContext(req);
+    res.set('cache-control', 'no-store');
+    return res.json({ ok: true, voce: role, call: rideCalls.view(rideId, role), callToken: req.body?.callToken && callTokenRole(rideId, req.body.callToken) ? req.body.callToken : callToken(rideId, role) });
+  } catch (error) { return next(error); }
+});
+
+app.post('/api/rides/:rideId/call/answer', rideChatLimiter, async (req, res, next) => {
+  try {
+    const { rideId, role } = await rideCallContext(req);
+    rideCalls.answer(rideId, role, String(req.body?.callId || ''), req.body?.answer);
+    return res.json({ ok: true, call: rideCalls.view(rideId, role) });
+  } catch (error) { return next(error); }
+});
+
+app.post('/api/rides/:rideId/call/end', rideChatLimiter, async (req, res, next) => {
+  try {
+    const { rideId, role } = await rideCallContext(req);
+    rideCalls.end(rideId, role, String(req.body?.callId || ''), String(req.body?.motivo || ''));
+    return res.json({ ok: true, call: rideCalls.view(rideId, role) });
+  } catch (error) { return next(error); }
 });
 
 // Avaliacao do motoboy pelo cliente depois da corrida (uma por corrida, ate 7 dias).

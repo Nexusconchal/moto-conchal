@@ -20,12 +20,12 @@ function harness(ride) {
   const ctx = vm.createContext({ db, Date, Math, Number, String, Map, console,
     admin: { firestore: { FieldValue: { serverTimestamp: () => 'TS', increment: n => ({ inc: n }) } } },
     cleanText: (v, n = 500) => String(v || '').trim().slice(0, n), onlyDigits: v => String(v || '').replace(/\D/g, ''),
-    hashSecret: hash, timestampMs: v => Number(v || 0), rideStatusCache: new Map(), createRideLimiter: 0,
+    hashSecret: hash, timestampMs: v => Number(v || 0), rideStatusCache: new Map(), createRideLimiter: 0, rideChatLimiter: 0,
     getDriverWithProof: async (cpf, body) => { if (body.driverCnh !== 'ok') throw Object.assign(new Error('prova'), { status: 401 }); return {}; },
     canReadRideTracking: async (req, access) => req.header('x-customer-device') && hash(req.header('x-customer-device')) === access.deviceHash,
     app: { post: (p, ...h) => { routes[p] = h.at(-1); } } });
   vm.runInContext(slice('const RIDE_CHAT_MAX', "app.post('/api/rides/:rideId/chat/send'"), ctx);
-  vm.runInContext(slice("app.post('/api/rides/:rideId/chat/send'", "// Avaliacao do motoboy pelo cliente"), ctx);
+  vm.runInContext(slice("app.post('/api/rides/:rideId/chat/send'", "// ---------- Ligacao de voz pelo app"), ctx);
   const call = async (path, { body = {}, device = '' } = {}) => {
     const out = { status: 200 }; let failure;
     const res = { status: c => { out.status = c; return res; }, json: d => { out.data = d; return res; } };

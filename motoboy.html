@@ -1074,10 +1074,11 @@
     </main>
     <script src="./driver-availability.js?v=call-alert-1"></script>
     <script src="./motoboy-call-alerts.js?v=3"></script>
-    <script src="./ride-chat.js?v=234"></script>
+    <script src="./ride-call-ui.js?v=1"></script>
+    <script src="./ride-chat.js?v=235"></script>
     <script src="./motoboy-avisos.js?v=5"></script>
     <script src="./motoboy-tela-acesa.js?v=1" defer></script>
-    <script src="./motoboy-nav.js?v=tela-acesa-1" defer></script>
+    <script src="./motoboy-nav.js?v=ligar-1" defer></script>
     <script src="./motoboy-home.js?v=5" defer></script>
     <script src="./motoboy-food.js?v=5"></script>
     <script type="module">
@@ -1840,6 +1841,7 @@
       }
       function abrirNavegacaoServico(c) {
         if (!window.MotoNav || !c?.id || servicoExclusivo(c)) return false;
+        if (!servicoEhEntrega(c) && c.status === "aceita") vigiarLigacao(c);
         const entrega = servicoEhEntrega(c),
           etapa = etapaServico(c),
           { coleta, destino } = pontosServico(c),
@@ -1915,9 +1917,10 @@
               nome: c.nome || "Cliente",
               foto: fotoClienteSegura(c),
               linha: etapa === "buscar" ? coleta.titulo : destino.titulo,
-              // Mototaxi: sem WhatsApp do cliente; a conversa e pelo chat do app.
+              // Mototaxi: sem WhatsApp do cliente; conversa e ligacao pelo app (sem mostrar numero).
               chat: () => abrirChatCorrida(c),
               chatNaoLido: chatNaoLido(c),
+              ligar: window.MotojaRideCall ? () => window.MotojaRideCall.call({ rideId: c.id, backend: CONFIG.backend, auth: () => ({ body: driverProof() }), voce: "motoboy", nomeOutro: c.nome || "Cliente" }) : undefined,
             },
             aviso: !avisado
               ? { tipo: "alerta", texto: `Avise o cliente para liberar a ${avulsa ? "entrega" : "corrida"}${prazo ? ` · ${prazo}` : ""}. Ele recebe seu nome, foto e acompanha você ao vivo.` }
@@ -2716,6 +2719,18 @@
           },
         });
       }
+      // Ligacao pelo app: com corrida em andamento, o celular do motoboy toca quando o cliente liga.
+      function vigiarLigacao(c) {
+        if (!c?.id || !window.MotojaRideCall) return;
+        window.MotojaRideCall.watch({ rideId: c.id, backend: CONFIG.backend, auth: () => ({ body: driverProof() }), voce: "motoboy", nomeOutro: c.nome || "Cliente" });
+      }
+      window.addEventListener("motoja:jobs-rendered", (event) => {
+        const d = event.detail || {};
+        if (d.scope !== "mine" || d.kind !== "rides") return;
+        const ativa = (d.jobs || []).find((j) => j.status === "aceita");
+        if (ativa) vigiarLigacao(ativa);
+        else window.MotojaRideCall?.unwatch();
+      });
       function abrirChatEntrega(c) {
         if (!c?.id || !window.MotojaRideChat) return;
         window.MotojaRideChat.open({

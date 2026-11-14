@@ -151,27 +151,33 @@ public class LauncherActivity extends Activity {
                         Manifest.permission.ACCESS_COARSE_LOCATION}, REQ_LOCATION);
             }
 
-            // Camera dentro da tela (getUserMedia): so para o site do MotoJa e so a camera.
+            // Camera (ler o endereco da nota) e microfone (ligacao pelo app com o cliente),
+            // so para o site do MotoJa. Nada alem disso.
             @Override
             public void onPermissionRequest(PermissionRequest request) {
                 runOnUiThread(() -> {
                     Uri origem = request.getOrigin();
                     boolean nosso = origem != null && HOST.equals(origem.getHost());
-                    boolean soCamera = true;
+                    boolean video = false, audio = false, outro = false;
                     for (String recurso : request.getResources()) {
-                        if (!PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(recurso)) soCamera = false;
+                        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(recurso)) video = true;
+                        else if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(recurso)) audio = true;
+                        else outro = true;
                     }
-                    if (!nosso || !soCamera) {
+                    if (!nosso || outro || (!video && !audio)) {
                         request.deny();
                         return;
                     }
-                    if (hasCamera()) {
-                        request.grant(new String[] {PermissionRequest.RESOURCE_VIDEO_CAPTURE});
+                    java.util.List<String> faltam = new java.util.ArrayList<>();
+                    if (video && !hasCamera()) faltam.add(Manifest.permission.CAMERA);
+                    if (audio && !hasMic()) faltam.add(Manifest.permission.RECORD_AUDIO);
+                    if (faltam.isEmpty()) {
+                        request.grant(request.getResources());
                         return;
                     }
                     if (cameraRequest != null) cameraRequest.deny();
                     cameraRequest = request;
-                    requestPermissions(new String[] {Manifest.permission.CAMERA}, REQ_CAMERA);
+                    requestPermissions(faltam.toArray(new String[0]), REQ_CAMERA);
                 });
             }
 
@@ -316,8 +322,13 @@ public class LauncherActivity extends Activity {
             geoCallback.invoke(geoOrigin, hasLocation(), true);
             geoCallback = null;
         } else if (requestCode == REQ_CAMERA && cameraRequest != null) {
-            if (hasCamera()) cameraRequest.grant(new String[] {PermissionRequest.RESOURCE_VIDEO_CAPTURE});
-            else cameraRequest.deny();
+            java.util.List<String> liberados = new java.util.ArrayList<>();
+            for (String recurso : cameraRequest.getResources()) {
+                if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(recurso) && hasCamera()) liberados.add(recurso);
+                if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(recurso) && hasMic()) liberados.add(recurso);
+            }
+            if (liberados.isEmpty()) cameraRequest.deny();
+            else cameraRequest.grant(liberados.toArray(new String[0]));
             cameraRequest = null;
         } else if (requestCode == REQ_NOTIFICATIONS && pendingPermissionCallback != null) {
             String id = pendingPermissionCallback;
@@ -341,6 +352,10 @@ public class LauncherActivity extends Activity {
             cameraUri = null;
             cameraFile = null;
         }
+    }
+
+    boolean hasMic() {
+        return checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
     }
 
     boolean hasCamera() {
@@ -403,6 +418,8 @@ public class LauncherActivity extends Activity {
 
     private class Bridge {
         @JavascriptInterface public int callAlertVersion() { return trustedDriverPage ? 1 : 0; }
+        // App com microfone liberado para a ligacao pelo app (versao 1.0.8+).
+        @JavascriptInterface public int audioCallVersion() { return 1; }
         // Tela acesa enquanto o motoboy roda pelo GPS do app (o site liga e desliga).
         @JavascriptInterface public void keepScreenOn(boolean on) {
             if (!trustedDriverPage) return;

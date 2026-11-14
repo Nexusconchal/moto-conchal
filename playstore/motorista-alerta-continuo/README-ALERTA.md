@@ -1,6 +1,9 @@
-# MotoJÁ Motorista 1.0.7 — alerta contínuo com o app fechado
+# MotoJÁ Motorista 1.0.8 — ligação pelo app e alerta contínuo
 
-Atualização exclusiva do aplicativo Android do motoboy, pacote `br.com.nexusconchal.motoja.motorista`, versionCode 8 (use um número maior que o da versão que está na Play Store). O projeto anterior permanece preservado.
+Atualização exclusiva do aplicativo Android do motoboy, pacote `br.com.nexusconchal.motoja.motorista`, versionCode 9 (use um número maior que o da versão que está na Play Store). O projeto anterior permanece preservado.
+
+Novidades da 1.0.8:
+- **Ligação pelo app com o cliente:** permissões `RECORD_AUDIO` e `MODIFY_AUDIO_SETTINGS`; o WebView libera o microfone (além da câmera) só para nexusmotoja.com.br. `NexusNative.audioCallVersion()` indica ao site que o app já tem o microfone.
 
 Novidades da 1.0.7:
 - **Alarme de reserva insistente:** se o Android não deixar abrir o serviço do alerta contínuo (app fechado há muito tempo, economia de bateria), a chamada aparece no canal `chamadas` com a voz "MotoJÁ! Bora rodar!" em modo insistente (`FLAG_INSISTENT`): repete até alguém aceitar (o push `removed` cancela), a chamada expirar (`setTimeoutAfter`) ou o motoboy abrir o app.

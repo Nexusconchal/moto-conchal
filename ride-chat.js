@@ -34,6 +34,8 @@
       .mjchat header{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);background:#161b27}
       .mjchat header b{flex:1;font-size:1rem}.mjchat header small{display:block;color:#9aa3b2;font-weight:400;font-size:.72rem;margin-top:2px}
       .mjchat header button{background:none;border:0;color:#fff;font-size:1.4rem;cursor:pointer;padding:4px 8px;box-shadow:none}
+      .mjchat header .mjchat-ligar{width:44px;height:44px;border-radius:50%;background:#1fbf5b;font-size:1.25rem;display:grid;place-items:center;padding:0}
+      .mjchat header .mjchat-ligar:disabled{opacity:.4}
       .mjchat-list{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px}
       .mjchat-msg{max-width:80%;padding:9px 12px;border-radius:14px;line-height:1.35;font-size:.92rem;white-space:pre-wrap;overflow-wrap:anywhere}
       .mjchat-msg small{display:block;margin-top:3px;font-size:.66rem;opacity:.7;text-align:right}
@@ -62,6 +64,8 @@
     state.firstRender = false;
     const closed = state.aberto === false;
     state.root.querySelector("textarea").disabled = closed;
+    const ligar = state.root.querySelector("[data-mjchat-ligar]");
+    if (ligar) ligar.disabled = closed;
     state.root.querySelector("form button").disabled = closed || state.sending;
     state.root.querySelector(".mjchat-aviso").textContent = closed
       ? `A ${state.servico} terminou. O chat fica só para leitura.`
@@ -139,7 +143,7 @@
     root.className = "mjchat-back";
     const rapidas = options.rapidas || [];
     root.innerHTML = `<div class="mjchat" role="dialog" aria-modal="true" aria-label="Chat da corrida">
-      <header><b>${esc(options.titulo || "Chat")}<small>${esc(options.subtitulo || "Conversa pelo app MotoJá")}</small></b><button type="button" data-mjchat-fechar aria-label="Fechar">×</button></header>
+      <header><b>${esc(options.titulo || "Chat")}<small>${esc(options.subtitulo || "Conversa pelo app MotoJá")}</small></b>${!options.caminho && window.MotojaRideCall ? `<button type="button" class="mjchat-ligar" data-mjchat-ligar aria-label="Ligar pelo app" title="Ligar pelo app (sem mostrar o número)">📞</button>` : ""}<button type="button" data-mjchat-fechar aria-label="Fechar">×</button></header>
       <div class="mjchat-list" aria-live="polite"></div>
       <p class="mjchat-aviso"></p>
       ${rapidas.length ? `<div class="mjchat-rapidas">${rapidas.map((t) => `<button type="button" data-mjchat-rapida="${esc(t)}">${esc(t)}</button>`).join("")}</div>` : ""}
@@ -148,7 +152,12 @@
     document.body.appendChild(root);
     state = { root, rideId: options.rideId, caminho: options.caminho || "", backend: options.backend, auth: options.auth, voce: options.voce || "", servico: options.servico || "corrida",
       tituloFixo: !!options.titulo, messages: [], aberto: true, sending: false, firstRender: true, timer: 0, onClose: options.onClose };
+    // Ligacao pelo app (so no chat da corrida): escuta ligacao recebida enquanto o chat esta aberto.
+    const ligacao = () => ({ rideId: state?.rideId, backend: state?.backend, auth: state?.auth, voce: state?.voce,
+      nomeOutro: root.querySelector("header b")?.firstChild?.textContent || options.titulo || "" });
+    if (!options.caminho) window.MotojaRideCall?.watch(ligacao());
     root.addEventListener("click", (event) => {
+      if (event.target.closest("[data-mjchat-ligar]")) { window.MotojaRideCall?.call(ligacao()); return; }
       if (event.target === root || event.target.closest("[data-mjchat-fechar]")) close();
       const quick = event.target.closest("[data-mjchat-rapida]");
       if (quick) send(quick.dataset.mjchatRapida);
