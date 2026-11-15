@@ -38,6 +38,7 @@ const saveFunction = server.slice(server.indexOf('async function saveTrackedLoca
 function transactionHarness(job) {
   const writes = [];
   const context = vm.createContext({
+    liveLocations: new Map(), reachedPickup: () => false, LIVE_LOCATION_PERSIST_MS: 20000,
     validateLocation: (body, previous) => validateLocation(body, previous, now),
     onlyDigits: (v) => String(v || '').replace(/\D/g, ''),
     admin: { firestore: { FieldValue: { serverTimestamp: () => 'SERVER_TIME' } } },
@@ -54,6 +55,27 @@ test('active assigned delivery writes one location in transaction', async () => 
   await h.save();
   assert.equal(h.writes.length, 1);
   assert.equal(h.writes[0].data.motoboyLocalizacao.clientTimestamp, now);
+});
+test('GPS ao vivo: posicao seguinte em menos de 20 s vai so na memoria, sem gravar no banco', async () => {
+  let clock = now;
+  const writes = [];
+  const job = { status: 'retirada', motoboyCpf: '12345678901', rastreamentoAtivo: true };
+  const context = vm.createContext({ liveLocations: new Map(), reachedPickup: () => false, LIVE_LOCATION_PERSIST_MS: 20000, Date: { now: () => clock },
+    validateLocation: (body, previous) => validateLocation(body, previous, clock), onlyDigits: (v) => String(v || '').replace(/\D/g, ''),
+    admin: { firestore: { FieldValue: { serverTimestamp: () => 'SERVER_TIME' } } },
+    db: { runTransaction: (callback) => callback({ get: async () => ({ data: () => job }), update: (ref, data) => writes.push({ ref, data }) }) } });
+  vm.runInContext(saveFunction, context);
+  const h = { writes, save: (body) => context.saveTrackedLocation({ path: 'entregas/d' }, '12345678901', body, true) };
+  await h.save(point);
+  clock = now + 9000;
+  const segunda = await h.save({ ...point, latitude: -22.3302, timestamp: now + 9000 });
+  clock = now + 21000;
+  await h.save({ ...point, latitude: -22.3304, timestamp: now + 21000 });
+  assert.equal(writes.length, 2, 'grava de novo depois de 20 s');
+  writes.pop();
+  assert.equal(h.writes.length, 1, 'so a primeira grava');
+  assert.equal(segunda.live, true);
+  assert.equal(segunda.location.latitude, -22.3302);
 });
 test('accepted delivery already sends GPS on the way to the pickup', async () => {
   const h = transactionHarness({ status: 'aceita', motoboyCpf: '12345678901' });

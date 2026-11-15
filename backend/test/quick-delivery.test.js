@@ -36,7 +36,7 @@ function harness(balance = 100, { taxaAvulsa = false } = {}) {
     return result;
   }};
   const money = n => Math.round(Number(n || 0) * 100) / 100;
-  const context = vm.createContext({ process: { env: { TAXA_AVULSA_LIMITE: taxaAvulsa ? 'on' : '' } }, console, db, prepareQuickDelivery, quickDeliveryFare, planFare, isSpecialFoodDestination: t => /martinho\s*prado|tujuguaba|iate/i.test(t), protectedDelivery, assertCompanyDelivery,
+  const context = vm.createContext({ liveLocationFor: (p, s) => s, process: { env: { TAXA_AVULSA_LIMITE: taxaAvulsa ? 'on' : '' } }, console, db, prepareQuickDelivery, quickDeliveryFare, planFare, isSpecialFoodDestination: t => /martinho\s*prado|tujuguaba|iate/i.test(t), protectedDelivery, assertCompanyDelivery,
     cleanText: s => String(s || '').trim(), onlyDigits: s => String(s || '').replace(/\D/g, ''), normalizeText: s => String(s || '').toLowerCase(), money,
     admin: { firestore: { FieldValue: { serverTimestamp: () => Date.now(), delete: () => null } } },
     companyBalance: d => ({ saldo: d.saldo, reservado: d.reservado, disponivel: d.saldo - d.reservado }),
@@ -212,8 +212,8 @@ test('company summary enables the daily plan (R$ 10 in districts) only when acti
 test('batch finish needs explicit whole-lot confirmation, pickup and fresh GPS; addressed delivery still needs destination proximity', () => {
   const start = source.indexOf('      if (!exclusiveService && !approvalCompanyId && !planAuto) {', source.indexOf('async function finishCompanyDelivery('));
   const end = source.indexOf('      if (protectedDelivery(delivery)', start);
-  const context = vm.createContext({ timestampMs: Number, coordinateDistanceKm: () => 100 });
-  vm.runInContext(`function validate(delivery, req) { const exclusiveService = false, approvalCompanyId = '', planAuto = false, body = req.body; ${source.slice(start, end)} }`, context);
+  const context = vm.createContext({ liveLocationFor: (p, s) => s, timestampMs: Number, coordinateDistanceKm: () => 100 });
+  vm.runInContext(`function validate(delivery, req) { const exclusiveService = false, approvalCompanyId = '', planAuto = false, body = req.body, deliveryRef = { path: 'entregas/d' }; ${source.slice(start, end)} }`, context);
   const d = { entregaNaNota: true, retiradaConfirmadaEm: Date.now() - 60000, motoboyLocalizacao: { serverTimestampMs: Date.now() } };
   assert.throws(() => context.validate(d, { body: {} }), /todas as entregas/);
   assert.doesNotThrow(() => context.validate(d, { body: { confirmarLoteEntregue: true } }));

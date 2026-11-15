@@ -532,6 +532,7 @@
     carregarServicos();
     clearInterval(ganhosTimer);
     ganhosTimer = setInterval(() => {
+      if (document.hidden) return;
       carregarGanhos();
       renderAtivo();
     }, 120000);

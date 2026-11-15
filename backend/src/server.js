@@ -69,7 +69,7 @@ const CAR_FREE_RIDES = Math.max(1, Number(process.env.CAR_FREE_RIDES || 3));
 const MP_OAUTH_STATE_MS = 10 * 60 * 1000;
 const driverProofCache = new Map();
 const carDriverCache = new Map();
-const ADMIN_STATE_CACHE_MS = 60 * 1000;
+const ADMIN_STATE_CACHE_MS = 2 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 let adminStateCache = null;
 let supportOperationsCache = null;
@@ -1667,6 +1667,9 @@ async function rebuildDriverEarnings(driverCpf) {
 
 // Upgrade only legacy quick batches once per driver/process. No full historical rebuild.
 async function repairQuickDeliveryEarnings(cpf) {
+  // Economia do banco: o reparo antigo roda uma vez por motoboy (antes rodava a cada reinicio do servidor).
+  const feito = await driverEarningsRef(cpf).get();
+  if (feito.data()?.reparoLoteV1) return;
   const snapshot = await db.collection('entregas').where('motoboyCpf', '==', cpf).where('entregaNaNota', '==', true).limit(100).get();
   for (const docSnap of snapshot.docs) {
     const job = docSnap.data() || {};
@@ -1685,6 +1688,7 @@ async function repairQuickDeliveryEarnings(cpf) {
       tx.set(driverEarningsDayRef(cpf, event.dia), increment, { merge: true });
     });
   }
+  await driverEarningsRef(cpf).set({ reparoLoteV1: true }, { merge: true });
 }
 
 async function initializeDriverEarnings(driverCpf) {
@@ -3270,6 +3274,10 @@ app.use('/api/admin', (req, res, next) => {
 });
 app.use('/api', (req, res, next) => {
   if (req.method === 'POST') {
+    // Qualquer acao em corrida/entrega (pedir, aceitar, cancelar, finalizar...) zera a lista aberta.
+    const caminho = req.originalUrl.split('?')[0];
+    if (/^\/api\/(?:admin\/|support\/operations\/)?(rides|deliveries|corrida|entrega)(?:\/[^/]+\/(?:accept|cancel|client-cancel|late-cancel|wait-cancel|finish|force-finish|renew|cash-reported|pickup|arrived|notify-client))?\/?$/.test(caminho)
+      || /^\/api\/companies\/me\/(deliveries|quick|lote|pedidos)/.test(caminho)) res.on('finish', () => { if (res.statusCode < 400) invalidateOpenJobs(); });
     const originalJson = res.json;
     res.json = function (body) {
       if (observeAvailabilityJob(driverAvailability, req.originalUrl, res.statusCode, body, onlyDigits(req.body?.driverCpf))) driverAvailabilitySocket.publishAll();
@@ -3917,6 +3925,7 @@ function telegramOfferInBackground(docs, text) {
 }
 
 async function notifyDriversAboutRide(rideId, ride) {
+  invalidateOpenJobs();
   const drivers = await db.collection('motoboys').where('status', '==', 'ativo').get();
   const tokens = [];
   const city = rideOperatingCity(ride);
@@ -3958,7 +3967,19 @@ function minutesOfDay(time) {
 }
 
 async function notifyCustomersRideReminder(slot) {
-  const customers = await db.collection('clientes').limit(1000).get();
+  // Economia do banco: le so quem ativou o lembrete (antes lia todos os clientes, 3x por dia).
+  let customers = await db.collection('clientes').where('temLembrete', '==', true).limit(1000).get();
+  if (customers.empty) {
+    // Cadastros antigos sem a marca: varre uma vez e marca quem tem lembrete.
+    customers = await db.collection('clientes').limit(1000).get();
+    const batch = db.batch();
+    let marcados = 0;
+    customers.forEach((doc) => {
+      const temToken = Object.values(doc.data()?.fcmTokens || {}).some((info) => info?.tipo === 'cliente_lembrete' && info?.ativo !== false);
+      if (temToken && marcados < 450) { batch.set(doc.ref, { temLembrete: true }, { merge: true }); marcados += 1; }
+    });
+    if (marcados) await batch.commit().catch((error) => console.error('reminder flag migration failed', error?.message));
+  }
   const tokens = [];
 
   customers.forEach((doc) => {
@@ -4022,6 +4043,7 @@ function saoPauloDateTimeParts(date = new Date()) {
   };
 }
 
+const customerReminderDone = new Set();
 async function runCustomerReminderTick(date = new Date()) {
   const { day, time: now } = saoPauloDateTimeParts(date);
   const nowMin = minutesOfDay(now);
@@ -4032,7 +4054,9 @@ async function runCustomerReminderTick(date = new Date()) {
   if (!slot) return;
   const time = slot.time;
 
-  const markerRef = db.collection('sistema').doc('cliente_lembrete_' + day + '_' + time.replace(':', ''));
+  const markerKey = 'cliente_lembrete_' + day + '_' + time.replace(':', '');
+  if (customerReminderDone.has(markerKey)) return;
+  const markerRef = db.collection('sistema').doc(markerKey);
   let shouldSend = false;
   await db.runTransaction(async (tx) => {
     const marker = await tx.get(markerRef);
@@ -4044,6 +4068,8 @@ async function runCustomerReminderTick(date = new Date()) {
     });
     shouldSend = true;
   });
+  customerReminderDone.add(markerKey);
+  if (customerReminderDone.size > 50) customerReminderDone.delete(customerReminderDone.values().next().value);
   if (!shouldSend) return;
 
   const result = await notifyCustomersRideReminder(time);
@@ -4072,6 +4098,7 @@ async function repeatDeliveryAlert(deliveryId, delivery, count) {
 }
 
 async function notifyDriversAboutDelivery(deliveryId, delivery, { onlyReserved = false } = {}) {
+  invalidateOpenJobs();
   // Entrega do plano com motoboy fixo: o push vai para todos (mostra que tem
   // movimento), mas so ele ve e pega; para ele o aviso diz que a entrega ja e dele.
   const reservedCpf = onlyDigits(delivery.motoboyExclusivoCpf);
@@ -5547,6 +5574,7 @@ app.post('/api/admin/support/accounts/:accountId/block', assertOwner, async (req
   }
 });
 
+const funnelSeen = new Map();
 app.post('/api/analytics/event', async (req, res, next) => {
   try {
     const type = cleanText(req.body.type || req.body.tipo, 80);
@@ -5557,6 +5585,13 @@ app.post('/api/analytics/event', async (req, res, next) => {
     const rideId = cleanText(req.body.rideId || req.body.corridaId || '', 120);
     const details = req.body.details && typeof req.body.details === 'object' ? req.body.details : {};
     const allowedDetails = {};
+    // Economia do banco: o mesmo evento da mesma sessao conta uma vez a cada 30 min.
+    const sessaoFunil = cleanText(req.body.sessionId, 80) || onlyDigits(req.body.telefoneCliente) || req.ip;
+    const chaveFunil = `${sessaoFunil}:${type}:${rideId}`;
+    const vistoFunil = funnelSeen.get(chaveFunil);
+    if (vistoFunil && Date.now() - vistoFunil < 30 * 60 * 1000) return res.status(200).json({ ok: true, repetido: true });
+    funnelSeen.set(chaveFunil, Date.now());
+    if (funnelSeen.size > 8000) funnelSeen.delete(funnelSeen.keys().next().value);
 
     Object.entries(details).slice(0, 20).forEach(([key, value]) => {
       if (['string', 'number', 'boolean'].includes(typeof value)) {
@@ -5612,7 +5647,10 @@ app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
       collectionState('depositos'),
       collectionState('recuperacoesSenhaEmpresa'),
       collectionState('empresas'),
-      collectionState('eventosFunil', 2000),
+      // So os eventos mais recentes (antes lia 2000 aleatorios a cada abertura do painel).
+      db.collection('eventosFunil').orderBy('criadaEm', 'desc').limit(800).get()
+        .then((snapshot) => snapshot.docs.map((doc) => serializeFirestore({ id: doc.id, ...doc.data() })))
+        .catch(() => collectionState('eventosFunil', 300)),
       db.collection('contasSuporte').limit(100).get().catch(() => ({ docs: [] }))
     ]);
     const planosAtivados = await db.collection('planosAtivados').where('ativadoEmMs', '>=', Date.now() - 31 * 86400000).limit(300).get()
@@ -6560,7 +6598,8 @@ app.post('/api/drivers/:cpf/earnings/summary', async (req, res, next) => {
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
     await getDriverWithProof(driverCpf, req.body);
     await initializeDriverEarnings(driverCpf);
-    const saldoApp = await driverDebtSummary(driverCpf).catch(() => null);
+    // Saldo com o app so na tela de Ganhos (a tela inicial confere o resumo a cada 2 min).
+    const saldoApp = req.body.saldo === true ? await driverDebtSummary(driverCpf).catch(() => null) : undefined;
 
     const period = ['today', '7days', '30days', 'all'].includes(req.body.period) ? req.body.period : 'today';
     if (period === 'all') {
@@ -6678,8 +6717,7 @@ app.post('/api/drivers/:cpf/call-alerts', async (req, res, next) => {
         load: async (kind, id) => {
           const pedidoFood = kind === 'deliveries' ? pedidoDaOferta(id) : null;
           if (pedidoFood) return foodAbertas.has(pedidoFood) ? { status: 'pendente', expiraEmMs: Date.now() + FOOD_OFFER_MS, food: true } : null;
-          const snapshot = await db.collection(kind === 'deliveries' ? 'entregas' : 'corridas').doc(id).get();
-          return snapshot.exists ? snapshot.data() : null;
+          return offerDoc(kind === 'deliveries' ? 'entregas' : 'corridas', id);
         },
         allowed: (kind, job) => job.food === true || !job.motoboyExclusivoCpf && job.tipo !== 'servico_exclusivo' &&
           (kind === 'rides' ? driverWantsRide(driver, job) : !deliveryReservedForOther(job, cpf) && driverWantsDeliveryIn(driver, deliveryOperatingCity(job)))
@@ -6692,6 +6730,30 @@ app.post('/api/drivers/:cpf/call-alerts', async (req, res, next) => {
     return res.json({ ok: true, available: true, offers });
   } catch (error) { next(error); }
 });
+
+// Economia do banco: a lista de chamadas abertas (e cada oferta conferida pelo alerta) e a
+// mesma para todos os motoboys; guarda por poucos segundos e zera a cada mudanca de corrida.
+const OPEN_JOBS_CACHE_MS = 5000;
+const openJobsCache = new Map();
+const offerDocCache = new Map();
+function invalidateOpenJobs() { openJobsCache.clear(); offerDocCache.clear(); }
+async function openJobsSnapshot(collectionName) {
+  const cached = openJobsCache.get(collectionName);
+  if (cached && Date.now() - cached.at < OPEN_JOBS_CACHE_MS) return cached.docs;
+  const snapshot = await db.collection(collectionName).where('status', '==', 'pendente').limit(30).get();
+  openJobsCache.set(collectionName, { at: Date.now(), docs: snapshot.docs });
+  return snapshot.docs;
+}
+async function offerDoc(collectionName, id) {
+  const key = `${collectionName}/${id}`;
+  const cached = offerDocCache.get(key);
+  if (cached && Date.now() - cached.at < 2500) return cached.data;
+  const snapshot = await db.collection(collectionName).doc(id).get();
+  const data = snapshot.exists ? snapshot.data() : null;
+  offerDocCache.set(key, { at: Date.now(), data });
+  if (offerDocCache.size > 500) offerDocCache.delete(offerDocCache.keys().next().value);
+  return data;
+}
 
 app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
   try {
@@ -6715,14 +6777,11 @@ app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
       )));
       docs = snapshots.flatMap((snapshot) => snapshot.docs);
     } else {
-      const snapshot = await db.collection(collectionName)
-        .where('status', '==', 'pendente')
-        .limit(30)
-        .get();
+      const openDocs = await openJobsSnapshot(collectionName);
       const services = driverServices(driver);
       docs = kind === 'rides'
-        ? snapshot.docs.filter((docSnap) => enabledCities[rideOperatingCity(docSnap.data())] && services[rideServiceKind(docSnap.data())])
-        : snapshot.docs.filter((docSnap) => {
+        ? openDocs.filter((docSnap) => enabledCities[rideOperatingCity(docSnap.data())] && services[rideServiceKind(docSnap.data())])
+        : openDocs.filter((docSnap) => {
           const delivery = docSnap.data();
           if (deliveryReservedForOther(delivery, driverCpf)) return false;
           // A entrega do plano reservada para ele aparece em qualquer cidade (e mesmo com Entregas desligado).
@@ -7338,6 +7397,7 @@ app.post('/api/customers/push-token', createRideLimiter, async (req, res, next) 
     await db.collection('clientes').doc(telefoneCliente).set({
       nome: nome || 'Cliente MotoJa',
       telefoneCliente,
+      temLembrete: true,
       fcmTokens: {
         [token]: {
           ativo: true,
@@ -11296,7 +11356,7 @@ app.post('/api/rides', createRideLimiter, async (req, res, next) => {
 });
 
 const rideStatusCache = new Map();
-const RIDE_STATUS_CACHE_MS = 2200;
+const RIDE_STATUS_CACHE_MS = 8000;
 
 async function canReadRideTracking(req, access) {
   // Link de acompanhamento do WhatsApp (so para ver o status, nunca chat ou nota).
@@ -11317,7 +11377,7 @@ app.get('/api/rides/:rideId/status', async (req, res, next) => {
     const cached = rideStatusCache.get(rideId);
     if (cached && (Date.now() - cached.at) < RIDE_STATUS_CACHE_MS) {
       if (!await canReadRideTracking(req, cached.access)) return res.status(403).json({ error: 'acompanhamento_nao_autorizado' });
-      return res.json(cached.payload);
+      return res.json(withLiveLocation(cached.payload, `corridas/${rideId}`));
     }
     const doc = await db.collection('corridas').doc(rideId).get();
     if (!doc.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
@@ -11380,7 +11440,7 @@ app.get('/api/rides/:rideId/status', async (req, res, next) => {
         if (now - v.at > 60000) rideStatusCache.delete(k);
       }
     }
-    res.json(payload);
+    res.json(withLiveLocation(payload, `corridas/${rideId}`));
   } catch (error) {
     next(error);
   }
@@ -11427,6 +11487,19 @@ function rideChatOpen(ride = {}) {
   return ['finalizada', 'cancelada'].includes(ride.status) && closedAt && Date.now() - closedAt < 2 * 60 * 60 * 1000;
 }
 
+// Economia do banco: o chat confere a cada 4 s; a corrida fica guardada por 4 s e as mensagens
+// so sao buscadas quando a corrida marca uma mensagem mais nova (chatUltimaEmMs).
+const chatRideCache = new Map();
+async function chatRide(rideId) {
+  const cached = chatRideCache.get(rideId);
+  if (cached && Date.now() - cached.at < 4000) return cached;
+  const snap = await db.collection('corridas').doc(rideId).get();
+  const entry = { at: Date.now(), exists: snap.exists, ride: snap.data() || {} };
+  chatRideCache.set(rideId, entry);
+  if (chatRideCache.size > 500) chatRideCache.delete(chatRideCache.keys().next().value);
+  return entry;
+}
+
 app.post('/api/rides/:rideId/chat/send', rideChatLimiter, async (req, res, next) => {
   try {
     const rideRef = db.collection('corridas').doc(String(req.params.rideId || ''));
@@ -11446,6 +11519,7 @@ app.post('/api/rides/:rideId/chat/send', rideChatLimiter, async (req, res, next)
     batch.set(rideRef, { chatUltimaEmMs: criadoEmMs, chatUltimoAutor: autor, chatTotal: admin.firestore.FieldValue.increment(1) }, { merge: true });
     await batch.commit();
     rideStatusCache.delete(rideRef.id);
+    chatRideCache.delete(rideRef.id);
     return res.json({ ok: true, mensagem: { id: messageRef.id, autor, texto, criadoEmMs } });
   } catch (error) {
     return next(error);
@@ -11455,13 +11529,16 @@ app.post('/api/rides/:rideId/chat/send', rideChatLimiter, async (req, res, next)
 app.post('/api/rides/:rideId/chat/list', rideChatLimiter, async (req, res, next) => {
   try {
     const rideRef = db.collection('corridas').doc(String(req.params.rideId || ''));
-    const snap = await rideRef.get();
+    const snap = await chatRide(rideRef.id);
     if (!snap.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
-    const ride = snap.data() || {};
+    const ride = snap.ride;
     const voce = await rideChatParticipant(req, ride);
     if (!voce) return res.status(403).json({ error: 'chat_nao_autorizado', message: 'Este chat e so do cliente e do motoboy desta corrida.' });
     if (!rideChatOpen(ride)) return res.json({ ok: true, voce, aberto: false, mensagens: [] });
     const depois = Math.max(0, Number(req.body?.depoisDeMs || 0));
+    const outro = voce === 'cliente' ? { nome: ride.motoboy || 'Motoboy' } : { nome: ride.nome || 'Cliente' };
+    // Nada novo desde a ultima conferida: responde sem ler as mensagens no banco.
+    if (depois && Number(ride.chatUltimaEmMs || 0) <= depois) return res.json({ ok: true, voce, aberto: ride.status === 'aceita', mensagens: [], outro });
     const query = depois ? rideRef.collection('chat').where('criadoEmMs', '>', depois) : rideRef.collection('chat');
     const messages = await query.limit(200).get();
     const mensagens = messages.docs
@@ -12973,7 +13050,11 @@ app.get('/api/companies/me/active-deliveries', assertCompany, assertCompanyAppro
       .limit(100)
       .get();
     const deliveries = snapshot.docs
-      .map((docSnap) => serializeFirestore({ id: docSnap.id, ...docSnap.data() }))
+      .map((docSnap) => {
+        const data = docSnap.data() || {};
+        const location = liveLocationFor(docSnap.ref.path, data.motoboyLocalizacao);
+        return serializeFirestore({ id: docSnap.id, ...data, ...(location ? { motoboyLocalizacao: location } : {}) });
+      })
       .filter((delivery) => delivery.status === 'pendente' || delivery.status === 'aceita' || delivery.status === 'retirada')
       .sort((a, b) => Number(timestampMs(b.aceitaEm || b.criadaEm)) - Number(timestampMs(a.aceitaEm || a.criadaEm)));
     return res.json({ ok: true, deliveries });
@@ -13059,8 +13140,45 @@ app.post('/api/deliveries/:deliveryId/pickup', async (req, res, next) => {
   }
 });
 
+// GPS ao vivo: a posicao vai na hora para quem acompanha (status do cliente, painel da loja),
+// mas so e gravada no banco a cada 20 s por servico (antes era a cada ~8 s por motoboy).
+const LIVE_LOCATION_PERSIST_MS = 20000;
+const liveLocations = new Map();
+
+function liveLocationFor(path, stored) {
+  const live = liveLocations.get(path);
+  if (!live?.location) return stored || null;
+  const storedMs = Number(stored?.serverTimestampMs || 0);
+  return Number(live.location.serverTimestampMs || 0) >= storedMs ? live.location : stored;
+}
+
+function withLiveLocation(payload, path) {
+  if (!payload?.motoboyLocalizacao && !payload?.rastreamentoAtivo) return payload;
+  const live = liveLocations.get(path);
+  if (!live?.location || payload.rastreamentoAtivo !== true || payload.status !== 'aceita') return payload;
+  const location = liveLocationFor(path, payload.motoboyLocalizacao);
+  return location === payload.motoboyLocalizacao ? payload : { ...payload, motoboyLocalizacao: serializeFirestore(location) };
+}
+
 async function saveTrackedLocation(ref, driverCpf, body, isDelivery) {
-  return db.runTransaction(async (tx) => {
+  const path = ref.path;
+  const live = liveLocations.get(path);
+  if (live && live.driverCpf === driverCpf && Date.now() - live.persistedAt < LIVE_LOCATION_PERSIST_MS) {
+    const result = validateLocation(body, live.location);
+    if (result.error) {
+      const error = new Error(result.error);
+      error.status = 422;
+      throw error;
+    }
+    if (result.ignored) return result;
+    // Chegou no embarque: grava na hora (some o "Cancelar motoboy" para o cliente).
+    const chegou = !isDelivery && !live.chegou && reachedPickup(live.job, result.location);
+    if (!chegou) {
+      live.location = result.location;
+      return { ...result, companyId: live.companyId, motoboy: live.motoboy, status: live.status, live: true };
+    }
+  }
+  const saved = await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const job = snap.data();
     if (!job || onlyDigits(job.motoboyCpf) !== driverCpf ||
@@ -13084,8 +13202,15 @@ async function saveTrackedLocation(ref, driverCpf, body, isDelivery) {
       localizacaoAtualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     });
-    return { ...result, companyId: job.empresaId || job.telefoneEmpresa, motoboy: job.motoboy || '', status: job.status };
+    return { ...result, companyId: job.empresaId || job.telefoneEmpresa, motoboy: job.motoboy || '', status: job.status,
+      job: { origemLat: job.origemLat, origemLon: job.origemLon },
+      chegou: isDelivery || !!job.motoboyChegouEm || reachedPickup(job, result.location) };
   });
+  if (saved?.location && !saved.ignored) {
+    liveLocations.set(path, { driverCpf, location: saved.location, persistedAt: Date.now(), companyId: saved.companyId, motoboy: saved.motoboy, status: saved.status, job: saved.job, chegou: saved.chegou });
+    if (liveLocations.size > 3000) liveLocations.delete(liveLocations.keys().next().value);
+  }
+  return saved;
 }
 
 app.post('/api/deliveries/:deliveryId/location', async (req, res, next) => {
@@ -13773,7 +13898,7 @@ async function finishCompanyDelivery(deliveryRef, driverCpf, body = {}, approval
           error.code = 'finalizacao_rapida_demais';
           throw error;
         }
-        const location = delivery.motoboyLocalizacao || {};
+        const location = liveLocationFor(deliveryRef.path, delivery.motoboyLocalizacao) || {};
         const locationMs = Number(location.serverTimestampMs || timestampMs(delivery.localizacaoAtualizadaEm));
         if (!locationMs || Date.now() - locationMs > 10 * 60 * 1000) {
           const error = new Error('Atualize sua localizacao perto do destino antes de finalizar.');
@@ -13955,7 +14080,7 @@ app.post('/api/rides/:rideId/location', async (req, res, next) => {
     const rideRef = db.collection('corridas').doc(req.params.rideId);
     const result = await saveTrackedLocation(rideRef, driverCpf, req.body, false);
     if (result.ignored) return res.json({ ok: true, ignored: result.ignored });
-    rideStatusCache.delete(req.params.rideId);
+    if (!result.live) rideStatusCache.delete(req.params.rideId);
     return res.json({ ok: true });
   } catch (error) {
     return next(error);
@@ -14843,6 +14968,7 @@ const supportAutomation = createSupportAutomation({
 });
 
 app.post('/api/support/whatsapp/webhook', async (req, res) => {
+  bookingDirty = true;
   try {
     const settings = await supportAutomation.config();
     const secret = settings.webhookSecret ? decryptSecret(settings.webhookSecret) : '';
@@ -15002,18 +15128,33 @@ async function scheduledCleanup() {
 
 setInterval(scheduledCleanup, CLEANUP_INTERVAL_MS);
 
-setInterval(() => {
+// Economia do banco: os avisos do grupo so procuram chamadas quando existe chamada aberta
+// (a lista aberta e a mesma, compartilhada, que os motoboys usam).
+setInterval(async () => {
+  try {
+    const [rides, deliveries] = await Promise.all([openJobsSnapshot('corridas'), openJobsSnapshot('entregas')]);
+    if (!rides.length && !deliveries.length) return;
+  } catch { /* na duvida, roda */ }
   supportAutomation.tick().catch(() => console.error('support automation tick failed'));
 }, 60 * 1000);
 
 // Avisos das corridas pedidas pelo WhatsApp (motoboy chegou, ninguem aceitou, finalizada).
 let bookingTickRunning = false;
+// Sem corrida pedida pelo WhatsApp em andamento: confere so a cada 3 min (ou na hora em que
+// chega mensagem no WhatsApp), em vez de a cada 30 s.
+let bookingIdleUntil = 0;
+let bookingDirty = true;
 setInterval(async () => {
   if (bookingTickRunning) return;
+  if (!bookingDirty && Date.now() < bookingIdleUntil) return;
   bookingTickRunning = true;
   try {
     const settings = await supportAutomation.config();
-    if (settings.enabled && settings.pedidoWhatsapp !== false) await whatsappBooking.tick({ sendText: sendEvolutionText });
+    if (settings.enabled && settings.pedidoWhatsapp !== false) {
+      bookingDirty = false;
+      const ativas = await whatsappBooking.tick({ sendText: sendEvolutionText });
+      bookingIdleUntil = ativas ? 0 : Date.now() + 3 * 60 * 1000;
+    }
   } catch (error) {
     console.error('whatsapp booking tick failed', String(error?.message || '').slice(0, 120));
   } finally {
@@ -15025,9 +15166,11 @@ setInterval(() => {
   runCustomerReminderTick().catch((error) => console.error('customer reminder failed', error));
 }, 60 * 1000);
 
+// Os planos com motoboy fixo finalizam por timer na memoria; esta conferida e so a rede de
+// seguranca depois de reiniciar o servidor (antes a cada 30 s, agora a cada 3 min).
 setInterval(() => {
   runPlanAutoFinishTick().catch((error) => console.error('plan auto finish tick failed', error));
-}, 30 * 1000);
+}, 3 * 60 * 1000);
 runCustomerReminderTick().catch((error) => console.error('customer reminder startup failed', error));
 
 

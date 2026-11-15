@@ -400,6 +400,7 @@ export function createWhatsappBooking({ db, encrypt, decrypt, now = () => Date.n
           : '✅ Corrida finalizada. Obrigado por andar com a Nexus MotoJá! Quando precisar, é só mandar *1* aqui.';
       await sendText(phone, text).catch(() => ({ sent: false }));
     }
+    return snap.size;
   }
 
   return { handle, tick };

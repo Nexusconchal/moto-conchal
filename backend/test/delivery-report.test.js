@@ -69,17 +69,19 @@ test('driver event and real aggregate writes count a batch once with N deliverie
 });
 
 test('legacy batch repair changes only counts once, never money or number of calls', async () => {
-  const event = { dia: '2026-10-04', ganhoCentavos: 1500 }, writes = [];
+  const event = { dia: '2026-10-04', ganhoCentavos: 1500 }, writes = [], total = {};
+  const totalRef = { get: async () => ({ data: () => total }), set: async (d) => Object.assign(total, d), toString: () => 'total' };
   const query = { where: () => query, limit: () => query, get: async () => ({ docs: [{ id: 'lot-3', data: () => jobs[0] }] }) };
   const context = vm.createContext({ deliveryReportQuantity,
     db: { collection: () => query, runTransaction: async fn => fn({ get: async () => ({ exists: true, data: () => event }), set: (r, d) => { writes.push([r,d]); if (r === 'event') Object.assign(event,d); } }) },
     admin: { firestore: { FieldValue: { increment: n => n, serverTimestamp: () => 'stamp' } } },
-    driverEarningEventRef: () => 'event', driverEarningsRef: () => 'total', driverEarningsDayRef: () => 'day'
+    driverEarningEventRef: () => 'event', driverEarningsRef: () => totalRef, driverEarningsDayRef: () => 'day'
   });
   const start = source.indexOf('async function repairQuickDeliveryEarnings('), end = source.indexOf('async function initializeDriverEarnings(', start);
   vm.runInContext(source.slice(start, end), context);
   await context.repairQuickDeliveryEarnings('12345678901'); await context.repairQuickDeliveryEarnings('12345678901');
   assert.equal(writes.length, 3); assert.equal(writes[1][1].entregas, 2); assert.equal(event.quantidadeEntregas, 3); assert.equal(event.ganhoCentavos, 1500);
+  assert.equal(total.reparoLoteV1, true, 'o reparo roda uma vez so');
   assert.equal('ganhoCentavos' in writes[1][1], false); assert.equal('servicos' in writes[1][1], false);
 });
 

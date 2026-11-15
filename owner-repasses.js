@@ -53,11 +53,11 @@
     carregar();
   });
 
-  // Carrega quando o dono entra e a cada 2 minutos.
+  // Carrega quando o dono entra e a cada 10 minutos (economia do banco).
   let tentativas = 0;
   const espera = setInterval(() => {
     tentativas += 1;
-    if (window.senhaDono) { clearInterval(espera); carregar(); setInterval(carregar, 120000); }
+    if (window.senhaDono) { clearInterval(espera); carregar(); setInterval(() => { if (!document.hidden) carregar(); }, 10 * 60000); }
     else if (tentativas > 3600) clearInterval(espera);
   }, 1000);
   window.MotojaRepasses = { carregar };

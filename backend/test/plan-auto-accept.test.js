@@ -93,6 +93,7 @@ test('app notification goes to every motoboy; the fixed one is told the delivery
   h.records.set(`motoboys/${other}`, { ...h.records.get(`motoboys/${other}`), fcmTokens: { outro: { ativo: true }, velho: { ativo: false }, nativoIndisponivel: { ativo: true, plataforma: 'android_nativo', callAlertVersion: 1 } } });
   h.context.driverAvailability = { state: () => ({ desired: false, busy: false }) };
   h.run('function nativeAlertToken(', '// Tokens de quem escolheu Disponivel');
+  h.context.invalidateOpenJobs = () => {};
   h.fn('notifyDriversAboutDelivery');
 
   const result = await h.context.notifyDriversAboutDelivery('d', planDelivery());

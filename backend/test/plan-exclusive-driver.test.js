@@ -39,6 +39,7 @@ test('a delivery reserved for the plan motoboy only appears for him; others stil
     ['entregas/d1', { status: 'pendente', motoboyExclusivoCpf: B, empresa: 'Deck' }],
     ['entregas/d2', { status: 'pendente', empresa: 'Outra loja' }]]);
   const { ctx, routes } = context(records);
+  vm.runInContext(slice('const OPEN_JOBS_CACHE_MS', "app.post('/api/drivers/:cpf/jobs'"), ctx);
   vm.runInContext(slice("app.post('/api/drivers/:cpf/jobs'", "\napp.post("), ctx);
   const list = async cpf => (await call(routes['/api/drivers/:cpf/jobs'], { params: { cpf }, body: { kind: 'deliveries' } })).data.jobs.map(j => j.id);
   assert.deepEqual(await list(A), ['d2']);

@@ -1079,7 +1079,7 @@
     <script src="./motoboy-avisos.js?v=5"></script>
     <script src="./motoboy-tela-acesa.js?v=1" defer></script>
     <script src="./motoboy-nav.js?v=ligar-1" defer></script>
-    <script src="./motoboy-home.js?v=5" defer></script>
+    <script src="./motoboy-home.js?v=6" defer></script>
     <script src="./motoboy-food.js?v=5"></script>
     <script type="module">
       let cidadesAtivas = {
@@ -2564,7 +2564,7 @@
             {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ ...driverProof(), period: ganhosPeriodo }),
+              body: JSON.stringify({ ...driverProof(), period: ganhosPeriodo, saldo: true }),
             },
             25000,
           );
@@ -3282,7 +3282,8 @@
       // Confere de tempos em tempos (e ao abrir o app) se caiu pagamento nas corridas do motoboy.
       let pagamentosTimer = 0;
       async function checarPagamentosRecebidos() {
-        if (!motoboyCpf) return;
+        // Tela apagada/app no fundo: confere quando voltar (economia do banco).
+        if (!motoboyCpf || document.hidden) return;
         try {
           const r = await fetch(`${CONFIG.backend}/api/drivers/${motoboyCpf}/jobs`, {
             method: "POST",
