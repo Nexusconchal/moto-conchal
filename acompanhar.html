@@ -203,6 +203,12 @@ async function refresh() {
     if (Number.isFinite(driverLat) && Number.isFinite(driverLon)) {
       ensureMap(driverLat, driverLon);
       liveDot.style.display = 'inline-block';
+      // Sinal velho: o motoboy saiu do app (Waze, WhatsApp...) ou a tela apagou; nao finge que e ao vivo.
+      const idade = Math.max(0, Math.round((Date.now() - Number(p.serverTimestampMs || Date.now())) / 1000));
+      const sinalVelho = idade > 45;
+      const idadeTxt = idade >= 90 ? Math.round(idade / 60) + ' min' : idade + ' segundos';
+      liveDot.style.background = sinalVelho ? '#f5a524' : '';
+      statusTxt.style.color = sinalVelho ? '#f5a524' : '';
 
       let rotation = Number.isFinite(Number(p.heading)) ? Number(p.heading) : 0;
       if (!p.heading && lastMotoboyPos) {
@@ -242,11 +248,14 @@ async function refresh() {
         hudGrid.style.display = 'grid';
         hudDist.textContent = distMeters < 1000 ? distMeters + ' m' : (distMeters / 1000).toFixed(1).replace('.', ',') + ' km';
         const speedKmh = p.speed ? Math.round(p.speed * 3.6) : (distMeters > 500 ? 30 : 20);
-        hudSpeed.textContent = p.speed ? Math.round(p.speed * 3.6) + ' km/h' : 'Em desloc.';
+        hudSpeed.textContent = sinalVelho ? '—' : Number.isFinite(Number(p.speed)) && p.speed !== null && Number(p.speed) < 1 ? 'Parado' : p.speed ? Math.round(p.speed * 3.6) + ' km/h' : 'Em desloc.';
         const etaMinutes = Math.max(1, Math.round((distMeters / 1000) / (Math.max(15, speedKmh) / 60)));
         hudEta.textContent = '~' + etaMinutes + ' min';
 
-        if (distMeters <= 160) {
+        if (sinalVelho) {
+          alertChegando.style.display = 'none';
+          statusTxt.textContent = '⚠️ Sem sinal do GPS do motoboy há ' + idadeTxt + '. O mapa mostra a última posição recebida.';
+        } else if (distMeters <= 160) {
           alertChegando.style.display = 'block';
           statusTxt.textContent = 'Motoboy chegando ao local de embarque!';
         } else {
@@ -256,7 +265,7 @@ async function refresh() {
       } else {
         hudGrid.style.display = 'none';
         alertChegando.style.display = 'none';
-        statusTxt.textContent = 'Motoboy a caminho - localizacao ao vivo';
+        statusTxt.textContent = sinalVelho ? '⚠️ Sem sinal do GPS do motoboy há ' + idadeTxt + '. O mapa mostra a última posição recebida.' : 'Motoboy a caminho - localizacao ao vivo';
       }
 
       if (Number.isFinite(destLat) && Number.isFinite(destLon) && Math.abs(destLat) > 0.1 && !destMarker) {
@@ -274,8 +283,7 @@ async function refresh() {
         hasAutoFitOnce = true;
       }
 
-      const age = Math.max(0, Math.round((Date.now() - Number(p.serverTimestampMs || Date.now())) / 1000));
-      footerUpdated.textContent = age < 10 ? 'GPS conectado em tempo real (agora)' : 'Ultimo sinal recebido ha ' + age + ' segundos';
+      footerUpdated.textContent = idade < 10 ? 'GPS conectado em tempo real (agora)' : 'Último sinal recebido há ' + idadeTxt;
     } else {
       statusTxt.textContent = d.clienteAvisado ? 'GPS iniciado. Aguardando primeira posicao...' : 'Aguardando o motoboy iniciar o GPS...';
       liveDot.style.display = 'none';

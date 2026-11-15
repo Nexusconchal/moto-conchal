@@ -447,5 +447,20 @@
     setInterval(() => {
       if (document.visibilityState === 'visible' && navigator.onLine && !gpsDenied && Date.now() - lastGpsAt > 45000) restartGps();
     }, 15000);
+    // Motoboy parado (farol, esperando o cliente): o GPS do celular quase nao manda posicao nova.
+    // Pede uma posicao a cada 15 s para o cliente/loja verem "ao vivo" (e "Parado"), nao "congelado".
+    let pedindoPosicao = false;
+    setInterval(() => {
+      if (pedindoPosicao || document.visibilityState !== 'visible' || !navigator.onLine || gpsDenied || !gpsSubscribers.size) return;
+      if (Date.now() - lastGpsAt < 15000 || !navigator.geolocation) return;
+      pedindoPosicao = true;
+      navigator.geolocation.getCurrentPosition((position) => {
+        pedindoPosicao = false;
+        lastGpsAt = Date.now();
+        const age = Date.now() - position.timestamp;
+        if (age > 30000 || age < -10000 || !Number.isFinite(position.coords.accuracy) || position.coords.accuracy > 100) return;
+        gpsSubscribers.forEach((subscriber) => subscriber.next(position));
+      }, () => { pedindoPosicao = false; }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 12000 });
+    }, 5000);
   });
 })();

@@ -4107,7 +4107,7 @@
             $("gps-cliente-hud").style.display = "grid";
             if ($("gps-hud-eta")) $("gps-hud-eta").textContent = etaMinutos ? `~${etaMinutos} min` : "Calculando";
             if ($("gps-hud-dist")) $("gps-hud-dist").textContent = distTxt;
-            if ($("gps-hud-speed")) $("gps-hud-speed").textContent = location.speed ? `${Math.round(location.speed * 3.6)} km/h` : "Em desloc.";
+            if ($("gps-hud-speed")) $("gps-hud-speed").textContent = location.speed !== null && location.speed !== undefined && Number(location.speed) < 1 ? "Parado" : location.speed ? `${Math.round(location.speed * 3.6)} km/h` : "Em desloc.";
           }
 
           if (distMetros <= 160) {
