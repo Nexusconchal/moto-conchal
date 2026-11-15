@@ -11,10 +11,14 @@
       && ['aguardando_empresa','contestada'].includes(item.conclusaoStatus)).sort((a,b) => ms(a.conclusaoSolicitadaEm || a.contestadaEm)-ms(b.conclusaoSolicitadaEm || b.contestadaEm));
     box.innerHTML = `<h2>Entregas aguardando conferência (${pending.length})</h2><p class="muted">Confirme com as partes antes de decidir. O saldo permanece reservado; nenhuma decisão é automática.</p>`
       + (pending.length ? pending.map(item => {
-        const elapsed = Math.max(0,Math.floor((Date.now()-ms(item.conclusaoSolicitadaEm || item.contestadaEm))/60000));
+        const desde = ms(item.conclusaoSolicitadaEm || item.contestadaEm || item.atualizadaEm);
+        const minutos = desde ? Math.max(0,Math.floor((Date.now()-desde)/60000)) : null;
+        // Mostra horas/dias em vez de "29912500 min" (e nada quando falta a data).
+        const elapsedTxt = minutos === null ? 'aguardando' : minutos < 60 ? `${minutos} min aguardando` : minutos < 1440 ? `${Math.floor(minutos/60)} h aguardando` : `${Math.floor(minutos/1440)} dia(s) aguardando`;
+        const elapsed = minutos || 0;
         return `<article style="padding:14px;border:1px solid #46505c;border-radius:10px;margin-top:12px;display:grid;gap:10px">
           <strong>${escape(item.empresa)} · ${escape(item.motoboy || 'Motoboy')} · ${Math.max(1,Number(item.paradas || 1))} entrega(s) · ${money(item.saldoReservado || item.valor)}</strong>
-          <p>${item.conclusaoStatus === 'contestada' ? 'Problema registrado' : 'Empresa ainda não confirmou'} · ${elapsed} min aguardando${elapsed >= 60 ? ' — conferir com prioridade' : ''}</p>
+          <p>${item.conclusaoStatus === 'contestada' ? 'Problema registrado' : 'Empresa ainda não confirmou'} · ${elapsedTxt}${elapsed >= 60 ? ' — conferir com prioridade' : ''}</p>
           ${item.contestacaoMotivo ? `<p>Motivo: ${escape(item.contestacaoMotivo)} · ${escape(item.contestacaoPor || '')}</p>` : ''}
           <small>Código: ${escape(item.id)}</small>
           <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="approve" type="button" data-review="approve" data-id="${escape(item.id)}">Confirmar serviço e descontar saldo</button><button class="danger" type="button" data-review="deny" data-id="${escape(item.id)}">Recusar conclusão e liberar reserva</button></div>
