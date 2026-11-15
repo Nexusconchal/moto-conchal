@@ -21,6 +21,16 @@ public class PushService extends FirebaseMessagingService {
 
     @Override
     public void onMessageReceived(@NonNull RemoteMessage message) {
+        java.util.Map<String, String> dados = message.getData();
+        if ("ligacao_app".equals(dados.get("tipo")) && message.getNotification() == null) {
+            // Loja (ou cliente) ligando pelo app: toca o toque de chamada sem parar, como
+            // ligacao de WhatsApp, ate o motoboy abrir o app ou a chamada passar (45 s).
+            String id = dados.containsKey("deliveryId") ? dados.get("deliveryId") : dados.get("rideId");
+            NativePush.received(dados.getOrDefault("title", "Ligação MotoJá"), dados.getOrDefault("body", ""));
+            showInsistent(NativePush.CALL_CHANNEL_ID, "ligacao_" + id, dados.getOrDefault("title", "📞 Ligação pelo app MotoJá"),
+                    dados.getOrDefault("body", "Toque para atender."), dados.get("expiresAtMs"), message.getMessageId());
+            return;
+        }
         if ("1".equals(message.getData().get("callAlertVersion"))) {
             java.util.Map<String, String> data = message.getData();
             String tag = "oferta_" + data.get("kind") + "_" + data.get("id");
@@ -39,7 +49,7 @@ public class PushService extends FirebaseMessagingService {
             // O Android não deixou abrir o serviço do alerta (app fechado há muito tempo,
             // economia de bateria...): toca a voz no canal "chamadas" em modo insistente,
             // repetindo até alguém aceitar, a chamada expirar ou o motoboy abrir o app.
-            showInsistent(tag, title, body, data.get("expiresAtMs"), message.getMessageId());
+            showInsistent(NativePush.CHANNEL_ID, tag, title, body, data.get("expiresAtMs"), message.getMessageId());
             return;
         }
         RemoteMessage.Notification n = message.getNotification();
@@ -73,8 +83,9 @@ public class PushService extends FirebaseMessagingService {
         }
     }
 
-    private void showInsistent(String tag, String title, String body, String expiresAt, String messageId) {
-        NativePush.ensureChannel(this);
+    private void showInsistent(String channelId, String tag, String title, String body, String expiresAt, String messageId) {
+        if (NativePush.CALL_CHANNEL_ID.equals(channelId)) NativePush.ensureCallChannel(this);
+        else NativePush.ensureChannel(this);
         long remaining;
         try { remaining = Long.parseLong(expiresAt) - System.currentTimeMillis(); }
         catch (Exception e) { remaining = 10 * 60 * 1000L; }
@@ -85,7 +96,7 @@ public class PushService extends FirebaseMessagingService {
         PendingIntent pending = PendingIntent.getActivity(this, tag.hashCode(), open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder builder = Build.VERSION.SDK_INT >= 26
-                ? new Notification.Builder(this, NativePush.CHANNEL_ID) : new Notification.Builder(this);
+                ? new Notification.Builder(this, channelId) : new Notification.Builder(this);
         builder.setSmallIcon(R.drawable.ic_notification_icon)
                 .setContentTitle(title)
                 .setContentText(body.isEmpty() ? "Toque para abrir e aceitar." : body)

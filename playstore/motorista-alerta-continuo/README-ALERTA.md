@@ -1,6 +1,10 @@
-# MotoJÁ Motorista 1.0.8 — ligação pelo app e alerta contínuo
+# MotoJÁ Motorista 1.0.9 — ligação pelo app e alerta contínuo
 
-Atualização exclusiva do aplicativo Android do motoboy, pacote `br.com.nexusconchal.motoja.motorista`, versionCode 9 (use um número maior que o da versão que está na Play Store). O projeto anterior permanece preservado.
+Atualização exclusiva do aplicativo Android do motoboy, pacote `br.com.nexusconchal.motoja.motorista`, versionCode 10 (use um número maior que o da versão que está na Play Store). O projeto anterior permanece preservado.
+
+Novidades da 1.0.9:
+- **Ligação tocando com o app fechado (igual WhatsApp):** quando a loja (entrega) ou o cliente (corrida) liga pelo app, o servidor manda um push só com dados (`tipo: ligacao_app`). O app mostra a ligação no novo canal `ligacoes`, com o **toque de chamada do próprio celular** em modo insistente: toca até o motoboy abrir o app ou a chamada passar (45 s). Ao abrir o app, o toque para e a tela de ligação do site assume (Atender / Recusar).
+- Versões antigas continuam recebendo o aviso como notificação normal (compatível).
 
 Novidades da 1.0.8:
 - **Ligação pelo app com o cliente:** permissões `RECORD_AUDIO` e `MODIFY_AUDIO_SETTINGS`; o WebView libera o microfone (além da câmera) só para nexusmotoja.com.br. `NexusNative.audioCallVersion()` indica ao site que o app já tem o microfone.

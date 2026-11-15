@@ -498,6 +498,10 @@
       .mj-lote li small { color: #9fb0bb; margin-left: 4px; }
       .mj-lote li.problema { color: #ffd27a; }
       .mj-lote button { justify-self: start; }
+      /* Falar com o motoboy da entrega: ligacao pelo app (como WhatsApp) e chat */
+      .mj-contato { display: flex; gap: 8px; flex-wrap: wrap; }
+      .mj-contato button { flex: 1 1 150px; min-height: 46px; font-weight: 800; }
+      .mj-contato .mj-ligar { background: #25d366; border-color: #25d366; color: #06210f; }
       .mj-chat-alerta { position: fixed; top: 16px; right: 16px; z-index: 9999; width: min(360px, calc(100vw - 32px)); display: grid; gap: 6px;
         padding: 14px 16px; border-radius: 14px; background: #2a1e08; color: #fff; border: 2px solid #ff9a00; box-shadow: 0 12px 40px rgba(0,0,0,.45);
         animation: mjChatPulse 1s ease-in-out 3; }
@@ -5691,8 +5695,9 @@
           }
         };
     </script>
-    <script src="./ride-chat.js?v=234" defer></script>
-    <script src="./empresa-tracking.js?v=213" defer></script>
+    <script src="./ride-call-ui.js?v=2" defer></script>
+    <script src="./ride-chat.js?v=236" defer></script>
+    <script src="./empresa-tracking.js?v=214" defer></script>
     <script src="./empresa-pedidos.js?v=135" defer></script>
     <script>
       (() => {

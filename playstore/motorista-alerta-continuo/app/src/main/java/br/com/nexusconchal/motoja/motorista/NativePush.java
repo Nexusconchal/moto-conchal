@@ -23,6 +23,8 @@ import java.lang.ref.WeakReference;
 // "chamadas" com o som "chamada"; aqui o canal e criado e o token vai para o site.
 final class NativePush {
     static final String CHANNEL_ID = "chamadas";
+    // Ligacao pelo app (loja ou cliente ligando): toca o toque de chamada do proprio celular.
+    static final String CALL_CHANNEL_ID = "ligacoes";
 
     private static WeakReference<LauncherActivity> activity = new WeakReference<>(null);
 
@@ -106,6 +108,24 @@ final class NativePush {
         channel.enableVibration(true);
         channel.setVibrationPattern(new long[] {0, 600, 300, 600, 300, 600});
         channel.enableLights(true);
+        channel.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
+        manager.createNotificationChannel(channel);
+    }
+
+    static void ensureCallChannel(Context context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        if (manager == null || manager.getNotificationChannel(CALL_CHANNEL_ID) != null) return;
+        NotificationChannel channel = new NotificationChannel(CALL_CHANNEL_ID,
+                "Ligações pelo app", NotificationManager.IMPORTANCE_HIGH);
+        channel.setDescription("Toca quando a loja ou o cliente liga pelo app MotoJá");
+        channel.setSound(android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE),
+                new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build());
+        channel.enableVibration(true);
+        channel.setVibrationPattern(new long[] {0, 1000, 800, 1000, 800, 1000});
         channel.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
         manager.createNotificationChannel(channel);
     }

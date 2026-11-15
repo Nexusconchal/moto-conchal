@@ -151,7 +151,6 @@
     if (delivery.entregaNaNota !== true) return '';
     const resumo = delivery.paradasNotaResumo;
     const paradas = Array.isArray(delivery.paradasNota) ? delivery.paradasNota : [];
-    const naoLido = window.MotojaRideChat?.hasUnread(delivery.id, delivery.chatUltimaEmMs, delivery.chatUltimoAutor, 'empresa');
     const linhas = paradas.map((p, i) => {
       const estado = p.status === 'entregue' ? `✅ entregue${p.entregueEm ? ` às ${new Date(p.entregueEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}`
         : p.status === 'nao_encontrado' ? `⚠️ ${PROBLEMAS[p.problema] || 'problema'}` : '⏳ a caminho';
@@ -160,8 +159,52 @@
     return `<div class="mj-lote">
       <strong>${resumo ? `${resumo.entregues} de ${resumo.total} entregues${resumo.problemas ? ` · ${resumo.problemas} com problema` : ''}` : `Lote de ${Math.max(1, Number(delivery.paradas || 1))} entregas`}</strong>
       ${linhas ? `<ol>${linhas}</ol>` : '<p class="muted">O motoboy ainda não adicionou os endereços das notas.</p>'}
-      ${['aceita', 'retirada'].includes(delivery.status) && delivery.motoboy ? `<button type="button" data-chat-entrega="${escapeHtml(delivery.id)}">💬 Chat com o motoboy${naoLido ? ' <span class="mjchat-badge"></span>' : ''}</button>` : ''}
     </div>`;
+  }
+
+  // Falar com o motoboy: ligar pelo app (toca no celular dele, como WhatsApp) ou chat.
+  function htmlContato(delivery) {
+    if (!['aceita', 'retirada'].includes(delivery.status) || !delivery.motoboy) return '';
+    const naoLido = window.MotojaRideChat?.hasUnread(delivery.id, delivery.chatUltimaEmMs, delivery.chatUltimoAutor, 'empresa');
+    const id = escapeHtml(delivery.id);
+    return `<div class="mj-contato">${window.MotojaRideCall ? `<button type="button" class="mj-ligar" data-ligar-entrega="${id}">📞 Ligar pro motoboy</button>` : ''}<button type="button" data-chat-entrega="${id}">💬 Chat${naoLido ? ' <span class="mjchat-badge"></span>' : ''}</button></div>`;
+  }
+
+  // Ligacao pelo app entre a loja e o motoboy da entrega.
+  function opcoesLigacao(deliveryId, nome) {
+    return { tipo: 'entrega', rideId: deliveryId, backend: BACKEND, voce: 'empresa', vigiar: false,
+      nomeOutro: nome || deliveries.get(deliveryId)?.motoboy || 'Motoboy', avatar: '🏍️',
+      auth: () => ({ headers: { authorization: `Bearer ${token()}` } }) };
+  }
+  function ligarMotoboy(deliveryId) {
+    if (!window.MotojaRideCall || !deliveryId) return;
+    liberarSom();
+    window.MotojaRideCall.call(opcoesLigacao(deliveryId));
+  }
+  function tocarLigacao(deliveryId, callId, nome) {
+    if (!window.MotojaRideCall || !deliveryId) return;
+    window.MotojaRideCall.ring(opcoesLigacao(deliveryId, nome), { callId });
+  }
+  // Reserva do socket: confere as ligacoes da loja (o servidor responde pela memoria, sem ler o banco).
+  let ligacoesToken = '', ligacoesTimer = 0, conferindoLigacoes = false;
+  async function conferirLigacoes() {
+    clearTimeout(ligacoesTimer);
+    if (conferindoLigacoes) return;
+    conferindoLigacoes = true;
+    const emAndamento = [...deliveries.values()].some((d) => ['aceita', 'retirada'].includes(d.status) && d.motoboy);
+    if (emAndamento && token() && !window.MotojaRideCall?.ativa()) {
+      try {
+        const r = await fetch(`${BACKEND}/api/companies/me/calls`, { method: 'POST', cache: 'no-store',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${token()}` }, body: JSON.stringify({ pollToken: ligacoesToken }) });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok) {
+          ligacoesToken = d.pollToken || ligacoesToken;
+          (d.ligacoes || []).forEach((l) => tocarLigacao(l.deliveryId, l.callId, l.motoboy));
+        } else if (r.status === 401) ligacoesToken = '';
+      } catch (_) {}
+    }
+    conferindoLigacoes = false;
+    ligacoesTimer = setTimeout(conferirLigacoes, document.visibilityState === 'visible' ? 4000 : 6000);
   }
 
   function statusLabel(status) {
@@ -430,7 +473,7 @@
       return `<div class="company-confirmation-card"><button type="button" class="tracking-delivery${delivery.id === selectedId ? ' active' : ''}" data-tracking-delivery="${escapeHtml(delivery.id)}">
         <span><strong>${escapeHtml(delivery.recebedor || delivery.empresa || 'Entrega')}</strong><small>${escapeHtml(delivery.entrega || delivery.entregaEncontrada || '-')}</small></span>
         <span><b>${escapeHtml(delivery.motoboy || 'Aguardando motoboy')}</b><small data-gps-label="${escapeHtml(delivery.id)}">${escapeHtml(statusLabel(delivery.status))}${location ? ` - GPS ${relativeTime(location.serverTimestampMs || location.clientTimestamp)}` : ''}</small></span>
-      </button>${htmlLote(delivery)}${delivery.confirmacaoEmpresaVersao === 1 ? `
+      </button>${htmlContato(delivery)}${htmlLote(delivery)}${delivery.confirmacaoEmpresaVersao === 1 ? `
         <div class="company-confirmation-actions" style="padding:12px;display:grid;gap:10px;border:1px solid #35424b;border-radius:8px">
           <strong>${Math.max(1,Number(delivery.paradas || 1))} entrega(s) · ${Number(delivery.valor || 0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</strong>
           ${delivery.conclusaoStatus === 'contestada' ? `<p>Problema registrado. Valor reservado para análise do dono.</p><p>${escapeHtml(delivery.contestacaoMotivo || '')}</p>`
@@ -447,6 +490,9 @@
     });
     list.querySelectorAll('[data-chat-entrega]').forEach((button) => {
       button.onclick = () => abrirChat(button.dataset.chatEntrega);
+    });
+    list.querySelectorAll('[data-ligar-entrega]').forEach((button) => {
+      button.onclick = () => ligarMotoboy(button.dataset.ligarEntrega);
     });
     list.querySelectorAll('[data-company-confirm]').forEach(button => {
       if (confirmando.has(`${button.dataset.companyConfirm}:${button.dataset.id}`)) { button.disabled = true; button.textContent = 'Confirmando...'; }
@@ -596,6 +642,10 @@
       }
       render();
     });
+    // Motoboy ligando pelo app: toca na hora, com tela de ligacao igual WhatsApp.
+    socket.on('delivery:call', (event) => {
+      if (event?.deliveryId) tocarLigacao(event.deliveryId, event.callId, event.motoboy);
+    });
     socket.on('delivery:chat', (event) => {
       const id = event?.deliveryId;
       const mensagem = event?.mensagem;
@@ -619,6 +669,7 @@
       if (status) status.textContent = 'Nao consegui carregar o mapa. Confira a internet.';
     }
     refresh();
+    setTimeout(conferirLigacoes, 3000);
     setInterval(() => {
       updateSignalStatus();
       if (token() && document.visibilityState === 'visible' && Date.now() - lastRefreshAt >= (socket?.connected ? 60000 : 15000)) refresh();

@@ -58,8 +58,8 @@ android {
         resValue "string", "runtimeApplicationId", twaManifest.applicationId
         minSdkVersion 24
         targetSdkVersion 36
-        versionCode 9
-        versionName "1.0.8"
+        versionCode 10
+        versionName "1.0.9"
 
         // The name for the application
         resValue "string", "appName", twaManifest.name

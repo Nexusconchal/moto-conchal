@@ -143,7 +143,7 @@
     root.className = "mjchat-back";
     const rapidas = options.rapidas || [];
     root.innerHTML = `<div class="mjchat" role="dialog" aria-modal="true" aria-label="Chat da corrida">
-      <header><b>${esc(options.titulo || "Chat")}<small>${esc(options.subtitulo || "Conversa pelo app MotoJá")}</small></b>${!options.caminho && window.MotojaRideCall ? `<button type="button" class="mjchat-ligar" data-mjchat-ligar aria-label="Ligar pelo app" title="Ligar pelo app (sem mostrar o número)">📞</button>` : ""}<button type="button" data-mjchat-fechar aria-label="Fechar">×</button></header>
+      <header><b>${esc(options.titulo || "Chat")}<small>${esc(options.subtitulo || "Conversa pelo app MotoJá")}</small></b>${options.ligacao !== false && window.MotojaRideCall ? `<button type="button" class="mjchat-ligar" data-mjchat-ligar aria-label="Ligar pelo app" title="Ligar pelo app (sem mostrar o número)">📞</button>` : ""}<button type="button" data-mjchat-fechar aria-label="Fechar">×</button></header>
       <div class="mjchat-list" aria-live="polite"></div>
       <p class="mjchat-aviso"></p>
       ${rapidas.length ? `<div class="mjchat-rapidas">${rapidas.map((t) => `<button type="button" data-mjchat-rapida="${esc(t)}">${esc(t)}</button>`).join("")}</div>` : ""}
@@ -152,10 +152,12 @@
     document.body.appendChild(root);
     state = { root, rideId: options.rideId, caminho: options.caminho || "", backend: options.backend, auth: options.auth, voce: options.voce || "", servico: options.servico || "corrida",
       tituloFixo: !!options.titulo, messages: [], aberto: true, sending: false, firstRender: true, timer: 0, onClose: options.onClose };
-    // Ligacao pelo app (so no chat da corrida): escuta ligacao recebida enquanto o chat esta aberto.
-    const ligacao = () => ({ rideId: state?.rideId, backend: state?.backend, auth: state?.auth, voce: state?.voce,
-      nomeOutro: root.querySelector("header b")?.firstChild?.textContent || options.titulo || "" });
-    if (!options.caminho) window.MotojaRideCall?.watch(ligacao());
+    // Ligacao pelo app (como no WhatsApp): na corrida, cliente <-> motoboy; na entrega, loja <-> motoboy.
+    // O painel da loja escuta todas as entregas de uma vez (socket), por isso nao vigia aqui.
+    const tipoLigacao = options.caminho ? "entrega" : "corrida";
+    const ligacao = () => ({ tipo: tipoLigacao, rideId: state?.rideId || options.rideId, backend: options.backend, auth: options.auth, voce: options.voce,
+      vigiar: options.voce !== "empresa", nomeOutro: root.querySelector("header b")?.firstChild?.textContent || options.titulo || "" });
+    if (options.ligacao !== false && options.voce !== "empresa") window.MotojaRideCall?.watch(ligacao());
     root.addEventListener("click", (event) => {
       if (event.target.closest("[data-mjchat-ligar]")) { window.MotojaRideCall?.call(ligacao()); return; }
       if (event.target === root || event.target.closest("[data-mjchat-fechar]")) close();

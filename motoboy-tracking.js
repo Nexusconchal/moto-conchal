@@ -330,6 +330,7 @@
         jobs.clear();
         (data.jobs || []).forEach((job) => jobs.set(job.id, job));
         mineDeliveriesLoaded = true;
+        window.dispatchEvent(new CustomEvent('motoja:mine-deliveries', { detail: { jobs: data.jobs || [] } }));
         for (const deliveryId of watches.keys()) {
           if (!['aceita', 'retirada'].includes(jobs.get(deliveryId)?.status) || jobs.get(deliveryId)?.conclusaoStatus) stopTracking(deliveryId);
         }

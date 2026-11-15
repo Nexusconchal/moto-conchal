@@ -238,7 +238,7 @@ public class LauncherActivity extends Activity {
         android.app.NotificationManager manager = getSystemService(android.app.NotificationManager.class);
         if (manager != null && Build.VERSION.SDK_INT >= 23) {
             for (android.service.notification.StatusBarNotification n : manager.getActiveNotifications()) {
-                if (n.getTag() != null && n.getTag().startsWith("oferta_")) manager.cancel(n.getTag(), n.getId());
+                if (n.getTag() != null && (n.getTag().startsWith("oferta_") || n.getTag().startsWith("ligacao_"))) manager.cancel(n.getTag(), n.getId());
             }
         }
     }

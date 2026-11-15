@@ -15,7 +15,7 @@ import { createCallPushDispatcher, callOfferExpiry, reconcileCallOffers } from '
 import { createDriverTelegram } from './driver-telegram.js';
 import { publicDriverCard, publicDriverId, sortPublicDrivers, referralCode, normalizeReferralCode, monthKey } from './customer-menu.js';
 import { reachedPickup, lateCancelState, lateCancelBlocker, waitCancelState, waitCancelBlocker } from './ride-late.js';
-import { createCallStore } from './ride-call.js';
+import { createCallStore, CALL_RING_MS } from './ride-call.js';
 import { parseRating, ratingBlocker, ratingSummary, driverRatingView, RATING_TAGS } from './ride-rating.js';
 import { validateLocation } from './tracking-policy.js';
 import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state.js';
@@ -11603,9 +11603,9 @@ function callToken(rideId, role) {
   return `${role}.${exp}.${sig}`;
 }
 
-function callTokenRole(rideId, token) {
+function callTokenRole(rideId, token, roles = ['cliente', 'motoboy']) {
   const [role, exp, sig] = String(token || '').split('.');
-  if (!['cliente', 'motoboy'].includes(role) || !(Number(exp) > Date.now()) || !/^[a-f0-9]{32}$/.test(sig || '')) return '';
+  if (!roles.includes(role) || !(Number(exp) > Date.now()) || !/^[a-f0-9]{32}$/.test(sig || '')) return '';
   const expected = crypto.createHmac('sha256', CALL_TOKEN_SECRET).update(`${rideId}|${role}|${exp}`).digest('hex').slice(0, 32);
   return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected)) ? role : '';
 }
@@ -11626,15 +11626,22 @@ async function rideCallContext(req, { requireActive = false } = {}) {
 // Aviso no celular de quem vai receber a ligacao (app fechado ou em segundo plano).
 async function notifyIncomingCall(ride, from) {
   const tokens = [];
+  const nativos = [];
   if (from === 'cliente' && onlyDigits(ride.motoboyCpf).length === 11) {
     const driver = await db.collection('motoboys').doc(onlyDigits(ride.motoboyCpf)).get();
-    Object.entries(driver.data()?.fcmTokens || {}).forEach(([token, info]) => { if (info?.ativo !== false) tokens.push(token); });
+    // App Android novo: push so com dados faz o celular tocar como ligacao ate atender.
+    Object.entries(driver.data()?.fcmTokens || {}).forEach(([token, info]) => { if (info?.ativo !== false) (info?.plataforma === 'android_nativo' ? nativos : tokens).push(token); });
   } else if (from === 'motoboy' && ride.customerId) {
     const customer = await db.collection('clientes').doc(String(ride.customerId)).get();
     Object.entries(customer.data()?.fcmTokens || {}).forEach(([token, info]) => { if (info?.ativo !== false) tokens.push(token); });
   }
-  if (!tokens.length) return;
   const nome = from === 'cliente' ? (ride.nome || 'Cliente') : (ride.motoboy || 'Seu motoboy');
+  if (nativos.length) {
+    await admin.messaging().sendEachForMulticast({ tokens: nativos.slice(0, 20), android: { priority: 'high', ttl: CALL_RING_MS },
+      data: { tipo: 'ligacao_app', servico: 'corrida', rideId: String(ride.id || ''), title: `📞 ${nome} está te ligando`, body: 'Ligação pelo app MotoJá. Toque para atender.', expiresAtMs: String(Date.now() + CALL_RING_MS) } })
+      .catch((error) => console.error('call push failed', error?.message));
+  }
+  if (!tokens.length) return;
   await admin.messaging().sendEachForMulticast({
     tokens: tokens.slice(0, 20),
     notification: { title: `📞 ${nome} está te ligando pelo app`, body: 'Abra o MotoJá para atender.' },
@@ -11677,6 +11684,131 @@ app.post('/api/rides/:rideId/call/end', rideChatLimiter, async (req, res, next) 
     const { rideId, role } = await rideCallContext(req);
     rideCalls.end(rideId, role, String(req.body?.callId || ''), String(req.body?.motivo || ''));
     return res.json({ ok: true, call: rideCalls.view(rideId, role) });
+  } catch (error) { return next(error); }
+});
+
+// ---------- Ligacao de voz pelo app na entrega (loja <-> motoboy) ----------
+// Mesmo jeito da corrida. Quando o motoboy liga, o painel da loja toca na hora (socket)
+// e tambem confere a cada poucos segundos (sem ler o banco), caso o socket tenha caido.
+const DELIVERY_CALL_ROLES = ['empresa', 'motoboy'];
+const deliveryCalls = createCallStore({ randomId: () => crypto.randomBytes(8).toString('hex'), roles: DELIVERY_CALL_ROLES });
+const deliveryCallKey = (deliveryId) => `entrega:${deliveryId}`;
+
+async function deliveryCallContext(req, { requireActive = false } = {}) {
+  const deliveryId = String(req.params.deliveryId || '').slice(0, 120);
+  const viaToken = !requireActive && callTokenRole(deliveryCallKey(deliveryId), req.body?.callToken, DELIVERY_CALL_ROLES);
+  if (viaToken) return { deliveryId, role: viaToken, delivery: null };
+  const snap = await db.collection('entregas').doc(deliveryId).get();
+  if (!snap.exists) throw Object.assign(new Error('Entrega nao encontrada.'), { status: 404, code: 'entrega_nao_encontrada' });
+  const delivery = snap.data() || {};
+  const role = await deliveryChatParticipant(req, delivery);
+  if (!role) throw Object.assign(new Error('A ligacao e so entre a loja e o motoboy desta entrega.'), { status: 403, code: 'ligacao_nao_autorizada' });
+  if (requireActive && !['aceita', 'retirada'].includes(delivery.status)) throw Object.assign(new Error('A ligacao pelo app funciona so enquanto a entrega esta em andamento.'), { status: 409, code: 'entrega_nao_ativa' });
+  return { deliveryId, role, delivery };
+}
+
+// Quem recebe a ligacao fica sabendo na hora: a loja pelo painel aberto; o motoboy pelo push
+// (no app Android novo, o push sem "notification" faz o celular tocar ate atender ou desistir).
+async function notifyIncomingDeliveryCall(delivery, deliveryId, from, call) {
+  if (from === 'motoboy') {
+    const companyId = onlyDigits(deliveryCompanyId(delivery));
+    if (companyId) io.to(`company:${companyId}`).emit('delivery:call', { deliveryId, callId: call.id, motoboy: delivery.motoboy || 'Motoboy' });
+    return;
+  }
+  const cpf = onlyDigits(delivery.motoboyCpf);
+  if (cpf.length !== 11) return;
+  const driver = await db.collection('motoboys').doc(cpf).get();
+  const nativos = [];
+  const web = [];
+  Object.entries(driver.data()?.fcmTokens || {}).forEach(([token, info]) => {
+    if (info?.ativo === false) return;
+    (info?.plataforma === 'android_nativo' ? nativos : web).push(token);
+  });
+  const nome = delivery.empresa || 'A loja';
+  const title = `📞 ${nome} está te ligando`;
+  const body = 'Ligação pelo app MotoJá. Toque para atender.';
+  const data = { tipo: 'ligacao_app', servico: 'entrega', deliveryId, callId: String(call.id), title, body, expiresAtMs: String(Date.now() + CALL_RING_MS) };
+  const envios = [];
+  if (nativos.length) envios.push(admin.messaging().sendEachForMulticast({ tokens: nativos.slice(0, 20), android: { priority: 'high', ttl: CALL_RING_MS }, data }));
+  if (web.length) envios.push(admin.messaging().sendEachForMulticast({
+    tokens: web.slice(0, 20),
+    notification: { title, body },
+    android: { priority: 'high', ttl: CALL_RING_MS, notification: { channelId: 'chamadas', tag: 'ligacao' } },
+    webpush: { headers: { Urgency: 'high', TTL: String(Math.round(CALL_RING_MS / 1000)) }, fcmOptions: { link: appUrl('/motoboy.html') } },
+    data
+  }));
+  await Promise.all(envios.map((envio) => envio.catch((error) => console.error('delivery call push failed', error?.message))));
+}
+
+app.post('/api/deliveries/:deliveryId/call/start', rideChatLimiter, async (req, res, next) => {
+  try {
+    const { deliveryId, role, delivery } = await deliveryCallContext(req, { requireActive: true });
+    const call = deliveryCalls.start(deliveryId, role, req.body?.offer, {
+      companyId: onlyDigits(deliveryCompanyId(delivery)), motoboy: cleanText(delivery.motoboy || '', 80), empresa: cleanText(delivery.empresa || '', 80)
+    });
+    notifyIncomingDeliveryCall(delivery, deliveryId, role, call).catch(() => {});
+    res.set('cache-control', 'no-store');
+    return res.json({ ok: true, call: deliveryCalls.view(deliveryId, role), callToken: callToken(deliveryCallKey(deliveryId), role) });
+  } catch (error) { return next(error); }
+});
+
+app.post('/api/deliveries/:deliveryId/call/state', rideChatLimiter, async (req, res, next) => {
+  try {
+    const { deliveryId, role, delivery } = await deliveryCallContext(req);
+    const key = deliveryCallKey(deliveryId);
+    res.set('cache-control', 'no-store');
+    return res.json({ ok: true, voce: role, call: deliveryCalls.view(deliveryId, role),
+      // Entrega ja encerrada: o app para de conferir ligacao nela.
+      ...(delivery && !['aceita', 'retirada'].includes(delivery.status) ? { encerrada: true } : {}),
+      callToken: req.body?.callToken && callTokenRole(key, req.body.callToken, DELIVERY_CALL_ROLES) ? req.body.callToken : callToken(key, role) });
+  } catch (error) { return next(error); }
+});
+
+app.post('/api/deliveries/:deliveryId/call/answer', rideChatLimiter, async (req, res, next) => {
+  try {
+    const { deliveryId, role } = await deliveryCallContext(req);
+    deliveryCalls.answer(deliveryId, role, String(req.body?.callId || ''), req.body?.answer);
+    return res.json({ ok: true, call: deliveryCalls.view(deliveryId, role) });
+  } catch (error) { return next(error); }
+});
+
+app.post('/api/deliveries/:deliveryId/call/end', rideChatLimiter, async (req, res, next) => {
+  try {
+    const { deliveryId, role } = await deliveryCallContext(req);
+    deliveryCalls.end(deliveryId, role, String(req.body?.callId || ''), String(req.body?.motivo || ''));
+    return res.json({ ok: true, call: deliveryCalls.view(deliveryId, role) });
+  } catch (error) { return next(error); }
+});
+
+// Painel da loja: ligacoes de motoboy tocando agora (reserva do socket). A primeira conferida
+// usa a sessao da loja; as proximas usam uma ficha curta, sem ler o banco.
+function companyCallPollToken(companyId) {
+  const exp = Date.now() + CALL_TOKEN_MS;
+  const sig = crypto.createHmac('sha256', CALL_TOKEN_SECRET).update(`empresa-ligacoes|${companyId}|${exp}`).digest('hex').slice(0, 32);
+  return `${companyId}.${exp}.${sig}`;
+}
+function companyFromCallPollToken(token) {
+  const [companyId, exp, sig] = String(token || '').split('.');
+  if (!/^\d{10,14}$/.test(companyId || '') || !(Number(exp) > Date.now()) || !/^[a-f0-9]{32}$/.test(sig || '')) return '';
+  const expected = crypto.createHmac('sha256', CALL_TOKEN_SECRET).update(`empresa-ligacoes|${companyId}|${exp}`).digest('hex').slice(0, 32);
+  return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected)) ? companyId : '';
+}
+
+app.post('/api/companies/me/calls', rideChatLimiter, async (req, res, next) => {
+  try {
+    let companyId = companyFromCallPollToken(req.body?.pollToken);
+    let pollToken = req.body?.pollToken;
+    if (!companyId) {
+      const header = String(req.header('authorization') || '');
+      const session = await findCompanySession(header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '');
+      if (!session) return res.status(401).json({ error: 'sessao_invalida' });
+      companyId = onlyDigits(session.companyId);
+      pollToken = companyCallPollToken(companyId);
+    }
+    const ligacoes = deliveryCalls.ringing((call) => call.to === 'empresa' && call.meta?.companyId === companyId)
+      .map((call) => ({ deliveryId: call.key, callId: call.id, motoboy: call.meta?.motoboy || 'Motoboy' }));
+    res.set('cache-control', 'no-store');
+    return res.json({ ok: true, ligacoes, pollToken });
   } catch (error) { return next(error); }
 });
 

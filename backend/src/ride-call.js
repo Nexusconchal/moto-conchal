@@ -1,4 +1,5 @@
-// Ligacao de voz pelo app (cliente <-> motoboy), sem mostrar o numero de ninguem.
+// Ligacao de voz pelo app (cliente <-> motoboy na corrida, loja <-> motoboy na entrega),
+// sem mostrar o numero de ninguem.
 // O audio vai direto de celular para celular (WebRTC); o servidor so troca os "convites"
 // (oferta e resposta SDP) e guarda o estado da chamada em memoria, por poucos minutos.
 export const CALL_RING_MS = 45 * 1000;
@@ -6,10 +7,9 @@ export const CALL_MAX_MS = 30 * 60 * 1000;
 const KEEP_ENDED_MS = 60 * 1000;
 const MAX_SDP = 20000;
 
-const other = (role) => (role === 'cliente' ? 'motoboy' : 'cliente');
-
-export function createCallStore({ now = Date.now, randomId = () => Math.random().toString(36).slice(2, 12) } = {}) {
+export function createCallStore({ now = Date.now, randomId = () => Math.random().toString(36).slice(2, 12), roles = ['cliente', 'motoboy'] } = {}) {
   const calls = new Map();
+  const other = (role) => (role === roles[0] ? roles[1] : roles[0]);
 
   function tidy(rideId) {
     const call = calls.get(rideId);
@@ -30,8 +30,8 @@ export function createCallStore({ now = Date.now, randomId = () => Math.random()
   }
 
   return {
-    start(rideId, role, offer) {
-      if (!['cliente', 'motoboy'].includes(role)) throw fail('Ligacao nao autorizada.', 403, 'ligacao_nao_autorizada');
+    start(rideId, role, offer, meta = {}) {
+      if (!roles.includes(role)) throw fail('Ligacao nao autorizada.', 403, 'ligacao_nao_autorizada');
       if (!validSdp(offer, 'offer')) throw fail('Convite de ligacao invalido.', 400);
       const current = tidy(rideId);
       if (current && current.status !== 'encerrada') {
@@ -39,7 +39,7 @@ export function createCallStore({ now = Date.now, randomId = () => Math.random()
         throw fail('Ja tem uma ligacao em andamento nesta corrida.', 409, 'linha_ocupada');
       }
       if (calls.size > 2000) calls.delete(calls.keys().next().value);
-      const call = { id: randomId(), from: role, to: other(role), status: 'chamando', offer, answer: null, motivo: '', createdAt: now(), updatedAt: now(), answeredAt: 0, endedAt: 0, endedBy: '' };
+      const call = { id: randomId(), from: role, to: other(role), status: 'chamando', offer, answer: null, motivo: '', createdAt: now(), updatedAt: now(), answeredAt: 0, endedAt: 0, endedBy: '', meta };
       calls.set(rideId, call);
       return call;
     },
@@ -70,6 +70,15 @@ export function createCallStore({ now = Date.now, randomId = () => Math.random()
         offer: call.to === role && call.status === 'chamando' ? call.offer : null,
         answer: call.from === role && call.status === 'atendida' ? call.answer : null
       };
+    },
+    // Ligacoes tocando agora para alguem (ex.: todas as da loja), sem ler o banco.
+    ringing(match = () => true) {
+      const list = [];
+      for (const key of [...calls.keys()]) {
+        const call = tidy(key);
+        if (call && call.status === 'chamando' && match(call)) list.push({ key, id: call.id, from: call.from, to: call.to, meta: call.meta, createdAt: call.createdAt });
+      }
+      return list;
     },
     clear(rideId) { calls.delete(rideId); },
     size() { return calls.size; }
