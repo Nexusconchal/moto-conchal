@@ -28,14 +28,18 @@ test('the 3-minute reopen does not take a ride from a motoboy who notified the c
   // Motoboy A taps "Avisar cliente" right after the scan read the accepted rides.
   const db = makeDb(records, { afterQuery: (name, value) => { if (name === 'corridas' && value === 'aceita') records.set('corridas/r1', { ...records.get('corridas/r1'), clienteAvisadoEm: 'TS' }); } });
   const released = [];
-  const ctx = vm.createContext({ db, Date, Number, console, admin: { firestore: { FieldValue: fv } }, timestampMs: Number, cleanText: v => String(v || ''),
+  const pushed = [];
+  const ctx = vm.createContext({ db, Date, Number, Math, console, admin: { firestore: { FieldValue: fv } }, timestampMs: Number, cleanText: v => String(v || ''),
     RIDE_EXPIRE_MS: 9e9, CAR_RIDE_EXPIRE_MS: 9e9, DELIVERY_EXPIRE_MS: 9e9, ACCEPTED_NOTICE_MS: 180000,
+    notifyDriversAboutRide: async (id, ride) => { pushed.push([id, ride.status, ride.motoboyCpf]); return { sent: 2 }; }, saveRideDispatch: async () => {},
     releaseDeliveryReservation: async () => {}, driverAvailability: { job: (_k, id) => released.push(id) }, driverAvailabilitySocket: { publishAll: () => {} } });
   vm.runInContext(slice('async function cleanupRides(', '\n}\n') + '\n}', ctx);
   await ctx.cleanupRides();
   assert.equal(records.get('corridas/r1').status, 'aceita'); assert.equal(records.get('corridas/r1').motoboyCpf, '11111111111');
   assert.equal(records.get('corridas/r2').status, 'pendente'); assert.equal(records.get('corridas/r2').motoboyCpf, '');
   assert.deepEqual(released, ['r2']);
+  // A corrida que voltou pra fila toca de novo para os motoboys (antes voltava em silencio).
+  assert.deepEqual(pushed, [['r2', 'pendente', '']]);
 });
 test('notify-client only marks the ride for the motoboy who still owns it', async () => {
   const records = new Map([['corridas/r1', { status: 'pendente', motoboyCpf: '', telefoneCliente: '19999990000' }]]);

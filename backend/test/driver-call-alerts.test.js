@@ -94,3 +94,16 @@ test('rede temporariamente indisponível não corta uma chamada válida; expira�
   now=base;start();mode='unauthorized';controller.jobs({kind:'rides',scope:'pending',jobs:[job]});await flush();assert.equal(loop,false);
   controller.jobs({kind:'rides',scope:'pending',jobs:[job]});assert.equal(loop,false);
 });
+
+test('a call that went back to the queue gets its time again from the reopening', () => {
+  const now = Date.now();
+  const criadaEm = { seconds: Math.floor((now - 25 * 60000) / 1000) };
+  const reabertaEm = { seconds: Math.floor((now - 2 * 60000) / 1000) };
+  // Sem reabertura: venceu (10 min a partir da criacao).
+  assert.ok(callOfferExpiry('rides', { criadaEm }) < now);
+  // Reaberta ha 2 min: continua valendo por mais ~8 min (antes sumia do app do motoboy).
+  const exp = callOfferExpiry('rides', { criadaEm, reabertaEm });
+  assert.ok(exp > now + 7 * 60000 && exp <= now + 8 * 60000 + 1000);
+  // Timestamp do Firestore (toMillis) tambem conta.
+  assert.ok(callOfferExpiry('deliveries', { criadaEm, reabertaEm: { toMillis: () => now } }) >= now + 15 * 60000 - 5);
+});

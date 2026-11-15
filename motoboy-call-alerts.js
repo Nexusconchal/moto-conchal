@@ -53,7 +53,7 @@
         for (const [id, offer] of offers) if (detail.kind === 'all' || offer.kind === detail.kind) offers.delete(id);
         for (const job of detail.jobs || []) {
           const kind = job.__kind || detail.kind;
-          const offer = { kind, id: job.id, expiresAtMs: Number(job.expiraEmMs) || Number(job.criadaEm?.seconds || 0) * 1000 + (kind === 'deliveries' ? 15 : 10) * 60000 };
+          const offer = { kind, id: job.id, expiresAtMs: Number(job.expiraEmMs) || Math.max(Number(job.criadaEm?.seconds || 0), Number(job.reabertaEm?.seconds || 0)) * 1000 + (kind === 'deliveries' ? 15 : 10) * 60000 };
           if (valid(offer) && job.status === 'pendente' && !job.motoboyExclusivoCpf && job.tipo !== 'servico_exclusivo' && offer.expiresAtMs > now()) offers.set(key(offer), offer);
         }
         paint(); verify();

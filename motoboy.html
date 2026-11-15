@@ -1073,7 +1073,7 @@
       </section>
     </main>
     <script src="./driver-availability.js?v=call-alert-1"></script>
-    <script src="./motoboy-call-alerts.js?v=3"></script>
+    <script src="./motoboy-call-alerts.js?v=4"></script>
     <script src="./ride-call-ui.js?v=1"></script>
     <script src="./ride-chat.js?v=235"></script>
     <script src="./motoboy-avisos.js?v=5"></script>
@@ -1549,7 +1549,7 @@
         fecharNotificacoesOferta((id) => id !== c.id);
         const entrega = servicoEhEntrega(c),
           modoOferta = servicoEhEntrega(c) ? "entregas" : "pendentes",
-          criadaMs = (c.criadaEm?.seconds || 0) * 1000,
+          criadaMs = buscaDesdeMs(c),
           paradas = Number(c.paradas || 1),
           loteNota = entrega && c.entregaNaNota === true,
           cidade = c.cidadeOperacao === "aguai" ? "Aguaí" : c.cidadeOperacao === "engenheiro_coelho" ? "Eng. Coelho" : "Conchal",
@@ -2237,13 +2237,17 @@
           (ts?.seconds || Date.now() / 1000) * 1000,
         ).toLocaleString("pt-BR");
       }
+      // Procurando motoboy desde: a criacao ou a ultima vez que a chamada voltou pra fila.
+      function buscaDesdeMs(c) {
+        return Math.max(Number(c?.criadaEm?.seconds || 0), Number(c?.reabertaEm?.seconds || 0)) * 1000;
+      }
       function idadeMs(c) {
-        return Date.now() - (c.criadaEm?.seconds || 0) * 1000;
+        return Date.now() - buscaDesdeMs(c);
       }
       function expirada(c) {
         return (
           c.status === "pendente" &&
-          c.criadaEm?.seconds &&
+          !!buscaDesdeMs(c) &&
           idadeMs(c) > tempoLimiteMs(c)
         );
       }
@@ -2256,7 +2260,7 @@
         );
       }
       function tempoRestante(c) {
-        if (!c.criadaEm?.seconds)
+        if (!buscaDesdeMs(c))
           return `${Math.round(tempoLimiteMs(c) / 60000)} min`;
         const ms = Math.max(0, tempoLimiteMs(c) - idadeMs(c));
         const m = Math.floor(ms / 60000),
@@ -2638,7 +2642,7 @@
         const exclusivo = servicoExclusivo(c),
           entrega = modoEntrega() || c.tipo === "entrega_empresarial",
           { coleta, destino } = pontosServico({ ...c, __kind: entrega ? "deliveries" : "rides" }),
-          criadaMs = (c.criadaEm?.seconds || 0) * 1000,
+          criadaMs = buscaDesdeMs(c),
           paradas = Number(c.paradas || 1),
           tag = exclusivo
             ? "⭐ Escala exclusiva"

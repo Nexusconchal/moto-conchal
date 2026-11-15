@@ -1,7 +1,10 @@
 const kinds = new Set(['rides', 'deliveries']);
+const stampMs = (value) => (typeof value?.toMillis === 'function' ? value.toMillis()
+  : Number(value?.seconds || value?._seconds || 0) * 1000);
+// Chamada que voltou a procurar motoboy (motoboy cancelou, nao avisou o cliente, suporte
+// devolveu pra fila) ganha o prazo de novo a partir da reabertura, nao da criacao.
 export function callOfferExpiry(kind, job, durations = { rides: 10 * 60000, deliveries: 15 * 60000 }) {
-  const created = typeof job?.criadaEm?.toMillis === 'function' ? job.criadaEm.toMillis()
-    : Number(job?.criadaEm?.seconds || job?.criadaEm?._seconds || 0) * 1000;
+  const created = Math.max(stampMs(job?.criadaEm), stampMs(job?.reabertaEm));
   return Number(job?.expiraEmMs) || (created ? created + durations[kind] : 0);
 }
 

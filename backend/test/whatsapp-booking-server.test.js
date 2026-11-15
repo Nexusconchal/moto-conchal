@@ -34,6 +34,7 @@ function setup({ km = 2.07, geocode, cityForPoint = () => 'conchal' } = {}) {
     findRecentDuplicateRide: async () => '',
     notifyDriversAboutRide: async (id) => { notified.push(id); return { sent: 1, failed: 0 }; },
     notifyTelegramAboutRide: async () => ({ sent: true }),
+    saveRideDispatch: async () => {},
     rideStatusCache: new Map(),
     db: {
       collection: (name) => ({ doc: (id) => ref(`${name}/${id || `auto${++auto}`}`), where: () => ({ where: () => ({ limit: () => ({ get: async () => ({ size: 0, docs: [] }) }) }), limit: () => ({ get: async () => ({ docs: [] }) }) }) }),

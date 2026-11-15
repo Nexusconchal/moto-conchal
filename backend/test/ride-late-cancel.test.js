@@ -35,7 +35,7 @@ function harness(ride) {
     lateCancelBlocker, waitCancelBlocker, clientWhatsappNumber: (r) => r.telefoneCliente || '', sendEvolutionText: async (n, t) => calls.whatsapp.push([n, t]), cleanText: (v, n = 200) => String(v || '').trim().slice(0, n), onlyDigits: (v) => String(v || '').replace(/\D/g, ''),
     hashSecret: hash, timestampMs: (v) => Number(v || 0), rideStatusCache: new Map(), adminStateCache: {}, createRideLimiter: 0,
     driverAvailability: { job: (...a) => calls.jobs.push(a) }, driverAvailabilitySocket: { publishAll() {} }, emitSupportOperationsRefresh() {},
-    notifyDriversAboutRide: async (id, r) => calls.push.push([id, r.status]), notifyTelegramAboutRide: async (id) => calls.telegram.push(id),
+    notifyDriversAboutRide: async (id, r) => calls.push.push([id, r.status]), notifyTelegramAboutRide: async (id) => calls.telegram.push(id), saveRideDispatch: async () => {},
     notifyDriverLateCancel: async (r, acao) => calls.driver.push([r.motoboyCpf, acao]),
     getDriverWithProof: async (_cpf, body) => { if (body.driverCnh !== 'ok') throw Object.assign(new Error('prova'), { status: 401 }); return {}; },
     canReadRideTracking: async (req, access) => !!req.header('x-customer-device') && hash(req.header('x-customer-device')) === access.deviceHash,

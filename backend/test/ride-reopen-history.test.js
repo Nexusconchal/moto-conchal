@@ -21,7 +21,8 @@ const fv = { serverTimestamp: () => 'TS', delete: () => 'DELETE' };
 const onlyDigits = v => String(v || '').replace(/\D/g, '');
 
 function cleanupHarness(records, sent) {
-  const ctx = vm.createContext({ db: makeDb(records), Date, Number, Array, console, admin: { firestore: { FieldValue: fv } }, timestampMs: Number, cleanText: v => String(v || ''),
+  const ctx = vm.createContext({ db: makeDb(records), Date, Number, Array, Math, console,
+    notifyDriversAboutRide: async () => ({ sent: 0 }), saveRideDispatch: async () => {}, admin: { firestore: { FieldValue: fv } }, timestampMs: Number, cleanText: v => String(v || ''),
     RIDE_EXPIRE_MS: 9e9, CAR_RIDE_EXPIRE_MS: 9e9, DELIVERY_EXPIRE_MS: 9e9, ACCEPTED_NOTICE_MS: 6 * 60000,
     notifyClientRideReopened: async ride => sent.push(ride.telefoneCliente),
     releaseDeliveryReservation: async () => {}, driverAvailability: { job: () => {} }, driverAvailabilitySocket: { publishAll: () => {} } });

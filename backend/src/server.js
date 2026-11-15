@@ -3931,26 +3931,41 @@ async function notifyDriversAboutRide(rideId, ride) {
   const city = rideOperatingCity(ride);
   telegramOfferInBackground(telegramReadyDrivers(drivers.docs || [], (data) => driverWantsRide(data, ride)), telegramOfferText('corrida', ride));
 
+  // Para o painel do dono saber por que ninguem pegou: quantos atendem a cidade e
+  // quantos estavam Disponiveis (e livres) quando a chamada saiu.
+  let naCidade = 0;
+  let disponiveis = 0;
   drivers.forEach((doc) => {
     const data = doc.data();
     if (!driverWantsRide(data, ride)) return;
+    naCidade += 1;
     const saved = data.fcmTokens || {};
     const ready = driverReadyForCall(doc.id);
+    if (ready) disponiveis += 1;
     Object.entries(saved).forEach(([token, info]) => {
       callPush.remember(token, info);
       if (info?.ativo !== false && (ready || !nativeAlertToken(info))) tokens.push(token);
     });
   });
 
-  if (!tokens.length) return { sent: 0, failed: 0 };
+  if (!tokens.length) return { sent: 0, failed: 0, cidade: city, naCidade, disponiveis };
 
   const response = await callPush.offer(rideOfferPush(rideId, ride, tokens), { kind: 'rides', id: rideId, job: ride });
   offerAlerts.start('rides', rideId);
 
   return {
     sent: response.successCount,
-    failed: response.failureCount
+    failed: response.failureCount,
+    cidade: city, naCidade, disponiveis
   };
+}
+
+// Guarda na corrida o resultado do aviso (1 gravacao por chamada), para o dono ver.
+function saveRideDispatch(rideRef, push = {}, telegram = {}) {
+  return rideRef.set({ avisoMotoboys: {
+    cidade: push.cidade || '', naCidade: Number(push.naCidade || 0), disponiveis: Number(push.disponiveis || 0),
+    pushEnviados: Number(push.sent || 0), telegram: telegram?.sent === true || Number(telegram?.sent || 0) > 0, emMs: Date.now()
+  } }, { merge: true }).catch((error) => console.error('ride dispatch save failed', rideRef.id, error?.message));
 }
 
 // Horarios de Sao Paulo. O lembrete sai uma vez por dia em cada janela, mesmo que o servidor acorde atrasado.
@@ -4472,6 +4487,11 @@ async function cleanupRides() {
     if (reopened) {
       releasedAvailabilityRides.push(rideRef.id);
       updated += 1;
+      // Volta a tocar para os motoboys Disponiveis (antes ela voltava pra fila em silencio).
+      const reaberta = { ...reopenedRide, status: 'pendente', motoboyCpf: '', motoboy: '' };
+      notifyDriversAboutRide(rideRef.id, reaberta)
+        .then((push) => saveRideDispatch(rideRef, push))
+        .catch((error) => console.error('reopened ride push failed', rideRef.id, error?.message));
       if (reopenedRide?.clienteAvisoAutomatico?.enviado) {
         notifyClientRideReopened(reopenedRide).catch((error) => console.error('ride reopen client whatsapp failed', rideRef.id, error));
       }
@@ -4481,7 +4501,7 @@ async function cleanupRides() {
   const pendingCarRides = await db.collection('corridasCarro').where('status', '==', 'pendente').get();
   pendingCarRides.forEach((doc) => {
     const data = doc.data() || {};
-    const createdAt = timestampMs(data.criadaEm);
+    const createdAt = Math.max(timestampMs(data.criadaEm), timestampMs(data.reabertaEm));
     if (createdAt && now - createdAt > CAR_RIDE_EXPIRE_MS) {
       batch.update(doc.ref, {
         status: 'expirada',
@@ -4496,7 +4516,7 @@ async function cleanupRides() {
   const pendingDeliveries = await db.collection('entregas').where('status', '==', 'pendente').get();
   for (const doc of pendingDeliveries.docs) {
     const data = doc.data();
-    const createdAt = timestampMs(data.criadaEm);
+    const createdAt = Math.max(timestampMs(data.criadaEm), timestampMs(data.reabertaEm));
     if (createdAt && now - createdAt > DELIVERY_EXPIRE_MS) {
       await releaseDeliveryReservation(doc.ref, 'expirada', {
         expiradaEm: admin.firestore.FieldValue.serverTimestamp(),
@@ -5386,6 +5406,7 @@ app.post('/api/support/operations/:kind/:jobId/reassign-to-queue', assertSupport
     if (kind === 'corrida') {
       const ref = db.collection('corridas').doc(jobId);
       let previousDriverCpf = '';
+      let reaberta = null;
       await db.runTransaction(async (tx) => {
         const snap = await tx.get(ref);
         if (!snap.exists) throw new Error('Corrida nao encontrada.');
@@ -5394,6 +5415,7 @@ app.post('/api/support/operations/:kind/:jobId/reassign-to-queue', assertSupport
           throw new Error('Corrida ja foi finalizada ou cancelada.');
         }
         previousDriverCpf = onlyDigits(ride.motoboyCpf);
+        reaberta = { ...ride, status: 'pendente', motoboy: '', motoboyCpf: '' };
         tx.update(ref, {
           status: 'pendente',
           motoboy: admin.firestore.FieldValue.delete(),
@@ -5419,6 +5441,9 @@ app.post('/api/support/operations/:kind/:jobId/reassign-to-queue', assertSupport
       clearDriverProofCache(previousDriverCpf);
       adminStateCache = null;
       emitSupportOperationsRefresh();
+      if (previousDriverCpf.length === 11) driverAvailability.job('rides', jobId, 'pendente');
+      if (reaberta) notifyDriversAboutRide(jobId, reaberta).then((push) => saveRideDispatch(ref, push))
+        .catch((error) => console.error('support requeue push failed', jobId, error?.message));
       await writeSupportAudit(req.supportAccountId, 'corrida_devolvida_para_fila', { jobId, previousDriverCpf, reason })
         .catch((error) => console.error('support audit failed', error));
       return res.json({ ok: true });
@@ -5427,6 +5452,7 @@ app.post('/api/support/operations/:kind/:jobId/reassign-to-queue', assertSupport
     if (kind === 'entrega') {
       const ref = db.collection('entregas').doc(jobId);
       let previousDriverCpf = '';
+      let reaberta = null;
       await db.runTransaction(async (tx) => {
         const snap = await tx.get(ref);
         if (!snap.exists) throw new Error('Entrega nao encontrada.');
@@ -5435,6 +5461,7 @@ app.post('/api/support/operations/:kind/:jobId/reassign-to-queue', assertSupport
           throw new Error('Entrega ja foi finalizada ou cancelada.');
         }
         previousDriverCpf = onlyDigits(delivery.motoboyCpf);
+        reaberta = { ...delivery, status: 'pendente', motoboy: '', motoboyCpf: '' };
         tx.update(ref, {
           status: 'pendente',
           motoboy: admin.firestore.FieldValue.delete(),
@@ -5461,6 +5488,9 @@ app.post('/api/support/operations/:kind/:jobId/reassign-to-queue', assertSupport
       clearDriverProofCache(previousDriverCpf);
       adminStateCache = null;
       emitSupportOperationsRefresh();
+      if (previousDriverCpf.length === 11) driverAvailability.job('deliveries', jobId, 'pendente');
+      if (reaberta) notifyDriversAboutDelivery(jobId, reaberta)
+        .catch((error) => console.error('support requeue push failed', jobId, error?.message));
       await writeSupportAudit(req.supportAccountId, 'entrega_devolvida_para_fila', { jobId, previousDriverCpf, reason })
         .catch((error) => console.error('support audit failed', error));
       return res.json({ ok: true });
@@ -11288,8 +11318,9 @@ async function createRideRecord(ride) {
     console.error('telegram notify failed', error);
     return { sent: false, failed: true };
   });
+  await saveRideDispatch(ref, push, telegram);
 
-  return { rideId: ref.id, duplicated: false, httpStatus: 201, body: { rideId: ref.id, push, telegram } };
+  return { rideId: ref.id, duplicated: false, httpStatus: 201, body: { rideId: ref.id, push: { sent: push.sent, failed: push.failed }, telegram } };
 }
 
 app.post('/api/rides', createRideLimiter, async (req, res, next) => {
@@ -11866,7 +11897,7 @@ app.post('/api/rides/:rideId/late-cancel', createRideLimiter, async (req, res, n
     emitSupportOperationsRefresh();
     notifyDriverLateCancel(previous, acao).catch((error) => console.error('late cancel driver push failed', ref.id, error));
     if (acao === 'trocar') {
-      notifyDriversAboutRide(ref.id, updated).catch((error) => console.error('late cancel push failed', ref.id, error));
+      notifyDriversAboutRide(ref.id, updated).then((push) => saveRideDispatch(ref, push)).catch((error) => console.error('late cancel push failed', ref.id, error));
       notifyTelegramAboutRide(ref.id, updated).catch((error) => console.error('late cancel telegram failed', ref.id, error));
     }
     return res.json({ ok: true, status: updated.status });
