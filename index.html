@@ -3410,6 +3410,24 @@
         }
         return null;
       }
+      // Endereco sem cidade escrita: tenta a cidade que o cliente usou da ultima vez, depois
+      // Conchal, Aguai e Engenheiro Coelho (antes so procurava em Conchal).
+      async function geocodificarOrigem(txt) {
+        const explicita = cidadeOperacaoPorTexto(txt);
+        if (explicita) return geocodificar(txt, explicita);
+        let lembrada = "";
+        try { lembrada = localStorage.getItem("motojaCidadeCliente") || ""; } catch (_) {}
+        const ordem = [lembrada, "conchal", "aguai", "engenheiro_coelho"].filter((c, i, a) => c && CIDADES_OPERACAO[c] && a.indexOf(c) === i);
+        let primeiroErro = null;
+        for (const cidade of ordem) {
+          try {
+            return await geocodificar(txt, cidade);
+          } catch (e) {
+            primeiroErro = primeiroErro || e;
+          }
+        }
+        throw new Error(`${(primeiroErro && primeiroErro.message) || "Endereço não encontrado."} Se você é de Aguaí ou Engenheiro Coelho, escreva a cidade no fim (ex.: "Rua ..., 123, Aguaí").`);
+      }
       async function geocodificar(endereco, cidadePreferida = "conchal") {
         // "Martinho Prado Jr." -> "Martinho Prado Júnior" (o "Jr." virava lixo na busca).
         const base = endereco.trim().replace(/\bjr\.?(?=[\s,\-]|$)/gi, "Júnior");
@@ -4850,17 +4868,16 @@
           );
           // Coordenadas coladas no campo valem como o ponto do GPS.
           const origemPonto = origemGps || coordenadasDoTexto(origemTxt),
-            cidadeOrigemDigitada =
-              cidadeOperacaoPorTexto(origemTxt) || "conchal",
             origem =
               origemPonto ||
-              (await geocodificar(origemTxt, cidadeOrigemDigitada)),
+              (await geocodificarOrigem(origemTxt)),
             enderecoGps = origemPonto ? await enderecoDoGps(origem) : "",
             cidadeOperacao = cidadeOperacaoPorOrigem(
               origem,
               enderecoGps || origem.texto || origemTxt,
             ),
             destino = await geocodificar(destinoTxt, cidadeOperacao);
+          try { localStorage.setItem("motojaCidadeCliente", cidadeOperacao); } catch (_) {}
           mostrarStatus("Calculando a distância da rota...");
           const rota = await calcularRota(origem, destino),
             km = rota.km;
