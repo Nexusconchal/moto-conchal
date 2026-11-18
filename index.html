@@ -4749,10 +4749,16 @@
       ["nome", "telefoneCliente", "origem"].forEach((id) =>
         $(id).addEventListener("input", salvarCliente),
       );
+      // WhatsApp do Brasil: tira o 55 do pais (quem cola o numero completo) e confere o formato.
+      function whatsappBr(valor) {
+        const d = String(valor || "").replace(/\D/g, "");
+        return (d.length === 12 || d.length === 13) && d.startsWith("55") ? d.slice(2) : d;
+      }
+      function whatsappValido(d) {
+        return /^[1-9][1-9]9\d{8}$/.test(d) || /^[1-9][1-9]\d{8}$/.test(d);
+      }
       $("telefoneCliente").addEventListener("input", () => {
-        $("telefoneCliente").value = $("telefoneCliente")
-          .value.replace(/\D/g, "")
-          .slice(0, 11);
+        $("telefoneCliente").value = whatsappBr($("telefoneCliente").value).slice(0, 11);
       });
       $("origem").addEventListener("input", () => {
         origemGps = null;
@@ -4800,8 +4806,11 @@
           mostrarStatus("Preencha nome, WhatsApp, origem e destino.", true);
           return;
         }
-        if (telefoneCliente.length < 10 || telefoneCliente.length > 11) {
-          mostrarStatus("Digite o WhatsApp com DDD.", true);
+        if (!whatsappValido(telefoneCliente)) {
+          mostrarStatus(/^55/.test(telefoneCliente) && telefoneCliente.length === 11
+            ? "Esse WhatsApp parece errado (com 55 na frente e faltando número). Digite só DDD + número, ex.: 19 99999-9999."
+            : "Digite o WhatsApp com DDD + número, ex.: 19 99999-9999.", true);
+          $("telefoneCliente").focus();
           return;
         }
         const entrega =

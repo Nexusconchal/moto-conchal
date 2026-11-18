@@ -11397,9 +11397,19 @@ async function createRideRecord(ride) {
   return { rideId: ref.id, duplicated: false, httpStatus: 201, body: { rideId: ref.id, push: { sent: push.sent, failed: push.failed }, telegram } };
 }
 
+// WhatsApp do Brasil: tira o 55 do pais e confere DDD + celular (9 + 8 digitos) ou fixo.
+function brWhatsappDigits(value) {
+  const digits = onlyDigits(value);
+  return (digits.length === 12 || digits.length === 13) && digits.startsWith('55') ? digits.slice(2) : digits;
+}
+function validBrWhatsapp(digits) {
+  return /^[1-9][1-9]9\d{8}$/.test(digits) || /^[1-9][1-9]\d{8}$/.test(digits);
+}
+
 app.post('/api/rides', createRideLimiter, async (req, res, next) => {
   try {
     const ride = ridePublicData(req.body);
+    ride.telefoneCliente = brWhatsappDigits(req.body?.telefoneCliente);
     ride.cidadeOperacao = inferNewRideOperatingCity(ride, req.body.cidadeOperacao);
     if (!ride.nome || !ride.origem || !ride.destino || ride.telefoneCliente.length < 10 || ride.telefoneCliente.length > 11) {
       return res.status(400).json({ error: 'preencha_nome_telefone_origem_destino' });
@@ -11429,6 +11439,10 @@ app.post('/api/rides', createRideLimiter, async (req, res, next) => {
     if (accountPhone.length >= 10 && accountPhone.length <= 11) ride.telefoneCliente = accountPhone;
     else if (authenticated) {
       return res.status(403).json({ error: 'telefone_cliente_divergente', message: 'Use o WhatsApp confirmado da sua conta.' });
+    }
+    // Numero errado (ex.: 55 na frente e faltando digito): o cliente nao receberia o aviso do motoboy.
+    if (!authenticated && !validBrWhatsapp(ride.telefoneCliente)) {
+      return res.status(400).json({ error: 'telefone_cliente_invalido', message: 'Esse WhatsApp parece errado. Digite DDD + número, ex.: 19 99999-9999.' });
     }
     if (CUSTOMER_REGISTRATION_ENFORCED && !authenticated) {
       const completedRides = await completedCustomerRides(ride.clienteDeviceId);
