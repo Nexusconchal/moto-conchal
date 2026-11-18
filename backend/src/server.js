@@ -226,6 +226,15 @@ function driverDebtHistoryRef(driverCpf, tipo, refId) {
 }
 
 // writer: transacao ou batch. centavos > 0 aumenta a divida; < 0 abate.
+// Taxa que o Mercado Pago repassou para a MotoJa num pagamento dividido (taxa do app +
+// cobranca da divida). O pagamento traz isso em fee_details ("application_fee"); alguns trazem
+// marketplace_fee. null = o pagamento nao informou (ai vale o que o nosso servidor pediu).
+function mpCollectedFee(payment = {}) {
+  if (payment && payment.marketplace_fee !== undefined && payment.marketplace_fee !== null && Number.isFinite(Number(payment.marketplace_fee))) return money(payment.marketplace_fee);
+  const fees = Array.isArray(payment?.fee_details) ? payment.fee_details.filter((fee) => /application_fee|marketplace_fee/i.test(String(fee?.type || ''))) : [];
+  return fees.length ? money(fees.reduce((sum, fee) => sum + Number(fee.amount || 0), 0)) : null;
+}
+
 function recordDriverDebt(writer, driverCpf, { centavos, tipo, refId, descricao = '' }) {
   const cpf = onlyDigits(driverCpf);
   const value = Math.round(Number(centavos) || 0);
@@ -6661,9 +6670,17 @@ async function driverDebtSummary(driverCpf) {
     db.collection('motoboys').doc(cpf).collection('dividaApp').orderBy('criadoEmMs', 'desc').limit(15).get()
   ]);
   const centavos = Math.round(Number(driverSnap.data()?.dividaAppCentavos || 0));
+  // Devendo e com corrida paga na conta da MotoJa (sem Mercado Pago dele): a divida sai do repasse.
+  let repasseAPagar = 0;
+  if (centavos > 0) {
+    const repasses = await db.collection('repassesMotoboy').where('motoboyCpf', '==', cpf).where('status', '==', 'a_pagar').limit(30).get().catch(() => null);
+    repasseAPagar = money((repasses?.docs || []).reduce((sum, doc) => sum + Number(doc.data()?.valor || 0), 0));
+  }
   return {
     devendo: money(Math.max(0, centavos) / 100),
     credito: money(Math.max(0, -centavos) / 100),
+    repasseAPagar,
+    mercadoPagoConectado: !!driverSnap.data()?.mercadoPago?.accessToken,
     historico: history.docs.map((doc) => {
       const item = doc.data() || {};
       return { tipo: item.tipo, valor: money(Number(item.centavos || 0) / 100), descricao: item.descricao || '', emMs: Number(item.criadoEmMs || 0) };
@@ -8918,6 +8935,57 @@ app.post('/api/admin/rides/:rideId/force-finish', assertOwner, async (req, res, 
   }
 });
 
+// Corrida paga pelo app (conta do motoboy) cuja cobranca da taxa em dinheiro nao foi baixada
+// (o aviso do Mercado Pago chegou sem o campo esperado): da baixa uma vez, conferindo tudo de novo.
+async function settleRideDebtFromPayment(rideRef, payment) {
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(rideRef);
+    if (!snap.exists) return 0;
+    const ride = snap.data() || {};
+    const anterior = ride.pagamento || {};
+    const cpf = onlyDigits(ride.motoboyCpf);
+    const cobranca = money(payment?.metadata?.cobranca_divida ?? 0);
+    if (anterior.dividaDescontadaEm || cobranca <= 0 || cpf.length !== 11 || payment?.status !== 'approved' || payment?.metadata?.payment_kind) return 0;
+    if (onlyDigits(payment.metadata?.driver_cpf) && onlyDigits(payment.metadata.driver_cpf) !== cpf) return 0;
+    if (anterior.paymentId && String(anterior.paymentId) !== String(payment.id)) return 0;
+    const esperado = money(anterior.total || ride.valor || 0);
+    if (!(esperado > 0) || Math.abs(money(payment.transaction_amount) - esperado) > 0.01) return 0;
+    const appFee = money(payment.metadata?.app_fee || anterior.appFee || 0);
+    const taxa = mpCollectedFee(payment);
+    if (taxa !== null && taxa + 0.01 < money(appFee + cobranca)) return 0;
+    tx.set(rideRef, { pagamento: { cobrancaDividaApp: cobranca, dividaDescontadaEm: admin.firestore.FieldValue.serverTimestamp() } }, { merge: true });
+    recordDriverDebt(tx, cpf, { centavos: -Math.round(cobranca * 100), tipo: 'desconto', refId: rideRef.id, descricao: `Descontado da corrida de ${ride.nome || 'cliente'}` });
+    return cobranca;
+  });
+}
+
+// Uma vez: confere as corridas pagas pelo app dos motoboys que ainda devem taxa em dinheiro.
+async function repairUnsettledRideDebts() {
+  const flagRef = db.collection('config').doc('reparoDividaApp');
+  if ((await flagRef.get()).data()?.v1) return { skipped: true };
+  const devedores = await db.collection('motoboys').where('dividaAppCentavos', '>', 0).limit(100).get();
+  let baixas = 0;
+  for (const driverDoc of devedores.docs) {
+    const sellerToken = driverDoc.data()?.mercadoPago?.accessToken;
+    if (!sellerToken) continue;
+    const rides = await db.collection('corridas').where('motoboyCpf', '==', driverDoc.id).where('status', '==', 'finalizada').limit(40).get();
+    for (const rideDoc of rides.docs) {
+      const ride = rideDoc.data() || {};
+      const p = ride.pagamento || {};
+      if (ride.pagoEmDinheiro || p.dividaDescontadaEm || p.receiver === 'motoja_owner' || p.status !== 'approved' || !/^\d+$/.test(String(p.paymentId || ''))) continue;
+      if (Date.now() - timestampMs(ride.finalizadaEm || ride.criadaEm) > 30 * 24 * 60 * 60 * 1000) continue;
+      try {
+        const payment = await mpFetch(`/v1/payments/${p.paymentId}`, { token: sellerToken });
+        if (await settleRideDebtFromPayment(rideDoc.ref, payment)) baixas += 1;
+      } catch (error) {
+        console.error('debt repair payment failed', rideDoc.id, error?.message);
+      }
+    }
+  }
+  await flagRef.set({ v1: true, baixas, emMs: Date.now() }, { merge: true });
+  return { baixas };
+}
+
 app.post('/api/admin/rides/:rideId/payment/sync', assertOwner, async (req, res, next) => {
   try {
     const rideRef = db.collection('corridas').doc(String(req.params.rideId || ''));
@@ -8966,9 +9034,13 @@ app.post('/api/admin/rides/:rideId/payment/sync', assertOwner, async (req, res, 
         ...(ride.pagamentoConfirmadoEm ? {} : { pagamentoConfirmadoEm: admin.firestore.FieldValue.serverTimestamp() }),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
+      const dividaBaixada = await settleRideDebtFromPayment(rideRef, approvedPayment).catch((error) => {
+        console.error('debt settle on sync failed', rideRef.id, error?.message);
+        return 0;
+      });
       adminStateCache = null;
       emitSupportOperationsRefresh();
-      return res.json({ ok: true, approved: true, payment: approvedPayment });
+      return res.json({ ok: true, approved: true, dividaBaixada, payment: approvedPayment });
     }
 
     const latest = payments[0];
@@ -14735,7 +14807,7 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
       // na taxa do app (conta do motoboy). Pagamento na conta MotoJa desconta no repasse.
       const cobrancaPedida = money(payment.metadata?.cobranca_divida ?? anterior.cobrancaDividaApp ?? 0);
       if (pagamentoAprovado && valorConfere && !anterior.dividaDescontadaEm && cobrancaPedida > 0 && rideDriverCpf.length === 11
-        && !payment.metadata?.payment_kind && money(payment.marketplace_fee || 0) + 0.01 >= money(pagamento.appFee + cobrancaPedida)) {
+        && !payment.metadata?.payment_kind && (mpCollectedFee(payment) === null || mpCollectedFee(payment) + 0.01 >= money(pagamento.appFee + cobrancaPedida))) {
         pagamento.cobrancaDividaApp = cobrancaPedida;
         pagamento.dividaDescontadaEm = admin.firestore.FieldValue.serverTimestamp();
         recordDriverDebt(tx, rideDriverCpf, { centavos: -Math.round(cobrancaPedida * 100), tipo: 'desconto', refId: rideId, descricao: `Descontado da corrida de ${ride.nome || 'cliente'}` });
@@ -15370,6 +15442,9 @@ httpServer.listen(PORT, () => {
   restoreDriverAvailability()
     .then((count) => console.log('driver availability restored', count))
     .catch((error) => console.error('driver availability restore failed', error));
+  repairUnsettledRideDebts()
+    .then((result) => console.log('ride debt repair', result))
+    .catch((error) => console.error('ride debt repair failed', error?.message));
   backfillActivePlanActivations()
     .then((count) => console.log('plan activations backfilled', count))
     .catch((error) => console.error('plan activations backfill failed', error));
