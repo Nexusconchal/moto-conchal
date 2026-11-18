@@ -344,10 +344,20 @@
     const deposits = (state.depositos || []).filter(inSelectedPeriod);
     const approved = deposits.filter((item) => item.status === "aprovado").reduce((sum, item) => sum + Number(item.valor || 0), 0);
     const pending = deposits.filter((item) => item.status === "pendente").reduce((sum, item) => sum + Number(item.valor || 0), 0);
+    // Como os clientes pagaram as corridas finalizadas do periodo (Pix, cartao, dinheiro).
+    const formas = { pix: [0, 0], cartao: [0, 0], dinheiro: [0, 0] };
+    (summary.rides || []).filter((item) => item.status === "finalizada").forEach((item) => {
+      const forma = window.formaPagamentoCorrida?.(item);
+      if (forma && formas[forma.k]) { formas[forma.k][0] += 1; formas[forma.k][1] += Number(item.valor || 0); }
+    });
+    const formaTxt = ([qtd, valor]) => `${money(valor)} · ${qtd} corrida${qtd === 1 ? "" : "s"}`;
     document.getElementById("ownerFinance").innerHTML = [
       ["Faturamento finalizado", money(summary.gross)],
       ["Repasse dos motoboys", money(summary.driver)],
       ["Receita da MotoJÁ", money(summary.app)],
+      ["💠 Corridas pagas no Pix", formaTxt(formas.pix)],
+      ["💳 Corridas pagas no cartão", formaTxt(formas.cartao)],
+      ["💵 Corridas pagas em dinheiro", formaTxt(formas.dinheiro)],
       ["Depósitos aprovados", money(approved)],
       ["Depósitos aguardando", money(pending)],
       ["Ticket médio", money(summary.average)],
@@ -394,7 +404,8 @@
     const dataRows = rows.map((item) =>
       isDelivery
         ? [new Date(jobTimestamp(item)).toLocaleString("pt-BR"), item.status, item.empresa, item.motoboy, item.tipoEntrega, item.retirada, item.entrega, item.paradas, item.km, item.valor]
-        : [new Date(jobTimestamp(item)).toLocaleString("pt-BR"), item.status, item.nome, item.motoboy, item.origem, item.destino, item.km, item.valor, item.pagamento?.status || ""],
+        : [new Date(jobTimestamp(item)).toLocaleString("pt-BR"), item.status, item.nome, item.motoboy, item.origem, item.destino, item.km, item.valor,
+          (window.formaPagamentoCorrida?.(item)?.t || item.pagamento?.status || "").replace(/^\S+\s/, "")],
     );
     const csv = `\uFEFF${[headers, ...dataRows].map((row) => row.map(csvCell).join(";")).join("\r\n")}`;
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
