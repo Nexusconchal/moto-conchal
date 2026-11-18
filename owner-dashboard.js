@@ -143,6 +143,8 @@
   }
 
   function periodLabel() {
+    const chip = document.querySelector('[data-periodo-geral][aria-pressed="true"]');
+    if (chip) return chip.textContent === "7 dias" || chip.textContent === "30 dias" ? `Últimos ${chip.textContent}` : chip.textContent;
     const select = document.getElementById("periodo");
     return select?.options[select.selectedIndex]?.textContent || "Hoje";
   }

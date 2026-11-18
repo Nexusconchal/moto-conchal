@@ -25,7 +25,7 @@ comidaEntrega = function(e){return /lanche|comida|pizza|pastel|acai|sorvete|marm
 </script>
 <link rel="stylesheet" href="./owner-dashboard.css?v=229">
 <link rel="stylesheet" href="./owner-workspace.css?v=237">
-<script src="./owner-dashboard.js?v=231"></script>
+<script src="./owner-dashboard.js?v=232"></script>
 <script src="./owner-repasses.js?v=3" defer></script><script src="./owner-food.js?v=11" defer></script><script src="./owner-sessoes.js?v=2" defer></script><script src="./owner-workspace.js?v=241"></script>
 <style>
   .delivery-report-toolbar{display:grid;grid-template-columns:repeat(3,minmax(190px,1fr)) auto;align-items:end;justify-content:space-between;gap:10px}
@@ -37,6 +37,13 @@ comidaEntrega = function(e){return /lanche|comida|pizza|pastel|acai|sorvete|marm
   .delivery-period-select{display:none}
   .delivery-report-toolbar .delivery-period-chips button{width:auto;flex:1 1 auto;padding:8px 14px}
   @media(max-width:680px){.delivery-period-chips{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.delivery-report-toolbar .delivery-period-chips button{padding:8px 2px;font-size:.78rem}}
+  .owner-period-chips{grid-column:1/-1}
+  .owner-period-chips button{flex:1 1 auto}
+  .owner-period-mais{grid-column:1/-1;justify-self:start;background:none!important;border:0!important;box-shadow:none!important;color:#ffb13c!important;font-weight:800;font-size:.8rem;padding:4px 2px!important;min-height:0!important;width:auto!important;cursor:pointer}
+  .filters:not(.mostrar-periodo) > label.periodo-avancado{display:none}
+  .filters label.periodo-avancado input[type=date]{display:block;width:100%;min-width:0;max-width:100%;-webkit-appearance:none;appearance:none;box-sizing:border-box}
+  .filters > label.periodo-status{grid-column:1/-1}
+  @media(max-width:680px){.owner-period-chips{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.owner-period-chips button{padding:8px 2px!important;font-size:.78rem!important}}
   #entregas-section:fullscreen,#entregas-section.report-expanded{background:#090b13;padding:18px;border:0;border-radius:0;width:100vw;height:100vh;max-width:none}
   #entregas-section:fullscreen .table,#entregas-section.report-expanded .table{max-height:calc(100vh - 230px);height:calc(100vh - 230px)}
   #entregas-section.report-expanded{position:fixed;inset:0;z-index:9999;overflow:hidden}
@@ -142,6 +149,11 @@ comidaEntrega = function(e){return /lanche|comida|pizza|pastel|acai|sorvete|marm
     // O filtro "Fechamento" do topo tambem muda este periodo.
     globalPeriod?.addEventListener('change', () => {
       if (['hoje', 'ontem', '7dias', 'todos'].includes(globalPeriod.value) && periodSelect.value !== globalPeriod.value) { periodSelect.value = globalPeriod.value; paintChips(); }
+      else if (globalPeriod.value === 'personalizado' && periodSelect.value !== '30dias') {
+        const d = new Date(); d.setDate(d.getDate() - 29);
+        const local = (x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+        if (document.getElementById('dataInicio')?.value === local(d) && document.getElementById('dataFim')?.value === local(new Date())) { periodSelect.value = '30dias'; paintChips(); }
+      }
     });
     periodSelect.addEventListener('change', () => {
       if (!globalPeriod) return;
@@ -193,5 +205,52 @@ comidaEntrega = function(e){return /lanche|comida|pizza|pastel|acai|sorvete|marm
       navigator.serviceWorker.register('./sw.js?v=180', { updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});
     }
   })();
+</script>
+<script>
+// Filtro de periodo do painel (Corridas, Visao geral...): botoes iguais aos das Entregas.
+// "Outro periodo" mostra o fechamento (dia 1 ao 10...) e as datas personalizadas.
+(function(){
+  function montar(){
+    const periodo=document.getElementById('periodo');
+    const box=periodo?.closest('.filters');
+    if(!box||box.querySelector('.owner-period-chips'))return;
+    const ini=document.getElementById('dataInicio'),fim=document.getElementById('dataFim'),status=document.getElementById('status');
+    periodo.closest('label')?.classList.add('periodo-avancado');
+    ini?.closest('label')?.classList.add('periodo-avancado');
+    fim?.closest('label')?.classList.add('periodo-avancado');
+    status?.closest('label')?.classList.add('periodo-status');
+    const opcoes=[['hoje','Hoje'],['ontem','Ontem'],['7dias','7 dias'],['30dias','30 dias'],['todos','Todos']];
+    const chips=document.createElement('div');
+    chips.className='delivery-period-chips owner-period-chips';
+    chips.setAttribute('role','group');chips.setAttribute('aria-label','Período');
+    chips.innerHTML=opcoes.map(([v,t])=>`<button type="button" data-periodo-geral="${v}">${t}</button>`).join('');
+    const mais=document.createElement('button');
+    mais.type='button';mais.className='owner-period-mais';
+    box.prepend(mais);box.prepend(chips);
+    if(!periodo.querySelector('option[value="30dias"]'))periodo.insertAdjacentHTML('beforeend','<option value="30dias" hidden>Últimos 30 dias</option>');
+    const dataLocal=(d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const ha29=()=>{const d=new Date();d.setDate(d.getDate()-29);return dataLocal(d)};
+    const atual=()=>periodo.value==='personalizado'&&ini?.value===ha29()&&fim?.value===dataLocal(new Date())?'30dias':periodo.value;
+    function pintar(){
+      const v=atual(),avancado=!opcoes.some(([o])=>o===v);
+      chips.querySelectorAll('button').forEach((b)=>b.setAttribute('aria-pressed',String(b.dataset.periodoGeral===v)));
+      if(avancado)box.classList.add('mostrar-periodo');
+      mais.textContent=box.classList.contains('mostrar-periodo')?'✕ Fechar outro período':'📅 Outro período (fechamento ou datas)';
+    }
+    chips.addEventListener('click',(e)=>{
+      const b=e.target.closest('[data-periodo-geral]');if(!b)return;
+      const v=b.dataset.periodoGeral;
+      if(v==='30dias'){periodo.value='personalizado';if(ini)ini.value=ha29();if(fim)fim.value=dataLocal(new Date())}
+      else periodo.value=v;
+      box.classList.remove('mostrar-periodo');
+      periodo.dispatchEvent(new Event('change'));
+      pintar();
+    });
+    mais.addEventListener('click',()=>{box.classList.toggle('mostrar-periodo');pintar()});
+    [periodo,ini,fim].forEach((el)=>el?.addEventListener('change',pintar));
+    pintar();
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',montar);else montar();
+})();
 </script>
 </body></html>
