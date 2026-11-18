@@ -1422,6 +1422,10 @@ function inferNewRideOperatingCity(ride = {}, requested = '') {
   ].filter(Boolean).join(' '));
   const origin = { lat: Number(ride.origemLat), lon: Number(ride.origemLon) };
   if (originText.includes('estiva gerbi') || coordinateDistanceKm(origin, ESTIVA_GERBI_CENTER) <= 8) return 'conchal';
+  // Municipio do endereco achado no mapa ("..., Conchal - SP"): zona rural de Conchal perto de
+  // Eng. Coelho continua com os motoboys de Conchal (antes ia para quem estava mais perto).
+  const municipio = normalizeText(ride.origemEncontrada || '').match(/(conchal|aguai|engenheiro coelho)\s*-\s*(sp|sao paulo|sudeste)\b/);
+  if (municipio) return municipio[1] === 'engenheiro coelho' ? 'engenheiro_coelho' : municipio[1];
   // Saiu de dentro de uma cidade atendida: fica com os motoboys dela.
   const originLocal = servedCityWithin(origin, RIDE_CITY_LOCAL_KM);
   if (originLocal) return originLocal;
@@ -4680,6 +4684,29 @@ app.get('/', (_req, res) => {
     service: 'motoja-conchal-backend',
     site: process.env.APP_BASE_URL || null
   });
+});
+
+// Endereco digitado sem cidade: em qual cidade atendida a rua existe (so o cadastro do IBGE,
+// na memoria; nao gasta Geoapify nem Firebase). O app busca primeiro na cidade que achou aqui.
+app.get('/api/maps/geocode-cities', mapLimiter, (req, res) => {
+  const text = cleanText(req.query.text, 220);
+  if (!text) return res.status(400).json({ error: 'endereco_obrigatorio' });
+  const cidades = [];
+  for (const [key, info] of Object.entries(GAZETTEER_CITIES)) {
+    try {
+      const gazetteer = gazetteerFor(key);
+      if (!gazetteer) continue;
+      const result = gazetteer.search(text);
+      const props = result.features?.[0]?.properties;
+      if (props) cidades.push({ cidade: key, nome: info.name, nota: Number(props.match_score || 0), endereco: props.formatted || '' });
+      else if (result.ambiguous) cidades.push({ cidade: key, nome: info.name, nota: 0.9, ambiguo: true, sugestoes: (result.suggestions || []).slice(0, 4) });
+    } catch (error) {
+      console.error('geocode cities failed', key, error?.message);
+    }
+  }
+  cidades.sort((a, b) => b.nota - a.nota);
+  res.set('cache-control', 'no-store');
+  return res.json({ ok: true, cidades });
 });
 
 app.get('/api/maps/geocode', mapLimiter, async (req, res, next) => {

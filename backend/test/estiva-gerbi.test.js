@@ -67,3 +67,20 @@ test('a motoboy in Araras is outside the service area and gets no calls (not Eng
   assert.match(rota, /cidadeGps: 'fora'/);
   assert.match(rota, /servedCityWithin\(point, DRIVER_CITY_KM\)/);
 });
+
+test('zona rural de Conchal perto de Eng. Coelho continua com os motoboys de Conchal', () => {
+  const pertoDeCoelho = { lat: -22.455, lon: -47.20 };
+  const cli = vm.createContext({});
+  const load = (name, next) => vm.runInContext(html.slice(html.indexOf(`function ${name}(`), html.indexOf(`function ${next}(`)), cli);
+  load('distanciaKmMapa', 'cidadeOperacaoPorTexto'); load('textoBusca', 'cidadesAtendidas');
+  load('cidadeOperacaoPorTexto', 'cidadeMapaPorTexto');
+  vm.runInContext('function coordenadaValida(p){return !!p&&Number.isFinite(Number(p.lat))&&Number.isFinite(Number(p.lon))}', cli);
+  assert.equal(cli.cidadeOperacaoPorOrigem({ ...pertoDeCoelho, texto: 'Estrada 366, 170 - Estrada Para Engenheiro Coelho, Conchal - SP, 13835-000' }), 'conchal');
+  // A rua pode ter nome de outra cidade: vale so o municipio no fim do endereco.
+  assert.equal(cli.cidadeOperacaoPorOrigem({ lat: -22.33, lon: -47.17, texto: 'Rua Aguaí, 10 - Centro, Conchal - SP' }), 'conchal');
+  const srv = vm.createContext({ streetNumber, normalizeText, Math, Number, Object });
+  vm.runInContext(backend.slice(backend.indexOf('function requestedPlaceHint('), backend.indexOf('function ensureResolvedPlaceMatches(')), srv);
+  vm.runInContext(backend.slice(backend.indexOf('const RIDE_CITY_CENTERS = {'), backend.indexOf('function normalizedPersonName(')), srv);
+  assert.equal(srv.inferNewRideOperatingCity({ origemLat: pertoDeCoelho.lat, origemLon: pertoDeCoelho.lon, origemEncontrada: 'Estrada 366, 170 - Estrada Para Engenheiro Coelho, Conchal - SP, 13835-000' }), 'conchal');
+  assert.equal(srv.inferNewRideOperatingCity({ origemLat: pertoDeCoelho.lat, origemLon: pertoDeCoelho.lon }), 'engenheiro_coelho', 'sem endereco, vale a distancia');
+});

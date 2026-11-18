@@ -2457,10 +2457,20 @@
         if (texto.includes("conchal")) return "conchal";
         return "";
       }
+      // Municipio escrito no endereco achado no mapa ("..., Conchal - SP"): so o fim do endereco
+      // conta (a rua pode se chamar "Rua Aguai" e ficar em Conchal).
+      function municipioDoEndereco(txt) {
+        const t = textoBusca(txt || "").replace(/[\u0300-\u036f]/g, "");
+        const m = t.match(/(conchal|aguai|engenheiro coelho)\s*-\s*(sp|sao paulo|sudeste)\b/);
+        return m ? (m[1] === "engenheiro coelho" ? "engenheiro_coelho" : m[1]) : "";
+      }
       function cidadeOperacaoPorOrigem(origem, endereco = "") {
         // Estiva Gerbi fica quase a mesma distancia de Conchal e de Aguai;
         // quem chama de la e atendido pelos motoboys de Conchal.
         if (textoBusca(`${endereco} ${origem?.texto || ""}`).includes("estiva gerbi")) return "conchal";
+        // Zona rural de Conchal perto de Eng. Coelho continua sendo dos motoboys de Conchal.
+        const municipio = municipioDoEndereco(origem?.texto) || municipioDoEndereco(endereco);
+        if (municipio) return municipio;
         if (coordenadaValida(origem) && distanciaKmMapa({ lat: Number(origem.lat), lon: Number(origem.lon) }, { lat: -22.2708, lon: -46.9478 }) <= 8) return "conchal";
         if (coordenadaValida(origem)) {
           const ponto = { lat: Number(origem.lat), lon: Number(origem.lon) },
@@ -3410,22 +3420,59 @@
         }
         return null;
       }
-      // Endereco sem cidade escrita: tenta a cidade que o cliente usou da ultima vez, depois
-      // Conchal, Aguai e Engenheiro Coelho (antes so procurava em Conchal).
+      // Endereco sem cidade escrita (cliente de Conchal ou de Aguai): o servidor diz em qual cidade a
+      // rua existe no cadastro do IBGE e o app busca primeiro la. Rua igual em duas cidades: o cliente
+      // escolhe. Sem resposta do servidor: tenta a cidade lembrada, Conchal, Aguai e Eng. Coelho.
+      async function cidadesComARua(txt) {
+        try {
+          const r = await fetch(`${CONFIG.backend}/api/maps/geocode-cities?${new URLSearchParams({ text: txt })}`, { cache: "no-store" });
+          if (!r.ok) return null;
+          const d = await r.json();
+          return Array.isArray(d.cidades) ? d.cidades.filter((c) => CIDADES_OPERACAO[c.cidade]) : null;
+        } catch (_) {
+          return null;
+        }
+      }
+      function erroEscolherCidade(cidades) {
+        return Object.assign(new Error(`Essa rua existe em ${cidades.map((c) => CIDADES_OPERACAO[c].nome).join(" e em ")}. Qual é a sua cidade?`), { cidades });
+      }
       async function geocodificarOrigem(txt) {
         const explicita = cidadeOperacaoPorTexto(txt);
         if (explicita) return geocodificar(txt, explicita);
         let lembrada = "";
         try { lembrada = localStorage.getItem("motojaCidadeCliente") || ""; } catch (_) {}
-        const ordem = [lembrada, "conchal", "aguai", "engenheiro_coelho"].filter((c, i, a) => c && CIDADES_OPERACAO[c] && a.indexOf(c) === i);
-        let primeiroErro = null;
+        if (!CIDADES_OPERACAO[lembrada]) lembrada = "";
+        const todas = ["conchal", "aguai", "engenheiro_coelho"];
+        const noCadastro = await cidadesComARua(txt);
+        let primeiras = [];
+        if (noCadastro && noCadastro.length) {
+          const identicas = noCadastro.filter((c) => c.nota >= 0.97).map((c) => c.cidade);
+          if (identicas.length > 1 && !identicas.includes(lembrada)) throw erroEscolherCidade(identicas);
+          primeiras = [...(identicas.includes(lembrada) ? [lembrada] : []), ...noCadastro.map((c) => c.cidade)];
+        }
+        const ordem = [...primeiras, lembrada, ...todas].filter((c, i, a) => c && CIDADES_OPERACAO[c] && a.indexOf(c) === i);
+        let primeiroErro = null, melhor = null;
+        const identicas = [];
         for (const cidade of ordem) {
+          // Cidades que o cadastro ja apontou vem primeiro; achou numa delas, nao procura nas outras
+          // (economiza consulta paga de mapa e deixa o calculo rapido).
+          if (melhor && primeiras.length && !primeiras.includes(cidade)) break;
           try {
-            return await geocodificar(txt, cidade);
+            const achado = await geocodificar(txt, cidade);
+            if (achado.nota >= 0.97) {
+              if (lembrada || noCadastro) return achado;
+              identicas.push({ cidade, achado });
+              continue;
+            }
+            if (!melhor || achado.nota > melhor.nota) melhor = achado;
           } catch (e) {
             primeiroErro = primeiroErro || e;
           }
         }
+        // Sem o servidor novo: mesma rua identica em duas cidades, o cliente escolhe.
+        if (identicas.length > 1) throw erroEscolherCidade(identicas.map((i) => i.cidade));
+        if (identicas.length) return identicas[0].achado;
+        if (melhor) return melhor;
         throw new Error(`${(primeiroErro && primeiroErro.message) || "Endereço não encontrado."} Se você é de Aguaí ou Engenheiro Coelho, escreva a cidade no fim (ex.: "Rua ..., 123, Aguaí").`);
       }
       async function geocodificar(endereco, cidadePreferida = "conchal") {
@@ -3486,7 +3533,7 @@
               continue;
             }
             const [lon, lat] = feature.geometry.coordinates;
-            return { lat: +lat, lon: +lon, texto: formatado };
+            return { lat: +lat, lon: +lon, texto: formatado, nota: Number(props.match_score || (props.match_confirmed ? 0.9 : 0.6)) };
           }
         }
         throw new Error(mensagemServidor || ultimoErro || `Endereço não encontrado: ${endereco}`);
@@ -4914,10 +4961,32 @@
           if (botaoEnviar) botaoEnviar.textContent = "Recalcular valor";
           limparStatus();
         } catch (err) {
-          mostrarStatus(
-            `${mensagemErroAmigavel(err)} Confira os dados e tente calcular novamente.`,
-            true,
-          );
+          if (Array.isArray(err.cidades) && err.cidades.length) {
+            // Botoes "E em Conchal / E em Aguai": poe a cidade no endereco e calcula de novo.
+            mostrarStatus(err.message, true);
+            const botoes = document.createElement("div");
+            botoes.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;margin-top:10px";
+            err.cidades.forEach((cidade) => {
+              const b = document.createElement("button");
+              b.type = "button";
+              b.className = "btn-secondary";
+              b.style.cssText = "flex:1 1 120px;min-height:44px;font-weight:800";
+              b.textContent = `É em ${CIDADES_OPERACAO[cidade].nome}`;
+              b.onclick = () => {
+                const campo = $("origem");
+                campo.value = `${campo.value.replace(/[,\s]+$/, "")}, ${CIDADES_OPERACAO[cidade].nome}`;
+                try { localStorage.setItem("motojaCidadeCliente", cidade); } catch (_) {}
+                $("form-corrida").requestSubmit ? $("form-corrida").requestSubmit() : $("form-corrida").dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+              };
+              botoes.appendChild(b);
+            });
+            statusBox.appendChild(botoes);
+          } else {
+            mostrarStatus(
+              `${mensagemErroAmigavel(err)} Confira os dados e tente calcular novamente.`,
+              true,
+            );
+          }
         } finally {
           if (botaoEnviar) {
             botaoEnviar.disabled = false;

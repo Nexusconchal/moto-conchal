@@ -78,3 +78,18 @@ test('the exact neighborhood typed decides a rural road that crosses similar one
   assert.equal(found(aguai, 'Rodovia Sp 340, Fazenda Barra Do Jaguari').suburb, 'Fazenda Barra do Jaguari');
   assert.equal(aguai.search('Rodovia Sp 340').ambiguous, true);
 });
+
+test('varredura: rua de Aguai nao vira rua so parecida de Conchal, e estrada com numero resolve', () => {
+  const conchal = gazetteerFor('conchal');
+  // "Rabelo" lido como bairro deixava so "Maria" e achava "Rua dos Martha".
+  assert.equal(found(conchal, 'Avenida Maria Nery Rabelo, 12'), undefined);
+  assert.equal(found(aguai, 'Avenida Maria Nery Rabelo, 12').match_score, 1);
+  // Estrada que passa por dois bairros: com numero, fica com o melhor trecho em vez de travar.
+  assert.match(found(aguai, 'Estrada do Mato Seco, 3').formatted, /Estrada do Mato Seco, 3/);
+  assert.equal(aguai.search('Rodovia Sp 340').ambiguous, true, 'sem numero nem bairro continua perguntando');
+  // Fim lido como bairro tem nota menor: o app confere a outra cidade, onde a rua e identica.
+  assert.ok(found(conchal, 'Rua Tres Terras de Sp, 10').match_score < 0.97);
+  assert.equal(found(aguai, 'Rua Tres Terras de Sp, 10').match_score, 1);
+  // Erro de digitacao comum continua achando.
+  assert.match(found(aguai, 'Rua Ana Euclidia Silveira Cruz, 120').formatted, /Ana Euclidea Silveira Cruz/);
+});

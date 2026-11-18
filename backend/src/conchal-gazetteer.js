@@ -521,6 +521,9 @@ export function createGazetteer({ city: cityKey = 'conchal', cnefeText, osmText,
         return { ...item, bairro, fit, final: item.score + bairro * 0.08 + fit * 0.04 - (interpretation.penalty || 0) + (item.entry.source === 'osm' ? -0.02 : 0) };
       }).sort((a, b) => b.final - a.final);
       const required = query.type ? 0.7 : 0.85;
+      // "Rua X Esperanca" lido como rua X no bairro Esperanca: so vale se a rua achada fica nesse
+      // bairro (senao "Avenida Maria Nery Rabelo" virava "Rua dos Martha" so pelo "Maria").
+      if (interpretation.penalty && !(ranked[0].bairro >= 0.5)) continue;
       if (ranked[0].score < required) {
         if (!best || ranked[0].final > best.top.final) best = { interpretation, ranked, top: ranked[0], accepted: false };
         continue;
@@ -541,12 +544,16 @@ export function createGazetteer({ city: cityKey = 'conchal', cnefeText, osmText,
     // Mesmo nome em lugares distantes (ex.: "Rua Um" em bairros diferentes) sem bairro ou numero que decida.
     // Bairro digitado igual vence bairro so parecido ("Barra do Jaguari" x "Fazenda Barra do Jaguari").
     const sameBairro = sameStreet[0].bairro > 0 ? item => item.bairro >= sameStreet[0].bairro - 0.01 : () => true;
-    const far = sameStreet.find(item => item !== sameStreet[0] && sameBairro(item) && item.final >= sameStreet[0].final - 0.03 && distanceKm(item.entry.center, chosen.center) > 1.5);
+    const numeroDecide = item => sameStreet[0].fit === 1 && item.fit < 1;
+    // Estrada/rodovia com numero: e a mesma estrada em varios trechos; fica com o melhor trecho
+    // (sem numero nem bairro continua perguntando, senao o preco sairia errado).
+    const estradaRural = !!best.interpretation.number && ['estrada', 'rodovia'].includes(chosen.names[0].type);
+    const far = !estradaRural && sameStreet.find(item => item !== sameStreet[0] && sameBairro(item) && !numeroDecide(item) && item.final >= sameStreet[0].final - 0.03 && distanceKm(item.entry.center, chosen.center) > 1.5);
     if (far) {
       return { features: [], ambiguous: true, suggestions: [...new Set(sameStreet.filter(item => item.final >= sameStreet[0].final - 0.03).map(item => `${item.entry.display} - ${titleCase(item.entry.bairro || city.name)}`))].slice(0, 4) };
     }
     const point = interpolate(chosen, best.interpretation.number);
-    const features = [toFeature(chosen, point, best.interpretation, best.top.score)];
+    const features = [toFeature(chosen, point, best.interpretation, Math.max(0, best.top.score - (best.interpretation.penalty || 0)))];
     if (limit > 1) {
       for (const item of sameStreet.slice(1, limit)) features.push(toFeature(item.entry, interpolate(item.entry, best.interpretation.number), best.interpretation, item.score));
     }
