@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { mpPaymentForm } from './payment-form.js';
 
 // Cartao salvo no app do cliente ("Meus cartoes"), cobrado na conta Mercado Pago da MotoJa.
 //
@@ -353,6 +354,7 @@ export function createCustomerCards({
         provider: 'mercadopago',
         receiver: 'motoja_owner',
         metodo: 'cartao_app',
+        ...mpPaymentForm(payment),
         cartaoFinal: card.final,
         cartaoBandeira: card.bandeiraNome || card.bandeira,
         paymentId: String(payment.id || ''),

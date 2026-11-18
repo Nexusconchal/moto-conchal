@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { repasseUpdate } from '../src/customer-cards.js';
+import { mpPaymentForm } from '../src/payment-form.js';
 
 const source = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
 const slice = (a, b) => { const i = source.indexOf(a), j = source.indexOf(b, i + 1); assert.ok(i >= 0 && j > i, a); return source.slice(i, j); };
@@ -18,7 +19,7 @@ function harness(records, payment) {
   const ctx = vm.createContext({ db, Date, Math, Number, String, Object, JSON, console,
     admin: { firestore: { FieldValue: { serverTimestamp: () => 'TS', increment: (n) => ({ inc: n }), delete: () => undefined } } },
     onlyDigits: (v) => String(v || '').replace(/\D/g, ''), cleanText: (v) => String(v || ''), money: (n) => Math.round(Number(n || 0) * 100) / 100,
-    hashSecret: (v) => `h${v}`, requiredEnv: () => 'tok', mpFetch: async () => payment, repasseUpdate,
+    hashSecret: (v) => `h${v}`, requiredEnv: () => 'tok', mpFetch: async () => payment, repasseUpdate, mpPaymentForm,
     applyCompanyDepositPayment: async () => {}, app: { post: (p, ...h) => { routes[p] = h.at(-1); } } });
   vm.runInContext(slice('const DEBT_MIN_DRIVER_SHARE', 'function isOutOfConchal('), ctx);
   vm.runInContext(slice("app.post('/api/mercadopago/webhook'", 'async function supportEvolution('), ctx);
@@ -39,8 +40,9 @@ test('proxima corrida paga pelo app (conta do motoboy) abate a taxa da corrida e
     ['corridas/r2', { status: 'aceita', motoboyCpf: DRIVER, nome: 'Ana', valor: 6.5, pagamento: { total: 6.5, appFee: 1.5, driverAmount: 5, cobrancaDividaApp: 1.5 } }],
     [`motoboys/${DRIVER}`, { dividaAppCentavos: 150 }]
   ]);
-  const call = harness(records, pagamento());
+  const call = harness(records, pagamento({ payment_method_id: 'pix', payment_type_id: 'bank_transfer' }));
   assert.equal((await call()).status, 200);
+  assert.equal(records.get('corridas/r2').pagamento.forma, 'pix', 'o dono ve que foi Pix');
   assert.equal(records.get(`motoboys/${DRIVER}`).dividaAppCentavos, 0);
   assert.equal(records.get(`motoboys/${DRIVER}/dividaApp/desconto_r2`).centavos, -150);
   const p = records.get('corridas/r2').pagamento;

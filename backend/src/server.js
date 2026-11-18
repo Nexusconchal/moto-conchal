@@ -16,6 +16,7 @@ import { createDriverTelegram } from './driver-telegram.js';
 import { publicDriverCard, publicDriverId, sortPublicDrivers, referralCode, normalizeReferralCode, monthKey } from './customer-menu.js';
 import { reachedPickup, lateCancelState, lateCancelBlocker, waitCancelState, waitCancelBlocker } from './ride-late.js';
 import { createCallStore, CALL_RING_MS } from './ride-call.js';
+import { mpPaymentForm } from './payment-form.js';
 import { parseRating, ratingBlocker, ratingSummary, driverRatingView, RATING_TAGS } from './ride-rating.js';
 import { validateLocation } from './tracking-policy.js';
 import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state.js';
@@ -8955,13 +8956,14 @@ app.post('/api/admin/rides/:rideId/payment/sync', assertOwner, async (req, res, 
       await rideRef.set({
         pagamento: {
           ...(ride.pagamento || {}),
+          ...mpPaymentForm(approvedPayment),
           status: 'approved',
           paymentId: String(approvedPayment.id),
           totalPago,
           statusDetail: approvedPayment.status_detail || null,
           atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
         },
-        pagamentoConfirmadoEm: admin.firestore.FieldValue.serverTimestamp(),
+        ...(ride.pagamentoConfirmadoEm ? {} : { pagamentoConfirmadoEm: admin.firestore.FieldValue.serverTimestamp() }),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
       adminStateCache = null;
@@ -12132,7 +12134,7 @@ app.post('/api/rides/:rideId/cash-reported', async (req, res, next) => {
         valorMotoboy: split.driverAmount, valorApp: split.appFee,
         percentualMotoboy: split.driverPercent, percentualApp: split.appPercent,
         dividaAppRegistrada: split.appFee,
-        pagamento: { ...(ride.pagamento || {}), status: 'approved', metodo: 'dinheiro', valido: true, total: split.total, appFee: split.appFee, driverAmount: split.driverAmount },
+        pagamento: { ...(ride.pagamento || {}), status: 'approved', metodo: 'dinheiro', forma: 'dinheiro', valido: true, total: split.total, appFee: split.appFee, driverAmount: split.driverAmount },
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
       recordDriverDebt(tx, driverCpf, { centavos: Math.round(split.appFee * 100), tipo: 'dinheiro', refId: ref.id, descricao: `Taxa da corrida de ${ride.nome || 'cliente'} paga em dinheiro` });
@@ -14713,6 +14715,8 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
       const pagamento = {
         ...anterior,
         ...(cartaoApp ? { receiver: 'motoja_owner', metodo: 'cartao_app' } : {}),
+        // Pix, cartao de credito/debito...: o dono ve na lista de corridas.
+        ...mpPaymentForm(payment),
         provider: 'mercadopago',
         paymentId: String(payment.id),
         status: payment.status,
