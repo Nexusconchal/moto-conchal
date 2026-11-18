@@ -136,3 +136,20 @@ test('a deliberate click on Indisponivel is saved and not undone by the retry', 
   h.heartbeat(); s.reply(s.emissions.length - 1, { ok: true, ...state(false) });
   assert.equal(s.emissions.at(-1).name, 'availability:heartbeat');
 });
+test('internet oscilando: Disponivel escolhido continua vendo e aceitando chamadas; 1 conferida lenta nao derruba', async () => {
+  const h = harness(); const s = await available(h);
+  // Conexao caiu (reconectando): nao e "Indisponivel".
+  s.disconnect();
+  assert.equal(h.api.canReceive(), false);
+  assert.equal(h.api.indisponivel(), false);
+  s.connect(); s.receive(state(true));
+  // Uma conferida que demorou (erro de tempo) nao reconecta; a segunda seguida reconecta.
+  h.heartbeat(); s.reply(s.emissions.length - 1, undefined, new Error('timeout'));
+  assert.equal(s.disconnects, 1);
+  h.heartbeat(); s.reply(s.emissions.length - 1, undefined, new Error('timeout'));
+  assert.equal(s.disconnects, 2);
+  // Escolheu Indisponivel de proposito: ai sim bloqueia.
+  await settle(); s.receive(state(true));
+  h.buttons[1].onclick(); s.reply(s.emissions.length - 1, { ok: true, ...state(false) });
+  assert.equal(h.api.indisponivel(), true);
+});

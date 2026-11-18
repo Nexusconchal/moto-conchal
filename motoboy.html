@@ -1072,7 +1072,7 @@
         </nav>
       </section>
     </main>
-    <script src="./driver-availability.js?v=call-alert-1"></script>
+    <script src="./driver-availability.js?v=228-reconexao"></script>
     <script src="./motoboy-call-alerts.js?v=4"></script>
     <script src="./ride-call-ui.js?v=2"></script>
     <script src="./ride-chat.js?v=236"></script>
@@ -2783,7 +2783,7 @@
         return !!window.MotojaRideChat?.hasUnread(c.id, c.chatUltimaEmMs, c.chatUltimoAutor, "motoboy");
       }
       async function aceitarCorrida(id) {
-        if (window.MotojaDriverAvailability?.canReceive() === false) throw new Error('Toque em Ficar disponível no Início e espere conectar antes de aceitar um novo serviço.');
+        if (window.MotojaDriverAvailability?.indisponivel?.() === true) throw new Error('Toque em Ficar disponível no Início e espere conectar antes de aceitar um novo serviço.');
         const kind = recursoAtual();
         pedirGpsNoToque();
         aceitandoAgora.add(id);
@@ -3327,7 +3327,7 @@
       async function ouvir(silencioso = false) {
         if (!motoboyCpf) return;
         if (modo === "ganhos") return;
-        if (!modoMinhas() && window.MotojaDriverAvailability?.canReceive() === false) {
+        if (!modoMinhas() && window.MotojaDriverAvailability?.indisponivel?.() === true) {
           if (jobsRequestController) jobsRequestController.abort();
           requestSeq += 1;
           if (window.MotoNav?.modo() === "oferta") window.MotoNav.fechar();
@@ -3469,7 +3469,7 @@
       async function procurarChamadas() {
         const painel = $("painel");
         if (!motoboyCpf || procurandoChamadas || document.visibilityState !== "visible" || !painel || painel.classList.contains("hidden")) return;
-        if (window.MotojaDriverAvailability?.canReceive() === false) {
+        if (window.MotojaDriverAvailability?.indisponivel?.() === true) {
           atualizarContaAbertas(0);
           window.dispatchEvent(new CustomEvent("motoja:jobs-rendered", { detail: { kind: "all", scope: "pending", jobs: [] } }));
           return;

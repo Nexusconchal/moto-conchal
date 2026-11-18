@@ -41,7 +41,7 @@
   function setAvailability(desired, restored = false) {
     if (!socket?.connected || changing) return;
     const current = generation, session = socket.id; changing = true; render();
-    socket.timeout(8000).emit('availability:set', { available: desired }, (error, reply) => {
+    socket.timeout(15000).emit('availability:set', { available: desired }, (error, reply) => {
       if (current !== generation || stopped || session !== socket?.id || !socket.connected) return;
       changing = false;
       if (!error && reply?.ok) { restorePending = false; apply(reply, { save: true }); }
@@ -67,7 +67,8 @@
     try {
       await library(); if (stopped || current !== generation || document.visibilityState === 'hidden') return;
       if (socket) { socket.connect(); return; }
-      socket = window.io(`${options.backend}/driver-availability`, { auth: callback => callback(options.getProof()), transports: ['websocket', 'polling'], timeout: 12000, reconnectionDelay: 2000, reconnectionDelayMax: 15000 });
+      // tryAllTransports: se a operadora bloquear WebSocket, conecta pelo modo "polling" (HTTP).
+      socket = window.io(`${options.backend}/driver-availability`, { auth: callback => callback(options.getProof()), transports: ['websocket', 'polling'], tryAllTransports: true, timeout: 20000, reconnectionDelay: 1500, reconnectionDelayMax: 10000 });
       socket.on('availability:state', next => {
         if (stopped || current !== generation) return;
         const saved = preference();
@@ -93,12 +94,17 @@
       if (label) label.textContent = 'Disponibilidade sem conexão. Confira a internet.';
     }
   }
+  // Internet lenta (comum no 3G/4G fraco): uma conferida demorada nao derruba a conexao;
+  // so reconecta depois de 2 falhas seguidas (antes 1 resposta acima de 8 s ja reconectava).
+  let heartbeatFails = 0;
   function heartbeat() {
     if (stopped) return;
     if (!socket?.connected) { connect(); return; }
     const current = generation, session = socket.id;
-    socket.timeout(8000).emit('availability:heartbeat', {}, (error, reply) => {
+    socket.timeout(20000).emit('availability:heartbeat', {}, (error, reply) => {
       if (current !== generation || stopped || session !== socket?.id || !socket.connected) return;
+      if (error && !reply && ++heartbeatFails < 2) return;
+      heartbeatFails = 0;
       if (!error && reply?.ok) {
         // A restore that failed (slow network, server waking up) is retried, keeping the saved choice.
         if (restorePending && reply.desired === false && preference()?.desired === true) {
@@ -134,6 +140,9 @@
     },
     stop({ forgetPreference = false } = {}) { stopped = true; generation++; restorePending = false; if (forgetPreference) forget(); clearInterval(timer); socket?.disconnect(); socket = null; changing = false; state = { connected: false, desired: false, busy: false }; render(); },
     canReceive() { return stopped ? null : state.connected && state.desired; },
+    // So bloqueia lista/aceite quando o motoboy escolheu Indisponivel; reconectando (internet
+    // oscilando) com Disponivel escolhido continua mostrando e aceitando chamadas pelo app.
+    indisponivel() { return !stopped && !state.desired && preference()?.desired !== true; },
     canAlert() { return !stopped && state.desired && !state.busy; }
   };
   document.addEventListener('visibilitychange', () => {

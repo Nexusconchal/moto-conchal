@@ -7,13 +7,19 @@ export function attachDriverAvailability(io, presence, { verifyDriver, enabledCi
   namespace.use(async (socket, next) => {
     try {
       const ip = socket.handshake.address || 'unknown';
-      for (const [key, value] of connections) if (value.until <= now()) connections.delete(key);
-      const attempts = connections.get(ip) || { count: 0, until: now() + 60000 };
-      if (connections.size >= 5000 && !connections.has(ip)) throw new Error('muitas_conexoes');
-      connections.set(ip, attempts);
-      if (++attempts.count > 60) throw new Error('muitas_conexoes');
       const proof = socket.handshake.auth || {};
       const cpf = String(proof.driverCpf || '').replace(/\D/g, '');
+      // Motoboys da mesma operadora de celular (ou do mesmo Wi-Fi) saem pelo mesmo IP: o limite
+      // e por IP + motoboy, com um teto bem maior so por IP.
+      for (const [key, value] of connections) if (value.until <= now()) connections.delete(key);
+      const count = (key, max) => {
+        const attempts = connections.get(key) || { count: 0, until: now() + 60000 };
+        if (connections.size >= 10000 && !connections.has(key)) throw new Error('muitas_conexoes');
+        connections.set(key, attempts);
+        if (++attempts.count > max) throw new Error('muitas_conexoes');
+      };
+      count(`ip:${ip}`, 600);
+      count(`ip:${ip}:${cpf}`, 40);
       if (!/^\d{11}$/.test(cpf)) throw new Error('dados_motoboy_invalidos');
       const driver = await verifyDriver(cpf, proof);
       const { fresh, preferenceMissing } = presence.connect(cpf, socket.id, enabledCities(driver));

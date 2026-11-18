@@ -85,9 +85,11 @@ test('owner revocation immediately removes presence and disconnects authenticate
   const disconnected = once(s, 'disconnect'); h.control.revoke(cpf); await disconnected;
   assert.equal(h.presence.publicCounts().counts.conchal, 0);
 });
-test('a fifth connected tab is rejected instead of multiplying identities or reads', async t => {
+test('internet oscilando: a conexao nova entra no lugar da mais antiga, sem ler o banco de novo', async t => {
   const h = await setup(t, { maxSessions: 2 }); const a = h.open(), b = h.open(); await Promise.all([connected(a), connected(b)]);
-  const c = h.open(); const [error] = await once(c, 'connect_error'); assert.equal(error.message, 'disponibilidade_nao_autorizada');
+  // Antes a terceira era recusada e o app ficava em "reconectando" ate as velhas vencerem.
+  const c = h.open(); await connected(c);
+  assert.equal((await emit(c, 'availability:set', { available: true })).ok, true);
   assert.equal(h.stats().loads, 1);
 });
 test('excessive toggle events are rate limited and cannot keep changing the accepted state', async t => {

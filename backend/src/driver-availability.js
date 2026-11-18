@@ -36,7 +36,14 @@ export function createDriverAvailability({ now = Date.now, ttlMs = 90000, maxDri
       prune();
       if (!/^\d{11}$/.test(cpf) || typeof id !== 'string' || !id || id.length > 120) throw new Error('presenca_invalida');
       const existing = drivers.get(cpf);
-      if (existing && !existing.sessions.has(id) && existing.sessions.size >= maxSessions) throw new Error('muitas_sessoes');
+      // Internet oscilando: as sessoes da conexao que caiu ficam ate o ttl. A conexao nova vence
+      // (antes era recusada e o app ficava preso em "reconectando").
+      if (existing && !existing.sessions.has(id)) {
+        while (existing.sessions.size >= maxSessions) {
+          const [oldest] = [...existing.sessions.entries()].sort((a, b) => a[1] - b[1])[0];
+          existing.sessions.delete(oldest);
+        }
+      }
       const d = entry(cpf);
       // fresh: os servicos ativos ainda precisam ser lidos do banco.
       const fresh = !d.ready;

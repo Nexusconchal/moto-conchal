@@ -51,7 +51,9 @@ test('unavailable and disconnected drivers retain accepted job tracking', () => 
 });
 test('invalid boolean, unknown session, session flooding and driver capacity are rejected', () => {
   const { p } = harness({ maxSessions: 2, maxDrivers: 1 }); ready(p); assert.throws(() => p.set(cpf, 'tab1', 'true'));
-  assert.throws(() => p.set(cpf, 'attacker', true)); p.connect(cpf, 'tab2', cities); assert.throws(() => p.connect(cpf, 'tab3', cities));
+  assert.throws(() => p.set(cpf, 'attacker', true)); p.connect(cpf, 'tab2', cities);
+  // Muitas sessoes: a conexao nova vence e a mais antiga sai (internet oscilando nao trava o motoboy).
+  p.connect(cpf, 'tab3', cities); assert.throws(() => p.set(cpf, 'tab1', true)); assert.equal(p.set(cpf, 'tab3', true).desired, true);
   assert.throws(() => p.connect(other, 'tab', cities)); assert.throws(() => p.connect('invalid', 'tab', cities));
 });
 test('blocked driver removal and process restart produce zero, never stale restored counts', () => {
