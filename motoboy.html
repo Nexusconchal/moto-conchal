@@ -1079,7 +1079,7 @@
     <script src="./motoboy-avisos.js?v=5"></script>
     <script src="./motoboy-tela-acesa.js?v=1" defer></script>
     <script src="./motoboy-nav.js?v=ligar-2" defer></script>
-    <script src="./motoboy-home.js?v=6" defer></script>
+    <script src="./motoboy-home.js?v=7" defer></script>
     <script src="./motoboy-food.js?v=5"></script>
     <script type="module">
       let cidadesAtivas = {
@@ -1561,13 +1561,18 @@
             titulo: `${paradas} ${paradas > 1 ? "entregas" : "entrega"} · endereços nas notas impressas`,
             detalhe: "Depois de retirar, você adiciona os endereços no mapa.",
           };
+        // Entrega avulsa (cliente enviando algo pelo app de mototaxi): aparece como ENTREGA,
+        // para o motoboy levar a bag e nao o capacete do passageiro.
+        const avulsa = !entrega && entregaAvulsa(c);
         window.MotoNav.abrirOferta({
           id: c.id,
           backend: CONFIG.backend,
-          tipo: entrega ? "entrega" : "corrida",
+          tipo: entrega || avulsa ? "entrega" : "corrida",
           tag: entrega
             ? `📦 MotoJá Entrega${loteNota ? " · Lote" : c.tipoEntrega && c.tipoEntrega.length <= 14 ? ` · ${c.tipoEntrega}` : ""} · ${cidade}`
-            : `🏍️ MotoJá Corrida · ${cidade}`,
+            : avulsa
+              ? `📦 ENTREGA AVULSA · ${cidade} · leve a bag 🎒`
+              : `🏍️ MotoJá Corrida · ${cidade}`,
           topo: "Online",
           ganhoTexto: moeda(ganhoMotoboy(c.valor, c)),
           ganhoLegenda: "você recebe",
@@ -1579,12 +1584,14 @@
             ? { valor: moeda(ganhoMotoboy(c.valor, c) / Math.max(1, paradas)), rotulo: "por entrega" }
             : entrega
               ? { valor: String(paradas), rotulo: paradas > 1 ? "paradas" : "parada" }
-              : { valor: moeda(c.valor), rotulo: "total da corrida" },
+              : { valor: moeda(c.valor), rotulo: avulsa ? "total da entrega" : "total da corrida" },
           ...pontos,
-          observacao: c.observacao || c.descricao || "",
+          observacao: avulsa
+            ? [`📦 Levar: ${c.itemEntrega || "encomenda"}`, c.nomeRecebedor ? `Para: ${c.nomeRecebedor}` : "", c.observacaoEntrega || c.observacao || ""].filter(Boolean).join(" · ")
+            : c.observacao || c.descricao || "",
           expiraEmMs: criadaMs ? criadaMs + tempoLimiteMs(c) : 0,
           duracaoMs: tempoLimiteMs(c),
-          textoAceitar: entrega ? "Aceitar entrega" : "Aceitar corrida",
+          textoAceitar: entrega ? "Aceitar entrega" : avulsa ? "Aceitar entrega avulsa" : "Aceitar corrida",
           alarme,
           onRecusar: () => ofertasRecusadas.add(c.id),
           onExpirar: () => {

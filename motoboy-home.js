@@ -168,7 +168,7 @@
     marcadoresChamadas.forEach((m) => mapa.removeLayer(m));
     marcadoresChamadas = [];
     const pontos = jobs
-      .map((j) => ({ lat: Number(j.origemLat || j.retiradaLat), lon: Number(j.origemLon || j.retiradaLon), entrega: !!j.retiradaLat }))
+      .map((j) => ({ lat: Number(j.origemLat || j.retiradaLat), lon: Number(j.origemLon || j.retiradaLon), entrega: !!j.retiradaLat || j.modalidade === 'entrega_avulsa' }))
       .filter((p) => Math.abs(p.lat) > 0.1 && Math.abs(p.lon) > 0.1);
     pontos.forEach((p) => {
       marcadoresChamadas.push(window.L.marker([p.lat, p.lon], {

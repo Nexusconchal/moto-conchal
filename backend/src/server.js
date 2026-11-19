@@ -2992,15 +2992,18 @@ async function notifyTelegramAboutRide(rideId, ride) {
     ? appUrl('/motoboy.html')
     : 'https://nexusmotoja.com.br/motoboy.html';
   const originMap = ride.origemMapa ? `\nMapa origem: ${ride.origemMapa}` : '';
+  // Entrega avulsa (cliente enviando algo): o motoboy leva a bag, nao o capacete do passageiro.
+  const avulsa = isStandaloneDelivery(ride);
   const message = [
-    '<b>NOVA CORRIDA TOCANDO</b>',
+    avulsa ? '<b>📦 NOVA ENTREGA AVULSA TOCANDO</b>\n<b>Leve a bag 🎒</b>' : '<b>NOVA CORRIDA TOCANDO</b>',
     '',
     `<b>Cidade:</b> ${escapeTelegram(rideCityLabel(city))}`,
     `<b>Cliente:</b> ${escapeTelegram(ride.nome || 'Cliente')}`,
+    ...(avulsa ? [`<b>Levar:</b> ${escapeTelegram(ride.itemEntrega || 'encomenda')}`, `<b>Quem recebe:</b> ${escapeTelegram(ride.nomeRecebedor || '-')}`] : []),
     `<b>Valor:</b> ${escapeTelegram(value)}`,
     `<b>Distancia:</b> ${escapeTelegram(km)} km`,
-    `<b>Origem:</b> ${escapeTelegram(ride.origem || '-')}${escapeTelegram(originMap)}`,
-    `<b>Destino:</b> ${escapeTelegram(ride.destino || '-')}`,
+    `<b>${avulsa ? 'Buscar em' : 'Origem'}:</b> ${escapeTelegram(ride.origem || '-')}${escapeTelegram(originMap)}`,
+    `<b>${avulsa ? 'Entregar em' : 'Destino'}:</b> ${escapeTelegram(ride.destino || '-')}`,
     '',
     `<b>Expira em:</b> ${RIDE_EXPIRE_MINUTES} minutos`,
     '',
@@ -3860,7 +3863,7 @@ function rideOfferPush(rideId, ride, tokens, repeticao = 0) {
     tokens,
     notification: {
       title: `${isStandaloneDelivery(ride) ? 'Nova entrega avulsa' : 'Nova corrida'} MotoJa ${rideCityLabel(city)}`,
-      body: `${ride.nome || 'Cliente'} - ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`
+      body: `${isStandaloneDelivery(ride) ? '📦 Leve a bag · ' : ''}${ride.nome || 'Cliente'} - ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`
     },
     webpush: {
       // Alta prioridade: o celular entrega na hora mesmo economizando bateria.
@@ -3926,7 +3929,9 @@ function telegramOfferText(kind, job = {}) {
   const link = process.env.APP_BASE_URL ? appUrl(kind === 'entrega' ? '/motoboy.html?aba=entregas' : '/motoboy.html') : `https://nexusmotoja.com.br/motoboy.html${kind === 'entrega' ? '?aba=entregas' : ''}`;
   const lines = kind === 'entrega'
     ? [`📦 NOVA ENTREGA MotoJá — ${value}`, `Empresa: ${job.empresa || '-'}`, job.entregaNaNota ? `Lote de ${job.paradas || 1} entregas` : `Bairro/destino: ${String(job.entrega || '-').slice(0, 80)}`]
-    : [`🏍️ NOVA CORRIDA MotoJá ${rideCityLabel(rideOperatingCity(job))} — ${value}`, `Saída: ${String(job.origem || '-').slice(0, 80)}`, `Destino: ${String(job.destino || '-').slice(0, 80)}`];
+    : isStandaloneDelivery(job)
+      ? [`📦 NOVA ENTREGA AVULSA MotoJá ${rideCityLabel(rideOperatingCity(job))} — ${value}`, 'Leve a bag 🎒', `Levar: ${String(job.itemEntrega || 'encomenda').slice(0, 60)}`, `Buscar em: ${String(job.origem || '-').slice(0, 80)}`, `Entregar em: ${String(job.destino || '-').slice(0, 80)}`]
+      : [`🏍️ NOVA CORRIDA MotoJá ${rideCityLabel(rideOperatingCity(job))} — ${value}`, `Saída: ${String(job.origem || '-').slice(0, 80)}`, `Destino: ${String(job.destino || '-').slice(0, 80)}`];
   return [...lines, '', `Quem aceitar primeiro leva. Abra o app:\n${link}`].join('\n');
 }
 
