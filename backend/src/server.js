@@ -4675,6 +4675,14 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
   return released;
 }
 
+// Versao do servidor no ar (o painel do dono mostra e avisa quando o Render nao atualizou).
+const SERVER_STARTED_AT = Date.now();
+const SERVER_RELEASE = '2026-11-20-lugares';
+app.get('/api/version', (_req, res) => {
+  res.set('cache-control', 'no-store');
+  res.json({ ok: true, release: SERVER_RELEASE, commit: String(process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || 'local', iniciadoEmMs: SERVER_STARTED_AT });
+});
+
 app.get('/health', (_req, res) => {
   // No plano free o Render dorme; um ping externo aqui acorda o servidor e confere os lembretes.
   runCustomerReminderTick().catch((error) => console.error('customer reminder health tick failed', error));

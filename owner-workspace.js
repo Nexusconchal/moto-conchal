@@ -735,7 +735,7 @@
       <div class="owner-stage">
         <header class="owner-workspace-head">
           <div><span id="ownerWorkspaceEyebrow">Central de operação</span><h2 id="ownerWorkspaceTitle">Visão geral</h2><p id="ownerWorkspaceDescription"></p></div>
-          <div class="owner-workspace-state"><i></i><span><strong>Operação online</strong><small>Última carga do painel</small></span></div>
+          <div class="owner-workspace-state"><i></i><span><strong>Operação online</strong><small id="ownerServerVersion">Última carga do painel</small></span></div>
         </header>
         <div id="ownerFilterSlot"></div>
         <div id="ownerPageSlot" class="owner-page-slot"></div>
@@ -781,6 +781,34 @@
     setPage(currentPageFromHash(), { updateHash: false, scroll: false });
   }
 
+  // Versao do servidor (Render): mostra quando foi atualizado e avisa se esta numa versao antiga.
+  const SITE_RELEASE = "2026-11-20-lugares";
+  async function checkServerVersion() {
+    const el = document.getElementById("ownerServerVersion");
+    if (!el) return;
+    const backend = (window.CONFIG && window.CONFIG.backend) || "https://motoboy-conchal.onrender.com";
+    let info = null;
+    try {
+      const r = await fetch(`${backend}/api/version`, { cache: "no-store" });
+      if (r.ok) info = await r.json();
+    } catch (_) {}
+    const atual = info && info.release >= SITE_RELEASE;
+    const quando = info?.iniciadoEmMs ? new Date(info.iniciadoEmMs).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+    el.textContent = atual ? `Servidor atualizado · ${info.commit} · ligado ${quando}` : "⚠️ Servidor desatualizado: faça o deploy no Render";
+    el.style.color = atual ? "" : "#ffb13c";
+    el.title = atual ? "" : "O site já tem a versão nova, mas o servidor no Render ainda não. Abra o Render e faça Manual Deploy > Deploy latest commit.";
+    // Faixa visivel tambem no celular (onde o canto do cabecalho fica escondido).
+    let faixa = document.getElementById("ownerServerOutdated");
+    if (atual) { faixa?.remove(); return; }
+    if (!faixa) {
+      faixa = document.createElement("div");
+      faixa.id = "ownerServerOutdated";
+      faixa.style.cssText = "margin:0 0 10px;padding:12px 14px;border-radius:10px;background:#3a2a10;border:1px solid #ff9a00;color:#ffd9a0;font-weight:700;font-size:.85rem;line-height:1.35";
+      faixa.innerHTML = "⚠️ <b>Servidor desatualizado.</b> O site já tem as correções novas, mas o servidor no Render ainda não: algumas corridas podem falhar. Abra o Render → serviço motoja-conchal-backend → <b>Manual Deploy → Deploy latest commit</b>.";
+      (document.getElementById("ownerFilterSlot") || document.body).before(faixa);
+    }
+  }
+  window.addEventListener("motoja:admin-state", () => checkServerVersion(), { once: true });
   document.addEventListener("DOMContentLoaded", createWorkspace);
   window.addEventListener("motoja:admin-state", (event) => {
     carAdminState = event.detail || carAdminState;
