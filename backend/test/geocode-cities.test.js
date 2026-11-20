@@ -6,7 +6,7 @@ import { GAZETTEER_CITIES, gazetteerFor } from '../src/conchal-gazetteer.js';
 
 const source = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
 const routes = {};
-const ctx = vm.createContext({ GAZETTEER_CITIES, gazetteerFor, console, Object, Number, app: { get: (p, ...h) => { routes[p] = h.at(-1); } }, mapLimiter: () => {}, cleanText: (v, n) => String(v || '').slice(0, n) });
+const ctx = vm.createContext({ GAZETTEER_CITIES, gazetteerFor, findKnownPlace: () => null, console, Object, Number, app: { get: (p, ...h) => { routes[p] = h.at(-1); } }, mapLimiter: () => {}, cleanText: (v, n) => String(v || '').slice(0, n) });
 const i = source.indexOf("app.get('/api/maps/geocode-cities'");
 vm.runInContext(source.slice(i, source.indexOf("app.get('/api/maps/geocode',", i)), ctx);
 const ask = (text) => { let out; routes['/api/maps/geocode-cities']({ query: { text } }, { set: () => {}, status: () => ({ json: (d) => { out = d; } }), json: (d) => { out = d; } }); return out.cidades; };

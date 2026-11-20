@@ -36,7 +36,7 @@
       title: "Corridas de mototáxi",
       eyebrow: "Operação",
       description: "Acompanhe corridas, pagamentos e cancelamentos em um só lugar.",
-      targets: ["corridas-section"],
+      targets: ["corridas-section", "lugares-section"],
     },
     cars: {
       title: "Nexus CarroJÁ",

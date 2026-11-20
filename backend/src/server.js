@@ -551,10 +551,13 @@ function ensureDistantRouteIsPlausible(distanceKm, ...texts) {
     'campinas',
     'cosmopolis'
   ];
+  // Fora do nome da rua ("Rua Mogi Mirim", "Rua Araras", "Estrada para Engenheiro Coelho" ficam em
+  // Conchal) e palavra inteira ("Clemente" nao e "Leme").
   const hasDistantPlace = texts.some((text) => {
     const normalized = normalizeText(text);
     if (normalized.includes('martinho prado')) return false;
-    return distantPlaces.some((place) => normalized.includes(place) && !origin.includes(place));
+    const semRua = normalized.replace(/\b(?:rua|r\.|avenida|av\.?|travessa|tv\.?|estrada|rodovia|rod\.?|alameda|praca|largo|viela|vicinal|sitio|chacara|fazenda)\s+[^,\-\d]+/g, ' ');
+    return distantPlaces.some((place) => new RegExp(`\\b${place.replace(/ /g, '\\s+')}\\b`).test(semRua) && !origin.includes(place));
   });
   if (hasDistantPlace && Number.isFinite(distance) && distance > 0 && distance < 10) {
     const error = new Error('A rota para outra cidade ficou curta demais. Confira se o endereco encontrado esta correto antes de chamar o motoboy.');
@@ -4691,6 +4694,75 @@ app.get('/', (_req, res) => {
   });
 });
 
+// ---------- Lugares conhecidos (cadastrados pelo dono no painel) ----------
+// Comercio, hospital, escola...: o cliente digita o nome ("supermercado sao roque") e cai no ponto
+// certo. Ficam na memoria (1 leitura do banco ao ligar o servidor e a cada cadastro).
+let knownPlaces = [];
+const placeWords = (value) => normalizeText(value).replace(/[^a-z0-9]+/g, ' ').trim();
+async function loadKnownPlaces() {
+  const snap = await db.collection('lugaresConhecidos').limit(500).get();
+  knownPlaces = snap.docs.map((doc) => {
+    const data = doc.data() || {};
+    return { id: doc.id, ...data, frases: (Array.isArray(data.nomes) ? data.nomes : []).map(placeWords).filter((f) => f.length >= 3) };
+  });
+  return knownPlaces.length;
+}
+function findKnownPlace(text, cityKey = '') {
+  const typed = ` ${placeWords(text)} `;
+  let best = null;
+  for (const place of knownPlaces) {
+    if (cityKey && place.cidade !== cityKey) continue;
+    for (const frase of place.frases) if (typed.includes(` ${frase} `) && (!best || frase.length > best.frase.length)) best = { place, frase };
+  }
+  return best?.place || null;
+}
+function knownPlaceFeature(place) {
+  const cityName = GAZETTEER_CITIES[place.cidade]?.name || 'Conchal';
+  const nome = place.nomes?.[0] || 'Lugar';
+  const line2 = [place.bairro, `${cityName} - SP`].filter(Boolean).join(', ');
+  return { type: 'Feature', geometry: { type: 'Point', coordinates: [place.lon, place.lat] },
+    properties: { lat: place.lat, lon: place.lon, name: nome, suburb: place.bairro || undefined, city: cityName, county: cityName, state: 'São Paulo', country: 'Brasil',
+      result_type: 'amenity', formatted: `${nome} - ${place.endereco ? `${place.endereco} - ` : ''}${line2}`, address_line1: place.endereco ? `${nome} - ${place.endereco}` : nome,
+      address_line2: line2, match_confirmed: true, match_source: 'manual', match_precision: 'lugar', match_score: 1 } };
+}
+
+app.get('/api/admin/places', assertOwner, (_req, res) => {
+  res.json({ ok: true, lugares: knownPlaces.map(({ frases, ...place }) => place).sort((a, b) => String(a.nomes?.[0] || '').localeCompare(String(b.nomes?.[0] || ''))) });
+});
+
+app.post('/api/admin/places', assertOwner, async (req, res, next) => {
+  try {
+    const nomes = String(req.body?.nomes || '').split(/[;\n]/).map((n) => cleanText(n, 80)).filter((n) => n.length >= 3).slice(0, 8);
+    const cidade = GAZETTEER_CITIES[req.body?.cidade] ? req.body.cidade : 'conchal';
+    const endereco = cleanText(req.body?.endereco, 120);
+    if (!nomes.length) return res.status(400).json({ error: 'nome_obrigatorio', message: 'Digite o nome do lugar (ex.: Supermercado São Roque).' });
+    let lat = null, lon = null, bairro = cleanText(req.body?.bairro, 60), enderecoAchado = endereco;
+    const coordenada = String(req.body?.coordenada || '').match(/(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/);
+    if (coordenada) { lat = Number(coordenada[1]); lon = Number(coordenada[2]); }
+    else if (endereco) {
+      const found = gazetteerFor(cidade)?.search(endereco).features?.[0]?.properties;
+      if (found) { lat = found.lat; lon = found.lon; bairro = bairro || found.suburb || ''; enderecoAchado = found.address_line1 || endereco; }
+    }
+    if (!validCoordinate({ lat, lon }) || coordinateDistanceKm({ lat, lon }, RIDE_CITY_CENTERS[cidade]) > 25) {
+      return res.status(400).json({ error: 'endereco_nao_achado', message: 'Não achei esse endereço na cidade. Confira rua e número, ou cole a coordenada do Google Maps (ex.: -22.3375, -47.1704).' });
+    }
+    const ref = db.collection('lugaresConhecidos').doc();
+    const lugar = { nomes, cidade, endereco: enderecoAchado, bairro, lat: Number(lat.toFixed(6)), lon: Number(lon.toFixed(6)), criadoEmMs: Date.now() };
+    await ref.set(lugar);
+    knownPlaces.push({ id: ref.id, ...lugar, frases: nomes.map(placeWords).filter((f) => f.length >= 3) });
+    return res.json({ ok: true, lugar: { id: ref.id, ...lugar } });
+  } catch (error) { return next(error); }
+});
+
+app.post('/api/admin/places/:id/delete', assertOwner, async (req, res, next) => {
+  try {
+    const id = cleanText(req.params.id, 60);
+    await db.collection('lugaresConhecidos').doc(id).delete();
+    knownPlaces = knownPlaces.filter((place) => place.id !== id);
+    return res.json({ ok: true });
+  } catch (error) { return next(error); }
+});
+
 // Endereco digitado sem cidade: em qual cidade atendida a rua existe (so o cadastro do IBGE,
 // na memoria; nao gasta Geoapify nem Firebase). O app busca primeiro na cidade que achou aqui.
 app.get('/api/maps/geocode-cities', mapLimiter, (req, res) => {
@@ -4698,6 +4770,7 @@ app.get('/api/maps/geocode-cities', mapLimiter, (req, res) => {
   if (!text) return res.status(400).json({ error: 'endereco_obrigatorio' });
   const cidades = [];
   for (const [key, info] of Object.entries(GAZETTEER_CITIES)) {
+    if (findKnownPlace(text, key)) { cidades.push({ cidade: key, nome: info.name, nota: 1, lugar: true }); continue; }
     try {
       const gazetteer = gazetteerFor(key);
       if (!gazetteer) continue;
@@ -4750,6 +4823,10 @@ app.get('/api/maps/geocode', mapLimiter, async (req, res, next) => {
         properties: { lat: learned.lat, lon: learned.lon, name: learned.texto, formatted, address_line1: learned.texto, address_line2: `${cityName} - SP`, city: cityName, county: cityName,
           state: 'São Paulo', country: 'Brasil', result_type: 'amenity', match_confirmed: true, match_source: 'aprendido', match_precision: 'entrega', match_score: learned.confirmacoes } }] });
     }
+    // Lugar conhecido cadastrado pelo dono (na cidade pedida): vale o ponto cadastrado.
+    const hintCity = gazetteerCityKey(placeHint) || '';
+    const lugar = findKnownPlace(original || text, hintCity) || (hintCity ? null : findKnownPlace(original || text));
+    if (lugar) return res.json({ type: 'FeatureCollection', source: 'lugar', features: [knownPlaceFeature(lugar)] });
     const data = await searchMapAddress({ text, original, apiKey: GEOAPIFY_API_KEY, filter: params.get('filter') || '', bias: params.get('bias') || '', city: requestedPlaceHint(text) || 'Conchal', limit: Number(params.get('limit')) });
     res.json(data);
   } catch (error) {
@@ -15488,6 +15565,9 @@ httpServer.listen(PORT, () => {
   restoreDriverAvailability()
     .then((count) => console.log('driver availability restored', count))
     .catch((error) => console.error('driver availability restore failed', error));
+  loadKnownPlaces()
+    .then((count) => console.log('known places loaded', count))
+    .catch((error) => console.error('known places load failed', error?.message));
   repairUnsettledRideDebts()
     .then((result) => console.log('ride debt repair', result))
     .catch((error) => console.error('ride debt repair failed', error?.message));

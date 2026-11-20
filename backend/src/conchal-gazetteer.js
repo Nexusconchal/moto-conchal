@@ -227,13 +227,13 @@ export function parseExtra(text) {
   const places = [];
   for (const line of String(text || '').split(/\r?\n/)) {
     if (!line.trim() || line.startsWith('#')) continue;
-    const [kind, names, bairro = '', point = ''] = line.split('|').map(part => part.trim());
+    const [kind, names, bairro = '', point = '', endereco = ''] = line.split('|').map(part => part.trim());
     const [lat, lon] = point.split(',').map(Number);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
     const list = names.split(';').map(name => name.trim()).filter(Boolean);
     if (!list.length) continue;
     if (kind === 'rua') streets.push({ name: list[0], alt: list.slice(1), bairro, center: { lat, lon } });
-    else if (kind === 'lugar') places.push({ name: list[0], names: list, bairro, center: { lat, lon } });
+    else if (kind === 'lugar') places.push({ name: list[0], names: list, bairro, endereco, center: { lat, lon } });
   }
   return { streets, places };
 }
@@ -433,8 +433,8 @@ export function createGazetteer({ city: cityKey = 'conchal', cnefeText, osmText,
         country_code: 'br',
         postcode: cep,
         result_type: 'amenity',
-        formatted: `${place.name} - ${line2}`,
-        address_line1: place.name,
+        formatted: `${place.name} - ${place.endereco ? `${place.endereco} - ` : ''}${line2}`,
+        address_line1: place.endereco ? `${place.name} - ${place.endereco}` : place.name,
         address_line2: line2,
         match_confirmed: true,
         match_source: 'manual',
