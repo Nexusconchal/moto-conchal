@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Story Motoboy MotoJá</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Montserrat:wght@600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --orange: #ff6b00;
+    --amber: #ffb000;
+    --gold: #ffd23f;
+    --ink: #0a0a10;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1080px; height: 1920px; overflow: hidden; background: #050508; }
+  body { font-family: Montserrat, sans-serif; color: #fff; }
+
+  .poster { position: relative; width: 1080px; height: 1920px; overflow: hidden;
+    background:
+      radial-gradient(70% 34% at 50% 30%, rgba(255,140,0,.42), rgba(255,107,0,0) 70%),
+      radial-gradient(90% 40% at 50% 108%, rgba(255,80,0,.45), rgba(255,80,0,0) 70%),
+      linear-gradient(180deg, #08070c 0%, #0b0806 45%, #140803 100%);
+  }
+  .layer { position: absolute; inset: 0; pointer-events: none; }
+  #bokeh span { position: absolute; border-radius: 50%; }
+  .vignette { background: radial-gradient(120% 80% at 50% 45%, transparent 55%, rgba(0,0,0,.75) 100%); z-index: 6; }
+  .grain { z-index: 7; opacity: .09; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); }
+
+  /* money */
+  .bill, .coin { position: absolute; z-index: 3; }
+  .bill { width: 300px; filter: drop-shadow(0 18px 24px rgba(0,0,0,.55)); }
+  .coin { width: 120px; filter: drop-shadow(0 12px 18px rgba(0,0,0,.5)); }
+
+  .content { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; padding: 150px 64px 0; text-align: center; }
+
+  .logo { height: 150px; filter: drop-shadow(0 8px 24px rgba(0,0,0,.7)); }
+
+  .kicker { margin-top: 20px; display: inline-flex; align-items: center; gap: 14px;
+    padding: 14px 30px; border-radius: 999px;
+    background: rgba(10,10,16,.72); border: 2px solid rgba(255,176,0,.75);
+    box-shadow: 0 0 34px rgba(255,120,0,.35);
+    font-weight: 900; font-size: 32px; letter-spacing: .1em; }
+  .kicker .dot { width: 16px; height: 16px; border-radius: 50%; background: #39ff7a; box-shadow: 0 0 0 6px rgba(57,255,122,.2), 0 0 16px #39ff7a; }
+
+  .headline { position: relative; margin-top: 26px; font-family: Anton, Impact, sans-serif; text-transform: uppercase; line-height: .86; }
+  .headline .w1 { font-size: 200px; letter-spacing: .02em; color: #fff;
+    text-shadow: 0 6px 0 #c9c3bd, 0 12px 0 #7d746c, 0 22px 30px rgba(0,0,0,.7); }
+
+  .gold { position: relative; display: inline-block; margin-top: 10px; transform: rotate(-4deg); }
+  .gold span { display: block; font-size: 236px; letter-spacing: .01em; padding: .14em .04em 0; }
+  .gold .back { color: #8a3300;
+    text-shadow:
+      0 2px 0 #9a3a00, 0 4px 0 #a54000, 0 6px 0 #b04600, 0 8px 0 #b84a00, 0 10px 0 #a43f00,
+      0 12px 0 #8e3500, 0 14px 0 #7a2c00, 0 16px 0 #682500, 0 30px 40px rgba(0,0,0,.75), 0 0 80px rgba(255,120,0,.6); }
+  .gold .front { position: absolute; inset: 0;
+    background: linear-gradient(180deg, #fffbe0 0%, #ffe680 18%, var(--gold) 34%, var(--amber) 58%, #ff8a00 82%, #ff6b00 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .gold .shine { position: absolute; inset: 0; color: transparent;
+    background: linear-gradient(115deg, transparent 30%, rgba(255,255,255,.85) 42%, transparent 52%);
+    -webkit-background-clip: text; background-clip: text; mix-blend-mode: overlay; }
+
+  .spark { position: absolute; color: #fff7cc; font-size: 64px; text-shadow: 0 0 20px #fff, 0 0 40px var(--gold); z-index: 6; }
+
+  .ribbon { margin-top: 30px; transform: rotate(-3deg); position: relative; z-index: 6;
+    background: linear-gradient(90deg, var(--gold), var(--amber) 60%, var(--orange));
+    color: var(--ink); padding: 18px 46px 16px; border-radius: 10px;
+    font-family: Anton, sans-serif; font-size: 70px; letter-spacing: .03em; text-transform: uppercase; line-height: 1;
+    box-shadow: 0 10px 0 #8a3300, 0 26px 40px rgba(0,0,0,.6), 0 0 60px rgba(255,140,0,.45); }
+
+  .cities { margin-top: 28px; font-size: 30px; font-weight: 800; letter-spacing: .04em; color: #ffe2c4;
+    text-shadow: 0 2px 10px rgba(0,0,0,.9); }
+  .cities b { color: var(--amber); }
+
+  .modes { margin-top: 28px; width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 26px; position: relative; }
+  .mode { position: relative; border-radius: 30px; padding: 26px 26px 28px; text-align: left; overflow: hidden; }
+  .mode .tag { display: inline-block; font-size: 22px; font-weight: 900; letter-spacing: .16em; padding: 8px 14px; border-radius: 10px; }
+  .mode h3 { margin-top: 16px; font-family: Anton, sans-serif; font-weight: 400; font-size: 66px; line-height: .95; text-transform: uppercase; }
+  .mode p { margin-top: 14px; font-size: 26px; font-weight: 700; line-height: 1.25; }
+  .mode .ico { position: absolute; right: -10px; top: -14px; font-size: 120px; opacity: .22; transform: rotate(12deg); }
+
+  .mode.a { padding-right: 40px; background: linear-gradient(160deg, #ff9a1f 0%, var(--orange) 55%, #d84d00 100%); color: var(--ink);
+    box-shadow: 0 24px 50px rgba(0,0,0,.55), 0 0 60px rgba(255,107,0,.35), inset 0 2px 0 rgba(255,255,255,.4); }
+  .mode.a .tag { background: var(--ink); color: var(--gold); }
+  .mode.a p { color: #2a1200; }
+
+  .mode.b { padding-left: 46px; background: linear-gradient(160deg, #1b1610 0%, #0e0c0a 100%); color: #fff;
+    box-shadow: 0 0 0 4px var(--amber), 0 24px 50px rgba(0,0,0,.55), 0 0 60px rgba(255,176,0,.25); }
+  .mode.b .tag { background: linear-gradient(90deg, var(--gold), var(--amber)); color: var(--ink); }
+  .mode.b h3 { color: var(--gold); }
+  .mode.b p { color: #e9dfd4; }
+
+  .plus { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); z-index: 2;
+    width: 74px; height: 74px; border-radius: 50%; display: grid; place-items: center;
+    background: #fff; color: var(--ink);
+    box-shadow: 0 0 0 8px rgba(10,10,16,.85), 0 10px 26px rgba(0,0,0,.6); }
+
+  .cta { margin-top: 30px; width: 100%; display: flex; align-items: center; gap: 24px; padding: 24px; border-radius: 32px;
+    background: linear-gradient(180deg, #ffffff, #fff3e6); color: var(--ink);
+    box-shadow: 0 30px 70px rgba(0,0,0,.65), 0 0 0 5px rgba(255,107,0,.95), 0 0 80px rgba(255,107,0,.4); }
+  .cta .left { flex: 1; text-align: left; display: flex; flex-direction: column; gap: 12px; }
+  .cta .btn { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 20px 18px; border-radius: 20px;
+    background: linear-gradient(180deg, #ff8a1f, var(--orange) 55%, #e65300); color: #fff;
+    font-family: Anton, sans-serif; font-size: 54px; text-transform: uppercase; letter-spacing: .02em; line-height: 1;
+    box-shadow: 0 8px 0 #a83a00, 0 16px 30px rgba(255,107,0,.45); }
+  .cta .btn svg { width: 46px; height: 46px; flex: none; }
+  .cta .url { font-size: 27px; font-weight: 900; padding-left: 4px; }
+  .cta .url span { color: var(--orange); }
+  .cta .req { font-size: 20px; font-weight: 700; color: #5e554d; padding-left: 4px; }
+  .cta .qr { flex: none; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .cta .qr img { width: 196px; height: 196px; border-radius: 16px; border: 5px solid var(--ink); image-rendering: pixelated; }
+  .cta .qr small { font-size: 17px; font-weight: 900; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="poster">
+
+  <!-- long-exposure light trails -->
+  <svg class="layer" viewBox="0 0 1080 1920" aria-hidden="true" style="z-index:1">
+    <defs>
+      <filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="9"/></filter>
+      <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2.2"/></filter>
+      <linearGradient id="fade" x1="0" y1="1" x2="1" y2="0">
+        <stop offset="0" stop-color="#fff" stop-opacity="1"/>
+        <stop offset=".75" stop-color="#fff" stop-opacity=".9"/>
+        <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+      </linearGradient>
+      <mask id="m"><rect width="1080" height="1920" fill="url(#fade)"/></mask>
+    </defs>
+    <g mask="url(#m)" fill="none" stroke-linecap="round">
+      <g filter="url(#glow)" opacity=".85">
+        <path d="M-120 1800 C 260 1500, 620 1480, 1220 1040" stroke="#ff3d00" stroke-width="26"/>
+        <path d="M-120 1870 C 300 1580, 660 1560, 1220 1120" stroke="#ff7a00" stroke-width="22"/>
+        <path d="M-120 1940 C 330 1660, 700 1640, 1220 1200" stroke="#ffb000" stroke-width="18"/>
+        <path d="M-120 1700 C 220 1420, 560 1400, 1220 960" stroke="#ff2a00" stroke-width="14"/>
+        <path d="M1220 1500 C 860 1360, 520 1380, -120 1180" stroke="#ff9a00" stroke-width="12" opacity=".6"/>
+      </g>
+      <g filter="url(#soft)">
+        <path d="M-120 1800 C 260 1500, 620 1480, 1220 1040" stroke="#ffd2a8" stroke-width="4"/>
+        <path d="M-120 1870 C 300 1580, 660 1560, 1220 1120" stroke="#fff1d6" stroke-width="3.5"/>
+        <path d="M-120 1940 C 330 1660, 700 1640, 1220 1200" stroke="#fff7e0" stroke-width="3"/>
+        <path d="M-120 1700 C 220 1420, 560 1400, 1220 960" stroke="#ffc2a0" stroke-width="2.5"/>
+      </g>
+    </g>
+  </svg>
+
+  <div id="bokeh" class="layer" style="z-index:2"></div>
+
+  <!-- money rain -->
+  <svg width="0" height="0" style="position:absolute">
+    <defs>
+      <linearGradient id="billg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#7fd38a"/><stop offset=".5" stop-color="#3fa45a"/><stop offset="1" stop-color="#1f6e3a"/>
+      </linearGradient>
+      <radialGradient id="coing" cx=".35" cy=".3" r=".8">
+        <stop offset="0" stop-color="#fff5bf"/><stop offset=".45" stop-color="#ffc21a"/><stop offset="1" stop-color="#c95a00"/>
+      </radialGradient>
+      <symbol id="bill" viewBox="0 0 300 150">
+        <rect x="2" y="2" width="296" height="146" rx="12" fill="url(#billg)" stroke="#d7f5d9" stroke-width="3"/>
+        <rect x="14" y="14" width="272" height="122" rx="8" fill="none" stroke="#e9ffe9" stroke-opacity=".55" stroke-width="2" stroke-dasharray="6 5"/>
+        <circle cx="150" cy="75" r="42" fill="#2c8a48" stroke="#e9ffe9" stroke-opacity=".7" stroke-width="3"/>
+        <text x="150" y="92" text-anchor="middle" font-family="Anton, sans-serif" font-size="46" fill="#f2fff2">R$</text>
+        <text x="30" y="50" font-family="Anton, sans-serif" font-size="30" fill="#f2fff2" fill-opacity=".9">R$</text>
+        <text x="270" y="130" text-anchor="end" font-family="Anton, sans-serif" font-size="30" fill="#f2fff2" fill-opacity=".9">R$</text>
+        <path d="M40 112 h60 M200 38 h60" stroke="#e9ffe9" stroke-opacity=".5" stroke-width="4" stroke-linecap="round"/>
+      </symbol>
+      <symbol id="coin" viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="56" fill="url(#coing)" stroke="#8a3a00" stroke-width="4"/>
+        <circle cx="60" cy="60" r="44" fill="none" stroke="#fff2b0" stroke-opacity=".7" stroke-width="3"/>
+        <text x="60" y="78" text-anchor="middle" font-family="Anton, sans-serif" font-size="48" fill="#6a2a00">R$</text>
+      </symbol>
+    </defs>
+  </svg>
+
+  <svg class="bill" style="left:-70px; top:560px; transform:rotate(-24deg); width:280px; filter:blur(1.5px) drop-shadow(0 18px 24px rgba(0,0,0,.55))"><use href="#bill"/></svg>
+  <svg class="bill" style="right:-90px; top:470px; transform:rotate(28deg); width:300px;"><use href="#bill"/></svg>
+  <svg class="bill" style="left:20px; top:300px; transform:rotate(16deg); width:170px; opacity:.75; filter:blur(3px)"><use href="#bill"/></svg>
+  <svg class="bill" style="right:40px; top:250px; transform:rotate(-14deg); width:180px; opacity:.7; filter:blur(3.5px)"><use href="#bill"/></svg>
+  <svg class="bill" style="right:-60px; top:960px; transform:rotate(-32deg); width:240px; filter:blur(2px) drop-shadow(0 18px 24px rgba(0,0,0,.55))"><use href="#bill"/></svg>
+  <svg class="bill" style="left:-80px; top:1020px; transform:rotate(30deg); width:230px; opacity:.9; filter:blur(2.5px)"><use href="#bill"/></svg>
+  <svg class="coin" style="left:70px; top:470px; width:96px; transform:rotate(-12deg)"><use href="#coin"/></svg>
+  <svg class="coin" style="right:30px; top:610px; width:104px; transform:rotate(14deg)"><use href="#coin"/></svg>
+  <svg class="coin" style="left:40px; top:860px; width:70px; filter:blur(2px)"><use href="#coin"/></svg>
+  <svg class="coin" style="right:200px; top:380px; width:60px; filter:blur(2.5px); opacity:.8"><use href="#coin"/></svg>
+
+  <div class="content">
+    <img class="logo" src="../../nexus-motoja-site-logo.png" alt="Nexus MotoJá">
+
+    <div class="kicker"><span class="dot"></span>MOTOBOY, BORA FATURAR?</div>
+
+    <div class="headline">
+      <div class="w1">Ganhos</div>
+      <div class="gold">
+        <span class="back">Surreais</span>
+        <span class="front">Surreais</span>
+        <span class="shine">Surreais</span>
+      </div>
+      <div class="spark" style="right:-6px; top:200px">✦</div>
+      <div class="spark" style="left:-10px; top:420px; font-size:44px">✦</div>
+    </div>
+
+    <div class="ribbon">💸 Por entrega • sem limite</div>
+
+    <p class="cities">Conchal <b>•</b> Aguaí <b>•</b> Engenheiro Coelho</p>
+
+    <div class="modes">
+      <div class="mode a">
+        <div class="ico">📦</div>
+        <span class="tag">GANHE POR ENTREGA</span>
+        <h3>Entrega<br>avulsa</h3>
+        <p>Quanto mais você roda, mais fatura. A maior parte de cada entrega é sua.</p>
+      </div>
+      <div class="plus"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#0a0a10" stroke-width="4.5" stroke-linecap="round"><path d="M12 4v16M4 12h16"/></svg></div>
+      <div class="mode b">
+        <div class="ico">💼</div>
+        <span class="tag">SALÁRIO FIXO</span>
+        <h3>Vagas<br>fixas</h3>
+        <p>Trampo certo, grana certa. Salário fixo garantido.</p>
+      </div>
+    </div>
+
+    <div class="cta">
+      <div class="left">
+        <div class="btn">Cadastre-se no app
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+        </div>
+        <div class="url">nexusmotoja.com.br<span>/motoboy.html</span></div>
+        <div class="req">Precisa de CNH, moto com CRLV e celular com WhatsApp.</div>
+      </div>
+      <div class="qr">
+        <img src="qr.png" alt="QR Code do cadastro">
+        <small>Aponte a câmera</small>
+      </div>
+    </div>
+  </div>
+
+  <div class="layer vignette"></div>
+  <div class="layer grain"></div>
+</div>
+<script>
+  // bokeh deterministico (mesmo resultado em toda renderizacao)
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const box = document.getElementById('bokeh');
+  const cores = ['255,176,0', '255,107,0', '255,220,150', '255,255,255', '255,60,0'];
+  for (let i = 0; i < 46; i++) {
+    const s = document.createElement('span');
+    const r = 8 + rnd() * 46;
+    const y = rnd() < .75 ? rnd() * 900 : 900 + rnd() * 1000;
+    s.style.cssText = `left:${rnd() * 1080 - r}px;top:${y}px;width:${r * 2}px;height:${r * 2}px;` +
+      `background:radial-gradient(circle, rgba(${cores[i % cores.length]},.9), rgba(${cores[i % cores.length]},.15) 70%, transparent 72%);` +
+      `opacity:${.12 + rnd() * .38};filter:blur(${1 + rnd() * 5}px)`;
+    box.appendChild(s);
+  }
+</script>
+</body>
+</html>

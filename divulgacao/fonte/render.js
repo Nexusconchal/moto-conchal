@@ -1,30 +1,20 @@
-// Gera as artes: node render.js . .. ["R$ 2.000"]   (o 3o valor, opcional, troca "Salario fixo" por "Fixo de R$ ...")
+// Gera o story (1080x1920): node render.js
+// Saida: ../motoboy-motoja-story.png
 const { chromium } = require('playwright');
 const path = require('path');
 
 (async () => {
-  const dir = process.argv[2];
-  const out = process.argv[3];
-  const fixo = process.argv[4] || '';
   const browser = await chromium.launch();
-  const formats = [
-    { name: 'feed', w: 1080, h: 1350 },
-    { name: 'story', w: 1080, h: 1920 },
-  ];
-  for (const f of formats) {
-    const page = await browser.newPage({ viewport: { width: f.w, height: f.h }, deviceScaleFactor: 1 });
-    const q = new URLSearchParams({ formato: f.name });
-    if (fixo) q.set('fixo', fixo);
-    await page.goto('file://' + path.resolve(dir, 'flyer.html') + '?' + q.toString());
-    await page.evaluate(() => document.fonts.ready);
-    await page.waitForTimeout(400);
-    const overflow = await page.evaluate(() => {
-      const c = document.querySelector('.content');
-      return { scrollH: c.scrollHeight, clientH: c.clientHeight };
-    });
-    console.log(f.name, JSON.stringify(overflow));
-    await page.screenshot({ path: path.join(out, `motoboy-motoja-${f.name}.png`) });
-    await page.close();
-  }
+  const page = await browser.newPage({ viewport: { width: 1080, height: 1920 }, deviceScaleFactor: 1 });
+  await page.goto('file://' + path.resolve(__dirname, 'story.html'));
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForTimeout(500);
+  const alturas = await page.evaluate(() => {
+    const c = document.querySelector('.content');
+    const cta = document.querySelector('.cta').getBoundingClientRect();
+    return { conteudo: c.scrollHeight, fimDoCadastro: Math.round(cta.bottom) };
+  });
+  console.log(JSON.stringify(alturas));
+  await page.screenshot({ path: path.resolve(__dirname, '..', 'motoboy-motoja-story.png') });
   await browser.close();
 })();
