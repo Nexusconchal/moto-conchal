@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
 import { createCallStore, CALL_RING_MS } from '../src/ride-call.js';
+import { iosAlert } from '../src/ios-push.js';
 
 const offer = { type: 'offer', sdp: 'v=0 oferta de teste' };
 const answer = { type: 'answer', sdp: 'v=0 resposta de teste' };
@@ -84,7 +85,7 @@ function deliveryCallHarness() {
     ? { exists: !!deliveries[id], data: () => deliveries[id] }
     : { exists: true, data: () => ({ fcmTokens: { nativo1: { plataforma: 'android_nativo' }, web1: {}, velho: { ativo: false } } }) }) }) }) };
   const ctx = vm.createContext({
-    crypto, Buffer, Date, Number, String, Math, Promise, console, CALL_TOKEN_SECRET: 'segredo', CALL_TOKEN_MS: 60000, CALL_RING_MS, createCallStore,
+    crypto, Buffer, Date, Number, String, Math, Promise, console, CALL_TOKEN_SECRET: 'segredo', CALL_TOKEN_MS: 60000, CALL_RING_MS, createCallStore, iosAlert,
     app: { post: (path, ...handlers) => { routes[path] = handlers.at(-1); } }, rideChatLimiter: () => {}, db,
     onlyDigits: (v) => String(v || '').replace(/\D/g, ''), cleanText: (v) => String(v || ''), appUrl: (p) => `https://site${p}`,
     deliveryCompanyId: (d) => d.empresaId,

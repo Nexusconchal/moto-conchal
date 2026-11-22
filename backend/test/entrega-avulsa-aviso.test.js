@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { iosAlert } from '../src/ios-push.js';
 
 const source = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
 const slice = (a, b) => { const i = source.indexOf(a); const j = source.indexOf(b, i + 1); assert.ok(i >= 0 && j > i, a); return source.slice(i, j); };
@@ -10,7 +11,7 @@ const ctx = vm.createContext({
   process: { env: { TELEGRAM_BOT_TOKEN: 't', TELEGRAM_CHAT_ID: 'g' } }, JSON, Number, String,
   money: (v) => Math.round(Number(v || 0) * 100) / 100, RIDE_EXPIRE_MINUTES: 10,
   rideOperatingCity: () => 'conchal', rideCityLabel: () => 'Conchal', telegramGroupChat: () => 'g',
-  appUrl: (p) => `https://site${p}`, escapeTelegram: (v) => String(v), androidCallConfig: () => ({}),
+  appUrl: (p) => `https://site${p}`, escapeTelegram: (v) => String(v), androidCallConfig: () => ({}), iosAlert,
   fetch: async (_url, init) => { sent.push(JSON.parse(init.body).text); return { ok: true, json: async () => ({ result: { message_id: 1 } }) }; }
 });
 vm.runInContext(slice('function isStandaloneDelivery(', 'function standaloneDeliveryData(') + slice('async function notifyTelegramAboutRide(', 'async function notifyTelegramAboutDelivery(') + slice('function rideOfferPush(', '// App Android com alerta continuo'), ctx);

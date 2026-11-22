@@ -16,6 +16,7 @@ import { createDriverTelegram } from './driver-telegram.js';
 import { publicDriverCard, publicDriverId, sortPublicDrivers, referralCode, normalizeReferralCode, monthKey } from './customer-menu.js';
 import { reachedPickup, lateCancelState, lateCancelBlocker, waitCancelState, waitCancelBlocker } from './ride-late.js';
 import { createCallStore, CALL_RING_MS } from './ride-call.js';
+import { iosAlert, driverPlatform } from './ios-push.js';
 import { mpPaymentForm } from './payment-form.js';
 import { parseRating, ratingBlocker, ratingSummary, driverRatingView, RATING_TAGS } from './ride-rating.js';
 import { validateLocation } from './tracking-policy.js';
@@ -3876,6 +3877,7 @@ function rideOfferPush(rideId, ride, tokens, repeticao = 0) {
       }
     },
     android: androidCallConfig(`corrida_${rideId}`),
+    apns: iosAlert(`corrida_${rideId}`),
     data: {
       rideId,
       tipo: 'nova_corrida',
@@ -4123,6 +4125,7 @@ function deliveryOfferPush(deliveryId, delivery, tokens, title, repeticao = 0) {
     notification: { title, body },
     webpush: { headers: { Urgency: 'high', TTL: '120' }, fcmOptions: { link: appUrl('/motoboy.html?aba=entregas') } },
     android: androidCallConfig(`entrega_${deliveryId}`),
+    apns: iosAlert(`entrega_${deliveryId}`),
     data: { deliveryId, tipo: 'nova_entrega', repeticao: String(repeticao) }
   };
 }
@@ -7045,6 +7048,7 @@ app.post('/api/drivers/:cpf/notification-test', authLimiter, async (req, res, ne
         notification: { title: 'Teste MotoJá', body: 'Se você viu isto com o celular bloqueado, os avisos estão chegando.' },
         webpush: { headers: { Urgency: 'high', TTL: '120' }, fcmOptions: { link: appUrl('/motoboy.html') } },
         android: androidCallConfig('teste_aviso'),
+        apns: iosAlert('teste_aviso'),
         data: { tipo: 'teste_aviso' }
       }).catch(() => ({ successCount: 0, failureCount: tokens.length }));
       push = { sent: response.successCount, failed: response.failureCount, devices: tokens.length };
@@ -11408,7 +11412,7 @@ app.post('/api/drivers/:cpf/push-token', async (req, res, next) => {
       fcmTokens: {
         [token]: {
           ativo: true,
-          plataforma: req.body.plataforma === 'android_nativo' ? 'android_nativo' : 'web',
+          plataforma: driverPlatform(req.body.plataforma),
           callAlertVersion: req.body.plataforma === 'android_nativo' && req.body.callAlertVersion === 1 ? 1 : 0,
           userAgent: String(req.body.userAgent || '').slice(0, 300),
           atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
@@ -11851,6 +11855,7 @@ async function notifyIncomingCall(ride, from) {
     tokens: tokens.slice(0, 20),
     notification: { title: `📞 ${nome} está te ligando pelo app`, body: 'Abra o MotoJá para atender.' },
     android: { priority: 'high', ttl: 45000, notification: { channelId: 'chamadas', tag: 'ligacao' } },
+    apns: iosAlert(`ligacao_${ride.id || ''}`),
     webpush: { headers: { Urgency: 'high', TTL: '45' }, fcmOptions: { link: appUrl(from === 'cliente' ? '/motoboy.html' : '/index.html') } },
     data: { tipo: 'ligacao_app', rideId: String(ride.id || '') }
   }).catch((error) => console.error('call push failed', error?.message));
@@ -11939,6 +11944,7 @@ async function notifyIncomingDeliveryCall(delivery, deliveryId, from, call) {
     tokens: web.slice(0, 20),
     notification: { title, body },
     android: { priority: 'high', ttl: CALL_RING_MS, notification: { channelId: 'chamadas', tag: 'ligacao' } },
+    apns: iosAlert(`ligacao_${deliveryId}`),
     webpush: { headers: { Urgency: 'high', TTL: String(Math.round(CALL_RING_MS / 1000)) }, fcmOptions: { link: appUrl('/motoboy.html') } },
     data
   }));
@@ -12372,6 +12378,7 @@ async function notifyDriverLateCancel(ride = {}, acao = 'trocar') {
     await admin.messaging().sendEachForMulticast({
       tokens,
       notification: { title: 'Corrida cancelada por atraso', body: text },
+      apns: iosAlert('cancelada_atraso', { urgent: false, sound: 'default' }),
       webpush: { headers: { Urgency: 'high', TTL: '600' }, fcmOptions: { link: appUrl('/motoboy.html') } },
       data: { tipo: 'corrida_cancelada_atraso' }
     }).catch(() => null);

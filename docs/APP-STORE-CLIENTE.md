@@ -2,7 +2,7 @@
 
 O app de iPhone do cliente é uma casca nativa (Capacitor 8) que abre `nexusmotoja.com.br`, igual ao app Android em WebView. Tudo o que muda no site aparece no app sem mandar versão nova para a Apple. A pasta é `ios-cliente/`.
 
-O app do **motoboy** no iPhone fica para depois. No iPhone a chamada não toca sem parar (no máximo 30 segundos), e com a tela apagada o GPS e as chamadas param. Primeiro é preciso fazer a localização em segundo plano nativa. Os motoboys continuam pelo Android (Play Store, em produção).
+O app do **motoboy** no iPhone tem roteiro próprio: `docs/APP-STORE-MOTORISTA.md` (aviso urgente que repete até aceitar e GPS em segundo plano só durante a corrida).
 
 ## O que já está pronto (22/11/2026)
 

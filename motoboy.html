@@ -3571,7 +3571,33 @@
       let pushNativoOuvindo = false, avisarRegistroNativo = false;
       function pushNativo() {
         const cap = window.Capacitor;
-        return cap?.isNativePlatform?.() && cap.Plugins?.PushNotifications ? cap.Plugins.PushNotifications : null;
+        if (!cap?.isNativePlatform?.()) return null;
+        if (cap.Plugins?.PushNotifications) return cap.Plugins.PushNotifications;
+        // App de iPhone (Capacitor + Firebase Messaging): a mesma interface do Android, entregando o
+        // token do Firebase no evento "registration". O som de chamada e o "urgente" vêm do servidor.
+        const fm = cap.Plugins?.FirebaseMessaging;
+        if (!fm) return null;
+        const ouvintes = { registration: [], registrationError: [] };
+        return {
+          ios: true,
+          checkPermissions: () => fm.checkPermissions(),
+          requestPermissions: () => fm.requestPermissions(),
+          createChannel: async () => {},
+          addListener: (evento, fn) => {
+            if (ouvintes[evento]) { ouvintes[evento].push(fn); return Promise.resolve({ remove() {} }); }
+            if (evento === "pushNotificationActionPerformed") return fm.addListener("notificationActionPerformed", fn);
+            if (evento === "pushNotificationReceived") return fm.addListener("notificationReceived", fn);
+            return Promise.resolve({ remove() {} });
+          },
+          register: async () => {
+            try {
+              const { token } = await fm.getToken();
+              ouvintes.registration.forEach((fn) => fn({ value: token }));
+            } catch (e) {
+              ouvintes.registrationError.forEach((fn) => fn(e));
+            }
+          },
+        };
       }
       async function ativarPushNativo(silencioso = false) {
         const push = pushNativo();
@@ -3582,7 +3608,7 @@
           let perm = await push.checkPermissions();
           if (perm.receive !== "granted") perm = await push.requestPermissions();
           if (perm.receive !== "granted") {
-            if (!silencioso) alert("Libere as notificações do app MotoJá nas configurações do Android para receber as chamadas.");
+            if (!silencioso) alert(push.ios ? "Libere as notificações do app MotoJá em Ajustes → MotoJá → Notificações (e deixe \"Notificações urgentes\" ligado) para receber as chamadas." : "Libere as notificações do app MotoJá nas configurações do Android para receber as chamadas.");
             return true;
           }
           if (!pushNativoOuvindo) {
@@ -3591,13 +3617,13 @@
               const r = await fetch(`${CONFIG.backend}/api/drivers/${motoboyCpf}/push-token`, {
                 method: "POST",
                 headers: { "content-type": "application/json" },
-                body: JSON.stringify({ ...driverProof(), token: value, plataforma: "android_nativo", callAlertVersion: Number(window.NexusNative?.callAlertVersion?.()) === 1 ? 1 : 0, userAgent: navigator.userAgent }),
+                body: JSON.stringify({ ...driverProof(), token: value, plataforma: push.ios ? "ios_nativo" : "android_nativo", callAlertVersion: Number(window.NexusNative?.callAlertVersion?.()) === 1 ? 1 : 0, userAgent: navigator.userAgent }),
               }).catch(() => null);
               if (avisarRegistroNativo) alert(r?.ok ? "Notificações ativadas neste celular." : "Não consegui salvar a notificação. Tente de novo.");
               avisarRegistroNativo = false;
             });
             await push.addListener("registrationError", () => {
-              if (avisarRegistroNativo) alert("O Android não liberou a notificação agora. Tente de novo.");
+              if (avisarRegistroNativo) alert(push.ios ? "O iPhone não liberou a notificação agora. Tente de novo." : "O Android não liberou a notificação agora. Tente de novo.");
             });
             // Tocou na notificacao: abre o app ja buscando a chamada.
             await push.addListener("pushNotificationActionPerformed", () => atualizarTrabalho());
@@ -4294,7 +4320,7 @@
         }
       };
     </script>
-    <script src="./motoboy-tracking.js?v=214" defer></script>
+    <script src="./motoboy-tracking.js?v=215-ios-gps" defer></script>
     <script src="./app-versao.js?v=1" defer></script>
   </body>
 </html>
