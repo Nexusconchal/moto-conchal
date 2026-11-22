@@ -3708,20 +3708,43 @@
       // pela mesma interface PushNotifications que o painel do motoboy usa.
       function pushNativoCliente() {
         const cap = window.Capacitor;
-        return cap?.isNativePlatform?.() && cap.Plugins?.PushNotifications
-          ? cap.Plugins.PushNotifications
-          : null;
+        if (!cap?.isNativePlatform?.()) return null;
+        if (cap.Plugins?.PushNotifications) return cap.Plugins.PushNotifications;
+        // App de iPhone (Capacitor + Firebase Messaging): a mesma interface do Android,
+        // entregando o token do Firebase no evento "registration".
+        const fm = cap.Plugins?.FirebaseMessaging;
+        if (!fm) return null;
+        const ouvintes = { registration: [], registrationError: [] };
+        return {
+          checkPermissions: () => fm.checkPermissions(),
+          requestPermissions: () => fm.requestPermissions(),
+          createChannel: async () => {},
+          addListener: (evento, fn) => {
+            if (ouvintes[evento]) { ouvintes[evento].push(fn); return Promise.resolve({ remove() {} }); }
+            if (evento === "pushNotificationActionPerformed") return fm.addListener("notificationActionPerformed", fn);
+            if (evento === "pushNotificationReceived") return fm.addListener("notificationReceived", fn);
+            return Promise.resolve({ remove() {} });
+          },
+          register: async () => {
+            try {
+              const { token } = await fm.getToken();
+              ouvintes.registration.forEach((fn) => fn({ value: token }));
+            } catch (e) {
+              ouvintes.registrationError.forEach((fn) => fn(e));
+            }
+          },
+        };
       }
       async function tokenPushNativoCliente(push) {
         let perm = await push.checkPermissions();
         if (perm.receive !== "granted") perm = await push.requestPermissions();
         if (perm.receive !== "granted")
           throw new Error(
-            "Libere as notificações do app MotoJá nas configurações do Android.",
+            "Libere as notificações do app MotoJá nas configurações do celular.",
           );
         return new Promise((resolve, reject) => {
           const timer = setTimeout(
-            () => reject(new Error("O Android não liberou a notificação agora. Tente de novo.")),
+            () => reject(new Error("O celular não liberou a notificação agora. Tente de novo.")),
             15000,
           );
           push.addListener("registration", ({ value }) => {
@@ -3730,7 +3753,7 @@
           });
           push.addListener("registrationError", () => {
             clearTimeout(timer);
-            reject(new Error("O Android não liberou a notificação agora. Tente de novo."));
+            reject(new Error("O celular não liberou a notificação agora. Tente de novo."));
           });
           push.register();
         });
