@@ -1,0 +1,51 @@
+# Build dos apps de iPhone do MotoJá na nuvem (Codemagic tem Mac; aqui não precisa de Mac).
+# Só funciona depois da conta Apple Developer: veja docs/APP-STORE-CLIENTE.md.
+#
+# No Codemagic (conta grátis ligada a este repositório no GitHub):
+#  - Integração "App Store Connect" com a chave de API da Apple, com o nome abaixo.
+#  - Grupo de variáveis "firebase-cliente" com GOOGLE_SERVICE_INFO_PLIST_CLIENTE: o arquivo
+#    GoogleService-Info.plist do app de iPhone do cliente em base64. Ele NÃO fica no repositório,
+#    porque este repositório é público.
+#  - Variável APP_STORE_APPLE_ID_CLIENTE: o número do app na App Store Connect.
+workflows:
+  ios-cliente:
+    name: MotoJá (moto táxi) iPhone → TestFlight
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    working_directory: ios-cliente
+    integrations:
+      app_store_connect: MotoJA App Store Connect
+    environment:
+      groups:
+        - firebase-cliente
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: br.com.nexusconchal.motoja.cliente
+      node: 22
+      xcode: latest
+    triggering:
+      events: []   # build só quando pedir no Codemagic (não a cada push)
+    scripts:
+      - name: Instalar dependências
+        script: npm ci
+      - name: Arquivo do Firebase
+        script: |
+          test -n "$GOOGLE_SERVICE_INFO_PLIST_CLIENTE" || { echo "Falta GOOGLE_SERVICE_INFO_PLIST_CLIENTE no Codemagic"; exit 1; }
+          echo "$GOOGLE_SERVICE_INFO_PLIST_CLIENTE" | base64 --decode > ios/App/App/GoogleService-Info.plist
+      - name: Copiar configuração para o projeto
+        script: npx cap sync ios
+      - name: Assinatura
+        script: xcode-project use-profiles
+      - name: Número do build (um a mais que o último enviado)
+        script: |
+          LAST=$(app-store-connect get-latest-app-store-build-number "$APP_STORE_APPLE_ID_CLIENTE" || echo 0)
+          cd ios/App && agvtool new-version -all $((LAST + 1))
+      - name: Gerar o app (IPA)
+        script: xcode-project build-ipa --project ios/App/App.xcodeproj --scheme App
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
