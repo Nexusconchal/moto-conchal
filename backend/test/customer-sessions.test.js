@@ -27,7 +27,8 @@ function setup() {
     } }) })
   }) };
   let n = 0;
-  const ctx = vm.createContext({ db, Date, Number, Array, Set, Math, String,
+  const ctx = vm.createContext({ db, Date, Number, Array, Set, Math, String, Map,
+    customerSessionCache: new Map(), customerWrittenAt: new Map(), savedAfterLastWrite: () => false,
     crypto: { randomBytes: () => ({ toString: () => `tok${++n}` }) },
     hashSecret: (v) => `h:${v}`,
     admin: { firestore: { FieldValue: { delete: () => DELETE, serverTimestamp: () => 'TS', arrayUnion: (...v) => ({ union: v }), arrayRemove: (...v) => ({ remove: v }) } } } });

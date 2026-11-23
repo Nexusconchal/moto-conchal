@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import * as stops from '../src/delivery-stops.js';
+import { liveJobs } from './live-jobs-off.js';
 
 const source = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
 const driverCpf = '12345678901';
@@ -29,7 +30,7 @@ function setup(delivery) {
     batch: () => { const writes = []; return { set: (r, d) => writes.push([r, d]), commit: async () => writes.forEach(([r, d]) => records.set(r.path, { ...records.get(r.path), ...d })) }; }
   };
   const context = vm.createContext({
-    ...stops, db, Date, Math, Number, String, Array, Object, JSON, Promise, Map, Set, AbortSignal, console,
+    ...stops, liveJobs, chatRideCache: new Map(), db, Date, Math, Number, String, Array, Object, JSON, Promise, Map, Set, AbortSignal, console,
     onlyDigits: (v) => String(v || '').replace(/\D/g, ''), cleanText: (v, max = 500) => String(v || '').trim().slice(0, max), timestampMs: Number,
     getDriverWithProof: async (cpf) => { if (cpf !== driverCpf) throw new Error('prova'); },
     findCompanySession: async (token) => (token === 'loja' ? { companyId } : token === 'outra' ? { companyId: '1' } : null),
@@ -41,6 +42,8 @@ function setup(delivery) {
     rateLimit: () => 'limit', createRideLimiter: 'limit', rideChatLimiter: 'limit', mapLimiter: 'limit',
     app: { post: (url, ...handlers) => routes.set(url, handlers.at(-1)) }
   });
+  vm.runInContext('function cachedCompanySession(token) { return findCompanySession(token); }', context);
+  vm.runInContext(source.slice(source.indexOf('async function chatJob('), source.indexOf('async function chatRide(')), context);
   const start = source.indexOf('// ---------- Lote pela nota: enderecos no servidor');
   vm.runInContext(source.slice(start, source.indexOf('function driverStatusHtml(', start)), context);
   async function call(url, body, token = '') {

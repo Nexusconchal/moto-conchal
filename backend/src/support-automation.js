@@ -173,7 +173,7 @@ export function rideFacts(ride, phoneKnown, looked, expireMs, now = Date.now()) 
 
 // The assistant never changes fares or accepts a job. Ride requests go through `booking`
 // (whatsapp-booking.js), which asks and confirms every detail before the server creates the ride.
-export function createSupportAutomation({ db, sendText, encrypt, decrypt = () => '', generateReply = async () => null, booking = null, instance, rideExpireMs, deliveryExpireMs, sendTelegram, isSystemOutgoing = () => false, markRead = async () => {}, typing = async () => {}, groupFor = async (job, kind, settings) => settings.driverGroupJid || '', pendingJobs = null, now = () => Date.now() }) {
+export function createSupportAutomation({ db, sendText, encrypt, decrypt = () => '', generateReply = async () => null, booking = null, instance, rideExpireMs, deliveryExpireMs, sendTelegram, isSystemOutgoing = () => false, markRead = async () => {}, typing = async () => {}, groupFor = async (job, kind, settings) => settings.driverGroupJid || '', pendingJobs = null, loadJob = null, now = () => Date.now() }) {
   const configRef = db.collection('configuracoes').doc('atendimentoAutomatico');
   let cache, cacheUntil = 0, ticking = false, lastPrune = 0;
   const completedNotices = new Map(), outgoingEchoes = new Map(), queuedChats = new Set();
@@ -423,8 +423,9 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
     let claim = false, status = 'ignored', completed = false;
     await db.runTransaction(async tx => {
       claim = false; status = 'ignored'; completed = false;
-      // Include legacy initial/reminder markers when upgrading an existing deployment.
-      const [previous, ...notices] = await Promise.all([tx.get(marker), tx.get(lastMarker), ...['initial', 'reminder'].map(value => tx.get(db.collection('supportAutomationNotices').doc(hash(`${kind}:${job.id}:${ms(job.criadaEm)}:${value}:${channel}`))))]);
+      // Economia do banco: so a marca deste aviso e a do ultimo aviso do canal (as marcas antigas
+      // initial/reminder eram da atualizacao de 2026; todo aviso desde entao grava a "last").
+      const [previous, ...notices] = await Promise.all([tx.get(marker), tx.get(lastMarker)]);
       if (previous.exists) { completed = true; status = previous.data().status === 'sent' ? 'recent' : previous.data().status === 'failed' ? 'failed' : 'sending'; return; }
       if (stage === 'customer' || stage.startsWith('reminder')) {
         const active = notices.map(snap => snap.data()).find(data => data && ['claimed', 'sent'].includes(data.status) && ms(data.createdAt) > now() - 60000);
@@ -438,7 +439,8 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
       if (['recent', 'failed'].includes(status)) remember(completedNotices, marker.id, status, completed ? expire : 30000);
       return { channel, status };
     }
-    const current = await ref.get();
+    // Confere se ainda esta aberta: pelo espelho ao vivo do servidor quando houver (sem leitura).
+    const current = (loadJob && await loadJob(kind, ref.id)) || await ref.get();
     const fresh = { ...current.data(), id: current.id };
     const text = ms(fresh.criadaEm) === ms(job.criadaEm) && pendingNotice(fresh, kind, stage, expire, now());
     if (!text) return { channel, status: 'ignored' };

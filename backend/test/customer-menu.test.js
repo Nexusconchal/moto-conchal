@@ -86,12 +86,14 @@ test('the motoboy list needs an account and shows only who is available now', as
   ];
   const routes = {};
   const ctx = vm.createContext({ Date, Number, String, Map, Buffer, console, crypto: nodeCrypto.default,
-    db: { collection: () => ({ where: () => ({ limit: () => ({ get: async () => ({ docs: drivers.map((d) => ({ id: d.id, data: () => d.data })) }) }) }) }) },
+    db: { collection: () => ({ where: () => ({ get: async () => ({ docs: drivers.map((d) => ({ id: d.id, data: () => d.data })) }), limit: () => ({ get: async () => ({ docs: drivers.map((d) => ({ id: d.id, data: () => d.data })) }) }) }) }) },
+    liveJobs: { listening: () => false },
     validDriverPhoto: (v) => (String(v || '').startsWith('data:image/') ? v : ''), publicDriverId, publicDriverCard, sortPublicDrivers,
     hashSecret: h, safeEqual: (a, b) => a === b, mapLimiter: 0,
     driverAvailability: { state: (cpf) => ({ available: cpf === '11111111111' }) },
     findCustomerSession: async (t) => (t === 'ok' ? { customer: { completo: true } } : null), customerProfileComplete: (c) => !!c.completo,
     app: { get: (p, ...fns) => { routes[p] = fns.at(-1); } } });
+  vm.runInContext(slice('async function activeDriverDocs(', 'instrumentFirestore(admin.firestore'), ctx);
   vm.runInContext(slice('// ---------- Menu do cliente: Motoristas e Indique e ganhe ----------', '// Codigo de indicacao do cliente'), ctx);
   const call = async (path, { token = '', params = {}, query = {} } = {}) => {
     const out = { status: 200 }; let failure;

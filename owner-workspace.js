@@ -782,7 +782,7 @@
   }
 
   // Versao do servidor (Render): mostra quando foi atualizado e avisa se esta numa versao antiga.
-  const SITE_RELEASE = "2026-11-23-economia";
+  const SITE_RELEASE = "2026-11-23-economia-2";
   async function checkServerVersion() {
     const el = document.getElementById("ownerServerVersion");
     if (!el) return;

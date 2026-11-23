@@ -56,3 +56,30 @@ test('a delivery with good GPS teaches the address; a bad GPS does not', async (
   const fresh = createLearnedAddresses({ db });
   assert.ok(await fresh.lookup('rua nova 12 monte real', 'conchal'));
 });
+
+test('enderecos aprendidos: le tudo 1 vez por dia e, no meio tempo, so o que mudou', async () => {
+  let t = 1_000_000;
+  const docs = new Map([['a', { chave: 'conchal|rua velha 1', pontos: [{ lat: -22.33, lon: -47.17 }], atualizadoEmMs: 10 }]]);
+  const leituras = [];
+  const all = () => [...docs.values()].map((data) => ({ data: () => data }));
+  const db = { collection: () => ({
+    limit: () => ({ get: async () => { leituras.push(['tudo', docs.size]); return { docs: all() }; } }),
+    where: (_f, _op, desde) => ({ limit: () => ({ get: async () => {
+      const mudou = all().filter((d) => d.data().atualizadoEmMs > desde);
+      leituras.push(['mudou', mudou.length]);
+      return { docs: mudou };
+    } }) })
+  }) };
+  const learned = createLearnedAddresses({ db, now: () => t });
+  await learned.lookup('rua velha 1', 'conchal');
+  assert.deepEqual(leituras, [['tudo', 1]]);
+  await learned.lookup('rua velha 1', 'conchal');
+  assert.equal(leituras.length, 1, 'dentro de 10 min nao le nada');
+  docs.set('b', { chave: [...addressKeys('Rua Nova 5', 'conchal')][0], pontos: [{ lat: -22.34, lon: -47.18 }], atualizadoEmMs: t + 1000 });
+  t += 11 * 60 * 1000;
+  assert.ok(await learned.lookup('Rua Nova 5', 'conchal'), 'endereco aprendido por outro servidor aparece');
+  assert.deepEqual(leituras.at(-1), ['mudou', 1], 'le so o que mudou, nao os 5.000');
+  t += 25 * 60 * 60 * 1000;
+  await learned.lookup('rua velha 1', 'conchal');
+  assert.deepEqual(leituras.at(-1), ['tudo', 2], 'uma vez por dia le tudo de novo');
+});

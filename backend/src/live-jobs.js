@@ -25,7 +25,9 @@ export function createLiveJobs({
   onChange = () => {},
   onReads = () => {},
   setTimer = setTimeout,
-  clearTimer = clearTimeout
+  clearTimer = clearTimeout,
+  // Por colecao: tira da memoria campos grandes que ninguem le daqui (ex.: foto do documento).
+  transform = {}
 } = {}) {
   const lists = new Map();
   for (const [name, statuses] of Object.entries(watch)) {
@@ -60,12 +62,16 @@ export function createLiveJobs({
         for (const change of changes) {
           const id = change.doc.id;
           const before = list.docs.get(id);
+          const shape = transform[list.name];
           if (change.type === 'removed') list.docs.delete(id);
-          else list.docs.set(id, change.doc);
+          else if (shape) {
+            const data = shape(change.doc.data() || {});
+            list.docs.set(id, { id, ref: change.doc.ref, exists: true, data: () => data });
+          } else list.docs.set(id, change.doc);
           list.writes.delete(id);
           list.changes += 1;
           try {
-            onChange(list.name, change.type, before ? before.data() || {} : null, change.type === 'removed' ? null : change.doc.data() || {}, id);
+            onChange(list.name, change.type, before ? before.data() || {} : null, change.type === 'removed' ? null : list.docs.get(id)?.data() || {}, id);
           } catch (error) {
             log.error?.(`[espelho] aviso de mudanca falhou: ${String(error?.message || error).slice(0, 120)}`);
           }
@@ -105,6 +111,10 @@ export function createLiveJobs({
       }
     },
     watches(name) { return lists.has(name); },
+    // Escuta ligada, mesmo com gravacao recente ainda sem aviso (para listas em que 1 s de atraso nao importa).
+    listening(name) {
+      return !!lists.get(name)?.ready;
+    },
     // true = pode responder pela memoria agora.
     ready(name) {
       const list = lists.get(name);

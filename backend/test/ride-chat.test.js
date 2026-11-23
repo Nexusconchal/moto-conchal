@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
+import { liveJobs } from './live-jobs-off.js';
 const source = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
 const hash = v => crypto.createHash('sha256').update(String(v)).digest('hex');
 const DRIVER = '11111111111', OTHER = '22222222222', DEVICE = 'device-client-1234567890';
@@ -17,7 +18,7 @@ function harness(ride) {
   const db = { collection: name => ({ doc: id => ref(`${name}/${id}`) }),
     batch: () => { const ops = []; return { set: (r, d, o) => ops.push([r, d, o]), commit: async () => ops.forEach(([r, d, o]) => records.set(r.path, o?.merge ? { ...records.get(r.path), ...Object.fromEntries(Object.entries(d).map(([k, v]) => [k, v?.inc ? Number(records.get(r.path)?.[k] || 0) + v.inc : v])) } : d)) }; } };
   const routes = {};
-  const ctx = vm.createContext({ db, Date, Math, Number, String, Map, console,
+  const ctx = vm.createContext({ liveJobs, db, Date, Math, Number, String, Map, console,
     admin: { firestore: { FieldValue: { serverTimestamp: () => 'TS', increment: n => ({ inc: n }) } } },
     cleanText: (v, n = 500) => String(v || '').trim().slice(0, n), onlyDigits: v => String(v || '').replace(/\D/g, ''),
     hashSecret: hash, timestampMs: v => Number(v || 0), rideStatusCache: new Map(), createRideLimiter: 0, rideChatLimiter: 0,

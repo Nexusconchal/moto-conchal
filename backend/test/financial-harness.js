@@ -48,5 +48,7 @@ export function harness(entries = {}) {
     await handlers.at(-1)({body,query:{},params:{deliveryId:'d'},companyId,company:records.get(`empresas/${companyId}`)||{},companySnap:snap(`empresas/${companyId}`),...extra},response,e=>{error=e;});
     if(error)throw error;return {status,data:result};
   }
+  // Lista de motoboys ativos: a mesma funcao do servidor (sem espelho nos testes, consulta o banco falso).
+  fn('activeDriverDocs');
   return {records,context,ref,calls,routes,run,fn,call};
 }

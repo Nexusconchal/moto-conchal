@@ -2295,11 +2295,20 @@ async function issueSupportSession(ref) {
   return token;
 }
 
+// O painel do suporte confere a cada 90 s: a conta fica guardada ate o servidor grava-la (aprovar,
+// bloquear, sair) ou por 10 min.
+const supportAccountCache = new Map();
 async function findSupportSession(token) {
   const value = String(token || '').trim();
   const parts = value.split('.');
   if (parts.length !== 4 || parts[0] !== 'support' || parts[1] !== 'v1' || !/^[a-f0-9]{64}$/.test(parts[2])) return null;
-  const accountSnap = await db.collection('contasSuporte').doc(parts[2]).get();
+  const saved = supportAccountCache.get(parts[2]);
+  const fresh = saved && Date.now() - saved.at < 10 * 60 * 1000 && savedAfterLastWrite(supportWrittenAt, parts[2], saved.at);
+  const accountSnap = fresh ? saved.snap : await db.collection('contasSuporte').doc(parts[2]).get();
+  if (!fresh) {
+    supportAccountCache.set(parts[2], { at: Date.now(), snap: accountSnap });
+    if (supportAccountCache.size > 200) supportAccountCache.delete(supportAccountCache.keys().next().value);
+  }
   if (!accountSnap.exists) return null;
   const account = accountSnap.data() || {};
   const tokenHash = hashSecret(value);
@@ -2413,12 +2422,29 @@ function customerProfileComplete(data = {}) {
   );
 }
 
+// Economia do banco: o app do cliente confere o login ao abrir, no acompanhamento e no chat.
+// O login fica guardado por 10 min e cai na hora em que o servidor grava o cadastro do cliente
+// (sair, trocar a senha, excluir a conta). Chave que nao vale fica guardada 1 min.
+const customerSessionCache = new Map();
+const CUSTOMER_SESSION_CACHE_MS = 10 * 60 * 1000;
 async function findCustomerSession(token) {
   const value = String(token || '').trim();
   if (!value) return null;
   const hash = hashSecret(value);
-  let snap = await db.collection('clientes').where('sessionTokenHash', '==', hash).limit(1).get();
-  if (snap.empty) snap = await db.collection('clientes').where('sessionTokenHashes', 'array-contains', hash).limit(1).get();
+  const saved = customerSessionCache.get(hash);
+  if (saved && Date.now() - saved.at < (saved.session ? CUSTOMER_SESSION_CACHE_MS : 60000)
+    && (!saved.session || savedAfterLastWrite(customerWrittenAt, saved.session.customerId, saved.at))) return saved.session;
+  const session = await loadCustomerSession(value, hash);
+  customerSessionCache.set(hash, { at: Date.now(), session });
+  if (customerSessionCache.size > 3000) customerSessionCache.delete(customerSessionCache.keys().next().value);
+  return session;
+}
+
+async function loadCustomerSession(value, hash) {
+  // Primeiro a lista de aparelhos (todo login novo entra nela); o campo antigo so se nao achar.
+  // Antes era o contrario e quase toda conferida pagava 2 consultas.
+  let snap = await db.collection('clientes').where('sessionTokenHashes', 'array-contains', hash).limit(1).get();
+  if (snap.empty) snap = await db.collection('clientes').where('sessionTokenHash', '==', hash).limit(1).get();
   if (snap.empty) return null;
   const customerSnap = snap.docs[0];
   const customer = customerSnap.data() || {};
@@ -3207,10 +3233,21 @@ const dbUsage = createDbUsage();
 const CAR_LIVE_STATUSES = ['pendente', 'aceita', 'motorista_chegou', 'em_andamento'];
 const liveJobs = createLiveJobs({
   db,
-  watch: { corridas: ['pendente', 'aceita', 'retirada'], entregas: ['pendente', 'aceita', 'retirada'], corridasCarro: CAR_LIVE_STATUSES },
-  onReads: (n) => dbUsage.reads(n, 'espelho ao vivo (corridas e entregas em andamento)'),
+  // Motoboys ativos tambem: cada chamada (e cada repeticao do alerta, a cada 20 s) relia TODOS.
+  watch: { corridas: ['pendente', 'aceita', 'retirada'], entregas: ['pendente', 'aceita', 'retirada'], corridasCarro: CAR_LIVE_STATUSES, motoboys: ['ativo'] },
+  // A foto do documento da moto (ate 550 KB) nao e usada pelos avisos: fica fora da memoria.
+  transform: { motoboys: ({ crlvFoto, ...driver }) => ({ ...driver, crlvCadastrado: !!crlvFoto }) },
+  onReads: (n) => dbUsage.reads(n, 'espelho ao vivo (corridas, entregas e motoboys)'),
   onChange: liveJobChanged
 });
+// Motoboys ativos (para avisar das chamadas e a lista do app do cliente): pela memoria quando
+// a escuta esta ligada (1 s de atraso depois de gravar nao muda nada aqui); senao pelo banco.
+async function activeDriverDocs() {
+  const docs = liveJobs.listening('motoboys')
+    ? liveJobs.docs('motoboys')
+    : (await db.collection('motoboys').where('status', '==', 'ativo').get()).docs;
+  return { docs, size: docs.length, empty: docs.length === 0, forEach: (fn) => docs.forEach(fn) };
+}
 instrumentFirestore(admin.firestore, {
   onReads: (n) => dbUsage.reads(n),
   onWrite: (path) => { dbUsage.writes(1); liveJobs.noteWrite(path); noteDocWrite(path); }
@@ -3222,13 +3259,29 @@ const DOC_WRITE_SETTLE_MS = 3000;
 const companyWrittenAt = new Map();
 const driverWrittenAt = new Map();
 const carDriverWrittenAt = new Map();
+const customerWrittenAt = new Map();
+const supportWrittenAt = new Map();
+let adminRepassesCache = null;
+let adminRepassesWrittenAt = 0;
+const driverRatingsCache = new Map();
+const driverDebtCache = new Map();
 function noteDocWrite(path) {
   const parts = String(path || '').split('/');
+  if (parts[0] === 'motoboys' && parts[1]) driverDebtCache.delete(parts[1]);
+  if (parts[0] === 'repassesMotoboy') driverDebtCache.clear();
+  if (parts[0] === 'motoboys' && parts[2] === 'avaliacoes') driverRatingsCache.delete(parts[1]);
+  // Repasse novo/pago ou divida de um motoboy da lista mudou: o painel rele os repasses.
+  if (parts[0] === 'repassesMotoboy' || (parts[0] === 'motoboys' && parts.length === 2 && adminRepassesCache?.cpfs?.has(parts[1]))) {
+    adminRepassesCache = null;
+    adminRepassesWrittenAt = Date.now();
+  }
   // Ganho gravado (resumosMotoboy/<cpf>/dias/...) ou plano reservado mudou: refaz o resumo do Inicio.
   if (parts[0] === 'resumosMotoboy' && parts[1]) forgetDriverSummary(parts[1]);
   if (parts[0] === 'planosAtivados') driverPlansCache.clear();
   if (parts.length !== 2 || !parts[1]) return;
-  const map = parts[0] === 'empresas' ? companyWrittenAt : parts[0] === 'motoboys' ? driverWrittenAt : parts[0] === 'carroMotoristas' ? carDriverWrittenAt : null;
+  const map = parts[0] === 'empresas' ? companyWrittenAt : parts[0] === 'motoboys' ? driverWrittenAt
+    : parts[0] === 'carroMotoristas' ? carDriverWrittenAt : parts[0] === 'clientes' ? customerWrittenAt
+    : parts[0] === 'contasSuporte' ? supportWrittenAt : null;
   if (!map) return;
   map.delete(parts[1]);
   map.set(parts[1], Date.now());
@@ -3248,6 +3301,7 @@ async function activeJobsSnapshot(collectionName, filter, fallback) {
   return { docs, size: docs.length, empty: docs.length === 0, forEach: (fn) => docs.forEach(fn) };
 }
 function liveJobChanged(collectionName, type, before, after) {
+  if (collectionName === 'motoboys') return;
   // Corrida pedida pelo WhatsApp mudou (chegou, finalizou, expirou): confere os avisos ja.
   if (collectionName === 'corridas' && (before?.whatsappAcompanhar || after?.whatsappAcompanhar)) bookingDirty = true;
   if (type !== 'modified' || before?.status !== after?.status) invalidateOpenJobs();
@@ -3450,6 +3504,8 @@ app.use('/api/admin', (req, res, next) => {
       }
       if (/^\/companies\//.test(req.path)) { adminCollectionCache.delete('empresas'); adminCollectionCache.delete('recuperacoesSenhaEmpresa'); companySessionCache.clear(); }
       if (/^\/support/.test(req.path)) adminCollectionCache.delete('contasSuporte');
+      // Motoboy aprovado/bloqueado: a lista de motoboys do app do cliente atualiza na hora.
+      if (/^\/drivers\//.test(req.path)) publicDriversCache = null;
     });
   }
   next();
@@ -4062,7 +4118,7 @@ function driverReadyForCall(cpf) {
 
 // Tokens de quem escolheu Disponivel e nao esta em servico.
 async function availableDriverTokens(accepts = () => true) {
-  const drivers = await db.collection('motoboys').where('status', '==', 'ativo').get();
+  const drivers = await activeDriverDocs();
   const tokens = [];
   drivers.forEach((doc) => {
     const presence = driverAvailability.state(doc.id);
@@ -4111,7 +4167,7 @@ function telegramOfferInBackground(docs, text) {
 
 async function notifyDriversAboutRide(rideId, ride) {
   invalidateOpenJobs();
-  const drivers = await db.collection('motoboys').where('status', '==', 'ativo').get();
+  const drivers = await activeDriverDocs();
   const tokens = [];
   const city = rideOperatingCity(ride);
   telegramOfferInBackground(telegramReadyDrivers(drivers.docs || [], (data) => driverWantsRide(data, ride)), telegramOfferText('corrida', ride));
@@ -4308,8 +4364,8 @@ async function notifyDriversAboutDelivery(deliveryId, delivery, { onlyReserved =
   // movimento), mas so ele ve e pega; para ele o aviso diz que a entrega ja e dele.
   const reservedCpf = onlyDigits(delivery.motoboyExclusivoCpf);
   const reserved = reservedCpf.length === 11;
-  const reservedDriver = reserved ? await db.collection('motoboys').doc(reservedCpf).get() : null;
-  const drivers = onlyReserved ? [] : (await db.collection('motoboys').where('status', '==', 'ativo').get()).docs || [];
+  const reservedDriver = reserved ? (liveJobs.listening('motoboys') && liveJobs.doc('motoboys', reservedCpf)) || await db.collection('motoboys').doc(reservedCpf).get() : null;
+  const drivers = onlyReserved ? [] : (await activeDriverDocs()).docs || [];
   const tokens = [];
   const reservedTokens = [];
   const collect = (doc, list, onlyReady = false) => {
@@ -4858,7 +4914,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 
 // Versao do servidor no ar (o painel do dono mostra e avisa quando o Render nao atualizou).
 const SERVER_STARTED_AT = Date.now();
-const SERVER_RELEASE = '2026-11-23-economia';
+const SERVER_RELEASE = '2026-11-23-economia-2';
 app.get('/api/version', (_req, res) => {
   res.set('cache-control', 'no-store');
   res.json({ ok: true, release: SERVER_RELEASE, commit: String(process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || 'local', iniciadoEmMs: SERVER_STARTED_AT });
@@ -5166,7 +5222,8 @@ async function deliveryChatParticipant(req, delivery) {
   const header = String(req.header('authorization') || '');
   const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
   if (!token) return '';
-  const session = await findCompanySession(token);
+  // O chat confere a cada 4 s: usa o login da loja guardado (cai quando o cadastro muda).
+  const session = await cachedCompanySession(token, true);
   return session && deliveryCompanyId(delivery) === String(session.companyId) ? 'empresa' : '';
 }
 
@@ -5202,6 +5259,7 @@ app.post('/api/deliveries/:deliveryId/chat/send', rideChatLimiter, async (req, r
     batch.set(messageRef, { autor, texto, criadoEmMs, criadoEm: admin.firestore.FieldValue.serverTimestamp() });
     batch.set(ref, { chatUltimaEmMs: criadoEmMs, chatUltimoAutor: autor, chatTotal: admin.firestore.FieldValue.increment(1) }, { merge: true });
     await batch.commit();
+    chatRideCache.delete(`entregas/${ref.id}`);
     const mensagem = { id: messageRef.id, autor, texto, criadoEmMs };
     const companyId = onlyDigits(deliveryCompanyId(delivery));
     if (companyId) io.to(`company:${companyId}`).emit('delivery:chat', { deliveryId: ref.id, motoboy: delivery.motoboy || 'Motoboy', mensagem });
@@ -5214,13 +5272,18 @@ app.post('/api/deliveries/:deliveryId/chat/send', rideChatLimiter, async (req, r
 app.post('/api/deliveries/:deliveryId/chat/list', rideChatLimiter, async (req, res, next) => {
   try {
     const ref = db.collection('entregas').doc(String(req.params.deliveryId || ''));
-    const snap = await ref.get();
+    const snap = await chatJob('entregas', ref.id);
     if (!snap.exists) return res.status(404).json({ error: 'entrega_nao_encontrada' });
-    const delivery = snap.data() || {};
+    const delivery = snap.ride;
     const voce = await deliveryChatParticipant(req, delivery);
     if (!voce) return res.status(403).json({ error: 'chat_nao_autorizado', message: 'Este chat e so da loja e do motoboy desta entrega.' });
     if (!deliveryChatOpen(delivery)) return res.json({ ok: true, voce, aberto: false, mensagens: [] });
     const depois = Math.max(0, Number(req.body?.depoisDeMs || 0));
+    // Nada novo desde a ultima conferida: responde sem ler as mensagens no banco.
+    if (depois && Number(delivery.chatUltimaEmMs || 0) <= depois) {
+      return res.json({ ok: true, voce, aberto: ['aceita', 'retirada'].includes(delivery.status), mensagens: [],
+        outro: voce === 'empresa' ? { nome: delivery.motoboy || 'Motoboy' } : { nome: delivery.empresa || 'Loja' } });
+    }
     const query = depois ? ref.collection('chat').where('criadoEmMs', '>', depois) : ref.collection('chat');
     const messages = await query.limit(200).get();
     const mensagens = messages.docs
@@ -6565,7 +6628,10 @@ app.post('/api/drivers/:cpf/me', async (req, res, next) => {
     const driver = snap.data() || {};
     assertDriverProof(driver, req.body, { requireSession: true });
     if (driver.status === 'bloqueado') return res.status(403).json(driverBlockedResponse(driver));
-    await snap.ref.set({ ultimoAcesso: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    // "Ultimo acesso" no maximo 1 vez por hora (antes gravava a cada vez que abria o app).
+    if (Date.now() - timestampMs(driver.ultimoAcesso) > 60 * 60 * 1000) {
+      await snap.ref.set({ ultimoAcesso: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    }
     return res.json({ ok: true, ...driverAppProfile(driver, cpf) });
   } catch (error) {
     return next(error);
@@ -7036,6 +7102,17 @@ app.post('/api/drivers/:cpf/earnings/summary', async (req, res, next) => {
 // Saldo com o app: taxa de corridas em dinheiro ainda nao descontada (devendo) ou credito.
 async function driverDebtSummary(driverCpf) {
   const cpf = onlyDigits(driverCpf);
+  // Economia do banco: guardado ate mudar o cadastro, a divida ou um repasse do motoboy (noteDocWrite).
+  const saved = driverDebtCache.get(cpf);
+  if (saved && Date.now() - saved.at < 30 * 60 * 1000 && savedAfterLastWrite(driverWrittenAt, cpf, saved.at)) return saved.value;
+  const startedAt = Date.now();
+  const value = await loadDriverDebtSummary(cpf);
+  // Gravou no cadastro dele enquanto lia: nao guarda (evita mostrar saldo velho).
+  if (savedAfterLastWrite(driverWrittenAt, cpf, startedAt)) driverDebtCache.set(cpf, { at: startedAt, value });
+  if (driverDebtCache.size > 2000) driverDebtCache.delete(driverDebtCache.keys().next().value);
+  return value;
+}
+async function loadDriverDebtSummary(cpf) {
   const [driverSnap, history] = await Promise.all([
     db.collection('motoboys').doc(cpf).get(),
     db.collection('motoboys').doc(cpf).collection('dividaApp').orderBy('criadoEmMs', 'desc').limit(15).get()
@@ -7285,8 +7362,8 @@ app.post('/api/drivers/:cpf/notification-status', async (req, res, next) => {
   try {
     const driverCpf = onlyDigits(req.params.cpf);
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
-    await getDriverWithProof(driverCpf, req.body);
-    const driver = (await db.collection('motoboys').doc(driverCpf).get()).data() || {};
+    // O app pergunta toda vez que volta para a tela: usa o cadastro guardado (cai quando muda).
+    const driver = await getDriverWithProof(driverCpf, req.body) || {};
     const devices = Object.values(driver.fcmTokens || {}).filter((info) => info?.ativo !== false).length;
     return res.json({ ok: true, telegram: { configured: !!process.env.TELEGRAM_BOT_TOKEN, linked: !!driver.telegramChatId }, push: { devices } });
   } catch (error) {
@@ -7904,12 +7981,14 @@ const PUBLIC_PHOTO_TTL_MS = 10 * 60 * 1000;
 let publicDriversCache = null;
 async function publicDriversList() {
   if (publicDriversCache && publicDriversCache.expiresAt > Date.now()) return publicDriversCache;
-  const snapshot = await db.collection('motoboys').where('status', '==', 'ativo').limit(300).get();
-  const drivers = snapshot.docs.map((doc) => {
+  const snapshot = await activeDriverDocs();
+  const drivers = snapshot.docs.slice(0, 300).map((doc) => {
     const data = doc.data() || {};
     return { cpf: doc.id, data: { ...data, fotoMotoboy: validDriverPhoto(data.fotoMotoboy) } };
   });
-  publicDriversCache = { drivers, byId: new Map(drivers.map((d) => [publicDriverId(d.cpf), d])), expiresAt: Date.now() + 60 * 1000 };
+  // Nome, foto e nota mudam pouco; quem esta online vem da memoria (driverAvailability).
+  // Antes relia todos os motoboys ativos a cada 1 min; agora a cada 30 min.
+  publicDriversCache = { drivers, byId: new Map(drivers.map((d) => [publicDriverId(d.cpf), d])), expiresAt: Date.now() + 30 * 60 * 1000 };
   return publicDriversCache;
 }
 
@@ -8324,9 +8403,13 @@ app.post('/api/food/whatsapp', async (req, res, next) => {
   }
 });
 
+// Economia do banco: o painel confere os repasses a cada 10 min. A resposta fica guardada ate
+// mudar um repasse ou o cadastro (divida) de um motoboy da lista (ver noteDocWrite).
 app.get('/api/admin/repasses', assertOwner, async (_req, res, next) => {
   try {
     res.set('cache-control', 'no-store');
+    if (adminRepassesCache && Date.now() - adminRepassesCache.at < 60 * 60 * 1000) return res.json(adminRepassesCache.payload);
+    const startedAt = Date.now();
     const snap = await db.collection('repassesMotoboy').where('status', '==', 'a_pagar').limit(500).get();
     const porMotoboy = new Map();
     snap.docs.forEach((docSnap) => {
@@ -8347,11 +8430,14 @@ app.get('/api/admin/repasses', assertOwner, async (_req, res, next) => {
       lista[index].liquido = money(lista[index].total - lista[index].dividaApp);
     });
     const estornos = await db.collection('repassesMotoboy').where('estornoAposPagamento', '==', true).limit(50).get();
-    return res.json({
+    const payload = {
       ok: true,
       motoboys: lista.sort((a, b) => b.total - a.total),
       estornosAposPagamento: estornos.docs.map((docSnap) => ({ rideId: docSnap.id, ...docSnap.data() }))
-    });
+    };
+    // Algo mudou enquanto lia (gravacao recente): nao guarda, para nao mostrar dado velho.
+    if (adminRepassesWrittenAt < startedAt - DOC_WRITE_SETTLE_MS) adminRepassesCache = { at: Date.now(), payload, cpfs: new Set(lista.map((item) => item.motoboyCpf)) };
+    return res.json(payload);
   } catch (error) {
     return next(error);
   }
@@ -11670,13 +11756,22 @@ app.post('/api/drivers/:cpf/push-token', async (req, res, next) => {
       return res.status(400).json({ error: 'dados_invalidos' });
     }
 
-    await getDriverWithProof(driverCpf, req.body);
+    const driver = await getDriverWithProof(driverCpf, req.body);
+    // O app manda o token toda vez que abre: so grava quando e novo, mudou ou tem mais de 1 dia.
+    const plataforma = driverPlatform(req.body.plataforma);
+    const callAlertVersion = plataforma === 'android_nativo' && req.body.callAlertVersion === 1 ? 1 : 0;
+    const salvo = driver?.fcmTokens?.[token];
+    if (salvo && salvo.ativo !== false && salvo.plataforma === plataforma && Number(salvo.callAlertVersion || 0) === callAlertVersion
+      && Date.now() - timestampMs(salvo.atualizadoEm) < 24 * 60 * 60 * 1000) {
+      callPush.remember(token, { ativo: true, plataforma: req.body.plataforma, callAlertVersion: req.body.callAlertVersion });
+      return res.json({ ok: true, jaSalvo: true });
+    }
 
     await db.collection('motoboys').doc(driverCpf).set({
       fcmTokens: {
         [token]: {
           ativo: true,
-          plataforma: driverPlatform(req.body.plataforma),
+          plataforma,
           callAlertVersion: req.body.plataforma === 'android_nativo' && req.body.callAlertVersion === 1 ? 1 : 0,
           userAgent: String(req.body.userAgent || '').slice(0, 300),
           atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
@@ -11995,17 +12090,25 @@ function rideChatOpen(ride = {}) {
   return ['finalizada', 'cancelada'].includes(ride.status) && closedAt && Date.now() - closedAt < 2 * 60 * 60 * 1000;
 }
 
-// Economia do banco: o chat confere a cada 4 s; a corrida fica guardada por 4 s e as mensagens
-// so sao buscadas quando a corrida marca uma mensagem mais nova (chatUltimaEmMs).
+// Economia do banco: o chat confere a cada 4 s. Corrida em andamento sai do espelho ao vivo
+// (sem leitura); encerrada (chat so de leitura) fica guardada por 1 min. As mensagens so sao
+// buscadas quando a corrida marca uma mensagem mais nova (chatUltimaEmMs).
 const chatRideCache = new Map();
-async function chatRide(rideId) {
-  const cached = chatRideCache.get(rideId);
-  if (cached && Date.now() - cached.at < 4000) return cached;
-  const snap = await db.collection('corridas').doc(rideId).get();
+async function chatJob(collectionName, id) {
+  const live = liveJobs.ready(collectionName) ? liveJobs.doc(collectionName, id) : null;
+  if (live) return { at: Date.now(), exists: true, ride: live.data() || {} };
+  const key = `${collectionName}/${id}`;
+  const cached = chatRideCache.get(key);
+  const active = ['aceita', 'retirada'].includes(cached?.ride?.status);
+  if (cached && Date.now() - cached.at < (active ? 4000 : 60000)) return cached;
+  const snap = await db.collection(collectionName).doc(id).get();
   const entry = { at: Date.now(), exists: snap.exists, ride: snap.data() || {} };
-  chatRideCache.set(rideId, entry);
+  chatRideCache.set(key, entry);
   if (chatRideCache.size > 500) chatRideCache.delete(chatRideCache.keys().next().value);
   return entry;
+}
+async function chatRide(rideId) {
+  return chatJob('corridas', rideId);
 }
 
 app.post('/api/rides/:rideId/chat/send', rideChatLimiter, async (req, res, next) => {
@@ -12027,7 +12130,7 @@ app.post('/api/rides/:rideId/chat/send', rideChatLimiter, async (req, res, next)
     batch.set(rideRef, { chatUltimaEmMs: criadoEmMs, chatUltimoAutor: autor, chatTotal: admin.firestore.FieldValue.increment(1) }, { merge: true });
     await batch.commit();
     rideStatusCache.delete(rideRef.id);
-    chatRideCache.delete(rideRef.id);
+    chatRideCache.delete(`corridas/${rideRef.id}`);
     return res.json({ ok: true, mensagem: { id: messageRef.id, autor, texto, criadoEmMs } });
   } catch (error) {
     return next(error);
@@ -12336,13 +12439,17 @@ app.post('/api/drivers/:cpf/ratings', async (req, res, next) => {
   try {
     const driverCpf = onlyDigits(req.params.cpf);
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
-    await getDriverWithProof(driverCpf, req.body);
-    const driverRef = db.collection('motoboys').doc(driverCpf);
-    const [driverSnap, recent] = await Promise.all([
-      driverRef.get(),
-      driverRef.collection('avaliacoes').orderBy('criadoEmMs', 'desc').limit(30).get()
-    ]);
-    return res.json({ ok: true, ...ratingSummary(driverSnap.data() || {}), recentes: recent.docs.map((doc) => driverRatingView(doc.data() || {})) });
+    // Economia do banco: a media vem do cadastro guardado (cai quando muda) e os comentarios
+    // ficam guardados ate chegar avaliacao nova (antes: 31 leituras a cada vez que abria o app).
+    const driver = await getDriverWithProof(driverCpf, req.body);
+    let saved = driverRatingsCache.get(driverCpf);
+    if (!saved || Date.now() - saved.at > 6 * 60 * 60 * 1000) {
+      const recent = await db.collection('motoboys').doc(driverCpf).collection('avaliacoes').orderBy('criadoEmMs', 'desc').limit(30).get();
+      saved = { at: Date.now(), recentes: recent.docs.map((doc) => driverRatingView(doc.data() || {})) };
+      driverRatingsCache.set(driverCpf, saved);
+      if (driverRatingsCache.size > 2000) driverRatingsCache.delete(driverRatingsCache.keys().next().value);
+    }
+    return res.json({ ok: true, ...ratingSummary(driver || {}), recentes: saved.recentes });
   } catch (error) {
     return next(error);
   }
@@ -13824,8 +13931,12 @@ async function saveTrackedLocation(ref, driverCpf, body, isDelivery) {
       return { ...result, companyId: live.companyId, motoboy: live.motoboy, status: live.status, live: true };
     }
   }
+  // Economia do banco: com o espelho ao vivo (sem gravacao recente nessa colecao), confere a
+  // corrida/entrega pela memoria e so grava; antes lia o documento a cada gravacao do GPS.
+  const liveName = isDelivery ? 'entregas' : 'corridas';
+  const usarEspelho = ref.parent?.id === liveName && liveJobs.ready(liveName);
   const saved = await db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
+    const snap = usarEspelho ? (liveJobs.doc(liveName, ref.id) || { data: () => null }) : await tx.get(ref);
     const job = snap.data();
     if (!job || onlyDigits(job.motoboyCpf) !== driverCpf ||
         !(isDelivery ? ['aceita', 'retirada'] : ['aceita']).includes(job.status) ||
@@ -15352,11 +15463,16 @@ app.get('/api/admin/drivers/groups', assertOwner, async (_req, res, next) => {
         grupos[city] = { configurado: true, erro: true };
       }
     }
-    const snap = await db.collection('motoboys').limit(500).get();
+    // Economia do banco: usa a lista de motoboys que o painel ja carregou (antes relia todos os
+    // motoboys a cada 5 min enquanto o painel ficava aberto: ~100 leituras por vez).
+    const carregados = adminCollectionCache.get('motoboys');
+    const lista = carregados?.docs?.size
+      ? [...carregados.docs.values()]
+      : await adminCollection('motoboys', { limit: 500, updatedField: 'atualizadoEm', fullReloadMs: 30 * 60 * 1000 });
     const motoboys = {};
-    snap.docs.forEach((docSnap) => {
-      const key = groupPhoneKey(docSnap.data()?.telefone);
-      motoboys[docSnap.id] = Object.fromEntries(DRIVER_GROUP_CITIES.map((city) => [city, membros[city] ? !!key && membros[city].has(key) : null]));
+    lista.forEach((driver) => {
+      const key = groupPhoneKey(driver?.telefone);
+      motoboys[driver.id] = Object.fromEntries(DRIVER_GROUP_CITIES.map((city) => [city, membros[city] ? !!key && membros[city].has(key) : null]));
     });
     return res.json({ ok: true, grupos, motoboys });
   } catch (error) {
@@ -15594,6 +15710,8 @@ const supportAutomation = createSupportAutomation({
   rideExpireMs: RIDE_EXPIRE_MS, deliveryExpireMs: DELIVERY_EXPIRE_MS,
   // Mesma lista aberta dos motoboys (espelho ao vivo), em vez de consultar o banco a cada minuto.
   pendingJobs: (kind) => openJobsSnapshot(kind),
+  // Fora do espelho = nao esta mais aberta (aceita some da lista de pendentes, mas continua no espelho).
+  loadJob: async (kind, id) => (liveJobs.ready(kind) ? liveJobs.doc(kind, id) || { id, exists: false, data: () => ({}) } : null),
   async sendText(number, text) {
     const data = await supportEvolution(`/message/sendText/${supportInstancePath}`, 'POST', { number, text });
     return { sent: true, id: data.key?.id || data.messageId || '' };

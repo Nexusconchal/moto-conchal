@@ -203,3 +203,58 @@ test('cidade pelo GPS (a cada 5 min): so grava e so apaga o login DESTE motoboy 
   assert.deepEqual(writes, [['11122233344', 'aguai']], 'mudou para Aguai: grava uma vez');
   assert.deepEqual(cleared, ['11122233344'], 'apaga so o login dele, nao o de todos');
 });
+
+test('login do cliente: 1 consulta (lista de aparelhos primeiro), guardado ate o cadastro mudar', async () => {
+  let t = 100000;
+  const consultas = [];
+  const conta = { nome: 'Ana', sessionTokenHash: 'h:novo', sessionTokenHashes: ['h:velho', 'h:novo'] };
+  const db = { collection: () => ({ where: (field, op, value) => ({ limit: () => ({ get: async () => {
+    consultas.push(field);
+    const ok = op === 'array-contains' ? conta[field]?.includes(value) : conta[field] === value;
+    return { empty: !ok, docs: ok ? [{ id: '19999338422', data: () => conta, ref: { set: async () => {} } }] : [] };
+  } }) }) }) };
+  const ctx = vm.createContext({ db, Map, String, Number, Date: { now: () => t }, hashSecret: (v) => `h:${v}`,
+    admin: { firestore: { FieldValue: { delete: () => 'DEL', arrayUnion: (...v) => v } } } });
+  vm.runInContext(slice('const DOC_WRITE_SETTLE_MS', '// Corridas/entregas em andamento: pela memoria'), ctx);
+  vm.runInContext(slice('const customerSessionCache = new Map();', 'function carCustomerProfileComplete('), ctx);
+  assert.equal((await ctx.findCustomerSession('velho')).customerId, '19999338422');
+  assert.deepEqual(consultas, ['sessionTokenHashes'], 'achou na lista: uma consulta so');
+  await ctx.findCustomerSession('velho');
+  assert.equal(consultas.length, 1, 'segunda conferida sai da memoria');
+  t += 5000;
+  vm.runInContext("noteDocWrite('clientes/19999338422')", ctx);
+  conta.sessionTokenHashes = ['h:novo'];
+  conta.sessionTokenHash = 'h:novo';
+  t += 3500;
+  assert.equal(await ctx.findCustomerSession('velho'), null, 'saiu/trocou a senha: o login guardado cai');
+  assert.equal(await ctx.findCustomerSession('velho'), null);
+  assert.equal(consultas.length, 3, 'chave que nao vale fica guardada (nao consulta de novo a cada 4 s)');
+});
+
+test('motoboys ativos no espelho: sem a foto do documento na memoria, e avisar chamada nao consulta o banco', async () => {
+  const db = fakeDb();
+  const live = createLiveJobs({ db, watch: { motoboys: ['ativo'] }, transform: { motoboys: ({ crlvFoto, ...d }) => ({ ...d, crlvCadastrado: !!crlvFoto }) } });
+  live.start();
+  db.listeners[0].next(snap([['added', doc('11122233344', { status: 'ativo', nome: 'Ana', crlvFoto: 'data:image/jpeg;base64,AAAA', fcmTokens: { t1: { ativo: true } } })]]));
+  const ana = live.doc('motoboys', '11122233344');
+  assert.equal(ana.data().crlvFoto, undefined);
+  assert.equal(ana.data().crlvCadastrado, true);
+  assert.equal(ana.ref.path, 'x/11122233344', 'continua com a referencia do banco');
+  live.noteWrite('motoboys/11122233344');
+  assert.equal(live.ready('motoboys'), false);
+  assert.equal(live.listening('motoboys'), true, 'para a lista de motoboys 1 s de atraso nao importa');
+  const ctx = vm.createContext({ liveJobs: live, db });
+  vm.runInContext(slice('async function activeDriverDocs(', 'instrumentFirestore(admin.firestore'), ctx);
+  const drivers = await ctx.activeDriverDocs();
+  assert.deepEqual([drivers.size, drivers.docs[0].id], [1, '11122233344']);
+  assert.deepEqual(db.queries, [], 'nenhuma consulta: antes relia todos os motoboys a cada chamada e a cada 20 s');
+  assert.match(source, /async function availableDriverTokens\(accepts = \(\) => true\) \{\n  const drivers = await activeDriverDocs\(\);/);
+  assert.match(source, /const drivers = onlyReserved \? \[\] : \(await activeDriverDocs\(\)\)\.docs/);
+});
+
+test('chat da entrega: nada novo = nao le mensagens; login da loja guardado', () => {
+  const rota = slice("app.post('/api/deliveries/:deliveryId/chat/list'", '// Distancia pela rua do motoboy');
+  assert.match(rota, /chatJob\('entregas', ref\.id\)/);
+  assert.match(rota, /if \(depois && Number\(delivery\.chatUltimaEmMs \|\| 0\) <= depois\)/);
+  assert.match(slice('async function deliveryChatParticipant(', 'function deliveryChatOpen('), /cachedCompanySession\(token, true\)/);
+});

@@ -38,7 +38,8 @@ function harness(ride) {
     maskChatText: (v) => String(v || '').replace(/\d{8,}/g, '[número oculto]'),
     cleanText: (v, n = 200) => String(v || '').trim().slice(0, n), onlyDigits: (v) => String(v || '').replace(/\D/g, ''),
     hashSecret: hash, timestampMs: (v) => Number(v || 0), rideStatusCache: new Map(), adminStateCache: {}, createRideLimiter: 0,
-    getDriverWithProof: async (_cpf, body) => { if (body.driverCnh !== 'ok') throw Object.assign(new Error('prova'), { status: 401 }); return {}; },
+    driverRatingsCache: new Map(),
+    getDriverWithProof: async (cpf, body) => { if (body.driverCnh !== 'ok') throw Object.assign(new Error('prova'), { status: 401 }); return records.get(`motoboys/${cpf}`) || {}; },
     canReadRideTracking: async (req, access) => !!req.header('x-customer-device') && hash(req.header('x-customer-device')) === access.deviceHash,
     app: { get: (p, ...h) => { routes[`GET ${p}`] = h.at(-1); }, post: (p, ...h) => { routes[p] = h.at(-1); } } });
   vm.runInContext(slice('// Avaliacao do motoboy pelo cliente', "app.post('/api/rides/:rideId/renew'"), ctx);

@@ -10,11 +10,13 @@
 
   // Nome que o dono entende para cada rota do servidor.
   const NOMES = [
-    [/^espelho ao vivo/, "🔴 Espelho ao vivo (corridas e entregas em andamento)"],
+    [/^espelho ao vivo/, "🔴 Espelho ao vivo (corridas, entregas e motoboys ativos)"],
     [/^POST \/api\/drivers\/:id\/jobs$/, "🏍️ App do motoboy: lista de chamadas e serviços"],
     [/^POST \/api\/drivers\/:id\/call-alerts$/, "🏍️ App do motoboy: alerta de chamada tocando"],
     [/^POST \/api\/drivers\/:id\/earnings/, "🏍️ App do motoboy: ganhos"],
     [/^POST \/api\/drivers\/:id\/plans$/, "🏍️ App do motoboy: planos reservados"],
+    [/^POST \/api\/drivers\/:id\/(ratings|notification-status)$/, "🏍️ App do motoboy: perfil (avaliações e avisos)"],
+    [/^POST \/api\/(rides|deliveries)\/:id\/chat/, "💬 Chat (cliente, motoboy e loja)"],
     [/^POST \/api\/drivers\/:id\/location-city$/, "🏍️ App do motoboy: cidade pelo GPS"],
     [/^POST \/api\/(rides|deliveries)\/:id\/location$/, "📍 GPS do motoboy durante o serviço"],
     [/^POST \/api\/drivers\//, "🏍️ App do motoboy (outros)"],

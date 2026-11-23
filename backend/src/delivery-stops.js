@@ -121,9 +121,13 @@ const MAX_GPS_ERROR_METERS = 60;
 const docId = key => crypto.createHash('sha1').update(key).digest('hex');
 
 // Indice em memoria (le a colecao inteira a cada 10 min) para a busca nao gastar leitura do Firebase.
-export function createLearnedAddresses({ db, now = () => Date.now(), refreshMs = 10 * 60 * 1000 } = {}) {
+// Economia do banco: a lista inteira e lida 1 vez por dia (fullReloadMs); a cada refreshMs le so
+// o que mudou desde a ultima vez (atualizadoEmMs). Antes relia ate 5.000 enderecos a cada 10 min.
+export function createLearnedAddresses({ db, now = () => Date.now(), refreshMs = 10 * 60 * 1000, fullReloadMs = 24 * 60 * 60 * 1000 } = {}) {
   let index = new Map();
   let loadedAt = 0;
+  let fullAt = 0;
+  let syncedAt = 0;
   let loading = null;
   const collection = () => db.collection('enderecosAprendidos');
 
@@ -132,13 +136,25 @@ export function createLearnedAddresses({ db, now = () => Date.now(), refreshMs =
     if (loading) return loading;
     loading = (async () => {
       try {
-        const snapshot = await collection().limit(5000).get();
-        const next = new Map();
-        snapshot.docs.forEach(doc => {
-          const data = doc.data() || {};
-          if (data.chave) next.set(data.chave, data);
-        });
-        index = next;
+        const startedAt = now();
+        if (!fullAt || startedAt - fullAt > fullReloadMs || typeof collection().where !== 'function') {
+          const snapshot = await collection().limit(5000).get();
+          const next = new Map();
+          snapshot.docs.forEach(doc => {
+            const data = doc.data() || {};
+            if (data.chave) next.set(data.chave, data);
+          });
+          index = next;
+          fullAt = startedAt;
+        } else {
+          const snapshot = await collection().where('atualizadoEmMs', '>', syncedAt).limit(500).get();
+          snapshot.docs.forEach(doc => {
+            const data = doc.data() || {};
+            if (data.chave) index.set(data.chave, data);
+          });
+        }
+        // Folga de 1 min para gravacoes de outro servidor que cheguem fora de ordem.
+        syncedAt = startedAt - 60000;
         loadedAt = now();
       } catch (error) {
         console.error('Enderecos aprendidos indisponiveis:', String(error?.message || '').slice(0, 120));
