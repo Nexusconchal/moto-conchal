@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { liveJobs, activeJobsSnapshot } from './live-jobs-off.js';
 const source = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
 function slice(startText, endText) { const a = source.indexOf(startText); const b = source.indexOf(endText, a + 1); assert.ok(a >= 0 && b > a); return source.slice(a, b); }
 function makeDb(records) {
@@ -21,7 +22,7 @@ const fv = { serverTimestamp: () => 'TS', delete: () => 'DELETE' };
 const onlyDigits = v => String(v || '').replace(/\D/g, '');
 
 function cleanupHarness(records, sent) {
-  const ctx = vm.createContext({ db: makeDb(records), Date, Number, Array, Math, console,
+  const ctx = vm.createContext({ liveJobs, activeJobsSnapshot, db: makeDb(records), Date, Number, Array, Math, console,
     notifyDriversAboutRide: async () => ({ sent: 0 }), saveRideDispatch: async () => {}, admin: { firestore: { FieldValue: fv } }, timestampMs: Number, cleanText: v => String(v || ''),
     RIDE_EXPIRE_MS: 9e9, CAR_RIDE_EXPIRE_MS: 9e9, DELIVERY_EXPIRE_MS: 9e9, ACCEPTED_NOTICE_MS: 6 * 60000,
     notifyClientRideReopened: async ride => sent.push(ride.telefoneCliente),
@@ -59,7 +60,7 @@ test('reopening keeps who accepted, keeps the link the client already got and wa
 });
 
 function noticeHarness(records, evolution) {
-  const ctx = vm.createContext({ db: makeDb(records), onlyDigits, money: Number, BACKEND_BASE_URL: 'https://api', rideTrackingUrl: (id) => `https://nexusmotoja.com.br/acompanhar.html?c=${id}&t=chave`, isStandaloneDelivery: () => false,
+  const ctx = vm.createContext({ liveJobs, activeJobsSnapshot, db: makeDb(records), onlyDigits, money: Number, BACKEND_BASE_URL: 'https://api', rideTrackingUrl: (id) => `https://nexusmotoja.com.br/acompanhar.html?c=${id}&t=chave`, isStandaloneDelivery: () => false,
     ridePaymentInstructions: ride => `Pague: ${ride.pagamento.initPoint}`, sendEvolutionText: evolution, setTimeout, Promise, Date, String });
   vm.runInContext([
     slice('function clientWhatsappNumber(', '\n}\n') + '\n}',

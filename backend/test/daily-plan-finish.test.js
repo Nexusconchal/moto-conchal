@@ -11,7 +11,7 @@ test('Finalizar expediente fecha o Plano Diario na hora, sem devolver a diaria, 
   const ctx = vm.createContext({ Date, String, Number, onlyDigits: v => String(v || '').replace(/\D/g, ''), todayKeySaoPaulo: () => '2026-11-03',
     admin: { firestore: { FieldValue: { serverTimestamp: () => 'TIME' } } },
     db: { collection: name => ({ doc: id => ref(`${name}/${id}`) }), runTransaction: async fn => { const pending = []; await fn({ get: async r => ({ exists: docs.has(r.path), data: () => docs.get(r.path) }), set: (r, data, opt) => pending.push([r, data, opt]) }); for (const [r, data, opt] of pending) docs.set(r.path, opt?.merge ? { ...docs.get(r.path), ...data } : data); } },
-    assertCompany: 0, app: { post: (_p, ...h) => { ctx.handler = h.at(-1); } } });
+    driverPlansCache: { clear() {} }, assertCompany: 0, app: { post: (_p, ...h) => { ctx.handler = h.at(-1); } } });
   vm.runInContext(source.slice(source.indexOf('function dailyPlanActivation('), source.indexOf('function dailyPlanInactiveError(')), ctx);
   vm.runInContext(source.slice(source.indexOf('function planActivationKey('), source.indexOf('function mirrorPlanActivation(')), ctx);
   const start = source.indexOf("app.post('/api/companies/daily-plan/finish'");

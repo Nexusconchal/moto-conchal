@@ -302,7 +302,7 @@ test('half period batch renewals stop after the 6 hours expire', async () => {
 test('half period activation debits R$ 40 once, lasts 5 hours and refuses insufficient balance', async () => {
   const docs = new Map();
   const ref = path => ({ path, id: path.split('/').at(-1), collection: name => ({ doc: id => ref(`${path}/${name}/${id}`) }) });
-  const ctx = vm.createContext({ Date, money: n => Math.round(Number(n || 0) * 100) / 100, onlyDigits: v => String(v || '').replace(/\D/g, ''), cleanText: v => String(v || '').trim(),
+  const ctx = vm.createContext({ Date, driverPlansCache: new Map(), money: n => Math.round(Number(n || 0) * 100) / 100, onlyDigits: v => String(v || '').replace(/\D/g, ''), cleanText: v => String(v || '').trim(),
     todayKeySaoPaulo: () => '2026-10-04', companyBalance: d => ({ saldo: d.saldo || 0, reservado: d.reservado || 0, disponivel: (d.saldo || 0) - (d.reservado || 0) }),
     ledgerRef: () => ref(`ledger/${docs.size}`), admin: { firestore: { FieldValue: { serverTimestamp: () => 'TIME' } } },
     db: { collection: name => ({ doc: id => ref(`${name}/${id}`) }), runTransaction: async fn => { const pending = []; await fn({ get: async r => ({ exists: docs.has(r.path), data: () => docs.get(r.path) }), set: (r, data, opt) => pending.push([r, data, opt]) }); for (const [r, data, opt] of pending) docs.set(r.path, opt?.merge ? { ...docs.get(r.path), ...data } : data); } },
@@ -420,7 +420,7 @@ test('taxa avulsa: with a plan active, fixed fares are allowed and do not consum
 test('taxa avulsa: activating either plan resets the counter and opens a new cycle', async () => {
   const docs = new Map();
   const ref = path => ({ path, id: path.split('/').at(-1), collection: name => ({ doc: id => ref(`${path}/${name}/${id}`) }) });
-  const ctx = vm.createContext({ Date, money: n => Math.round(Number(n || 0) * 100) / 100, onlyDigits: v => String(v || '').replace(/\D/g, ''), cleanText: v => String(v || '').trim(),
+  const ctx = vm.createContext({ Date, driverPlansCache: new Map(), money: n => Math.round(Number(n || 0) * 100) / 100, onlyDigits: v => String(v || '').replace(/\D/g, ''), cleanText: v => String(v || '').trim(),
     todayKeySaoPaulo: () => '2026-10-04', companyBalance: d => ({ saldo: d.saldo || 0, reservado: d.reservado || 0, disponivel: (d.saldo || 0) - (d.reservado || 0) }),
     ledgerRef: () => ref(`ledger/${docs.size}`), admin: { firestore: { FieldValue: { serverTimestamp: () => 'TIME' } } },
     dailyPlanRef: (id, day) => ref(`empresas/${id}/planosDiarios/${day}`),
@@ -481,7 +481,7 @@ test('plan deliveries created while the owner reserved a motoboy carry that moto
 test('Plano Diario lasts until the shop closes the day (midnight at the latest), does not charge twice while valid and renewals stop after it', async () => {
   const docs = new Map();
   const ref = path => ({ path, id: path.split('/').at(-1), collection: name => ({ doc: id => ref(`${path}/${name}/${id}`) }) });
-  const ctx = vm.createContext({ Date, money: n => Math.round(Number(n || 0) * 100) / 100, onlyDigits: v => String(v || '').replace(/\D/g, ''), cleanText: v => String(v || '').trim(),
+  const ctx = vm.createContext({ Date, driverPlansCache: new Map(), money: n => Math.round(Number(n || 0) * 100) / 100, onlyDigits: v => String(v || '').replace(/\D/g, ''), cleanText: v => String(v || '').trim(),
     todayKeySaoPaulo: () => '2026-10-13', companyBalance: d => ({ saldo: d.saldo || 0, reservado: d.reservado || 0, disponivel: (d.saldo || 0) - (d.reservado || 0) }),
     ledgerRef: () => ref(`ledger/${docs.size}`), admin: { firestore: { FieldValue: { serverTimestamp: () => 'TIME' } } },
     db: { collection: name => ({ doc: id => ref(`${name}/${id}`) }), runTransaction: async fn => { const pending = []; await fn({ get: async r => ({ exists: docs.has(r.path), data: () => docs.get(r.path) }), set: (r, data, opt) => pending.push([r, data, opt]) }); for (const [r, data, opt] of pending) docs.set(r.path, opt?.merge ? { ...docs.get(r.path), ...data } : data); } },

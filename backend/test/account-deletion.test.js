@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { liveJobs, activeJobsSnapshot } from './live-jobs-off.js';
 
 // Roda as duas rotas de exclusao de conta do server.js real, contra um Firestore falso.
 const source = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
@@ -49,7 +50,7 @@ function fakeFirestore(records) {
 function build({ records, purgeAccount = async () => {}, getDriverWithProof = async () => ({}), findCustomerSession = async () => null }) {
   const routes = new Map();
   const db = fakeFirestore(records);
-  const context = vm.createContext({
+  const context = vm.createContext({ liveJobs, activeJobsSnapshot,
     app: { post: (url, ...handlers) => routes.set(url, handlers) },
     db,
     admin: { firestore: { FieldValue: { serverTimestamp: () => 0 } } },
@@ -57,6 +58,7 @@ function build({ records, purgeAccount = async () => {}, getDriverWithProof = as
     authLimiter: (_req, _res, next) => next(),
     createRideLimiter: (_req, _res, next) => next(),
     driverProofCache: { clear() {} },
+    clearDriverProofCache: () => {},
     adminStateCache: null,
     getDriverWithProof,
     findCustomerSession,

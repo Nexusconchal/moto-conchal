@@ -173,7 +173,7 @@ export function rideFacts(ride, phoneKnown, looked, expireMs, now = Date.now()) 
 
 // The assistant never changes fares or accepts a job. Ride requests go through `booking`
 // (whatsapp-booking.js), which asks and confirms every detail before the server creates the ride.
-export function createSupportAutomation({ db, sendText, encrypt, decrypt = () => '', generateReply = async () => null, booking = null, instance, rideExpireMs, deliveryExpireMs, sendTelegram, isSystemOutgoing = () => false, markRead = async () => {}, typing = async () => {}, groupFor = async (job, kind, settings) => settings.driverGroupJid || '', now = () => Date.now() }) {
+export function createSupportAutomation({ db, sendText, encrypt, decrypt = () => '', generateReply = async () => null, booking = null, instance, rideExpireMs, deliveryExpireMs, sendTelegram, isSystemOutgoing = () => false, markRead = async () => {}, typing = async () => {}, groupFor = async (job, kind, settings) => settings.driverGroupJid || '', pendingJobs = null, now = () => Date.now() }) {
   const configRef = db.collection('configuracoes').doc('atendimentoAutomatico');
   let cache, cacheUntil = 0, ticking = false, lastPrune = 0;
   const completedNotices = new Map(), outgoingEchoes = new Map(), queuedChats = new Set();
@@ -191,7 +191,9 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
   async function config(refresh = false) {
     if (!refresh && cache && cacheUntil > now()) return cache;
     cache = (await configRef.get()).data() || {};
-    cacheUntil = now() + 60000;
+    // So este servidor muda a configuracao (saveConfig zera o guardado): guarda por 30 min
+    // em vez de 1 min (eram ~1.400 leituras por dia so para conferir se estava ligado).
+    cacheUntil = now() + 30 * 60000;
     return cache;
   }
   async function saveConfig(data) {
@@ -463,8 +465,9 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
       const settings = await config();
       if (!settings.enabled || !settings.groupAlerts) return;
       for (const kind of ['corridas', 'entregas']) {
-        const pending = await db.collection(kind).where('status', '==', 'pendente').get();
-        for (const doc of pending.docs) {
+        // Lista aberta compartilhada (espelho ao vivo) quando o servidor passa uma; senao, o banco.
+        const pendingDocs = pendingJobs ? await pendingJobs(kind) : (await db.collection(kind).where('status', '==', 'pendente').get()).docs;
+        for (const doc of pendingDocs) {
           const reminders = kind === 'corridas' ? Array.from({ length: Math.max(0, Math.ceil(rideExpireMs / 120000) - 1) }, (_, index) => index === 0 ? 'reminder' : `reminder-${(index + 1) * 2}m`) : ['reminder'];
           await notify(doc.ref, kind, 'initial', 'whatsapp', settings, doc.data());
           for (const stage of reminders) await notify(doc.ref, kind, stage, 'whatsapp', settings, doc.data());

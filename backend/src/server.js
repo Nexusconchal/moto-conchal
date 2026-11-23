@@ -17,6 +17,8 @@ import { publicDriverCard, publicDriverId, sortPublicDrivers, referralCode, norm
 import { reachedPickup, lateCancelState, lateCancelBlocker, waitCancelState, waitCancelBlocker } from './ride-late.js';
 import { createCallStore, CALL_RING_MS } from './ride-call.js';
 import { mpPaymentForm } from './payment-form.js';
+import { createLiveJobs } from './live-jobs.js';
+import { createDbUsage, instrumentFirestore, quotaDayKey, FREE_READS_PER_DAY, FREE_WRITES_PER_DAY } from './db-usage.js';
 import { parseRating, ratingBlocker, ratingSummary, driverRatingView, RATING_TAGS } from './ride-rating.js';
 import { validateLocation } from './tracking-policy.js';
 import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state.js';
@@ -54,7 +56,8 @@ const BACKEND_BASE_URL = String(process.env.BACKEND_BASE_URL || 'https://motoboy
 const OWNER_WHATSAPP = onlyDigits(process.env.OWNER_WHATSAPP || process.env.SUPPORT_PHONE || '5519992306488');
 const OWNER_PIX_KEY = String(process.env.OWNER_PIX_KEY || '7b1c6034-c04d-4e91-9e83-e7f6a10b4b5a').trim();
 const GEOAPIFY_API_KEY = process.env.GEOAPIFY_API_KEY || '1361a528dcbe484e8143a19929527781';
-const DRIVER_PROOF_CACHE_MS = 5 * 60 * 1000;
+// Login do motoboy guardado por 20 min (antes 5): cai na hora se o servidor gravar o cadastro dele.
+const DRIVER_PROOF_CACHE_MS = 20 * 60 * 1000;
 const COMPANY_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 const SUPPORT_SESSION_MS = 12 * 60 * 60 * 1000;
 const CUSTOMER_SESSION_MS = 90 * 24 * 60 * 60 * 1000;
@@ -83,7 +86,8 @@ const MIN_INTEGRATION_BALANCE = 6.50;
 
 // ── Cardápio Web automatic polling (in-memory, zero Firebase cost) ──
 const CARDAPIO_WEB_POLL_INTERVAL_MS = 45 * 1000;
-const CARDAPIO_WEB_COMPANIES_REFRESH_MS = 5 * 60 * 1000;
+// Lista de lojas com integracao: relida a cada 15 min (antes 5); ligar/desligar na tela ja atualiza na hora.
+const CARDAPIO_WEB_COMPANIES_REFRESH_MS = 15 * 60 * 1000;
 const cardapioWebActiveCompanies = new Map(); // companyId → { apiKey, storeCode, tipoEntrega, empresa, retirada, companyData }
 const cardapioWebSeenOrders = new Map(); // companyId → Set<externalId>
 const cardapioWebPendingOrders = new Map(); // companyId → Map<externalId, orderPreview>
@@ -91,7 +95,8 @@ let cardapioWebLastCompanyRefresh = 0;
 
 // ── PediPlus automatic polling (in-memory, zero Firebase cost) ──
 const PEDIPLUS_POLL_INTERVAL_MS = 45 * 1000;
-const PEDIPLUS_COMPANIES_REFRESH_MS = 5 * 60 * 1000;
+// Lista de lojas com integracao: relida a cada 15 min (antes 5); ligar/desligar na tela ja atualiza na hora.
+const PEDIPLUS_COMPANIES_REFRESH_MS = 15 * 60 * 1000;
 const pediplusActiveCompanies = new Map(); // companyId → { apiKey, tipoEntrega, empresa, retirada, cidade, companyData }
 const pediplusSeenOrders = new Map(); // companyId → Set<externalId>
 const pediplusPendingOrders = new Map(); // companyId → Map<externalId, orderPreview>
@@ -427,6 +432,7 @@ function planActivationRef(key) {
 }
 
 function mirrorPlanActivation(tx, companyId, company, planDocId, plan) {
+  driverPlansCache.clear();
   const daily = plan.tipo !== 'meio_periodo';
   tx.set(planActivationRef(planActivationKey(companyId, planDocId)), {
     empresaId: onlyDigits(companyId),
@@ -1511,6 +1517,17 @@ function driverEarningsRef(driverCpf) {
   return db.collection('resumosMotoboy').doc(onlyDigits(driverCpf));
 }
 
+// Economia do banco: o Inicio do motoboy pede o resumo de ganhos e os planos a cada 2 min.
+// Guarda por 15 min e apaga na hora em que um ganho e registrado ou um plano muda.
+const driverSummaryCache = new Map();
+const DRIVER_SUMMARY_CACHE_MS = 15 * 60 * 1000;
+const driverPlansCache = new Map();
+function forgetDriverSummary(driverCpf = '') {
+  const cpf = String(driverCpf || '').replace(/\D/g, '');
+  if (!cpf) { driverSummaryCache.clear(); return; }
+  for (const key of driverSummaryCache.keys()) if (key.startsWith(`${cpf}:`)) driverSummaryCache.delete(key);
+}
+
 function driverEarningsDayRef(driverCpf, dayKey) {
   return driverEarningsRef(driverCpf).collection('dias').doc(dayKey);
 }
@@ -1566,6 +1583,7 @@ function driverEarningDayIncrements(event, direction = 1) {
 }
 
 async function recordDriverEarning(tx, driverCpf, event) {
+  forgetDriverSummary(driverCpf);
   const cpf = onlyDigits(driverCpf);
   if (cpf.length !== 11 || !event?.serviceId || !event?.ganhoCentavos) return false;
   const eventRef = driverEarningEventRef(cpf, event.tipo, event.serviceId);
@@ -2569,10 +2587,10 @@ function publicCarDriver(driver = {}, cpf = '', carProfile = null) {
 async function getCarDriverProfile(driverCpf, fallbackDriver = null) {
   const cpf = onlyDigits(driverCpf);
   const cached = carDriverCache.get(cpf);
-  if (cached && cached.expiresAt > Date.now()) return cached.car;
+  if (cached && cached.expiresAt > Date.now() && savedAfterLastWrite(carDriverWrittenAt, cpf, cached.at || 0)) return cached.car;
   const snap = await db.collection('carroMotoristas').doc(cpf).get();
   const car = snap.exists ? snap.data() || {} : fallbackDriver?.carro || {};
-  carDriverCache.set(cpf, { car, expiresAt: Date.now() + DRIVER_PROOF_CACHE_MS });
+  carDriverCache.set(cpf, { car, at: Date.now(), expiresAt: Date.now() + DRIVER_PROOF_CACHE_MS });
   return car;
 }
 
@@ -2584,10 +2602,8 @@ function clearCarDriverCache(driverCpf = '') {
 
 function clearDriverProofCache(driverCpf = '') {
   const cpf = onlyDigits(driverCpf);
-  if (!cpf) {
-    driverProofCache.clear();
-    return;
-  }
+  // Sem motoboy definido nao apaga nada (antes apagava o guardado de todos e cada um relia o banco).
+  if (!cpf) return;
   for (const key of driverProofCache.keys()) {
     if (key.startsWith(`${cpf}:`)) {
       driverProofCache.delete(key);
@@ -2709,14 +2725,14 @@ async function findCompanySession(token) {
 }
 
 // Economia do banco: o painel da empresa pergunta pedidos/saldo a cada 30 s. Nas consultas so
-// de leitura (GET) a sessao fica guardada por 45 s; acoes (criar entrega, pagar...) sempre
-// conferem no banco.
+// de leitura (GET) a sessao fica guardada por 10 min (antes 45 s), mas cai na hora em que o
+// servidor grava o cadastro da empresa (saldo, entrega, plano). Acoes sempre conferem no banco.
 const companySessionCache = new Map();
-const COMPANY_SESSION_CACHE_MS = 45 * 1000;
+const COMPANY_SESSION_CACHE_MS = 10 * 60 * 1000;
 async function cachedCompanySession(token, readOnly) {
   const key = hashSecret(token);
   const saved = companySessionCache.get(key);
-  if (readOnly && saved && Date.now() - saved.at < COMPANY_SESSION_CACHE_MS) return saved.session;
+  if (readOnly && saved && Date.now() - saved.at < COMPANY_SESSION_CACHE_MS && savedAfterLastWrite(companyWrittenAt, saved.session?.companyId, saved.at)) return saved.session;
   const session = await findCompanySession(token);
   if (session) {
     companySessionCache.set(key, { at: Date.now(), session });
@@ -2799,7 +2815,7 @@ async function getDriverWithProof(driverCpf, body = {}, options = {}) {
   const proofKey = body.driverToken ? `t:${hashSecret(String(body.driverToken))}` : `l:${onlyDigits(body.driverCnh)}:${onlyDigits(body.driverTelefone)}`;
   const cacheKey = `${driverCpf}:${proofKey}:${options.requireSession ? 's' : ''}`;
   const cached = driverProofCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
+  if (cached && cached.expiresAt > Date.now() && savedAfterLastWrite(driverWrittenAt, driverCpf, cached.at || 0)) {
     if (cached.driver?.status === 'bloqueado') {
       const error = new Error('Motoboy bloqueado pelo dono. Fale com o suporte MotoJa.');
       error.status = 403;
@@ -2825,7 +2841,7 @@ async function getDriverWithProof(driverCpf, body = {}, options = {}) {
     throw error;
   }
   assertDriverProof(driver, body, options);
-  driverProofCache.set(cacheKey, { driver, expiresAt: Date.now() + DRIVER_PROOF_CACHE_MS });
+  driverProofCache.set(cacheKey, { driver, at: Date.now(), expiresAt: Date.now() + DRIVER_PROOF_CACHE_MS });
   return driver;
 }
 
@@ -3184,6 +3200,57 @@ admin.initializeApp({
 });
 
 const db = admin.firestore();
+// Medidor de consumo do banco (painel do dono) e espelho ao vivo das corridas/entregas
+// em andamento: as listas que os apps pedem toda hora saem da memoria, nao do banco.
+const dbUsage = createDbUsage();
+const CAR_LIVE_STATUSES = ['pendente', 'aceita', 'motorista_chegou', 'em_andamento'];
+const liveJobs = createLiveJobs({
+  db,
+  watch: { corridas: ['pendente', 'aceita', 'retirada'], entregas: ['pendente', 'aceita', 'retirada'], corridasCarro: CAR_LIVE_STATUSES },
+  onReads: (n) => dbUsage.reads(n, 'espelho ao vivo (corridas e entregas em andamento)'),
+  onChange: liveJobChanged
+});
+instrumentFirestore(admin.firestore, {
+  onReads: (n) => dbUsage.reads(n),
+  onWrite: (path) => { dbUsage.writes(1); liveJobs.noteWrite(path); noteDocWrite(path); }
+});
+// Quando o servidor grava o cadastro de uma empresa ou de um motoboy, o login guardado na
+// memoria dele deixa de valer (le de novo, ja com o dado novo). Por isso o login pode ficar
+// guardado por muito mais tempo sem mostrar saldo, cidade ou bloqueio velhos.
+const DOC_WRITE_SETTLE_MS = 3000;
+const companyWrittenAt = new Map();
+const driverWrittenAt = new Map();
+const carDriverWrittenAt = new Map();
+function noteDocWrite(path) {
+  const parts = String(path || '').split('/');
+  // Ganho gravado (resumosMotoboy/<cpf>/dias/...) ou plano reservado mudou: refaz o resumo do Inicio.
+  if (parts[0] === 'resumosMotoboy' && parts[1]) forgetDriverSummary(parts[1]);
+  if (parts[0] === 'planosAtivados') driverPlansCache.clear();
+  if (parts.length !== 2 || !parts[1]) return;
+  const map = parts[0] === 'empresas' ? companyWrittenAt : parts[0] === 'motoboys' ? driverWrittenAt : parts[0] === 'carroMotoristas' ? carDriverWrittenAt : null;
+  if (!map) return;
+  map.delete(parts[1]);
+  map.set(parts[1], Date.now());
+  if (map.size > 5000) map.delete(map.keys().next().value);
+}
+// Guardado em `savedAt` ainda vale se foi lido depois da ultima gravacao (com folga do commit).
+function savedAfterLastWrite(map, id, savedAt) {
+  const writtenAt = map.get(String(id || ''));
+  return !writtenAt || savedAt >= writtenAt + DOC_WRITE_SETTLE_MS;
+}
+// Corridas/entregas em andamento: pela memoria (espelho) quando da; senao pelo banco, como antes.
+// Devolve no formato de resultado de consulta (docs, size, empty, forEach).
+async function activeJobsSnapshot(collectionName, filter, fallback) {
+  const docs = liveJobs.ready(collectionName)
+    ? liveJobs.docs(collectionName, filter)
+    : (await fallback()).docs.filter((doc) => !filter || filter(doc.data() || {}, doc));
+  return { docs, size: docs.length, empty: docs.length === 0, forEach: (fn) => docs.forEach(fn) };
+}
+function liveJobChanged(collectionName, type, before, after) {
+  // Corrida pedida pelo WhatsApp mudou (chegou, finalizou, expirou): confere os avisos ja.
+  if (collectionName === 'corridas' && (before?.whatsappAcompanhar || after?.whatsappAcompanhar)) bookingDirty = true;
+  if (type !== 'modified' || before?.status !== after?.status) invalidateOpenJobs();
+}
 // A escolha Disponivel/Indisponivel fica salva no cadastro do motoboy, para
 // sobreviver a reinicios do servidor. So muda quando o motoboy troca ou e bloqueado.
 const driverAvailability = createDriverAvailability({
@@ -3201,8 +3268,10 @@ function driverCallExpiry(kind, job) {
 // alguem aceitar ou a oferta expirar. No Android atualizado, o áudio é um loop local.
 const offerAlerts = createOfferAlerts({
   async loadPending(kind, id) {
-    const snap = await db.collection(kind === 'deliveries' ? 'entregas' : 'corridas').doc(id).get();
-    const job = snap.exists ? snap.data() : null;
+    const name = kind === 'deliveries' ? 'entregas' : 'corridas';
+    // Espelho ao vivo: a chamada ainda aberta esta na memoria (sem leitura a cada repeticao do alerta).
+    const snap = liveJobs.ready(name) ? liveJobs.doc(name, id) : await db.collection(name).doc(id).get();
+    const job = snap?.exists ? snap.data() : null;
     if (job?.status === 'pendente' && driverCallExpiry(kind, job) > Date.now()) return job;
     callPush.closed(kind, id).catch(error => console.error('call alert close failed', error?.message));
     return null;
@@ -3274,7 +3343,8 @@ async function loadDriverActiveJobs(cpf) {
   const groups = await Promise.all([
     ['corridas', 'rides', 'aceita'], ['entregas', 'deliveries', 'aceita'], ['entregas', 'deliveries', 'retirada']
   ].map(async ([collection, kind, status]) => {
-    const snapshot = await db.collection(collection).where('motoboyCpf', '==', cpf).where('status', '==', status).limit(15).get();
+    const snapshot = await activeJobsSnapshot(collection, (job) => onlyDigits(job.motoboyCpf) === cpf && job.status === status,
+      () => db.collection(collection).where('motoboyCpf', '==', cpf).where('status', '==', status).limit(15).get());
     // Entrega ja entregue, esperando a loja aprovar: nao prende o motoboy em "Em atendimento".
     return snapshot.docs.filter(doc => !doc.data()?.conclusaoStatus).map(doc => `${kind}:${doc.id}`);
   }));
@@ -3359,6 +3429,7 @@ app.use(cors({
 }));
 app.use(helmet());
 app.use(express.json({ limit: '8mb' }));
+app.use((req, res, next) => dbUsage.middleware(req, res, next));
 app.use(['/api/support', '/api/admin/support', '/api/admin/support-automation'], (_req, res, next) => {
   res.set('cache-control', 'no-store, max-age=0');
   res.set('pragma', 'no-cache');
@@ -4096,6 +4167,9 @@ function minutesOfDay(time) {
 async function notifyCustomersRideReminder(slot) {
   // Economia do banco: le so quem ativou o lembrete (antes lia todos os clientes, 3x por dia).
   let customers = await db.collection('clientes').where('temLembrete', '==', true).limit(1000).get();
+  // A varredura de todos os clientes (cadastros antigos sem a marca) roda uma vez so, nao todo dia.
+  const migracao = customers.empty ? db.collection('sistema').doc('lembreteClientesMarcados') : null;
+  if (migracao && (await migracao.get()).exists) return { sent: 0, failed: 0 };
   if (customers.empty) {
     // Cadastros antigos sem a marca: varre uma vez e marca quem tem lembrete.
     customers = await db.collection('clientes').limit(1000).get();
@@ -4106,6 +4180,7 @@ async function notifyCustomersRideReminder(slot) {
       if (temToken && marcados < 450) { batch.set(doc.ref, { temLembrete: true }, { merge: true }); marcados += 1; }
     });
     if (marcados) await batch.commit().catch((error) => console.error('reminder flag migration failed', error?.message));
+    await migracao.set({ feitoEmMs: Date.now(), marcados }).catch(() => {});
   }
   const tokens = [];
 
@@ -4430,8 +4505,15 @@ async function autoFinishPlanDelivery(deliveryId) {
 }
 
 // Depois de reiniciar o servidor os timers somem: a varredura finaliza as que venceram.
+let planAutoFinishQueriedAt = 0;
 async function runPlanAutoFinishTick(now = Date.now()) {
-  const due = await db.collection('entregas').where('autoFinalizarEmMs', '<=', now).limit(50).get();
+  // Economia: com o espelho ao vivo, procura na memoria; consulta o banco so a cada 30 min
+  // (rede de seguranca para entrega que saiu do andamento com a marca ainda gravada).
+  const useMirror = liveJobs.ready('entregas') && now - planAutoFinishQueriedAt < 30 * 60 * 1000;
+  if (!useMirror) planAutoFinishQueriedAt = now;
+  const due = useMirror
+    ? { docs: liveJobs.docs('entregas', (job) => Number(job.autoFinalizarEmMs || 0) > 0 && Number(job.autoFinalizarEmMs) <= now).slice(0, 50) }
+    : await db.collection('entregas').where('autoFinalizarEmMs', '<=', now).limit(50).get();
   for (const doc of due.docs) {
     if (!planAutoFinishTimers.has(doc.id)) await autoFinishPlanDelivery(doc.id);
   }
@@ -4515,7 +4597,8 @@ async function cleanupRides() {
   const releasedAvailabilityRides = [];
   const lateNoticeRides = [];
 
-  const pending = await db.collection('corridas').where('status', '==', 'pendente').get();
+  const pending = await activeJobsSnapshot('corridas', (job) => job.status === 'pendente',
+    () => db.collection('corridas').where('status', '==', 'pendente').get());
   pending.forEach((doc) => {
     const data = doc.data();
     // Corrida que voltou a procurar motoboy ganha o prazo de novo a partir da reabertura.
@@ -4531,7 +4614,8 @@ async function cleanupRides() {
     }
   });
 
-  const accepted = await db.collection('corridas').where('status', '==', 'aceita').get();
+  const accepted = await activeJobsSnapshot('corridas', (job) => job.status === 'aceita',
+    () => db.collection('corridas').where('status', '==', 'aceita').get());
   accepted.forEach((doc) => {
     const data = doc.data();
     const acceptedAt = timestampMs(data.aceitaEm);
@@ -4610,7 +4694,8 @@ async function cleanupRides() {
     }
   }
 
-  const pendingCarRides = await db.collection('corridasCarro').where('status', '==', 'pendente').get();
+  const pendingCarRides = await activeJobsSnapshot('corridasCarro', (job) => job.status === 'pendente',
+    () => db.collection('corridasCarro').where('status', '==', 'pendente').get());
   pendingCarRides.forEach((doc) => {
     const data = doc.data() || {};
     const createdAt = Math.max(timestampMs(data.criadaEm), timestampMs(data.reabertaEm));
@@ -4625,7 +4710,8 @@ async function cleanupRides() {
     }
   });
 
-  const pendingDeliveries = await db.collection('entregas').where('status', '==', 'pendente').get();
+  const pendingDeliveries = await activeJobsSnapshot('entregas', (job) => job.status === 'pendente',
+    () => db.collection('entregas').where('status', '==', 'pendente').get());
   for (const doc of pendingDeliveries.docs) {
     const data = doc.data();
     const createdAt = Math.max(timestampMs(data.criadaEm), timestampMs(data.reabertaEm));
@@ -4645,11 +4731,12 @@ async function cleanupRides() {
 
 async function findRecentDuplicateRide(ride) {
   const now = Date.now();
-  const snapshot = await db.collection('corridas')
-    .where('telefoneCliente', '==', ride.telefoneCliente)
-    .where('status', 'in', ['pendente', 'aceita'])
-    .limit(10)
-    .get();
+  const snapshot = await activeJobsSnapshot('corridas', (job) => job.telefoneCliente === ride.telefoneCliente && ['pendente', 'aceita'].includes(job.status),
+    () => db.collection('corridas')
+      .where('telefoneCliente', '==', ride.telefoneCliente)
+      .where('status', 'in', ['pendente', 'aceita'])
+      .limit(10)
+      .get());
 
   const origem = normalizeText(ride.origem);
   const destino = normalizeText(ride.destino);
@@ -4668,11 +4755,12 @@ async function findRecentDuplicateRide(ride) {
 
 async function findRecentDuplicateDelivery(delivery) {
   const now = Date.now();
-  const snapshot = await db.collection('entregas')
-    .where('telefoneEmpresa', '==', delivery.telefoneEmpresa)
-    .where('status', 'in', ['pendente', 'aceita'])
-    .limit(10)
-    .get();
+  const snapshot = await activeJobsSnapshot('entregas', (job) => job.telefoneEmpresa === delivery.telefoneEmpresa && ['pendente', 'aceita'].includes(job.status),
+    () => db.collection('entregas')
+      .where('telefoneEmpresa', '==', delivery.telefoneEmpresa)
+      .where('status', 'in', ['pendente', 'aceita'])
+      .limit(10)
+      .get());
 
   const retirada = normalizeText(delivery.retirada);
   const entrega = normalizeText(delivery.entrega);
@@ -4767,7 +4855,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 
 // Versao do servidor no ar (o painel do dono mostra e avisa quando o Render nao atualizou).
 const SERVER_STARTED_AT = Date.now();
-const SERVER_RELEASE = '2026-11-20-lugares';
+const SERVER_RELEASE = '2026-11-23-economia';
 app.get('/api/version', (_req, res) => {
   res.set('cache-control', 'no-store');
   res.json({ ok: true, release: SERVER_RELEASE, commit: String(process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || 'local', iniciadoEmMs: SERVER_STARTED_AT });
@@ -4823,6 +4911,59 @@ function knownPlaceFeature(place) {
       result_type: 'amenity', formatted: `${nome} - ${place.endereco ? `${place.endereco} - ` : ''}${line2}`, address_line1: place.endereco ? `${nome} - ${place.endereco}` : nome,
       address_line2: line2, match_confirmed: true, match_source: 'manual', match_precision: 'lugar', match_score: 1 } };
 }
+
+// Consumo do banco (Firestore) no painel do dono: hoje (no dia da cota do Firebase, que zera
+// a meia-noite do Pacifico) por rota, o espelho ao vivo e os dias anteriores.
+const DB_USAGE_SAVE_MS = 20 * 60 * 1000;
+let dbUsageHistoryCache = null;
+let dbUsagePreviousSaved = '';
+const dbUsageRef = (day) => db.collection('sistema').doc(`consumoBanco-${day}`);
+async function saveDbUsage() {
+  const previous = dbUsage.previous();
+  if (previous && previous.dia !== dbUsagePreviousSaved) {
+    dbUsagePreviousSaved = previous.dia;
+    await dbUsage.run('medidor de consumo', () => dbUsageRef(previous.dia).set({ ...previous, salvoEmMs: Date.now() }));
+  }
+  const today = dbUsage.snapshot(40);
+  if (!today.leituras && !today.gravacoes) return;
+  await dbUsage.run('medidor de consumo', () => dbUsageRef(today.dia).set({ ...today, salvoEmMs: Date.now() }));
+}
+async function restoreDbUsage() {
+  // Continua a conta do dia depois de reiniciar (deploy no Render), salvando a cada 20 min.
+  const saved = await dbUsage.run('medidor de consumo', () => dbUsageRef(dbUsage.day()).get());
+  if (saved.exists) dbUsage.seed(saved.data());
+  const timer = setInterval(() => saveDbUsage().catch((error) => console.error('db usage save failed', error?.message)), DB_USAGE_SAVE_MS);
+  timer.unref?.();
+  // Deploy/reinicio: salva a conta antes de sair (sem segurar o desligamento mais que 3 s).
+  process.once('SIGTERM', () => {
+    const sair = () => process.exit(0);
+    setTimeout(sair, 3000).unref?.();
+    saveDbUsage().catch(() => {}).finally(sair);
+  });
+}
+app.get('/api/admin/db-usage', assertOwner, async (_req, res, next) => {
+  try {
+    res.set('cache-control', 'no-store');
+    if (!dbUsageHistoryCache || Date.now() - dbUsageHistoryCache.at > 30 * 60 * 1000) {
+      const today = dbUsage.day();
+      const days = [...new Set([1, 2, 3, 4, 5, 6, 7].map((i) => quotaDayKey(new Date(Date.now() - i * 86400000))))].filter((day) => day !== today).slice(0, 6);
+      const snaps = await db.getAll(...days.map(dbUsageRef));
+      dbUsageHistoryCache = { at: Date.now(), dias: snaps.filter((snap) => snap.exists).map((snap) => {
+        const data = snap.data() || {};
+        return { dia: data.dia || snap.id.replace('consumoBanco-', ''), leituras: Number(data.leituras || 0), gravacoes: Number(data.gravacoes || 0), rotas: (data.rotas || []).slice(0, 5) };
+      }) };
+    }
+    return res.json({
+      ok: true,
+      limites: { leituras: FREE_READS_PER_DAY, gravacoes: FREE_WRITES_PER_DAY },
+      hoje: dbUsage.snapshot(25),
+      espelho: liveJobs.stats(),
+      anteriores: dbUsageHistoryCache.dias
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
 
 app.get('/api/admin/places', assertOwner, (_req, res) => {
   res.json({ ok: true, lugares: knownPlaces.map(({ frases, ...place }) => place).sort((a, b) => String(a.nomes?.[0] || '').localeCompare(String(b.nomes?.[0] || ''))) });
@@ -5274,9 +5415,9 @@ app.get('/api/support/operations', assertSupport, async (req, res, next) => {
     }
     const activeStatuses = ['pendente', 'aceita', 'retirada'];
     const [ridesSnap, deliveriesSnap, carRidesSnap] = await Promise.all([
-      db.collection('corridas').where('status', 'in', activeStatuses).limit(100).get(),
-      db.collection('entregas').where('status', 'in', activeStatuses).limit(100).get(),
-      db.collection('corridasCarro').where('status', 'in', ['pendente', 'aceita', 'motorista_chegou', 'em_andamento']).limit(100).get()
+      activeJobsSnapshot('corridas', (job) => activeStatuses.includes(job.status), () => db.collection('corridas').where('status', 'in', activeStatuses).limit(100).get()),
+      activeJobsSnapshot('entregas', (job) => activeStatuses.includes(job.status), () => db.collection('entregas').where('status', 'in', activeStatuses).limit(100).get()),
+      activeJobsSnapshot('corridasCarro', (job) => CAR_LIVE_STATUSES.includes(job.status), () => db.collection('corridasCarro').where('status', 'in', CAR_LIVE_STATUSES).limit(100).get())
     ]);
     const operations = [
       ...ridesSnap.docs.map((doc) => supportOperation('corrida', doc.id, doc.data() || {})),
@@ -5337,9 +5478,9 @@ app.post('/api/support/alerts/acknowledge-all', assertSupport, async (req, res, 
   try {
     const activeStatuses = ['pendente', 'aceita', 'retirada'];
     const [ridesSnap, deliveriesSnap, carRidesSnap] = await Promise.all([
-      db.collection('corridas').where('status', 'in', activeStatuses).limit(100).get(),
-      db.collection('entregas').where('status', 'in', activeStatuses).limit(100).get(),
-      db.collection('corridasCarro').where('status', 'in', ['pendente', 'aceita', 'motorista_chegou', 'em_andamento']).limit(100).get()
+      activeJobsSnapshot('corridas', (job) => activeStatuses.includes(job.status), () => db.collection('corridas').where('status', 'in', activeStatuses).limit(100).get()),
+      activeJobsSnapshot('entregas', (job) => activeStatuses.includes(job.status), () => db.collection('entregas').where('status', 'in', activeStatuses).limit(100).get()),
+      activeJobsSnapshot('corridasCarro', (job) => CAR_LIVE_STATUSES.includes(job.status), () => db.collection('corridasCarro').where('status', 'in', CAR_LIVE_STATUSES).limit(100).get())
     ]);
     const batch = db.batch();
     let count = 0;
@@ -6237,7 +6378,7 @@ app.post('/api/admin/drivers/:cpf/block', assertOwner, async (req, res, next) =>
       bloqueadoEm: admin.firestore.FieldValue.serverTimestamp(),
       atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
-    driverProofCache.clear();
+    clearDriverProofCache(cpf);
     driverAvailabilitySocket.revoke(cpf);
     return res.json({ ok: true });
   } catch (error) {
@@ -6258,7 +6399,7 @@ app.post('/api/admin/drivers/:cpf/unblock', assertOwner, async (req, res, next) 
       desbloqueadoEm: admin.firestore.FieldValue.serverTimestamp(),
       atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
-    driverProofCache.clear();
+    clearDriverProofCache(cpf);
     return res.json({ ok: true });
   } catch (error) {
     return next(error);
@@ -6366,7 +6507,7 @@ app.post('/api/drivers/otp/verify', authLimiter, async (req, res, next) => {
   try {
     const result = await driverSessionsApi.verifyCode({ cpf: req.body.cpf, code: req.body.code, aparelho: req.get('user-agent') });
     if (result.novo) return res.json({ ok: true, novo: true, verificationToken: result.verificationToken });
-    driverProofCache.clear();
+    clearDriverProofCache(onlyDigits(req.body.cpf));
     const driver = result.driver || {};
     if (driver.status === 'bloqueado') {
       return res.status(403).json({ ...driverBlockedResponse(driver), driverToken: result.driverToken });
@@ -6383,7 +6524,7 @@ app.post('/api/drivers/session/upgrade', authLimiter, async (req, res, next) => 
     const cpf = onlyDigits(req.body.driverCpf);
     if (cpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
     const result = await driverSessionsApi.upgradeLegacy(cpf, req.body, { assertLegacyProof: assertLegacyDriverProof, aparelho: req.get('user-agent') });
-    driverProofCache.clear();
+    clearDriverProofCache(cpf);
     return res.json(result);
   } catch (error) {
     return next(error);
@@ -6404,7 +6545,7 @@ app.post('/api/drivers/:cpf/services', async (req, res, next) => {
       return res.status(400).json({ error: 'servico_obrigatorio', message: 'Deixe pelo menos um ligado. Para parar de receber, toque em Pausar.', servicosAtivos: driverServices(driver) });
     }
     await db.collection('motoboys').doc(cpf).set({ servicosAtivos, atualizadoEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-    driverProofCache.clear();
+    clearDriverProofCache(cpf);
     return res.json({ ok: true, servicosAtivos });
   } catch (error) {
     return next(error);
@@ -6434,7 +6575,7 @@ app.post('/api/admin/drivers/:cpf/sessions/revoke', assertOwner, async (req, res
     const cpf = onlyDigits(req.params.cpf);
     if (cpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
     await driverSessionsApi.revokeAll(cpf);
-    driverProofCache.clear();
+    clearDriverProofCache(cpf);
     adminStateCache = null;
     return res.json({ ok: true });
   } catch (error) {
@@ -6450,9 +6591,9 @@ app.post('/api/drivers/:cpf/excluir-conta', authLimiter, async (req, res, next) 
     if (cpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
     await getDriverWithProof(cpf, req.body, { requireSession: true });
     const [corridas, entregas, corridasCarro, repasses] = await Promise.all([
-      db.collection('corridas').where('motoboyCpf', '==', cpf).where('status', 'in', ['aceita', 'retirada']).limit(1).get(),
-      db.collection('entregas').where('motoboyCpf', '==', cpf).where('status', 'in', ['aceita', 'retirada']).limit(1).get(),
-      db.collection('corridasCarro').where('motoristaCpf', '==', cpf).where('status', 'in', ['aceita', 'motorista_chegou', 'em_andamento']).limit(1).get(),
+      activeJobsSnapshot('corridas', (job) => onlyDigits(job.motoboyCpf) === cpf && ['aceita', 'retirada'].includes(job.status), () => db.collection('corridas').where('motoboyCpf', '==', cpf).where('status', 'in', ['aceita', 'retirada']).limit(1).get()),
+      activeJobsSnapshot('entregas', (job) => onlyDigits(job.motoboyCpf) === cpf && ['aceita', 'retirada'].includes(job.status), () => db.collection('entregas').where('motoboyCpf', '==', cpf).where('status', 'in', ['aceita', 'retirada']).limit(1).get()),
+      activeJobsSnapshot('corridasCarro', (job) => onlyDigits(job.motoristaCpf) === cpf && ['aceita', 'motorista_chegou', 'em_andamento'].includes(job.status), () => db.collection('corridasCarro').where('motoristaCpf', '==', cpf).where('status', 'in', ['aceita', 'motorista_chegou', 'em_andamento']).limit(1).get()),
       db.collection('repassesMotoboy').where('motoboyCpf', '==', cpf).where('status', '==', 'a_pagar').limit(1).get()
     ]);
     if (!corridas.empty || !entregas.empty || !corridasCarro.empty) {
@@ -6465,7 +6606,7 @@ app.post('/api/drivers/:cpf/excluir-conta', authLimiter, async (req, res, next) 
     await db.collection('carroMotoristas').doc(cpf).delete();
     await db.collection('motoboys').doc(cpf).delete();
     clearCarDriverCache(cpf);
-    driverProofCache.clear();
+    clearDriverProofCache(cpf);
     adminStateCache = null;
     return res.json({ ok: true });
   } catch (error) {
@@ -6594,7 +6735,7 @@ app.post('/api/drivers/register', authLimiter, async (req, res, next) => {
     await driverRef.set(driverData, { merge: true });
 
     if (newDriver) {
-      driverProofCache.clear();
+      clearDriverProofCache(cpf);
       // O celular ja fica com a chave: quando o dono liberar, o app entra sozinho.
       const session = await driverSessionsApi.issueSession(cpf, { aparelho: req.get('user-agent') });
       return res.status(202).json({
@@ -6720,10 +6861,13 @@ app.post('/api/drivers/:cpf/car/jobs', createRideLimiter, async (req, res, next)
       return res.json({ ok: true, jobs: [], carDriver: publicCarDriver(driver, driverCpf) });
     }
     let snapshot;
+    // Antes "minhas" lia ate 25 corridas do motorista (tambem as antigas) a cada 20 s.
     if (scope === 'mine') {
-      snapshot = await db.collection('corridasCarro').where('motoristaCpf', '==', driverCpf).limit(25).get();
+      snapshot = await activeJobsSnapshot('corridasCarro', (job) => onlyDigits(job.motoristaCpf) === driverCpf && job.status !== 'pendente',
+        () => db.collection('corridasCarro').where('motoristaCpf', '==', driverCpf).limit(25).get());
     } else {
-      snapshot = await db.collection('corridasCarro').where('status', '==', 'pendente').limit(25).get();
+      snapshot = await activeJobsSnapshot('corridasCarro', (job) => job.status === 'pendente',
+        () => db.collection('corridasCarro').where('status', '==', 'pendente').limit(25).get());
     }
     const allowedMine = new Set(['aceita', 'motorista_chegou', 'em_andamento']);
     const jobs = snapshot.docs
@@ -6806,7 +6950,7 @@ app.post('/api/drivers/:cpf/location-city', async (req, res, next) => {
   try {
     const driverCpf = onlyDigits(req.params.cpf);
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
-    await getDriverWithProof(driverCpf, req.body);
+    const driverAtual = await getDriverWithProof(driverCpf, req.body);
     const point = { lat: Number(req.body?.lat), lon: Number(req.body?.lon) };
     if (!Number.isFinite(point.lat) || !Number.isFinite(point.lon) || Math.abs(point.lat) > 90 || Math.abs(point.lon) > 180 || (!point.lat && !point.lon)) {
       return res.status(400).json({ error: 'localizacao_invalida', message: 'Nao recebi a sua localizacao. Libere o GPS e tente de novo.' });
@@ -6814,24 +6958,33 @@ app.post('/api/drivers/:cpf/location-city', async (req, res, next) => {
     // O motoboy precisa estar DENTRO de uma cidade atendida (nao so perto dela): de
     // Araras, por exemplo, Eng. Coelho e a mais proxima, mas ele nao atende de la.
     const city = coordinateDistanceKm(point, ESTIVA_GERBI_CENTER) <= 8 ? 'conchal' : servedCityWithin(point, DRIVER_CITY_KM);
+    // Economia do banco: o app confere a cidade a cada 5 min. So grava quando a cidade MUDA, e
+    // so apaga o guardado DESTE motoboy (antes apagava o de todos, e cada motoboy relia o cadastro
+    // no banco: ~80 leituras por minuto com 20 motoboys Disponiveis).
+    const mesmaCidade = (gps, ativas) => driverAtual.cidadeGps === gps
+      && ['conchal', 'aguai', 'engenheiro_coelho'].every((k) => !!driverAtual.cidadesAtivas?.[k] === ativas[k]);
     if (!city) {
       const nenhuma = { conchal: false, aguai: false, engenheiro_coelho: false };
-      await db.collection('motoboys').doc(driverCpf).set({
-        cidadeGps: 'fora', cidadeGpsEm: admin.firestore.FieldValue.serverTimestamp(), cidadesAtivas: nenhuma,
-        atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-      driverProofCache.clear();
+      if (!mesmaCidade('fora', nenhuma)) {
+        await db.collection('motoboys').doc(driverCpf).set({
+          cidadeGps: 'fora', cidadeGpsEm: admin.firestore.FieldValue.serverTimestamp(), cidadesAtivas: nenhuma,
+          atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        clearDriverProofCache(driverCpf);
+      }
       driverAvailability.cities(driverCpf, nenhuma);
       return res.status(422).json({ error: 'fora_da_area', message: 'Você está fora da área atendida (Conchal, Aguaí e Engenheiro Coelho). As chamadas voltam quando você estiver em uma dessas cidades.' });
     }
     const cidadesAtivas = { conchal: city === 'conchal', aguai: city === 'aguai', engenheiro_coelho: city === 'engenheiro_coelho' };
-    await db.collection('motoboys').doc(driverCpf).set({
-      cidadeGps: city,
-      cidadeGpsEm: admin.firestore.FieldValue.serverTimestamp(),
-      cidadesAtivas,
-      atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
-    driverProofCache.clear();
+    if (!mesmaCidade(city, cidadesAtivas)) {
+      await db.collection('motoboys').doc(driverCpf).set({
+        cidadeGps: city,
+        cidadeGpsEm: admin.firestore.FieldValue.serverTimestamp(),
+        cidadesAtivas,
+        atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      clearDriverProofCache(driverCpf);
+    }
     driverAvailability.cities(driverCpf, cidadesAtivas);
     return res.json({ ok: true, cidade: city, label: rideCityLabel(city), cidadesAtivas });
   } catch (error) {
@@ -6856,7 +7009,15 @@ app.post('/api/drivers/:cpf/earnings/summary', async (req, res, next) => {
 
     const count = period === '30days' ? 30 : period === '7days' ? 7 : 1;
     const dayKeys = Array.from({ length: count }, (_, index) => dateKeySaoPaulo(new Date(Date.now() - index * 86400000))).reverse();
-    const snapshots = await db.getAll(...dayKeys.map((day) => driverEarningsDayRef(driverCpf, day)));
+    const chaveResumo = `${driverCpf}:${period}:${dayKeys[dayKeys.length - 1]}`;
+    const resumoGuardado = driverSummaryCache.get(chaveResumo);
+    const snapshots = resumoGuardado && Date.now() - resumoGuardado.at < DRIVER_SUMMARY_CACHE_MS
+      ? resumoGuardado.snapshots
+      : await db.getAll(...dayKeys.map((day) => driverEarningsDayRef(driverCpf, day)));
+    if (!resumoGuardado || resumoGuardado.snapshots !== snapshots) {
+      driverSummaryCache.set(chaveResumo, { at: Date.now(), snapshots });
+      if (driverSummaryCache.size > 5000) driverSummaryCache.delete(driverSummaryCache.keys().next().value);
+    }
     const total = emptyDriverEarnings();
     const days = snapshots.map((snapshot, index) => {
       const raw = snapshot.exists ? snapshot.data() || {} : emptyDriverEarnings();
@@ -6993,6 +7154,8 @@ const openJobsCache = new Map();
 const offerDocCache = new Map();
 function invalidateOpenJobs() { openJobsCache.clear(); offerDocCache.clear(); }
 async function openJobsSnapshot(collectionName) {
+  // Espelho ao vivo pronto: a lista aberta sai da memoria (zero leitura por motoboy).
+  if (liveJobs.ready(collectionName)) return liveJobs.docs(collectionName, (job) => job.status === 'pendente').slice(0, 30);
   const cached = openJobsCache.get(collectionName);
   if (cached && Date.now() - cached.at < OPEN_JOBS_CACHE_MS) return cached.docs;
   const snapshot = await db.collection(collectionName).where('status', '==', 'pendente').limit(30).get();
@@ -7000,6 +7163,8 @@ async function openJobsSnapshot(collectionName) {
   return snapshot.docs;
 }
 async function offerDoc(collectionName, id) {
+  // Fora do espelho = nao esta mais em andamento (aceita por outro ja aparece com status).
+  if (liveJobs.ready(collectionName)) return liveJobs.doc(collectionName, id)?.data() || null;
   const key = `${collectionName}/${id}`;
   const cached = offerDocCache.get(key);
   if (cached && Date.now() - cached.at < 2500) return cached.data;
@@ -7023,13 +7188,13 @@ app.post('/api/drivers/:cpf/jobs', async (req, res, next) => {
     let docs = [];
     if (scope === 'mine') {
       const activeStatuses = kind === 'deliveries' ? ['aceita', 'retirada'] : ['aceita'];
-      const snapshots = await Promise.all(activeStatuses.map((status) => (
-        db.collection(collectionName)
+      const snapshots = await Promise.all(activeStatuses.map((status) => activeJobsSnapshot(collectionName,
+        (job) => onlyDigits(job.motoboyCpf) === driverCpf && job.status === status,
+        () => db.collection(collectionName)
           .where('motoboyCpf', '==', driverCpf)
           .where('status', '==', status)
           .limit(15)
-          .get()
-      )));
+          .get())));
       docs = snapshots.flatMap((snapshot) => snapshot.docs);
     } else {
       const openDocs = await openJobsSnapshot(collectionName);
@@ -7060,7 +7225,14 @@ app.post('/api/drivers/:cpf/plans', async (req, res, next) => {
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
     await getDriverWithProof(driverCpf, req.body);
     const now = Date.now();
-    const snapshot = await db.collection('planosAtivados').where('motoboyExclusivoCpf', '==', driverCpf).limit(20).get();
+    const guardado = driverPlansCache.get(driverCpf);
+    const snapshot = guardado && now - guardado.at < DRIVER_SUMMARY_CACHE_MS
+      ? guardado.snapshot
+      : await db.collection('planosAtivados').where('motoboyExclusivoCpf', '==', driverCpf).limit(20).get();
+    if (!guardado || guardado.snapshot !== snapshot) {
+      driverPlansCache.set(driverCpf, { at: now, snapshot });
+      if (driverPlansCache.size > 3000) driverPlansCache.delete(driverPlansCache.keys().next().value);
+    }
     const plans = snapshot.docs
       .map((doc) => doc.data() || {})
       .filter((plan) => Number(plan.expiraEmMs || 0) > now)
@@ -8531,7 +8703,8 @@ app.post('/api/car/rides', assertCarCustomerOrGuest, createRideLimiter, async (r
 
 app.get('/api/car/rides/:rideId/status', assertCarCustomerOrGuestAccess, async (req, res, next) => {
   try {
-    const snap = await db.collection('corridasCarro').doc(String(req.params.rideId || '')).get();
+    const rideId = String(req.params.rideId || '');
+    const snap = (liveJobs.ready('corridasCarro') && liveJobs.doc('corridasCarro', rideId)) || await db.collection('corridasCarro').doc(rideId).get();
     if (!snap.exists) return res.status(404).json({ error: 'corrida_carro_nao_encontrada' });
     const ride = snap.data() || {};
     if (!carRideBelongsToRequester(ride, req)) return res.status(403).json({ error: 'corrida_nao_pertence_ao_passageiro' });
@@ -10642,7 +10815,7 @@ app.post('/api/companies/me/integration/pending-orders/:orderId/cancel', assertC
 cardapioWebRefreshActiveCompanies().then(() => {
   console.log('[cardapioweb] polling automatico iniciado (intervalo: 45s).');
   setInterval(() => {
-    cardapioWebPollAll().catch((error) => console.error('[cardapioweb] erro no polling geral:', error.message));
+    dbUsage.run('rotina: integracao CardapioWeb', () => cardapioWebPollAll()).catch((error) => console.error('[cardapioweb] erro no polling geral:', error.message));
   }, CARDAPIO_WEB_POLL_INTERVAL_MS);
 }).catch((error) => {
   console.error('[cardapioweb] erro ao iniciar polling:', error.message);
@@ -11064,7 +11237,7 @@ app.post('/api/companies/me/pediplus/pending-orders/:orderId/cancel', assertComp
 pediplusRefreshActiveCompanies().then(() => {
   console.log('[pediplus] polling automatico iniciado (intervalo: 45s).');
   setInterval(() => {
-    pediplusPollAll().catch((error) => console.error('[pediplus] erro no polling geral:', error.message));
+    dbUsage.run('rotina: integracao PediPlus', () => pediplusPollAll()).catch((error) => console.error('[pediplus] erro no polling geral:', error.message));
   }, PEDIPLUS_POLL_INTERVAL_MS);
 }).catch((error) => {
   console.error('[pediplus] erro ao iniciar polling:', error.message);
@@ -11702,11 +11875,15 @@ app.get('/api/rides/:rideId/status', async (req, res, next) => {
     res.set('cache-control', 'no-store');
     const rideId = String(req.params.rideId || '');
     const cached = rideStatusCache.get(rideId);
-    if (cached && (Date.now() - cached.at) < RIDE_STATUS_CACHE_MS) {
+    // Em andamento: o espelho ao vivo ja tem a corrida (sem leitura). Encerrada: guarda por mais
+    // tempo, porque quase nao muda mais (so a nota e o pagamento, que limpam o guardado).
+    const live = liveJobs.ready('corridas') ? liveJobs.doc('corridas', rideId) : null;
+    const cacheMs = cached && ['pendente', 'aceita', 'retirada'].includes(cached.payload?.status) ? RIDE_STATUS_CACHE_MS : 30000;
+    if (!live && cached && (Date.now() - cached.at) < cacheMs) {
       if (!await canReadRideTracking(req, cached.access)) return res.status(403).json({ error: 'acompanhamento_nao_autorizado' });
       return res.json(withLiveLocation(cached.payload, `corridas/${rideId}`));
     }
-    const doc = await db.collection('corridas').doc(rideId).get();
+    const doc = live || await db.collection('corridas').doc(rideId).get();
     if (!doc.exists) return res.status(404).json({ error: 'corrida_nao_encontrada' });
     const ride = doc.data() || {};
     const access = { deviceHash: ride.clienteDeviceId ? hashSecret(ride.clienteDeviceId) : '', customerId: ride.customerId || '', rideId: doc.id };
@@ -12589,6 +12766,7 @@ app.post('/api/companies/daily-plan/finish', assertCompany, async (req, res, nex
       if (current.planDocId) {
         tx.set(companyRef.collection('planosDiarios').doc(current.planDocId), { status: 'encerrado', expiraEmMs: now, encerradoEmMs: now }, { merge: true });
         tx.set(planActivationRef(planActivationKey(req.companyId, current.planDocId)), { expiraEmMs: now, encerradoEmMs: now }, { merge: true });
+        driverPlansCache.clear();
       }
     });
     res.json({ ok: true, active: false, closed, encerradoEmMs: now });
@@ -13503,11 +13681,12 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
 
 app.get('/api/companies/me/active-deliveries', assertCompany, assertCompanyApproved, async (req, res, next) => {
   try {
-    const snapshot = await db.collection('entregas')
-      .where('empresaId', '==', req.companyId)
-      .where('status', 'in', ['pendente', 'aceita', 'retirada'])
-      .limit(100)
-      .get();
+    const snapshot = await activeJobsSnapshot('entregas', (job) => job.empresaId === req.companyId && ['pendente', 'aceita', 'retirada'].includes(job.status),
+      () => db.collection('entregas')
+        .where('empresaId', '==', req.companyId)
+        .where('status', 'in', ['pendente', 'aceita', 'retirada'])
+        .limit(100)
+        .get());
     const deliveries = snapshot.docs
       .map((docSnap) => {
         const data = docSnap.data() || {};
@@ -13600,8 +13779,9 @@ app.post('/api/deliveries/:deliveryId/pickup', async (req, res, next) => {
 });
 
 // GPS ao vivo: a posicao vai na hora para quem acompanha (status do cliente, painel da loja),
-// mas so e gravada no banco a cada 20 s por servico (antes era a cada ~8 s por motoboy).
-const LIVE_LOCATION_PERSIST_MS = 20000;
+// mas so e gravada no banco a cada 60 s por servico (antes 20 s; e antes disso ~8 s por motoboy).
+// A gravacao serve so para quem abre depois de o servidor reiniciar; o "ao vivo" vem da memoria.
+const LIVE_LOCATION_PERSIST_MS = 60000;
 const liveLocations = new Map();
 
 function liveLocationFor(path, stored) {
@@ -15315,7 +15495,8 @@ async function createBookingRide({ phone, nome, origem, destino, cotacao, reques
 
 async function findOpenBookingRide(phone) {
   const national = onlyDigits(phone).replace(/^55(?=\d{10,11}$)/, '');
-  const snap = await db.collection('corridas').where('telefoneCliente', '==', national).where('status', 'in', ['pendente', 'aceita']).limit(10).get();
+  const snap = await activeJobsSnapshot('corridas', (job) => job.telefoneCliente === national && ['pendente', 'aceita'].includes(job.status),
+    () => db.collection('corridas').where('telefoneCliente', '==', national).where('status', 'in', ['pendente', 'aceita']).limit(10).get());
   const day = Date.now() - 86400000;
   return snap.docs
     .map((doc) => ({ ...doc.data(), id: doc.id }))
@@ -15404,6 +15585,8 @@ const supportAutomation = createSupportAutomation({
   generateReply: createSupportAiChain({ gemini: geminiSupport, openRouter: openrouterSupport, decrypt: decryptSecretSafe }),
   isSystemOutgoing: event => (automaticWhatsappMessages.get(hashSecret(`${event.phone}:${event.text}`)) || 0) > Date.now(),
   rideExpireMs: RIDE_EXPIRE_MS, deliveryExpireMs: DELIVERY_EXPIRE_MS,
+  // Mesma lista aberta dos motoboys (espelho ao vivo), em vez de consultar o banco a cada minuto.
+  pendingJobs: (kind) => openJobsSnapshot(kind),
   async sendText(number, text) {
     const data = await supportEvolution(`/message/sendText/${supportInstancePath}`, 'POST', { number, text });
     return { sent: true, id: data.key?.id || data.messageId || '' };
@@ -15587,17 +15770,17 @@ async function scheduledCleanup() {
   }
 }
 
-setInterval(scheduledCleanup, CLEANUP_INTERVAL_MS);
+setInterval(() => dbUsage.run('rotina: limpeza das corridas', scheduledCleanup), CLEANUP_INTERVAL_MS);
 
 // Economia do banco: os avisos do grupo so procuram chamadas quando existe chamada aberta
 // (a lista aberta e a mesma, compartilhada, que os motoboys usam).
-setInterval(async () => {
+setInterval(() => dbUsage.run('rotina: avisos nos grupos', async () => {
   try {
     const [rides, deliveries] = await Promise.all([openJobsSnapshot('corridas'), openJobsSnapshot('entregas')]);
     if (!rides.length && !deliveries.length) return;
   } catch { /* na duvida, roda */ }
   supportAutomation.tick().catch(() => console.error('support automation tick failed'));
-}, 60 * 1000);
+}), 60 * 1000);
 
 // Avisos das corridas pedidas pelo WhatsApp (motoboy chegou, ninguem aceitou, finalizada).
 let bookingTickRunning = false;
@@ -15605,7 +15788,7 @@ let bookingTickRunning = false;
 // chega mensagem no WhatsApp), em vez de a cada 30 s.
 let bookingIdleUntil = 0;
 let bookingDirty = true;
-setInterval(async () => {
+setInterval(() => dbUsage.run('rotina: corridas pedidas pelo WhatsApp', async () => {
   if (bookingTickRunning) return;
   if (!bookingDirty && Date.now() < bookingIdleUntil) return;
   bookingTickRunning = true;
@@ -15614,24 +15797,26 @@ setInterval(async () => {
     if (settings.enabled && settings.pedidoWhatsapp !== false) {
       bookingDirty = false;
       const ativas = await whatsappBooking.tick({ sendText: sendEvolutionText });
-      bookingIdleUntil = ativas ? 0 : Date.now() + 3 * 60 * 1000;
+      // Com o espelho ao vivo, qualquer mudanca numa corrida do WhatsApp marca bookingDirty na hora;
+      // sem corrida dessas, a conferida de seguranca fica a cada 20 min (antes a cada 3 min).
+      bookingIdleUntil = ativas ? 0 : Date.now() + (liveJobs.ready('corridas') ? 20 : 3) * 60 * 1000;
     }
   } catch (error) {
     console.error('whatsapp booking tick failed', String(error?.message || '').slice(0, 120));
   } finally {
     bookingTickRunning = false;
   }
-}, 30 * 1000);
+}), 30 * 1000);
 
-setInterval(() => {
+setInterval(() => dbUsage.run('rotina: lembrete dos clientes', () => {
   runCustomerReminderTick().catch((error) => console.error('customer reminder failed', error));
-}, 60 * 1000);
+}), 60 * 1000);
 
 // Os planos com motoboy fixo finalizam por timer na memoria; esta conferida e so a rede de
 // seguranca depois de reiniciar o servidor (antes a cada 30 s, agora a cada 3 min).
-setInterval(() => {
+setInterval(() => dbUsage.run('rotina: planos com motoboy fixo', () => {
   runPlanAutoFinishTick().catch((error) => console.error('plan auto finish tick failed', error));
-}, 3 * 60 * 1000);
+}), 3 * 60 * 1000);
 runCustomerReminderTick().catch((error) => console.error('customer reminder startup failed', error));
 
 
@@ -15656,6 +15841,9 @@ app.use((error, _req, res, _next) => {
 
 httpServer.listen(PORT, () => {
   console.log(`MotoJa Conchal backend listening on ${PORT}`);
+  // Espelho ao vivo das corridas/entregas em andamento (LIVE_JOBS=off desliga e volta a consultar o banco).
+  if (process.env.LIVE_JOBS !== 'off') dbUsage.run('espelho ao vivo (corridas e entregas em andamento)', () => liveJobs.start());
+  restoreDbUsage().catch((error) => console.error('db usage restore failed', error?.message));
   if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_WEBHOOK !== 'off') {
     driverTelegram.setWebhook(`${BACKEND_BASE_URL}/api/telegram/webhook`, telegramWebhookSecret())
       .then(() => console.log('telegram webhook ok'))
