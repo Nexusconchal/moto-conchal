@@ -1846,6 +1846,69 @@ function withoutSecrets(value, depth = 0) {
   return out;
 }
 
+// ---------- Painel do dono: economia do banco ----------
+// Antes, cada abertura do painel ou acao do dono relia ate ~6.500 documentos (e o guardado era
+// apagado a cada acao). Agora cada colecao e lida uma vez e depois so busca o que mudou
+// (campo "atualizado em") e os documentos que o dono acabou de alterar. Listas pequenas
+// (empresas, motoboys...) sao relidas inteiras de tempos em tempos, porque sao poucas.
+const adminCollectionCache = new Map();
+const adminRefetch = new Map();
+const adminSortKey = (item) => timestampMs(item.finalizadaEm || item.aceitaEm || item.criadaEm || item.ultimoAcesso) || Number(item.criadoEmMs || 0);
+function markAdminRefetch(name, id) {
+  if (!name || !id) return;
+  if (!adminRefetch.has(name)) adminRefetch.set(name, new Set());
+  adminRefetch.get(name).add(String(id).slice(0, 120));
+}
+async function adminCollection(name, { limit = 500, orderField = '', updatedField = '', numeric = false, fullReloadMs = 3 * 60 * 60 * 1000, force = false } = {}) {
+  const now = Date.now();
+  let cache = adminCollectionCache.get(name);
+  const serialize = (doc) => serializeFirestore({ id: doc.id, ...doc.data() });
+  if (!cache || force || now - cache.loadedAt > fullReloadMs) {
+    let query = db.collection(name);
+    if (orderField) query = query.orderBy(orderField, 'desc');
+    const snapshot = await query.limit(limit).get();
+    cache = { docs: new Map(snapshot.docs.map((doc) => [doc.id, serialize(doc)])), loadedAt: now, syncedAt: now - 15000, deltaAt: now };
+    adminCollectionCache.set(name, cache);
+    adminRefetch.delete(name);
+  } else {
+    if (updatedField && now - cache.deltaAt >= 15000) {
+      const since = cache.syncedAt;
+      cache.deltaAt = now;
+      const value = numeric ? since : admin.firestore.Timestamp.fromMillis(since);
+      try {
+        const changed = await db.collection(name).where(updatedField, '>', value).limit(300).get();
+        changed.docs.forEach((doc) => cache.docs.set(doc.id, serialize(doc)));
+        cache.syncedAt = now - 15000;
+      } catch (error) {
+        // Sem a busca do que mudou: na proxima carga le a colecao inteira de novo.
+        console.error('admin delta failed', name, error?.message);
+        cache.loadedAt = 0;
+      }
+    }
+    const ids = adminRefetch.get(name);
+    if (ids?.size) {
+      adminRefetch.delete(name);
+      const snaps = await Promise.all([...ids].slice(0, 40).map((id) => db.collection(name).doc(id).get()));
+      snaps.forEach((snap) => { if (snap.exists) cache.docs.set(snap.id, serialize(snap)); else cache.docs.delete(snap.id); });
+    }
+  }
+  const list = [...cache.docs.values()].sort((a, b) => adminSortKey(b) - adminSortKey(a));
+  if (list.length > limit * 1.3) {
+    cache.docs = new Map(list.slice(0, limit).map((item) => [item.id, item]));
+    return list.slice(0, limit);
+  }
+  return list;
+}
+// Consultas pequenas do painel (contagens, planos, indicacoes): guardadas por 15 min.
+const adminSmallCache = new Map();
+async function adminCached(key, ttlMs, load) {
+  const saved = adminSmallCache.get(key);
+  if (saved && Date.now() - saved.at < ttlMs) return saved.value;
+  const value = await load();
+  adminSmallCache.set(key, { at: Date.now(), value });
+  return value;
+}
+
 async function collectionState(name, limit = 500, orderField = '') {
   let query = db.collection(name);
   if (orderField) query = query.orderBy(orderField, 'desc');
@@ -2645,12 +2708,29 @@ async function findCompanySession(token) {
   return { companySnap, company, companyId: companySnap.id, legacySession: true };
 }
 
+// Economia do banco: o painel da empresa pergunta pedidos/saldo a cada 30 s. Nas consultas so
+// de leitura (GET) a sessao fica guardada por 45 s; acoes (criar entrega, pagar...) sempre
+// conferem no banco.
+const companySessionCache = new Map();
+const COMPANY_SESSION_CACHE_MS = 45 * 1000;
+async function cachedCompanySession(token, readOnly) {
+  const key = hashSecret(token);
+  const saved = companySessionCache.get(key);
+  if (readOnly && saved && Date.now() - saved.at < COMPANY_SESSION_CACHE_MS) return saved.session;
+  const session = await findCompanySession(token);
+  if (session) {
+    companySessionCache.set(key, { at: Date.now(), session });
+    if (companySessionCache.size > 2000) companySessionCache.delete(companySessionCache.keys().next().value);
+  } else companySessionCache.delete(key);
+  return session;
+}
+
 async function assertCompany(req, res, next) {
   try {
     const header = String(req.header('authorization') || '');
     const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
     if (!token) return res.status(401).json({ error: 'empresa_login_obrigatorio' });
-    const session = await findCompanySession(token);
+    const session = await cachedCompanySession(token, req.method === 'GET');
     if (!session) return res.status(401).json({ error: 'sessao_empresa_invalida' });
     req.companySnap = session.companySnap;
     req.company = session.company;
@@ -3284,10 +3364,20 @@ app.use(['/api/support', '/api/admin/support', '/api/admin/support-automation'],
   res.set('pragma', 'no-cache');
   next();
 });
+const ADMIN_PATH_COLLECTIONS = [[/^\/car\/rides\/([^/]+)/, 'corridasCarro'], [/^\/car\/drivers\/([^/]+)/, 'carroMotoristas'], [/^\/rides\/([^/]+)/, 'corridas'],
+  [/^\/deliveries\/([^/]+)/, 'entregas'], [/^\/deposits\/([^/]+)/, 'depositos'], [/^\/drivers\/([^/]+)/, 'motoboys'], [/^\/companies\/(\d{10,14})/, 'empresas']];
 app.use('/api/admin', (req, res, next) => {
   if (req.method !== 'GET') {
     res.on('finish', () => {
-      if (res.statusCode < 400) adminStateCache = null;
+      if (res.statusCode >= 400) return;
+      adminStateCache = null;
+      // O painel rele so o documento que o dono alterou (1 leitura) na proxima carga.
+      for (const [pattern, name] of ADMIN_PATH_COLLECTIONS) {
+        const match = req.path.match(pattern);
+        if (match) { markAdminRefetch(name, match[1]); break; }
+      }
+      if (/^\/companies\//.test(req.path)) { adminCollectionCache.delete('empresas'); adminCollectionCache.delete('recuperacoesSenhaEmpresa'); companySessionCache.clear(); }
+      if (/^\/support/.test(req.path)) adminCollectionCache.delete('contasSuporte');
     });
   }
   next();
@@ -5795,37 +5885,37 @@ app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
     if (adminStateCache && adminStateCache.expiresAt > Date.now()) {
       return res.json(adminStateCache.payload);
     }
-    const [corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresasRaw, eventosFunil, contasSuporteSnap] = await Promise.all([
-      collectionState('corridas'),
-      collectionState('corridasCarro', 500, 'criadaEm'),
-      collectionState('entregas', 500, 'criadaEm'),
-      collectionState('motoboys'),
-      collectionState('carroMotoristas', 500, 'atualizadoEm'),
-      collectionState('depositos'),
-      collectionState('recuperacoesSenhaEmpresa'),
-      collectionState('empresas'),
-      // So os eventos mais recentes (antes lia 2000 aleatorios a cada abertura do painel).
-      db.collection('eventosFunil').orderBy('criadaEm', 'desc').limit(800).get()
-        .then((snapshot) => snapshot.docs.map((doc) => serializeFirestore({ id: doc.id, ...doc.data() })))
-        .catch(() => collectionState('eventosFunil', 300)),
-      db.collection('contasSuporte').limit(100).get().catch(() => ({ docs: [] }))
+    const full = _req.query?.full === '1';
+    const small = { fullReloadMs: 30 * 60 * 1000, force: full };
+    const [corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresasRaw, eventosFunil, contasSuporteList] = await Promise.all([
+      // As corridas mais recentes (antes pegava 500 quaisquer, sem ordem).
+      adminCollection('corridas', { limit: 500, orderField: 'criadaEm', updatedField: 'atualizadaEm', force: full }),
+      adminCollection('corridasCarro', { limit: 300, orderField: 'criadaEm', updatedField: 'atualizadaEm', force: full }),
+      adminCollection('entregas', { limit: 500, orderField: 'criadaEm', updatedField: 'atualizadaEm', force: full }),
+      adminCollection('motoboys', { limit: 500, updatedField: 'atualizadoEm', ...small }),
+      adminCollection('carroMotoristas', { limit: 300, updatedField: 'atualizadoEm', ...small }),
+      adminCollection('depositos', { limit: 300, orderField: 'criadaEm', updatedField: 'atualizadaEm', fullReloadMs: 60 * 60 * 1000, force: full }),
+      adminCollection('recuperacoesSenhaEmpresa', { limit: 200, ...small }),
+      adminCollection('empresas', { limit: 500, updatedField: 'atualizadaEm', ...small }),
+      adminCollection('eventosFunil', { limit: 400, orderField: 'criadaEm', updatedField: 'criadaEm', force: full }).catch(() => []),
+      adminCollection('contasSuporte', { limit: 100, ...small }).catch(() => [])
     ]);
-    const planosAtivados = await db.collection('planosAtivados').where('ativadoEmMs', '>=', Date.now() - 31 * 86400000).limit(300).get()
-      .then((snapshot) => snapshot.docs.map((doc) => serializeFirestore({ id: doc.id, ...doc.data() })).sort((a, b) => Number(b.ativadoEmMs || 0) - Number(a.ativadoEmMs || 0)))
+    const ttl = full ? 0 : 15 * 60 * 1000;
+    const planosAtivados = await adminCached('planosAtivados', ttl, () => db.collection('planosAtivados').where('ativadoEmMs', '>=', Date.now() - 31 * 86400000).limit(300).get()
+      .then((snapshot) => snapshot.docs.map((doc) => serializeFirestore({ id: doc.id, ...doc.data() })).sort((a, b) => Number(b.ativadoEmMs || 0) - Number(a.ativadoEmMs || 0))))
       .catch((error) => { console.error('plan activations load failed', error); return []; });
-    const indicacoes = await db.collection('indicacoes').where('qualificadaEmMs', '>=', Date.now() - 62 * 86400000).limit(1000).get()
-      .then((snapshot) => snapshot.docs.map((doc) => serializeFirestore({ id: doc.id, ...doc.data() })))
+    const indicacoes = await adminCached('indicacoes', ttl, () => db.collection('indicacoes').where('qualificadaEmMs', '>=', Date.now() - 62 * 86400000).limit(1000).get()
+      .then((snapshot) => snapshot.docs.map((doc) => serializeFirestore({ id: doc.id, ...doc.data() }))))
       .catch((error) => { console.error('referrals load failed', error); return []; });
-    const avaliacoes = await db.collection('avaliacoesMotoboy').orderBy('criadoEmMs', 'desc').limit(500).get()
-      .then((snapshot) => snapshot.docs.map((doc) => serializeFirestore({ id: doc.id, ...doc.data() })))
+    const avaliacoes = await adminCollection('avaliacoesMotoboy', { limit: 300, orderField: 'criadoEmMs', updatedField: 'criadoEmMs', numeric: true, force: full })
       .catch((error) => { console.error('ratings load failed', error); return []; });
-    const clientesCadastrados = await customerSignupCounts().catch((error) => {
+    const clientesCadastrados = await adminCached('clientesCadastrados', ttl, () => customerSignupCounts()).catch((error) => {
       console.error('customer signup counts failed', error);
       return null;
     });
     const empresas = empresasRaw.map((empresa) => publicCompany(empresa, empresa.id));
-    const contasSuporte = (contasSuporteSnap.docs || [])
-      .map((doc) => publicSupportAccount(doc.data() || {}, doc.id, true))
+    const contasSuporte = (contasSuporteList || [])
+      .map((item) => publicSupportAccount(item, item.id, true))
       .sort((a, b) => timestampMs(b.cadastradaEm) - timestampMs(a.cadastradaEm));
     // O dono ve quem ja conectou o Mercado Pago (so o sim/nao; os tokens nunca saem daqui).
     for (const motoboy of motoboys) motoboy.mercadoPagoConectado = !!motoboy.mercadoPago?.accessToken;
@@ -7180,6 +7270,7 @@ app.post('/api/companies/logout', assertCompany, async (req, res, next) => {
       update.sessionExpiresAtMs = admin.firestore.FieldValue.delete();
     }
     await req.companySnap.ref.update(update);
+    companySessionCache.clear();
     return res.json({ ok: true });
   } catch (error) {
     return next(error);
