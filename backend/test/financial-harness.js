@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import * as deposit from '../src/company-deposit.js';
 import * as completion from '../src/delivery-completion.js';
+import { liveJobs, activeJobsSnapshot } from './live-jobs-off.js';
 export const source = fs.readFileSync(new URL('../src/server.js',import.meta.url),'utf8');
 export const companyId = '19999990000', driverCpf = '12345678901';
 export function harness(entries = {}) {
@@ -21,7 +22,7 @@ export function harness(entries = {}) {
     }); queue=run.catch(()=>{}); return run;
   }};
   const money=value=>Math.round(Number(value||0)*100)/100;
-  const context=vm.createContext({iosAlert,liveLocationFor:(p,s)=>s,...deposit,...completion,db,console,URL,Map,Set,Date,Number,String,Math,
+  const context=vm.createContext({ iosAlert, liveJobs, activeJobsSnapshot,liveLocationFor:(p,s)=>s,...deposit,...completion,db,console,URL,Map,Set,Date,Number,String,Math,
     crypto,hashSecret:value=>crypto.createHash('sha256').update(value).digest('hex'),
     onlyDigits:value=>String(value||'').replace(/\D/g,''),money,cleanText:value=>String(value||'').trim(),timestampMs:Number,
     serializeFirestore:value=>value,adminStateCache:null,process:{env:{MP_OWNER_ACCESS_TOKEN:'test-only-token'}},

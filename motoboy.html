@@ -1072,7 +1072,7 @@
         </nav>
       </section>
     </main>
-    <script src="./driver-availability.js?v=228-reconexao"></script>
+    <script src="./driver-availability.js?v=229-economia"></script>
     <script src="./motoboy-call-alerts.js?v=4"></script>
     <script src="./ride-call-ui.js?v=2"></script>
     <script src="./ride-chat.js?v=236"></script>
@@ -3314,6 +3314,9 @@
       async function checarPagamentosRecebidos() {
         // Tela apagada/app no fundo: confere quando voltar (economia do banco).
         if (!motoboyCpf || document.hidden) return;
+        // Sem corrida em andamento nao tem pagamento para avisar: nao pergunta ao banco
+        // (antes perguntava a cada 45 s mesmo parado, e cada pergunta custa leitura).
+        if (window.MotojaDriverAvailability?.ocupado?.() === false) return;
         try {
           const r = await fetch(`${CONFIG.backend}/api/drivers/${motoboyCpf}/jobs`, {
             method: "POST",

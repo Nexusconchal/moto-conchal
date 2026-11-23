@@ -57,7 +57,7 @@ test('driver event and real aggregate writes count a batch once with N deliverie
   const context = vm.createContext({ deliveryReportQuantity, onlyDigits: s => String(s), cleanText: s => String(s || ''), money, Date,
     dateKeySaoPaulo: () => '2026-10-04', deliverySplit: () => ({ driverAmount: 15 }),
     admin: { firestore: { FieldValue: { increment: n => n, serverTimestamp: () => 'stamp' } } },
-    driverEarningEventRef: () => ref('event'), driverEarningsRef: () => ref('total'), driverEarningsDayRef: () => ref('day')
+    forgetDriverSummary: () => {}, driverEarningEventRef: () => ref('event'), driverEarningsRef: () => ref('total'), driverEarningsDayRef: () => ref('day')
   });
   vm.runInContext(extract('driverEarningEvent', 'function manualDeliveryPerformedAtMs') + '\n' + extract('recordDriverEarning', 'function addDriverEarningToSummary'), context);
   const event = context.driverEarningEvent('entrega', 'lot-3', jobs[0]);

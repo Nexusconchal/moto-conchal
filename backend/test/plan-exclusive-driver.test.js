@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { liveJobs, activeJobsSnapshot } from './live-jobs-off.js';
 const source = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
 const A = '11111111111', B = '22222222222', company = '19999990000';
 function slice(startText, endText) { const a = source.indexOf(startText); const b = source.indexOf(endText, a + 1); assert.ok(a >= 0 && b > a, startText); return source.slice(a, b); }
@@ -20,7 +21,7 @@ function makeDb(records) {
 }
 function context(records, extra = {}) {
   const routes = {};
-  const ctx = vm.createContext({ db: makeDb(records), console, Date, Number, String, Object, Array,
+  const ctx = vm.createContext({ liveJobs, activeJobsSnapshot, db: makeDb(records), console, Date, Number, String, Object, Array, driverPlansCache: new Map(),
     admin: { firestore: { FieldValue: { serverTimestamp: () => 'TS', delete: () => 'DELETE' } } },
     onlyDigits: v => String(v || '').replace(/\D/g, ''), cleanText: v => String(v || '').trim(),
     getDriverWithProof: async cpf => ({ nome: cpf === A ? 'Ana' : 'Bruno' }), driverRideCities: () => ({ conchal: true }), driverServices: () => ({ corrida: true, entrega: true }), driverWantsDeliveryIn: () => true, driverWantsRide: () => true, rideServiceKind: () => 'corrida', rideOperatingCity: () => 'conchal', deliveryOperatingCity: () => 'conchal', rideCityLabel: () => 'Conchal',
@@ -108,7 +109,7 @@ test('countdown text in the company and motoboy apps', () => {
     const html = fs.readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8');
     const start = html.indexOf(`function ${fn}(`);
     const body = html.slice(start, html.indexOf('\n      }\n', start) + 8);
-    const ctx = vm.createContext({ Date, Math, String, Number });
+    const ctx = vm.createContext({ liveJobs, activeJobsSnapshot, Date, Math, String, Number });
     vm.runInContext(body, ctx);
     const now = Date.now();
     assert.equal(ctx[fn](now + (8 * 60 + 42) * 60000 - 1000), '8h 42min');

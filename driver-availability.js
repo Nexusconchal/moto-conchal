@@ -143,7 +143,9 @@
     // So bloqueia lista/aceite quando o motoboy escolheu Indisponivel; reconectando (internet
     // oscilando) com Disponivel escolhido continua mostrando e aceitando chamadas pelo app.
     indisponivel() { return !stopped && !state.desired && preference()?.desired !== true; },
-    canAlert() { return !stopped && state.desired && !state.busy; }
+    canAlert() { return !stopped && state.desired && !state.busy; },
+    // Em servico agora? true/false pelo servidor; null quando ainda nao sabe (sem conexao).
+    ocupado() { return stopped || !state.connected ? null : state.busy === true; }
   };
   document.addEventListener('visibilitychange', () => {
     if (stopped) return;

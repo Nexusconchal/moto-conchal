@@ -6,7 +6,7 @@
       title: "Visão geral",
       eyebrow: "Central de operação",
       description: "Acompanhe a saúde da operação e resolva primeiro o que exige atenção.",
-      targets: ["visao-section"],
+      targets: ["visao-section", "banco-section"],
     },
     plans: {
       title: "Planos das empresas",
@@ -782,7 +782,7 @@
   }
 
   // Versao do servidor (Render): mostra quando foi atualizado e avisa se esta numa versao antiga.
-  const SITE_RELEASE = "2026-11-20-lugares";
+  const SITE_RELEASE = "2026-11-23-economia";
   async function checkServerVersion() {
     const el = document.getElementById("ownerServerVersion");
     if (!el) return;

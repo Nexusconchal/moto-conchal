@@ -40,5 +40,5 @@ test('push, Telegram, open list and accept all respect the choice; the plan deli
   const route = slice("app.post('/api/drivers/:cpf/services'", "// Abertura do app com a chave");
   assert.match(route, /getDriverWithProof\(cpf, req\.body\)/);
   assert.match(route, /servico_obrigatorio/);
-  assert.match(route, /driverProofCache\.clear\(\)/);
+  assert.match(route, /clearDriverProofCache\(cpf\)/);
 });

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { liveJobs, activeJobsSnapshot } from './live-jobs-off.js';
 const source = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
 function slice(startText, endText) { const a = source.indexOf(startText); const b = source.indexOf(endText, a + 1); assert.ok(a >= 0 && b > a); return source.slice(a, b); }
 function makeDb(records, hooks = {}) {
@@ -29,7 +30,7 @@ test('the 3-minute reopen does not take a ride from a motoboy who notified the c
   const db = makeDb(records, { afterQuery: (name, value) => { if (name === 'corridas' && value === 'aceita') records.set('corridas/r1', { ...records.get('corridas/r1'), clienteAvisadoEm: 'TS' }); } });
   const released = [];
   const pushed = [];
-  const ctx = vm.createContext({ db, Date, Number, Math, console, admin: { firestore: { FieldValue: fv } }, timestampMs: Number, cleanText: v => String(v || ''),
+  const ctx = vm.createContext({ liveJobs, activeJobsSnapshot, db, Date, Number, Math, console, admin: { firestore: { FieldValue: fv } }, timestampMs: Number, cleanText: v => String(v || ''),
     RIDE_EXPIRE_MS: 9e9, CAR_RIDE_EXPIRE_MS: 9e9, DELIVERY_EXPIRE_MS: 9e9, ACCEPTED_NOTICE_MS: 180000,
     notifyDriversAboutRide: async (id, ride) => { pushed.push([id, ride.status, ride.motoboyCpf]); return { sent: 2 }; }, saveRideDispatch: async () => {},
     releaseDeliveryReservation: async () => {}, driverAvailability: { job: (_k, id) => released.push(id) }, driverAvailabilitySocket: { publishAll: () => {} } });
@@ -44,7 +45,7 @@ test('the 3-minute reopen does not take a ride from a motoboy who notified the c
 test('notify-client only marks the ride for the motoboy who still owns it', async () => {
   const records = new Map([['corridas/r1', { status: 'pendente', motoboyCpf: '', telefoneCliente: '19999990000' }]]);
   const routes = {};
-  const ctx = vm.createContext({ db: makeDb(records), admin: { firestore: { FieldValue: fv } }, onlyDigits: v => String(v || '').replace(/\D/g, ''),
+  const ctx = vm.createContext({ liveJobs, activeJobsSnapshot, db: makeDb(records), admin: { firestore: { FieldValue: fv } }, onlyDigits: v => String(v || '').replace(/\D/g, ''),
     getDriverWithProof: async () => ({}), BACKEND_BASE_URL: '', rideTrackingUrl: (id) => `https://nexusmotoja.com.br/acompanhar.html?c=${id}&t=chave`, isStandaloneDelivery: () => false, money: Number, ridePaymentInstructions: () => '',
     whatsappLink: (phone) => `https://wa.me/55${phone}`, sendEvolutionText: async () => ({}), console, setTimeout, Promise,
     app: { post: (path, ...h) => { routes[path] = h.at(-1); } } });
