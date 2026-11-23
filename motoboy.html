@@ -1079,8 +1079,10 @@
     <script src="./motoboy-avisos.js?v=5"></script>
     <script src="./motoboy-tela-acesa.js?v=1" defer></script>
     <script src="./motoboy-nav.js?v=ligar-2" defer></script>
-    <script src="./motoboy-home.js?v=8" defer></script>
+    <script src="./motoboy-home.js?v=9" defer></script>
     <script src="./motoboy-food.js?v=5"></script>
+    <script src="./motoboy-perfil.js?v=1"></script>
+    <script src="./motoboy-ganhos.js?v=1"></script>
     <script type="module">
       let cidadesAtivas = {
           conchal: true,
@@ -2034,14 +2036,6 @@
         telaAtual = "inicio",
         jobsRequestsInFlight = 0,
         jobsRequestController = null;
-      let ganhosPeriodo = "today",
-        ganhosResumo = null,
-        ganhosSaldoApp = null,
-        ganhosDias = [],
-        ganhosHistorico = [],
-        ganhosCursor = "",
-        ganhosCarregandoHistorico = false;
-      const ganhosCache = new Map();
       const TEMPO_CORRIDA_MS = 10 * 60 * 1000,
         TEMPO_ENTREGA_MS = 15 * 60 * 1000,
         TEMPO_AVISO_MS = 6 * 60 * 1000;
@@ -2086,9 +2080,7 @@
       }
       function limparCache() {
         jobsCache.clear();
-        ganhosCache.clear();
-        ganhosHistorico = [];
-        ganhosCursor = "";
+        window.MotoGanhos?.limpar();
       }
       const MEMORIA_MOTOBOY = "motoJaMotoboyDados",
         LOGIN_MOTOBOY_MS = 3650 * 24 * 60 * 60 * 1000;
@@ -2388,25 +2380,38 @@
           URL.revokeObjectURL(url);
         }
       }
+      // Perfil: fica em motoboy-perfil.js (foto, dados, moto e SOS), sem abrir o cadastro de novo.
       function renderPerfilMotoboy() {
-        const box = $("perfilMotoboy");
-        if (!box) return;
-        box.innerHTML = `<div class="driver-profile">${motoboyFoto ? `<img src="${motoboyFoto}" alt="Foto do motoboy">` : '<div class="ph">MJ</div>'}<div><p class="muted">Meu perfil</p><h2>${motoboy || "Motoboy MotoJa"}</h2><p class="muted">${motoboyTelefone || "-"}</p></div></div><div class="driver-tags"><span>${motoModelo || "Moto nao informada"}</span><span>Ano ${motoAno || "-"}</span><span>Placa ${motoPlaca || "-"}</span><span>${crlvFoto ? "CRLV cadastrado" : "CRLV pendente"}</span></div><div class="mini-actions"><button id="editarCadastroMotoboy" class="secondary" type="button">Editar cadastro</button><button id="indicarMotoboy" class="secondary" type="button">Indicar motoboy</button></div>`;
-        const editar = $("editarCadastroMotoboy");
-        if (editar)
-          editar.onclick = () => {
-            $("painel").classList.add("hidden");
-            $("login").classList.remove("hidden");
-            $("online").textContent = "Editando";
-            window.MotojaDriverAvailability?.stop();
-          };
-        const indicar = $("indicarMotoboy");
-        if (indicar)
-          indicar.onclick = () => {
-            const msg =
-              "Quer trabalhar no Nexus MotoJa em Conchal, Aguaí ou Engenheiro Coelho? Cadastre-se como motoboy pelo app: https://nexusmotoja.com.br/motoboy.html";
-            location.href = `https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`;
-          };
+        const perfil = window.MotoPerfil;
+        if (!perfil) return;
+        if (!renderPerfilMotoboy.iniciado) {
+          renderPerfilMotoboy.iniciado = true;
+          perfil.iniciar({
+            backend: CONFIG.backend,
+            getProof: driverProof,
+            dados: () => ({ nome: motoboy, cpf: motoboyCpf, cnh: motoboyCnh, telefone: motoboyTelefone, foto: motoboyFoto, motoModelo, motoAno, motoPlaca, crlv: !!crlvFoto }),
+            salvarDados: (d) => {
+              if (d.fotoMotoboy) motoboyFoto = d.fotoMotoboy;
+              if (d.motoModelo) motoModelo = d.motoModelo;
+              if (d.motoAno) motoAno = d.motoAno;
+              if (d.motoPlaca) motoPlaca = d.motoPlaca;
+              if (d.crlvCadastrado && !crlvFoto) crlvFoto = "cadastrado";
+              salvarMotoboy(false);
+              window.MotoHome?.atualizar();
+            },
+            comprimirFoto,
+            comprimirDocumento,
+            mercadoPagoTexto: () => $("btn-mp")?.textContent || "",
+            mercadoPago: () => $("btn-mp")?.click(),
+            avisos: () => (document.getElementById("avisosMotoboy") || $("btn-push-device"))?.scrollIntoView({ behavior: "smooth", block: "start" }),
+            indicar: () => {
+              const msg =
+                "Quer trabalhar no Nexus MotoJa em Conchal, Aguaí ou Engenheiro Coelho? Cadastre-se como motoboy pelo app: https://nexusmotoja.com.br/motoboy.html";
+              location.href = `https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`;
+            },
+          });
+        }
+        perfil.render();
       }
       async function checarMercadoPago() {
         try {
@@ -2481,128 +2486,32 @@
           btn.classList.toggle("on", btn.dataset.servicosTipo === (modoEntrega() ? "entregas" : "corridas")),
         );
       }
-      function periodoGanhosLabel(periodo) {
-        return (
-          {
-            today: "Hoje",
-            "7days": "7 dias",
-            "30days": "30 dias",
-            all: "Geral",
-          }[periodo] || "Hoje"
-        );
+      // Tela Ganhos: fica em motoboy-ganhos.js (destaque, meta do dia, dinheiro x app, extrato e PDF).
+      function ganhosModulo() {
+        const g = window.MotoGanhos;
+        if (g && !ganhosModulo.iniciado) {
+          ganhosModulo.iniciado = true;
+          g.iniciar({
+            backend: CONFIG.backend,
+            getProof: driverProof,
+            cpf: () => motoboyCpf,
+            nome: () => motoboy,
+            lista: () => $("lista"),
+            ativo: () => modo === "ganhos",
+            fetchRetry: fetchMotoboyComRetry,
+          });
+        }
+        return g;
       }
       function renderGanhos() {
-        const lista = $("lista");
-        if (!ganhosResumo) {
-          lista.innerHTML = '<div class="empty">Carregando seus ganhos...</div>';
-          return;
-        }
-        const resumo = ganhosResumo,
-          maior = Math.max(1, ...ganhosDias.map((dia) => Number(dia.ganho || 0))),
-          grafico = ganhosDias.length
-            ? `<div class="earnings-chart" aria-label="Ganhos por dia">${ganhosDias
-                .map((dia) => {
-                  const altura = Math.max(3, Math.round((Number(dia.ganho || 0) / maior) * 94));
-                  return `<div class="earnings-bar" title="${escSeguro(dia.dia)}: ${escSeguro(moeda(dia.ganho))} · ${Number(dia.entregas || 0)} entregas"><i style="height:${altura}px"></i><small>${escSeguro(String(dia.dia || "").slice(8, 10))}/${escSeguro(String(dia.dia || "").slice(5, 7))}</small></div>`;
-                })
-                .join("")}</div>`
-            : '<div class="empty">O total geral reúne todos os serviços finalizados.</div>',
-          historico = ganhosHistorico.length
-            ? ganhosHistorico
-                .map(
-                  (item) =>
-                    `<div class="earning-row"><div><strong>${item.tipo === "entrega" ? (item.entregaNaNota ? "Lote de " + Number(item.quantidadeEntregas || 1) + " entregas" : Number(item.quantidadeEntregas || 1) + " entrega(s)") : "Corrida"} · ${escSeguro(item.titulo || "Serviço")}</strong><p class="muted">${new Date(Number(item.finalizadaEmMs || 0)).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}</p></div><strong>${moeda(item.ganho)}</strong><div class="earning-route">${escSeguro(item.origem || "-")} → ${escSeguro(item.destino || "-")}${Number(item.quilometros || 0) ? ` · ${Number(item.quilometros).toFixed(2).replace(".", ",")} km` : ""}</div></div>`,
-                )
-                .join("")
-            : '<div class="empty">Nenhum serviço finalizado no histórico.</div>';
-        // Taxa das corridas pagas em dinheiro: descontada da proxima corrida paga pelo app.
-        const saldo = ganhosSaldoApp,
-          movimentos = (saldo?.historico || []).slice(0, 6).map((m) => `<div style="display:flex;justify-content:space-between;gap:10px;font-size:.82rem;padding:6px 0;border-top:1px solid rgba(255,255,255,.07)"><span>${escSeguro(m.descricao || (m.valor > 0 ? "Corrida em dinheiro" : "Desconto"))}<br><small class="muted">${m.emMs ? new Date(m.emMs).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : ""}</small></span><strong style="color:${m.valor > 0 ? "#ffb27a" : "#7ee2a8"};white-space:nowrap">${m.valor > 0 ? "−" : "+"} ${moeda(Math.abs(m.valor))}</strong></div>`).join(""),
-          cartaoSaldo = !saldo || (!saldo.devendo && !saldo.credito && !movimentos)
-            ? ""
-            : `<div style="margin:12px 0;padding:14px;border-radius:16px;background:${saldo.devendo ? "rgba(255,138,0,.10)" : "rgba(53,201,121,.10)"};border:1px solid ${saldo.devendo ? "rgba(255,138,0,.45)" : "rgba(53,201,121,.4)"}"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><div><p class="muted" style="margin:0">💵 Saldo com o app</p><strong style="font-size:1.4rem;color:${saldo.devendo ? "#ff8a3d" : "#7ee2a8"}">${saldo.devendo ? "− " + moeda(saldo.devendo) : moeda(saldo.credito || 0)}</strong></div></div><p class="muted" style="margin:8px 0 0;font-size:.82rem;line-height:1.4">${saldo.devendo ? "Saldo negativo: é a parte do app das corridas que o cliente pagou em dinheiro. Você não precisa mandar Pix: ele é descontado sozinho da próxima corrida paga pelo app (Pix ou cartão), e você fica sempre com pelo menos 30% dela." + (saldo.repasseAPagar > 0 ? `<br><b style="color:#ffd27a">Você tem ${moeda(saldo.repasseAPagar)} a receber de repasse da MotoJá</b> (corridas pagas na conta do app): a taxa é descontada desse repasse quando o dono pagar.` : "") + (saldo.mercadoPagoConectado === false ? `<br><b style="color:#ffd27a">Conecte seu Mercado Pago no Perfil</b> para o desconto sair na hora, direto na corrida.` : "") : saldo.credito ? "Saldo positivo: esse valor abate as próximas taxas de corridas em dinheiro." : "Saldo zerado: nenhuma taxa de corrida em dinheiro pendente."}</p>${movimentos ? `<div style="margin-top:8px">${movimentos}</div>` : ""}</div>`;
-        lista.innerHTML = `<section class="earnings-shell"><div class="earnings-head"><div><p class="muted">Resumo do período</p><h2>Meus ganhos</h2></div><button id="atualizar-ganhos" class="secondary earnings-refresh" type="button" title="Atualizar" aria-label="Atualizar ganhos">↻</button></div><div class="earnings-periods">${["today", "7days", "30days", "all"].map((periodo) => `<button type="button" data-periodo-ganhos="${periodo}" class="${ganhosPeriodo === periodo ? "" : "secondary"}">${periodoGanhosLabel(periodo)}</button>`).join("")}</div><div class="earnings-metrics"><div class="earning-metric primary"><span>Ganhos</span><strong>${moeda(resumo.ganho)}</strong></div><div class="earning-metric"><span>Serviços</span><strong>${Number(resumo.servicos || 0)}</strong></div><div class="earning-metric"><span>Corridas</span><strong>${Number(resumo.corridas || 0)}</strong></div><div class="earning-metric"><span>Entregas</span><strong>${Number(resumo.entregas || 0)}</strong></div><div class="earning-metric"><span>Média por serviço</span><strong>${moeda(resumo.mediaPorServico)}</strong></div><div class="earning-metric"><span>Distância</span><strong>${Number(resumo.quilometros || 0).toFixed(1).replace(".", ",")} km</strong></div></div>${cartaoSaldo}${grafico}<div class="earnings-head"><div><p class="muted">Últimos serviços</p><h2>Histórico</h2></div></div><div class="earning-history">${historico}</div>${ganhosCursor ? '<button id="carregar-mais-ganhos" class="secondary" type="button">Carregar mais 20</button>' : ""}</section>`;
-        lista.querySelectorAll("[data-periodo-ganhos]").forEach(
-          (button) =>
-            (button.onclick = () => {
-              ganhosPeriodo = button.dataset.periodoGanhos;
-              carregarGanhos();
-            }),
-        );
-        const atualizar = $("atualizar-ganhos");
-        if (atualizar) atualizar.onclick = () => carregarGanhos(true);
-        const mais = $("carregar-mais-ganhos");
-        if (mais) mais.onclick = () => carregarHistoricoGanhos(false);
-      }
-      async function carregarHistoricoGanhos(reset = false) {
-        if (ganhosCarregandoHistorico) return;
-        ganhosCarregandoHistorico = true;
-        if (reset) {
-          ganhosHistorico = [];
-          ganhosCursor = "";
-        }
-        try {
-          const r = await fetchMotoboyComRetry(
-            `${CONFIG.backend}/api/drivers/${motoboyCpf}/earnings/history`,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ ...driverProof(), cursor: ganhosCursor }),
-            },
-            18000,
-          );
-          const d = await r.json().catch(() => ({}));
-          if (!r.ok) throw new Error(d.message || d.error || "Não consegui carregar o histórico.");
-          ganhosHistorico.push(...(Array.isArray(d.items) ? d.items : []));
-          ganhosCursor = d.nextCursor || "";
-        } catch (error) {
-          alert(error.message || "Não consegui carregar o histórico.");
-        } finally {
-          ganhosCarregandoHistorico = false;
-          if (modo === "ganhos") renderGanhos();
-        }
+        ganhosModulo()?.render();
       }
       async function carregarGanhos(atualizar = false) {
         if (!motoboyCpf) return;
         modo = "ganhos";
-        const seq = ++requestSeq;
+        ++requestSeq;
         atualizarAbas();
-        const cached = ganhosCache.get(ganhosPeriodo);
-        if (!atualizar && cached && Date.now() - cached.t < 5 * 60 * 1000) {
-          ganhosResumo = cached.summary;
-          ganhosDias = cached.days;
-          ganhosSaldoApp = cached.saldoApp || null;
-          renderGanhos();
-          if (!ganhosHistorico.length) await carregarHistoricoGanhos(true);
-          return;
-        }
-        ganhosResumo = null;
-        renderGanhos();
-        try {
-          const r = await fetchMotoboyComRetry(
-            `${CONFIG.backend}/api/drivers/${motoboyCpf}/earnings/summary`,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ ...driverProof(), period: ganhosPeriodo, saldo: true }),
-            },
-            25000,
-          );
-          const d = await r.json().catch(() => ({}));
-          if (modo !== "ganhos" || seq !== requestSeq) return;
-          if (!r.ok) throw new Error(d.message || d.error || "Não consegui carregar os ganhos.");
-          ganhosResumo = d.summary || {};
-          ganhosDias = Array.isArray(d.days) ? d.days : [];
-          ganhosSaldoApp = d.saldoApp || null;
-          ganhosCache.set(ganhosPeriodo, { t: Date.now(), summary: ganhosResumo, days: ganhosDias, saldoApp: ganhosSaldoApp });
-          renderGanhos();
-          if (atualizar || !ganhosHistorico.length) await carregarHistoricoGanhos(true);
-        } catch (error) {
-          if (modo !== "ganhos" || seq !== requestSeq) return;
-          $("lista").innerHTML = `<div class="status danger">${escSeguro(error.message || "Não consegui carregar os ganhos.")}<br><button id="tentar-carregar-ganhos" class="secondary" type="button" style="margin-top:12px">Tentar novamente</button></div>`;
-          const retry = $("tentar-carregar-ganhos");
-          if (retry) retry.onclick = () => carregarGanhos(true);
-        }
+        await ganhosModulo()?.carregar(atualizar);
       }
       function telefoneCliente(c) {
         return String(c.telefoneCliente || c.telefoneContato || c.telefoneEmpresa || "").replace(

@@ -568,5 +568,5 @@
     }, 120000);
   }
 
-  window.MotoHome = { iniciar, atualizar: () => { renderAtivo(); renderChecklist(); renderDisponibilidade(); renderPreferencias(); } };
+  window.MotoHome = { iniciar, atualizar: () => { if (!root) return; renderAtivo(); renderChecklist(); renderDisponibilidade(); renderPreferencias(); renderAvatar(); } };
 })();

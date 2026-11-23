@@ -1539,6 +1539,26 @@ function driverEarningEventRef(driverCpf, kind, serviceId) {
   return driverEarningsRef(driverCpf).collection('historico').doc(`${safeKind}_${safeId}`);
 }
 
+// Forma de pagamento do servico para o extrato do motoboy (mesma regra do painel do dono).
+// dinheiro = ficou no bolso dele; pix/cartao = pago pelo app (conta dele no Mercado Pago ou
+// repasse da MotoJa); '' = ainda nao confirmado quando a corrida terminou.
+function earningPaymentForm(job = {}) {
+  const p = job.pagamento && typeof job.pagamento === 'object' ? job.pagamento : {};
+  if (job.pagoEmDinheiro || p.metodo === 'dinheiro' || p.forma === 'dinheiro') return 'dinheiro';
+  if (p.presencialManual?.codigo) return 'cartao';
+  if (p.status !== 'approved') return '';
+  if (p.forma === 'pix') return 'pix';
+  if (/^cartao/.test(String(p.forma || '')) || p.metodo === 'cartao_app') return 'cartao';
+  return 'app';
+}
+
+function earningPaymentFields(kind, job = {}) {
+  if (kind === 'entrega') return { forma: 'empresa', recebedor: '' };
+  const forma = earningPaymentForm(job);
+  const recebedor = forma === 'dinheiro' || !forma ? '' : job.pagamento?.receiver === 'motoja_owner' ? 'motoja' : 'mercadopago';
+  return { forma, recebedor };
+}
+
 function driverEarningEvent(kind, serviceId, job = {}, finishedAtMs = Date.now()) {
   const isDelivery = kind === 'entrega';
   const isCar = kind === 'carro';
@@ -1560,8 +1580,20 @@ function driverEarningEvent(kind, serviceId, job = {}, finishedAtMs = Date.now()
     ganhoCentavos: Math.max(0, Math.round(driverAmount * 100)),
     quilometrosMetros: Math.max(0, Math.round(Number(job.km || 0) * 1000)),
     finalizadaEmMs: Number(finishedAtMs || Date.now()),
-    dia: dateKeySaoPaulo(new Date(Number(finishedAtMs || Date.now())))
+    dia: dateKeySaoPaulo(new Date(Number(finishedAtMs || Date.now()))),
+    ...earningPaymentFields(isDelivery ? 'entrega' : 'corrida', job),
+    valorCobradoCentavos: isDelivery ? 0 : Math.max(0, Math.round(money(job.pagamento?.total || job.valor) * 100))
   };
+}
+
+// Pagamento confirmado depois de a corrida terminar: marca a forma no extrato do motoboy.
+// update() (nunca set): se o ganho ainda nao foi registrado, nao cria um registro pela metade.
+function markEarningPayment(rideId, driverCpf, ride = {}) {
+  const cpf = onlyDigits(driverCpf);
+  if (cpf.length !== 11 || !rideId) return Promise.resolve(false);
+  const campos = earningPaymentFields('corrida', ride);
+  if (!campos.forma) return Promise.resolve(false);
+  return driverEarningEventRef(cpf, 'corrida', rideId).update(campos).then(() => true).catch(() => false);
 }
 
 function manualDeliveryPerformedAtMs(delivery = {}) {
@@ -4914,7 +4946,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 
 // Versao do servidor no ar (o painel do dono mostra e avisa quando o Render nao atualizou).
 const SERVER_STARTED_AT = Date.now();
-const SERVER_RELEASE = '2026-11-23-economia-2';
+const SERVER_RELEASE = '2026-11-23-sos-perfil';
 app.get('/api/version', (_req, res) => {
   res.set('cache-control', 'no-store');
   res.json({ ok: true, release: SERVER_RELEASE, commit: String(process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || 'local', iniciadoEmMs: SERVER_STARTED_AT });
@@ -7061,6 +7093,170 @@ app.post('/api/drivers/:cpf/location-city', async (req, res, next) => {
   }
 });
 
+// ---------- SOS do motoboy (botao de emergencia do Perfil) ----------
+// Manda no grupo de WhatsApp dos motoboys da cidade dele (Conchal, Aguai ou Eng. Coelho): nome,
+// WhatsApp dele, moto, localizacao no mapa e o servico em andamento (nunca o telefone do cliente).
+// Sem grupo da cidade (ou se o envio falhar), avisa o WhatsApp do dono.
+const driverSosSent = new Map();
+const SOS_INTERVALO_MS = 60 * 1000;
+const SOS_OK_ATE_MS = 6 * 60 * 60 * 1000;
+function sosPhoneLabel(value) {
+  const d = onlyDigits(value);
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return d;
+}
+function sosCity(point, driver = {}) {
+  const pelaPosicao = point ? (coordinateDistanceKm(point, ESTIVA_GERBI_CENTER) <= 8 ? 'conchal' : servedCityWithin(point, DRIVER_CITY_KM)) : '';
+  if (pelaPosicao) return pelaPosicao;
+  if (DRIVER_GROUP_CITIES.includes(driver.cidadeGps)) return driver.cidadeGps;
+  return DRIVER_GROUP_CITIES.find((city) => driver.cidadesAtivas?.[city] === true) || 'conchal';
+}
+function sosMessage({ acao, driver = {}, point, accuracy, job, sosEmMs, now = Date.now() }) {
+  const hora = (ms) => new Date(ms).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
+  const nome = cleanText(driver.nome, 80) || 'Motoboy';
+  if (acao === 'ok') return `✅ ${nome} avisou pelo app que está tudo bem (SOS das ${hora(sosEmMs || now)}).`;
+  const moto = [cleanText(driver.motoModelo, 60), driver.motoPlaca ? `placa ${cleanText(driver.motoPlaca, 12)}` : ''].filter(Boolean).join(' · ');
+  const linhas = [
+    '🆘 *SOS — MOTOBOY PRECISA DE AJUDA*',
+    `👤 ${nome}${driver.telefone ? ` · WhatsApp ${sosPhoneLabel(driver.telefone)}` : ''}`,
+    moto ? `🏍️ ${moto}` : '',
+    point
+      ? `📍 Onde ele está: https://maps.google.com/?q=${point.lat.toFixed(6)},${point.lon.toFixed(6)}${accuracy ? ` (precisão ~${Math.round(accuracy)} m)` : ''}`
+      : '📍 Sem GPS no celular dele agora: ligue para ele.',
+    job ? `🧭 ${job}` : '',
+    `🕒 ${hora(now)}`,
+    '',
+    'Quem estiver perto, ligue para ele e vá até lá. Perigo: 190 (Polícia) · 192 (SAMU).'
+  ];
+  return linhas.filter((linha, index) => linha || index === linhas.length - 2).join('\n');
+}
+async function driverActiveJobText(cpf) {
+  const mine = (job) => onlyDigits(job.motoboyCpf) === cpf && ['aceita', 'retirada'].includes(job.status);
+  const [rides, deliveries] = await Promise.all([
+    activeJobsSnapshot('corridas', mine, () => db.collection('corridas').where('motoboyCpf', '==', cpf).where('status', 'in', ['aceita', 'retirada']).limit(1).get()),
+    activeJobsSnapshot('entregas', mine, () => db.collection('entregas').where('motoboyCpf', '==', cpf).where('status', 'in', ['aceita', 'retirada']).limit(1).get())
+  ]);
+  const ride = rides.docs[0]?.data();
+  if (ride) return `Em ${isStandaloneDelivery(ride) ? 'entrega avulsa' : 'corrida'}: ${cleanText(ride.origem, 80)} → ${cleanText(ride.destino, 80)}`;
+  const delivery = deliveries.docs[0]?.data();
+  if (delivery) return `Em entrega: ${cleanText(delivery.empresa, 60)} (${cleanText(delivery.retirada, 70)}) → ${cleanText(delivery.entrega, 70)}`;
+  return '';
+}
+app.post('/api/drivers/:cpf/sos', async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.params.cpf);
+    if (cpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    const driver = await getDriverWithProof(cpf, req.body);
+    const acao = req.body.acao === 'ok' ? 'ok' : 'sos';
+    const anterior = driverSosSent.get(cpf);
+    if (acao === 'sos' && anterior && Date.now() - anterior.emMs < SOS_INTERVALO_MS) {
+      return res.status(429).json({ error: 'sos_recente', message: 'Seu pedido de ajuda já foi enviado agora há pouco. Se estiver em perigo, ligue 190.' });
+    }
+    if (acao === 'ok' && (!anterior || Date.now() - anterior.emMs > SOS_OK_ATE_MS)) {
+      return res.status(409).json({ error: 'sem_sos', message: 'Não há pedido de ajuda aberto.' });
+    }
+    const lat = Number(req.body.lat), lon = Number(req.body.lon);
+    const point = Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && (lat || lon) ? { lat, lon } : null;
+    const accuracy = Math.min(5000, Math.max(0, Number(req.body.accuracy) || 0));
+    const city = acao === 'ok' ? anterior.city : sosCity(point, driver);
+    const job = acao === 'sos' ? await driverActiveJobText(cpf).catch(() => '') : '';
+    const text = sosMessage({ acao, driver, point, accuracy, job, sosEmMs: anterior?.emMs });
+    const settings = await supportAutomation.config().catch(() => ({}));
+    const group = await whatsappGroupFor(city, settings).catch(() => '');
+    let enviado = false;
+    let destino = '';
+    if (group) {
+      enviado = (await sendEvolutionText(group, text).catch(() => ({ sent: false }))).sent === true;
+      if (enviado) destino = 'grupo';
+    }
+    if (!enviado && OWNER_WHATSAPP) {
+      enviado = (await sendEvolutionText(OWNER_WHATSAPP, text).catch(() => ({ sent: false }))).sent === true;
+      if (enviado) destino = 'dono';
+    }
+    if (acao === 'sos') driverSosSent.set(cpf, { emMs: Date.now(), city });
+    else driverSosSent.delete(cpf);
+    if (driverSosSent.size > 1000) driverSosSent.delete(driverSosSent.keys().next().value);
+    // Fica registrado para o dono (1 gravacao por pedido).
+    await db.collection('sosMotoboys').add({
+      motoboyCpf: cpf, motoboy: cleanText(driver.nome, 80), acao, cidade: city, enviado, destino,
+      ...(point ? { lat, lon, precisao: accuracy } : {}), servico: job || '', criadoEmMs: Date.now()
+    }).catch(() => {});
+    if (!enviado) {
+      return res.status(502).json({ error: 'sos_nao_enviado', cidade: city, message: 'Não consegui avisar o grupo agora. Ligue 190 (Polícia) ou 192 (SAMU).' });
+    }
+    return res.json({ ok: true, cidade: city, cidadeLabel: rideCityLabel(city), destino,
+      message: acao === 'ok' ? 'Avisamos que está tudo bem.' : destino === 'grupo'
+        ? `Pedido de ajuda enviado no grupo de ${rideCityLabel(city)}.` : 'Pedido de ajuda enviado para a central da MotoJá.' });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// ---------- Perfil do motoboy: trocar a foto e os dados da moto ----------
+// Sem passar pelo cadastro de novo. Nome, CPF, CNH e WhatsApp nao mudam por aqui (fale com o
+// suporte). Placa ou documento da moto novos ficam marcados para o dono conferir, sem parar o motoboy.
+app.post('/api/drivers/:cpf/perfil', authLimiter, async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.params.cpf);
+    if (cpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    const driverRef = db.collection('motoboys').doc(cpf);
+    const snap = await driverRef.get();
+    if (!snap.exists) return res.status(404).json({ error: 'motoboy_nao_cadastrado', message: 'Motoboy não cadastrado.' });
+    const driver = snap.data() || {};
+    assertDriverProof(driver, req.body, { requireSession: true });
+    if (driver.status === 'bloqueado' && driver.aguardandoAprovacaoEm === undefined) return res.status(403).json(driverBlockedResponse(driver));
+    const update = {};
+    if (req.body.fotoMotoboy !== undefined) {
+      const foto = validDriverPhoto(req.body.fotoMotoboy);
+      if (!foto) return res.status(400).json({ error: 'foto_invalida', message: 'Foto inválida. Tire outra foto do rosto, com boa luz.' });
+      update.fotoMotoboy = foto;
+      update.fotoAtualizadaEm = admin.firestore.FieldValue.serverTimestamp();
+    }
+    if (req.body.moto && typeof req.body.moto === 'object') {
+      const modelo = cleanText(req.body.moto.modelo, 60);
+      const ano = onlyDigits(req.body.moto.ano);
+      const placa = cleanText(req.body.moto.placa, 12).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (!modelo || !/^(19|20)\d{2}$/.test(ano) || placa.length < 7) {
+        return res.status(400).json({ error: 'dados_moto_invalidos', message: 'Preencha modelo, ano (4 números) e placa da moto.' });
+      }
+      update.motoModelo = modelo;
+      update.motoAno = ano;
+      update.motoPlaca = placa;
+      if (placa !== String(driver.motoPlaca || '')) {
+        update.motoAlteracaoPendente = true;
+        update.motoAnterior = { modelo: driver.motoModelo || '', ano: driver.motoAno || '', placa: driver.motoPlaca || '' };
+        update.motoAlteradaEm = admin.firestore.FieldValue.serverTimestamp();
+      }
+    }
+    if (req.body.crlvFoto !== undefined) {
+      const crlv = validDriverDocument(req.body.crlvFoto);
+      if (!crlv) return res.status(400).json({ error: 'crlv_invalido', message: 'Foto do documento inválida. Tire outra foto, mais perto e com boa luz.' });
+      update.crlvFoto = crlv;
+      update.crlvAtualizadoEm = admin.firestore.FieldValue.serverTimestamp();
+      update.motoAlteracaoPendente = true;
+      update.motoAlteradaEm = admin.firestore.FieldValue.serverTimestamp();
+    }
+    if (!Object.keys(update).length) return res.status(400).json({ error: 'nada_para_salvar', message: 'Nada para salvar.' });
+    update.atualizadoEm = admin.firestore.FieldValue.serverTimestamp();
+    await driverRef.set(update, { merge: true });
+    clearDriverProofCache(cpf);
+    adminStateCache = null;
+    markAdminRefetch('motoboys', cpf);
+    const salvo = { ...driver, ...update };
+    return res.json({
+      ok: true,
+      fotoMotoboy: salvo.fotoMotoboy || '',
+      motoModelo: salvo.motoModelo || '', motoAno: salvo.motoAno || '', motoPlaca: salvo.motoPlaca || '',
+      crlvCadastrado: !!salvo.crlvFoto,
+      conferencia: update.motoAlteracaoPendente === true,
+      message: update.motoAlteracaoPendente ? 'Salvo! O dono vai conferir a moto nova; você continua rodando.' : 'Salvo!'
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/drivers/:cpf/earnings/summary', async (req, res, next) => {
   try {
     const driverCpf = onlyDigits(req.params.cpf);
@@ -7076,7 +7272,8 @@ app.post('/api/drivers/:cpf/earnings/summary', async (req, res, next) => {
       return res.json({ ok: true, period, summary: publicDriverEarnings(totalSnap.data()), days: [], saldoApp });
     }
 
-    const count = period === '30days' ? 30 : period === '7days' ? 7 : 1;
+    // Hoje tambem le ontem (1 documento a mais), para o app comparar.
+    const count = period === '30days' ? 30 : period === '7days' ? 7 : 2;
     const dayKeys = Array.from({ length: count }, (_, index) => dateKeySaoPaulo(new Date(Date.now() - index * 86400000))).reverse();
     const chaveResumo = `${driverCpf}:${period}:${dayKeys[dayKeys.length - 1]}`;
     const resumoGuardado = driverSummaryCache.get(chaveResumo);
@@ -7088,12 +7285,18 @@ app.post('/api/drivers/:cpf/earnings/summary', async (req, res, next) => {
       if (driverSummaryCache.size > 5000) driverSummaryCache.delete(driverSummaryCache.keys().next().value);
     }
     const total = emptyDriverEarnings();
-    const days = snapshots.map((snapshot, index) => {
+    let days = snapshots.map((snapshot, index) => {
       const raw = snapshot.exists ? snapshot.data() || {} : emptyDriverEarnings();
-      mergeDriverEarningsSummary(total, raw);
-      return { dia: dayKeys[index], ...publicDriverEarnings(raw) };
+      return { dia: dayKeys[index], raw, ...publicDriverEarnings(raw) };
     });
-    return res.json({ ok: true, period, summary: publicDriverEarnings(total), days, saldoApp });
+    let ontem = null;
+    if (period === 'today') {
+      ontem = days.length > 1 ? (({ raw, ...dia }) => dia)(days[0]) : null;
+      days = days.slice(-1);
+    }
+    days.forEach((dia) => mergeDriverEarningsSummary(total, dia.raw));
+    days = days.map(({ raw, ...dia }) => dia);
+    return res.json({ ok: true, period, summary: publicDriverEarnings(total), days, ontem, saldoApp });
   } catch (error) {
     return next(error);
   }
@@ -7120,7 +7323,8 @@ async function loadDriverDebtSummary(cpf) {
   const centavos = Math.round(Number(driverSnap.data()?.dividaAppCentavos || 0));
   // Devendo e com corrida paga na conta da MotoJa (sem Mercado Pago dele): a divida sai do repasse.
   let repasseAPagar = 0;
-  if (centavos > 0) {
+  {
+    // Sempre (a tela de Ganhos mostra "MotoJa te repassa"); a resposta fica guardada (driverDebtCache).
     const repasses = await db.collection('repassesMotoboy').where('motoboyCpf', '==', cpf).where('status', '==', 'a_pagar').limit(30).get().catch(() => null);
     repasseAPagar = money((repasses?.docs || []).reduce((sum, doc) => sum + Number(doc.data()?.valor || 0), 0));
   }
@@ -7144,6 +7348,21 @@ app.post('/api/drivers/:cpf/earnings/history', async (req, res, next) => {
     await initializeDriverEarnings(driverCpf);
 
     const historyRef = driverEarningsRef(driverCpf).collection('historico');
+    // Extrato do periodo (hoje, 7 ou 30 dias): todos os servicos de uma vez, guardado ate um
+    // ganho novo (forgetDriverSummary). Sem desde: a lista paginada de antes ("Geral").
+    const desdeDias = [1, 7, 30].includes(Number(req.body.dias)) ? Number(req.body.dias) : 0;
+    if (desdeDias) {
+      const desdeDia = dateKeySaoPaulo(new Date(Date.now() - (desdeDias - 1) * 86400000));
+      const desdeMs = new Date(`${desdeDia}T00:00:00-03:00`).getTime();
+      const chave = `${driverCpf}:extrato:${desdeDia}`;
+      const guardado = driverSummaryCache.get(chave);
+      let docs = guardado && Date.now() - guardado.at < DRIVER_SUMMARY_CACHE_MS ? guardado.docs : null;
+      if (!docs) {
+        docs = (await historyRef.where('finalizadaEmMs', '>=', desdeMs).orderBy('finalizadaEmMs', 'desc').limit(400).get()).docs;
+        driverSummaryCache.set(chave, { at: Date.now(), docs });
+      }
+      return res.json({ ok: true, items: docs.map((docSnap) => earningHistoryItem(docSnap)), nextCursor: '', desdeMs });
+    }
     let query = historyRef.orderBy('finalizadaEmMs', 'desc');
     const cursor = cleanText(req.body.cursor, 140);
     if (cursor) {
@@ -7153,26 +7372,35 @@ app.post('/api/drivers/:cpf/earnings/history', async (req, res, next) => {
     const snapshot = await query.limit(21).get();
     const hasMore = snapshot.docs.length > 20;
     const visible = snapshot.docs.slice(0, 20);
-    const items = visible.map((docSnap) => {
-      const data = docSnap.data() || {};
-      return {
-        id: docSnap.id,
-        tipo: data.tipo === 'entrega' ? 'entrega' : 'corrida',
-        quantidadeEntregas: data.tipo === 'entrega' ? Math.max(0, Number(data.quantidadeEntregas ?? 1)) : 0,
-        entregaNaNota: data.entregaNaNota === true,
-        titulo: cleanText(data.titulo, 100),
-        origem: cleanText(data.origem, 180),
-        destino: cleanText(data.destino, 180),
-        ganho: money(Number(data.ganhoCentavos || 0) / 100),
-        quilometros: Math.round(Number(data.quilometrosMetros || 0) / 10) / 100,
-        finalizadaEmMs: Number(data.finalizadaEmMs || 0)
-      };
-    });
+    const items = visible.map((docSnap) => earningHistoryItem(docSnap));
     return res.json({ ok: true, items, nextCursor: hasMore && visible.length ? visible[visible.length - 1].id : '' });
   } catch (error) {
     return next(error);
   }
 });
+
+function earningHistoryItem(docSnap) {
+  const data = docSnap.data() || {};
+  const ganhoCentavos = Number(data.ganhoCentavos || 0);
+  const cobradoCentavos = Number(data.valorCobradoCentavos || 0);
+  return {
+    id: docSnap.id,
+    tipo: data.tipo === 'entrega' ? 'entrega' : 'corrida',
+    quantidadeEntregas: data.tipo === 'entrega' ? Math.max(0, Number(data.quantidadeEntregas ?? 1)) : 0,
+    entregaNaNota: data.entregaNaNota === true,
+    titulo: cleanText(data.titulo, 100),
+    origem: cleanText(data.origem, 180),
+    destino: cleanText(data.destino, 180),
+    ganho: money(ganhoCentavos / 100),
+    quilometros: Math.round(Number(data.quilometrosMetros || 0) / 10) / 100,
+    finalizadaEmMs: Number(data.finalizadaEmMs || 0),
+    forma: ['dinheiro', 'pix', 'cartao', 'app', 'empresa'].includes(data.forma) ? data.forma : '',
+    recebedor: ['motoja', 'mercadopago'].includes(data.recebedor) ? data.recebedor : '',
+    // Corrida: o que o cliente pagou e a taxa do app (no dinheiro, ela vira saldo devedor).
+    valorCobrado: cobradoCentavos ? money(cobradoCentavos / 100) : 0,
+    taxaApp: cobradoCentavos > ganhoCentavos ? money((cobradoCentavos - ganhoCentavos) / 100) : 0
+  };
+}
 
 // Consulta pequena para encerrar o alarme local por estado confirmado no servidor.
 // Pedidos do Food ainda livres para este motoboy (para o alerta contínuo). Guarda 3 s por motoboy,
@@ -9505,6 +9733,9 @@ app.post('/api/admin/rides/:rideId/payment/sync', assertOwner, async (req, res, 
         ...(ride.pagamentoConfirmadoEm ? {} : { pagamentoConfirmadoEm: admin.firestore.FieldValue.serverTimestamp() }),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
+      if (ride.status === 'finalizada') {
+        await markEarningPayment(rideRef.id, ride.motoboyCpf, { ...ride, pagamento: { ...(ride.pagamento || {}), ...mpPaymentForm(approvedPayment), status: 'approved' } });
+      }
       const dividaBaixada = await settleRideDebtFromPayment(rideRef, approvedPayment).catch((error) => {
         console.error('debt settle on sync failed', rideRef.id, error?.message);
         return 0;
@@ -12704,7 +12935,7 @@ app.post('/api/rides/:rideId/cash-reported', async (req, res, next) => {
       const split = rideSplitAmounts(ride.pagamento?.total || ride.valor, ride.km, timestampMs(ride.criadaEm));
       appFeeDevida = split.appFee;
       const agora = Date.now();
-      await recordDriverEarning(tx, driverCpf, driverEarningEvent('corrida', ref.id, { ...ride, ganhoMotoboy: split.driverAmount }, agora));
+      await recordDriverEarning(tx, driverCpf, driverEarningEvent('corrida', ref.id, { ...ride, pagoEmDinheiro: true, ganhoMotoboy: split.driverAmount }, agora));
       tx.set(ref, {
         status: 'finalizada',
         finalizadaEm: admin.firestore.FieldValue.serverTimestamp(),
@@ -15251,7 +15482,9 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
     const rideRef = db.collection('corridas').doc(rideId);
     const usageRef = db.collection('mercadoPagoPagamentos').doc(hashSecret(String(payment.id)));
     const repasseRef = db.collection('repassesMotoboy').doc(rideId);
+    let extratoPagamento = null;
     await db.runTransaction(async (tx) => {
+      extratoPagamento = null;
       const [rideSnap, usageSnap, repasseSnap] = await Promise.all([tx.get(rideRef), tx.get(usageRef), tx.get(repasseRef)]);
       if (!rideSnap.exists) {
         const error = new Error('Corrida do pagamento nao encontrada.');
@@ -15349,6 +15582,7 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
           : admin.firestore.FieldValue.delete(),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
+      if (pagamentoAprovado && valorConfere && ride.status === 'finalizada') extratoPagamento = { cpf: rideDriverCpf, ride: { ...ride, pagamento } };
       // Pago na conta da MotoJa: a parte do motoboy vira repasse a pagar.
       if (paymentSource === 'owner' && pagamento.receiver === 'motoja_owner') {
         const repasse = repasseUpdate(repasseSnap.exists ? repasseSnap.data() : null, {
@@ -15357,6 +15591,7 @@ app.post('/api/mercadopago/webhook', async (req, res, next) => {
         if (repasse) tx.set(repasseRef, repasse, { merge: true });
       }
     });
+    if (extratoPagamento) await markEarningPayment(rideId, extratoPagamento.cpf, extratoPagamento.ride);
 
     res.json({ ok: true });
   } catch (error) {

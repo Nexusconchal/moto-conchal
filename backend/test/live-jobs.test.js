@@ -193,7 +193,7 @@ test('cidade pelo GPS (a cada 5 min): so grava e so apaga o login DESTE motoboy 
     driverAvailability: { cities() {} }, rideCityLabel: (c) => c,
     app: { post: (_p, h) => { ctx.handler = h; } }
   });
-  vm.runInContext(slice("app.post('/api/drivers/:cpf/location-city'", "app.post('/api/drivers/:cpf/earnings/summary'"), ctx);
+  vm.runInContext(slice("app.post('/api/drivers/:cpf/location-city'", '// ---------- SOS do motoboy'), ctx);
   const call = async (lat) => { const out = {}; const res = { status: (c) => { out.status = c; return res; }, json: (d) => { out.data = d; return res; } };
     await ctx.handler({ params: { cpf: '11122233344' }, body: { lat, lon: -47.17 } }, res, (e) => { throw e; }); return out; };
   await call(-22.33);
