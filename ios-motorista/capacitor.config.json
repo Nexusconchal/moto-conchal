@@ -1,0 +1,40 @@
+{
+  "appId": "br.com.nexusconchal.motoja.motorista",
+  "appName": "MotoJá Motorista",
+  "webDir": "www",
+  "server": {
+    "url": "https://nexusmotoja.com.br/motoboy.html",
+    "cleartext": false,
+    "errorPath": "offline.html",
+    "allowNavigation": [
+      "nexusmotoja.com.br",
+      "www.nexusmotoja.com.br",
+      "nexusconchal.github.io"
+    ]
+  },
+  "ios": {
+    "appendUserAgent": "MotoJaMotoristaiOS/1",
+    "contentInset": "never",
+    "backgroundColor": "#000000"
+  },
+  "plugins": {
+    "FirebaseMessaging": {
+      "presentationOptions": [
+        "badge",
+        "sound",
+        "alert"
+      ]
+    }
+  },
+  "experimental": {
+    "ios": {
+      "spm": {
+        "packageOptions": {
+          "@capacitor-firebase/messaging": {
+            "symlink": true
+          }
+        }
+      }
+    }
+  }
+}

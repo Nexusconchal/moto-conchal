@@ -1,3 +1,4 @@
+import { iosAlert } from '../src/ios-push.js';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
@@ -21,7 +22,7 @@ export function harness(entries = {}) {
     }); queue=run.catch(()=>{}); return run;
   }};
   const money=value=>Math.round(Number(value||0)*100)/100;
-  const context=vm.createContext({ liveJobs, activeJobsSnapshot,liveLocationFor:(p,s)=>s,...deposit,...completion,db,console,URL,Map,Set,Date,Number,String,Math,
+  const context=vm.createContext({ iosAlert, liveJobs, activeJobsSnapshot,liveLocationFor:(p,s)=>s,...deposit,...completion,db,console,URL,Map,Set,Date,Number,String,Math,
     crypto,hashSecret:value=>crypto.createHash('sha256').update(value).digest('hex'),
     onlyDigits:value=>String(value||'').replace(/\D/g,''),money,cleanText:value=>String(value||'').trim(),timestampMs:Number,
     serializeFirestore:value=>value,adminStateCache:null,process:{env:{MP_OWNER_ACCESS_TOKEN:'test-only-token'}},

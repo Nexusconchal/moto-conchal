@@ -16,13 +16,68 @@
   let lastGpsAt = 0;
   let gpsDenied = false;
 
-  function restartGps() {
-    if (gpsWatchId !== null) navigator.geolocation.clearWatch(gpsWatchId);
+  // App de iPhone: o GPS continua com a tela apagada ou com o Waze/Google Maps aberto (plugin
+  // nativo, barra azul no topo do iPhone). Liga e desliga junto com a corrida/entrega, como aqui.
+  // No Android e no navegador continua o GPS do navegador de sempre.
+  let nativeWatchId = null;
+  let gpsRun = 0;
+  function nativeGps() {
+    const cap = window.Capacitor;
+    return cap?.isNativePlatform?.() && cap.getPlatform?.() === 'ios' && cap.Plugins?.BackgroundGeolocation
+      ? cap.Plugins.BackgroundGeolocation
+      : null;
+  }
+  function stopGpsWatch() {
+    gpsRun += 1;
+    if (gpsWatchId !== null && gpsWatchId !== 'nativo') navigator.geolocation.clearWatch(gpsWatchId);
+    if (nativeWatchId) nativeGps()?.removeWatcher({ id: nativeWatchId }).catch(() => {});
     gpsWatchId = null;
+    nativeWatchId = null;
+  }
+  function startNativeGps(bg) {
+    const run = gpsRun;
+    gpsWatchId = 'nativo';
+    bg.addWatcher({
+      backgroundTitle: 'MotoJá: corrida em andamento',
+      backgroundMessage: 'Enviando sua posição para o cliente acompanhar.',
+      requestPermissions: true,
+      stale: false,
+      distanceFilter: 15
+    }, (location, error) => {
+      if (run !== gpsRun) return;
+      if (error) {
+        gpsDenied = error.code === 'NOT_AUTHORIZED';
+        gpsSubscribers.forEach((subscriber) => subscriber.error({ code: gpsDenied ? 1 : 2 }));
+        return;
+      }
+      if (!location) return;
+      lastGpsAt = Date.now();
+      if (!Number.isFinite(location.accuracy) || location.accuracy > 100) {
+        gpsSubscribers.forEach((subscriber) => subscriber.error({ code: 2 }));
+        return;
+      }
+      const position = {
+        coords: { latitude: location.latitude, longitude: location.longitude, accuracy: location.accuracy, altitude: location.altitude ?? null, speed: location.speed ?? null, heading: location.bearing ?? null },
+        timestamp: Number(location.time) || Date.now()
+      };
+      gpsSubscribers.forEach((subscriber) => subscriber.next(position));
+    }).then((id) => {
+      if (run === gpsRun && gpsWatchId === 'nativo') nativeWatchId = id;
+      else bg.removeWatcher({ id }).catch(() => {});
+    }).catch(() => {
+      if (run === gpsRun) gpsSubscribers.forEach((subscriber) => subscriber.error({ code: 2 }));
+    });
+  }
+
+  function restartGps() {
+    stopGpsWatch();
     // Com corrida/entrega em andamento mandando GPS pro cliente, a tela fica acesa.
     if (gpsSubscribers.size && !gpsDenied) window.MotojaTelaAcesa?.ligar('gps');
     else window.MotojaTelaAcesa?.desligar('gps');
-    if (!gpsSubscribers.size || !navigator.geolocation || gpsDenied) return;
+    if (!gpsSubscribers.size || gpsDenied) return;
+    const bg = nativeGps();
+    if (bg) { lastGpsAt = Date.now(); startNativeGps(bg); return; }
+    if (!navigator.geolocation) return;
     lastGpsAt = Date.now();
     gpsWatchId = navigator.geolocation.watchPosition((position) => {
       lastGpsAt = Date.now();
@@ -47,10 +102,7 @@
 
   function unsubscribeGps(subscriber) {
     gpsSubscribers.delete(subscriber);
-    if (!gpsSubscribers.size && gpsWatchId !== null) {
-      navigator.geolocation.clearWatch(gpsWatchId);
-      gpsWatchId = null;
-    }
+    if (!gpsSubscribers.size && gpsWatchId !== null) stopGpsWatch();
   }
 
   function setButtonState(button, disabled, text) {
