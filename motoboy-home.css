@@ -155,6 +155,21 @@ body.mjhome-ativo #dicaAvisos {
 .mjhome[data-estado="conectando"] .mjhome-searching {
   background: #3a3f4b;
 }
+/* Fora da area atendida: aviso laranja, sem o pulso de "procurando". */
+.mjhome[data-estado="fora"] .mjhome-searching {
+  background: #9a5200;
+}
+.mjhome[data-estado="fora"] .mjhome-radar {
+  animation: none;
+  background: #ffd27a;
+}
+.mjhome-searching [data-home-conferir] {
+  background: #fff;
+  color: #8a4a00;
+}
+.mjhome-searching [data-home-conferir][hidden] {
+  display: none;
+}
 .mjhome-searching > div {
   flex: 1;
   min-width: 0;
@@ -162,6 +177,9 @@ body.mjhome-ativo #dicaAvisos {
 .mjhome-searching b {
   display: block;
   font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .mjhome-searching small {
   display: block;
@@ -252,6 +270,7 @@ body.mjhome-ativo #dicaAvisos {
 }
 .mjhome[data-estado="disponivel"] .mjhome-sheet,
 .mjhome[data-estado="ocupado"] .mjhome-sheet,
+.mjhome[data-estado="fora"] .mjhome-sheet,
 .mjhome[data-estado="conectando"] .mjhome-sheet {
   padding-top: 14px;
 }
@@ -343,6 +362,10 @@ body.mjhome-ativo #dicaAvisos {
 }
 .mjhome[data-estado="ocupado"] .mjhome-dot {
   background: #ff9d00;
+}
+.mjhome[data-estado="fora"] .mjhome-dot {
+  background: #ffb020;
+  box-shadow: 0 0 0 4px rgba(255, 176, 32, 0.22);
 }
 .mjhome-active {
   display: flex;

@@ -20,6 +20,7 @@
   let seguir = true;
   let ganhosTimer = null;
   let gpsPermitido = null;
+  let conferindo = false;
 
   const $ = (sel) => root?.querySelector(sel);
 
@@ -56,6 +57,7 @@
         <div class="mjhome-searching" data-home-procurando hidden>
           <span class="mjhome-radar" aria-hidden="true"></span>
           <div><b data-home-procurando-titulo>Procurando chamadas</b><small data-home-procurando-sub></small></div>
+          <button type="button" data-home-conferir hidden title="Conferir o GPS agora">Conferir</button>
           <button type="button" data-home-pausar>Pausar</button>
         </div>
         <div class="mjhome-chip" data-home-perto hidden></div>
@@ -96,7 +98,7 @@
       <div class="mjhome-prefs" data-home-prefs hidden>
         <div class="mjhome-prefs-sheet" role="dialog" aria-label="Preferências">
           <div class="mjhome-prefs-h"><h2>Preferências</h2><button type="button" class="mjhome-round" data-home-prefs-fechar aria-label="Fechar">✕</button></div>
-          <p class="mjhome-prefs-txt">Escolha de onde você quer receber corridas. Entregas para comércios chegam de todas as cidades atendidas.</p>
+          <p class="mjhome-prefs-txt">A cidade vem do GPS: você recebe corridas e entregas da cidade onde está (Conchal, Aguaí ou Eng. Coelho). Fora delas, as chamadas param e voltam sozinhas quando você volta.</p>
           <div data-home-cidades></div>
         </div>
       </div>`;
@@ -203,7 +205,10 @@
     const go = $('[data-home-go]');
     const procurando = $('[data-home-procurando]');
     let estado = 'indisponivel';
+    // GPS fora de Conchal, Aguai e Eng. Coelho: nao chega chamada. Nao pode parecer "procurando".
+    const fora = d.ligado && opcoes?.foraDaArea?.() === true;
     if (d.ligado && d.ocupado) estado = 'ocupado';
+    else if (fora) estado = 'fora';
     else if (d.ligado && d.online) estado = 'disponivel';
     else if (d.ligado) estado = 'conectando';
     root.dataset.estado = estado;
@@ -215,20 +220,30 @@
     procurando.hidden = !d.ligado;
     $('[data-home-procurando-titulo]').textContent = estado === 'ocupado'
       ? 'Em atendimento'
-      : estado === 'conectando' ? 'Reconectando…' : 'Procurando chamadas';
-    $('[data-home-procurando-sub]').textContent = [opcoes?.resumoCidades?.(), resumoServicos()].filter(Boolean).join(' · ');
+      : estado === 'fora' ? 'Fora da área'
+        : estado === 'conectando' ? 'Reconectando…' : 'Procurando chamadas';
+    $('[data-home-procurando-sub]').textContent = estado === 'fora'
+      ? 'Sem chamadas aqui · volte para Conchal, Aguaí ou Eng. Coelho'
+      : [opcoes?.resumoCidades?.(), resumoServicos()].filter(Boolean).join(' · ');
     $('[data-home-pausar]').disabled = !d.pronto;
+    const conferir = $('[data-home-conferir]');
+    conferir.hidden = estado !== 'fora';
+    conferir.disabled = !!conferindo;
+    conferir.textContent = conferindo ? 'Conferindo…' : 'Conferir';
 
     const titulos = {
       indisponivel: 'Você está indisponível',
       conectando: 'Disponível · reconectando',
       disponivel: 'Você está disponível',
-      ocupado: 'Em atendimento'
+      ocupado: 'Em atendimento',
+      fora: 'Fora da área atendida'
     };
     $('[data-home-estado]').textContent = titulos[estado];
     $('[data-home-estado-sub]').textContent = estado === 'indisponivel'
       ? (d.pronto ? 'Toque no botão para receber chamadas' : d.texto || 'Conectando ao servidor…')
-      : d.texto;
+      : estado === 'fora'
+        ? 'Você não recebe chamadas aqui. Quando o GPS mostrar Conchal, Aguaí ou Eng. Coelho, elas voltam sozinhas.'
+        : d.texto;
     desenharEu();
     renderAtivo();
   }
@@ -422,7 +437,21 @@
 
   function renderPreferencias() {
     if (!root) return;
-    $('[data-home-pref-sub]').textContent = `Corridas de ${opcoes?.resumoCidades?.() || 'Conchal'}`;
+    $('[data-home-pref-sub]').textContent = opcoes?.foraDaArea?.() === true
+      ? 'Fora da área atendida · sem chamadas agora'
+      : `Chamadas de ${opcoes?.resumoCidades?.() || 'Conchal'} (pelo GPS)`;
+  }
+
+  // "Ja voltei": confere o GPS na hora, sem esperar a conferida automatica.
+  async function conferirCidade() {
+    if (conferindo || !opcoes?.conferirCidade) return;
+    conferindo = true;
+    renderDisponibilidade();
+    try { await opcoes.conferirCidade(); } finally {
+      conferindo = false;
+      renderDisponibilidade();
+      renderPreferencias();
+    }
   }
 
   function adotarCidades() {
@@ -462,6 +491,7 @@
       root.dataset.montado = '1';
       $('[data-home-go]').onclick = () => lerDisponibilidade().sim?.click();
       $('[data-home-pausar]').onclick = () => lerDisponibilidade().nao?.click();
+      $('[data-home-conferir]').onclick = conferirCidade;
       $('[data-home-ganhos]').onclick = () => document.getElementById('nav-ganhos')?.click();
       $('[data-home-perfil]').onclick = () => document.getElementById('nav-perfil')?.click();
       $('[data-home-centralizar]').onclick = (event) => {

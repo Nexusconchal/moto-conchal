@@ -22,7 +22,7 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="./motoboy-nav.css?v=4" />
-    <link rel="stylesheet" href="./motoboy-home.css?v=5" />
+    <link rel="stylesheet" href="./motoboy-home.css?v=6" />
     <style>
       * {
         box-sizing: border-box;
@@ -775,13 +775,13 @@
         font-size: 0.65rem;
         box-shadow: none;
       }
-      .driver-bottom-nav button:before { font-size: 1.08rem; color: #a4a7b0; }
-      .driver-bottom-nav button:nth-child(1):before { content: "⌂"; }
-      .driver-bottom-nav button:nth-child(2):before { content: "▤"; }
-      .driver-bottom-nav button:nth-child(3):before { content: "$"; }
-      .driver-bottom-nav button:nth-child(4):before { content: "●"; }
+      /* Icones desenhados (casa, lista, carteira, pessoa): pegam a cor do texto da aba. */
+      .driver-bottom-nav button:before { content: ""; width: 22px; height: 22px; background: currentColor; -webkit-mask: var(--nav-ic) center / contain no-repeat; mask: var(--nav-ic) center / contain no-repeat; }
+      .driver-bottom-nav button:nth-child(1) { --nav-ic: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 10.5 12 3l9 7.5'/%3E%3Cpath d='M5 9.5V20h5v-6h4v6h5V9.5'/%3E%3C/svg%3E"); }
+      .driver-bottom-nav button:nth-child(2) { --nav-ic: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='3' width='16' height='18' rx='2.5'/%3E%3Cpath d='M8 8h8M8 12h8M8 16h5'/%3E%3C/svg%3E"); }
+      .driver-bottom-nav button:nth-child(3) { --nav-ic: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7.5A2.5 2.5 0 0 1 6.5 5H18v4'/%3E%3Crect x='4' y='7' width='17' height='13' rx='2.5'/%3E%3Cpath d='M16 13.5h2'/%3E%3C/svg%3E"); }
+      .driver-bottom-nav button:nth-child(4) { --nav-ic: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='4'/%3E%3Cpath d='M4.5 20.5c1.2-3.8 4-5.5 7.5-5.5s6.3 1.7 7.5 5.5'/%3E%3C/svg%3E"); }
       .driver-bottom-nav button.active { color: var(--driver-orange-2); background: rgba(255, 114, 0, 0.1); }
-      .driver-bottom-nav button.active:before { color: var(--driver-orange-2); }
       .boot-logo { padding: 6px; background: #050505; border: 1px solid rgba(255, 157, 0, 0.42); overflow: hidden; }
       .boot-logo img { width: 100%; height: 100%; object-fit: contain; }
       @media (max-width: 520px) {
@@ -1079,7 +1079,7 @@
     <script src="./motoboy-avisos.js?v=5"></script>
     <script src="./motoboy-tela-acesa.js?v=1" defer></script>
     <script src="./motoboy-nav.js?v=ligar-2" defer></script>
-    <script src="./motoboy-home.js?v=7" defer></script>
+    <script src="./motoboy-home.js?v=8" defer></script>
     <script src="./motoboy-food.js?v=5"></script>
     <script type="module">
       let cidadesAtivas = {
@@ -1191,9 +1191,15 @@
         }
       }
       // Enquanto Disponivel, confere a cidade de novo: se ele mudou de cidade, troca sozinho.
+      // Fora da area confere a cada 2 min (as chamadas voltam logo que ele volta); dentro, a cada 5.
+      let cidadeConferidaEm = Date.now();
       setInterval(() => {
-        if (motoboyCpf && window.MotojaDriverAvailability?.canReceive()) confirmarCidadePeloGps({ silencioso: true });
-      }, 5 * 60000);
+        if (!motoboyCpf || !window.MotojaDriverAvailability?.canReceive()) return;
+        const fora = !Object.values(cidadesAtivas).some(Boolean);
+        if (Date.now() - cidadeConferidaEm < (fora ? 2 : 5) * 60000) return;
+        cidadeConferidaEm = Date.now();
+        confirmarCidadePeloGps({ silencioso: true });
+      }, 30000);
       async function carregarCidadesAtivas() {
         if (!motoboyCpf || cidadesCarregadasCpf === motoboyCpf) return;
         montarSeletorCidades();
@@ -4010,6 +4016,9 @@
           nome: () => motoboy,
           foto: () => motoboyFoto,
           resumoCidades: () => nomesCidadesAtivas(),
+          // GPS em outra cidade (ex.: Araras): a tela mostra o aviso laranja, nao "Procurando chamadas".
+          foraDaArea: () => !Object.values(cidadesAtivas).some(Boolean),
+          conferirCidade: () => confirmarCidadePeloGps(),
           // Moto taxi / Entregas trocado: a lista de chamadas abertas recarrega na hora.
           aoMudarServicos: () => {
             limparCache();
