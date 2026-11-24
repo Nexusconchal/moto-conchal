@@ -820,3 +820,90 @@ html.mjnav-aberto body {
   font: inherit;
   font-size: 13px;
 }
+/* Lote pela nota: lista recolhida deixa so a entrega da vez e aumenta o mapa. */
+.mjnav-grab-zona {
+  margin: -12px -18px 0;
+  padding: 12px 18px 6px;
+  cursor: pointer;
+  touch-action: none;
+}
+.mjnav-grab-zona .mjnav-grab {
+  width: 48px;
+  height: 5px;
+  background: #3a3e49;
+}
+.mjnav-sheet.compacta .mjnav-eta {
+  margin-bottom: 8px;
+}
+.mjnav-sheet.compacta .mjnav-eta-big {
+  font-size: 26px;
+}
+.mjnav-sheet.compacta .mjnav-client {
+  padding: 7px 10px;
+  margin-bottom: 8px;
+}
+.mjnav-sheet.compacta .mjnav-avatar {
+  width: 34px;
+  height: 34px;
+  font-size: 14px;
+}
+.mjnav-sheet.compacta .mjnav-client-icons .mjnav-round {
+  width: 34px;
+  height: 34px;
+  font-size: 15px;
+}
+.mjnav-paradas.compacta {
+  margin-bottom: 8px;
+}
+.mjnav-paradas.compacta .mjnav-parada {
+  margin-bottom: 0;
+  padding: 10px;
+}
+.mjnav-paradas.compacta .mjnav-parada-txt b {
+  font-size: 14.5px;
+}
+.mjnav-paradas-head > div {
+  min-width: 0;
+}
+.mjnav-paradas-head > div span {
+  display: block;
+  margin-top: 1px;
+}
+.mjnav-paradas-head {
+  align-items: center;
+}
+.mjnav-actions.tres {
+  grid-template-columns: 1.25fr 1fr 1fr;
+}
+.mjnav-actions.tres .mjnav-act {
+  padding: 11px 4px;
+  white-space: nowrap;
+}
+.mjnav-notas small {
+  font-size: 11px;
+  color: #9aa0ab;
+  font-weight: 700;
+}
+.mjnav-notas:only-child {
+  grid-column: 1 / -1;
+}
+.mjnav-actions.tres .mjnav-act,
+.mjnav-notas {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.mjnav-parada.fim {
+  border-color: rgba(53, 201, 121, 0.7);
+  background: rgba(53, 201, 121, 0.08);
+}
+.mjnav-parada.fim .mjnav-num {
+  background: #35c979;
+  color: #06210f;
+}
+.mjnav-actions.tres .mjnav-act {
+  box-sizing: border-box;
+  min-height: 44px;
+  line-height: 1.2;
+}

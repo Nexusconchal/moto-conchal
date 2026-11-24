@@ -466,6 +466,9 @@
     outro: 'Outro problema'
   };
   let paradaProblema = '';
+  // Lista das notas recolhida (padrao): na folha fica so a entrega da vez e o
+  // mapa ganha espaco. O botao "Notas" ou puxar a folha para cima abre tudo.
+  let listaAberta = '';
 
   // Celular trocado ou app reinstalado: a lista volta do servidor.
   function restaurarDoServidor(cfg) {
@@ -596,15 +599,64 @@
     });
   }
 
-  function htmlParadasNav(cfg) {
-    if (!cfg.paradas) return '';
+  function estadoParadas(cfg) {
     const dados = lerParadas(cfg.id);
-    const total = Number(cfg.paradas.total || 0);
+    const total = Number(cfg.paradas?.total || 0);
     const pendentes = dados.lista.filter((p) => !p.entregue && !p.problema);
     const comProblema = dados.lista.filter((p) => !p.entregue && p.problema);
     const perto = paradaMaisPerta(pendentes);
+    const destaque = pendentes.find((p) => p.id === dados.ativa) || perto || pendentes[0] || comProblema[0] || null;
     const faltam = total - dados.lista.length;
     const entregues = dados.lista.filter((p) => p.entregue).length;
+    // Faltando endereco, com o campo aberto ou com problema em outra parada, a lista fica aberta.
+    const forcada = faltam > 0 || paradaFormAberto === cfg.id || (!!paradaProblema && paradaProblema !== destaque?.id);
+    return { dados, total, pendentes, comProblema, perto, destaque, faltam, entregues, forcada, aberta: forcada || listaAberta === cfg.id };
+  }
+
+  function linhaParada(p, estado, compacta) {
+    const { dados, pendentes, perto } = estado;
+    const numero = dados.lista.indexOf(p) + 1;
+    const ativa = !p.entregue && !p.problema && p.id === dados.ativa;
+    let info;
+    if (p.entregue) {
+      info = esc(`Entregue${p.entregueEm ? ` ${new Date(p.entregueEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}`);
+    } else if (p.problema) {
+      info = `<em class="mjnav-problema-tag">⚠️ ${esc(MOTIVOS_PROBLEMA[p.problema] || 'Problema')} · loja avisada</em>`;
+    } else {
+      const dist = pontoValido(p) ? textoKm(distanciaAteMim(p)) : 'sem mapa';
+      const pelaRua = Number.isFinite(distRua.metros.get(p.id)) ? ' pela rua' : '';
+      const marcas = [p === perto && pendentes.length > 1 ? 'mais perto' : '', ativa ? 'indo agora' : ''].filter(Boolean).join(' · ');
+      info = `${esc(dist === '-' ? '' : dist)}${dist !== '-' && dist !== 'sem mapa' ? `${pelaRua}` : ''}${marcas ? `${dist === '-' ? '' : ' · '}<em>${marcas}</em>` : dist !== '-' && dist !== 'sem mapa' ? ' de você' : ''}`;
+    }
+    // Recolhida: sem "Ir" e sem ✕ (ficam na lista inteira), para nao apagar endereco sem querer.
+    const botoes = p.entregue
+      ? `<button type="button" class="mjnav-mini" data-mjnav-desfazer="${esc(p.id)}" aria-label="Desfazer entrega ${numero}">↺</button>`
+      : p.problema
+        ? `<button type="button" class="mjnav-mini" data-mjnav-voltar="${esc(p.id)}" aria-label="Voltar a entrega ${numero} para a fila">↺ Fila</button><button type="button" class="mjnav-mini ok" data-mjnav-ok="${esc(p.id)}" aria-label="Marcar entrega ${numero} como entregue">✓</button>`
+        : `${ativa || compacta ? '' : `<button type="button" class="mjnav-mini" data-mjnav-ir="${esc(p.id)}">Ir</button>`}<button type="button" class="mjnav-mini ok" data-mjnav-ok="${esc(p.id)}" aria-label="Marcar entrega ${numero} como entregue">${ativa || compacta ? '✓ Entregue' : '✓'}</button><button type="button" class="mjnav-mini aviso" data-mjnav-problema="${esc(p.id)}" aria-label="Não encontrei o cliente da entrega ${numero}">⚠️</button>${compacta ? '' : `<button type="button" class="mjnav-mini x" data-mjnav-del="${esc(p.id)}" aria-label="Remover endereço ${numero}">✕</button>`}`;
+    const painel = paradaProblema === p.id && !p.entregue
+      ? `<div class="mjnav-problema" data-mjnav-problema-painel="${esc(p.id)}">
+          <b>Qual o problema na entrega ${numero}?</b>
+          <div class="mjnav-motivos">${Object.entries(MOTIVOS_PROBLEMA).map(([chave, texto]) => `<button type="button" class="mjnav-mini" data-mjnav-motivo="${chave}">${esc(texto)}</button>`).join('')}</div>
+          <input type="text" data-mjnav-problema-obs maxlength="200" placeholder="Detalhe para a loja (opcional)">
+          <div class="mjnav-motivos"><button type="button" class="mjnav-mini laranja" data-mjnav-problema-enviar disabled>Avisar a loja</button><button type="button" class="mjnav-mini" data-mjnav-problema-cancelar>Cancelar</button></div>
+        </div>`
+      : '';
+    return `<div class="mjnav-parada${ativa || (compacta && !p.problema) ? ' ativa' : ''}${p.entregue ? ' feita' : ''}${p.problema ? ' problema' : ''}">
+      <span class="mjnav-num">${p.entregue ? '✓' : numero}</span>
+      <div class="mjnav-parada-txt"><b>${esc(p.texto)}</b><span>${info}</span></div>
+      ${botoes}
+    </div>${painel}`;
+  }
+
+  function htmlParadasNav(cfg) {
+    if (!cfg.paradas) return '';
+    const estado = estadoParadas(cfg);
+    const { dados, total, pendentes, comProblema, faltam, entregues } = estado;
+    if (!estado.aberta) {
+      const tudoFeito = `<div class="mjnav-parada fim"><span class="mjnav-num">✓</span><div class="mjnav-parada-txt"><b>${entregues === 1 ? 'Entrega marcada' : `As ${entregues} entregas marcadas`}</b><span>Agora toque no botão verde para concluir.</span></div></div>`;
+      return `<div class="mjnav-paradas compacta">${estado.destaque ? linhaParada(estado.destaque, estado, true) : tudoFeito}</div>`;
+    }
     const resumo = faltam > 0
       ? `${dados.lista.length} de ${total} endereços · ${faltam === 1 ? 'falta 1' : `faltam ${faltam}`}`
       : `${entregues} de ${dados.lista.length} entregues${comProblema.length ? ` · ${comProblema.length} com problema` : ''}`;
@@ -612,42 +664,10 @@
     const ordenadas = [...pendentes]
       .sort((a, b) => (pontoValido(ultimaPosicao) ? distanciaAteMim(a) - distanciaAteMim(b) : 0) || 0)
       .concat(comProblema, dados.lista.filter((p) => p.entregue));
-    const linhas = ordenadas.map((p) => {
-      const numero = dados.lista.indexOf(p) + 1;
-      const ativa = !p.entregue && !p.problema && p.id === dados.ativa;
-      let info;
-      if (p.entregue) {
-        info = esc(`Entregue${p.entregueEm ? ` ${new Date(p.entregueEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}`);
-      } else if (p.problema) {
-        info = `<em class="mjnav-problema-tag">⚠️ ${esc(MOTIVOS_PROBLEMA[p.problema] || 'Problema')} · loja avisada</em>`;
-      } else {
-        const dist = pontoValido(p) ? textoKm(distanciaAteMim(p)) : 'sem mapa';
-        const pelaRua = Number.isFinite(distRua.metros.get(p.id)) ? ' pela rua' : '';
-        const marcas = [p === perto && pendentes.length > 1 ? 'mais perto' : '', ativa ? 'indo agora' : ''].filter(Boolean).join(' · ');
-        info = `${esc(dist === '-' ? '' : dist)}${dist !== '-' && dist !== 'sem mapa' ? `${pelaRua}` : ''}${marcas ? `${dist === '-' ? '' : ' · '}<em>${marcas}</em>` : dist !== '-' && dist !== 'sem mapa' ? ' de você' : ''}`;
-      }
-      const botoes = p.entregue
-        ? `<button type="button" class="mjnav-mini" data-mjnav-desfazer="${esc(p.id)}" aria-label="Desfazer entrega ${numero}">↺</button>`
-        : p.problema
-          ? `<button type="button" class="mjnav-mini" data-mjnav-voltar="${esc(p.id)}" aria-label="Voltar a entrega ${numero} para a fila">↺ Fila</button><button type="button" class="mjnav-mini ok" data-mjnav-ok="${esc(p.id)}" aria-label="Marcar entrega ${numero} como entregue">✓</button>`
-          : `${ativa ? '' : `<button type="button" class="mjnav-mini" data-mjnav-ir="${esc(p.id)}">Ir</button>`}<button type="button" class="mjnav-mini ok" data-mjnav-ok="${esc(p.id)}" aria-label="Marcar entrega ${numero} como entregue">${ativa ? '✓ Entregue' : '✓'}</button><button type="button" class="mjnav-mini aviso" data-mjnav-problema="${esc(p.id)}" aria-label="Não encontrei o cliente da entrega ${numero}">⚠️</button><button type="button" class="mjnav-mini x" data-mjnav-del="${esc(p.id)}" aria-label="Remover endereço ${numero}">✕</button>`;
-      const painel = paradaProblema === p.id && !p.entregue
-        ? `<div class="mjnav-problema" data-mjnav-problema-painel="${esc(p.id)}">
-            <b>Qual o problema na entrega ${numero}?</b>
-            <div class="mjnav-motivos">${Object.entries(MOTIVOS_PROBLEMA).map(([chave, texto]) => `<button type="button" class="mjnav-mini" data-mjnav-motivo="${chave}">${esc(texto)}</button>`).join('')}</div>
-            <input type="text" data-mjnav-problema-obs maxlength="200" placeholder="Detalhe para a loja (opcional)">
-            <div class="mjnav-motivos"><button type="button" class="mjnav-mini laranja" data-mjnav-problema-enviar disabled>Avisar a loja</button><button type="button" class="mjnav-mini" data-mjnav-problema-cancelar>Cancelar</button></div>
-          </div>`
-        : '';
-      return `<div class="mjnav-parada${ativa ? ' ativa' : ''}${p.entregue ? ' feita' : ''}${p.problema ? ' problema' : ''}">
-        <span class="mjnav-num">${p.entregue ? '✓' : numero}</span>
-        <div class="mjnav-parada-txt"><b>${esc(p.texto)}</b><span>${info}</span></div>
-        ${botoes}
-      </div>${painel}`;
-    }).join('');
+    const linhas = ordenadas.map((p) => linhaParada(p, estado, false)).join('');
     const formAberto = faltam > 0 || paradaFormAberto === cfg.id;
     return `<div class="mjnav-paradas">
-      <div class="mjnav-paradas-head"><b>📝 Endereços das notas</b><span>${esc(resumo)}</span></div>
+      <div class="mjnav-paradas-head"><div><b>📝 Endereços das notas</b><span>${esc(resumo)}</span></div>${estado.forcada ? '' : '<button type="button" class="mjnav-mini" data-mjnav-lista aria-expanded="true">▴ Recolher</button>'}</div>
       ${linhas}
       ${formAberto
         ? `<form class="mjnav-add" data-mjnav-add-form>
@@ -963,6 +983,10 @@
     const avatar = cliente.foto
       ? `<img class="mjnav-avatar" src="${esc(cliente.foto)}" alt="">`
       : `<span class="mjnav-avatar">${esc(String(cliente.nome || 'C').trim().charAt(0).toUpperCase() || 'C')}</span>`;
+    // Lote pela nota: com a lista recolhida, "Notas" divide a linha com Waze e Maps.
+    const lote = cfg.paradas ? estadoParadas(cfg) : null;
+    const podeRecolher = !!(lote && lote.dados.lista.length && !lote.forcada);
+    const botaoNotas = podeRecolher && !lote.aberta;
     ui().innerHTML = `
       <div class="mjnav-banner ${cfg.etapa === 'levar' ? 'levar' : ''}">
         <div class="mjnav-arrow">${cfg.etapa === 'levar' ? '🏁' : '📍'}</div>
@@ -971,8 +995,8 @@
       </div>
       ${cfg.aviso ? `<div class="mjnav-toast ${cfg.aviso.tipo === 'alerta' ? 'alerta' : ''}">${esc(cfg.aviso.texto)}</div>` : ''}
       <button type="button" class="mjnav-round mjnav-recenter" data-mjnav-centralizar aria-label="Centralizar no meu GPS">◎</button>
-      <section class="mjnav-sheet">
-        <div class="mjnav-grab"></div>
+      <section class="mjnav-sheet${lote && !lote.aberta ? ' compacta' : ''}">
+        ${podeRecolher ? `<div class="mjnav-grab-zona" data-mjnav-lista role="button" tabindex="0" aria-expanded="${lote.aberta}" aria-label="${lote.aberta ? 'Recolher a lista de endereços' : 'Abrir a lista de endereços'}"><div class="mjnav-grab"></div></div>` : '<div class="mjnav-grab"></div>'}
         <div class="mjnav-eta">
           <div><div class="mjnav-eta-big">${esc(tempo || distancia)}</div><div class="mjnav-meta">${esc(distancia)}${rota ? ` · chegada ${esc(horaChegada(rota.segundos))}` : ''}${rota?.aproximada ? ' · estimado' : ''}</div></div>
           <div class="mjnav-tag verde">● ${esc(cfg.etapaTexto || '')}</div>
@@ -985,9 +1009,10 @@
           </div>
         </div>
         ${htmlParadasNav(cfg)}
-        <div class="mjnav-actions">
+        <div class="mjnav-actions${botaoNotas && links.waze ? ' tres' : ''}">
           ${(cfg.secundarias || []).map((acao, index) => `<button type="button" class="mjnav-act ${acao.destaque ? 'hl' : ''}" data-mjnav-sec="${index}" ${acao.desativado ? 'disabled' : ''}>${esc(acao.texto)}</button>`).join('')}
-          ${links.waze ? `<a class="mjnav-act" href="${esc(links.waze)}" target="_blank" rel="noopener">🗺️ Waze</a><a class="mjnav-act" href="${esc(links.maps)}" target="_blank" rel="noopener">🧭 Google Maps</a>` : ''}
+          ${botaoNotas ? `<button type="button" class="mjnav-act mjnav-notas" data-mjnav-lista aria-expanded="false">📝 Notas <small>${lote.entregues}/${lote.dados.lista.length}</small> ▾</button>` : ''}
+          ${links.waze ? `<a class="mjnav-act" href="${esc(links.waze)}" target="_blank" rel="noopener">🗺️ Waze</a><a class="mjnav-act" href="${esc(links.maps)}" target="_blank" rel="noopener">🧭 ${botaoNotas ? 'Maps' : 'Google Maps'}</a>` : ''}
         </div>
         <p class="mjnav-erro" data-mjnav-erro hidden></p>
         ${cfg.principal ? `<button type="button" class="mjnav-btn ${cfg.principal.cor === 'verde' ? 'verde' : ''}" data-mjnav-principal ${cfg.principal.desativado ? 'disabled' : ''}>${esc(cfg.principal.texto)}</button>` : ''}
@@ -997,7 +1022,39 @@
       fechar();
       aoFechar?.();
     };
-    ui().querySelector('[data-mjnav-centralizar]').onclick = (event) => {
+    const centralizar = ui().querySelector('[data-mjnav-centralizar]');
+    // O ◎ fica logo acima da folha, que muda de altura com a lista aberta ou recolhida.
+    centralizar.style.bottom = `${alturaRodape() + 14}px`;
+    const alternarLista = (abrir) => {
+      if ((listaAberta === cfg.id) === abrir) return;
+      listaAberta = abrir ? cfg.id : '';
+      renderNav(cfg, tela?.rota || null);
+      if (seguirMotoboy) enquadrarNav(cfg);
+    };
+    ui().querySelectorAll('[data-mjnav-lista]').forEach((el) => {
+      el.onclick = () => alternarLista(listaAberta !== cfg.id);
+      // A alca e uma div: Enter e espaco fazem o mesmo que o toque (botoes ja fazem sozinhos).
+      if (el.tagName !== 'BUTTON') el.onkeydown = (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        alternarLista(listaAberta !== cfg.id);
+      };
+    });
+    // Puxar a alca da folha: para cima abre a lista, para baixo recolhe.
+    const zona = ui().querySelector('.mjnav-grab-zona');
+    if (zona) {
+      let inicioY = null;
+      zona.ontouchstart = (event) => { inicioY = event.touches[0].clientY; };
+      zona.ontouchend = (event) => {
+        if (inicioY === null) return;
+        const dy = event.changedTouches[0].clientY - inicioY;
+        inicioY = null;
+        if (Math.abs(dy) < 25) return;
+        event.preventDefault();
+        alternarLista(dy < 0);
+      };
+    }
+    centralizar.onclick = (event) => {
       seguirMotoboy = true;
       event.currentTarget.classList.remove('show');
       enquadrarNav(cfg);
