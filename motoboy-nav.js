@@ -10,6 +10,9 @@
   const ROTA_CACHE_MS = 2 * 60 * 1000;
   const REROTA_METROS = 60;
   const REROTA_MS = 45000;
+  // Na linha da rota a faixa e o tempo andam com o GPS; so confere a rota de novo de vez em quando.
+  const REROTA_NA_ROTA_MS = 120000;
+  const FORA_DA_ROTA_M = 40;
   const VELOCIDADE_MOTO_KMH = 28;
 
   let leafletPromise = null;
@@ -99,9 +102,9 @@
     });
   }
 
-  async function calcularRota(backend, a, b) {
+  async function calcularRota(backend, a, b, opcoes = {}) {
     if (!pontoValido(a) || !pontoValido(b)) return null;
-    const chave = [a.lat, a.lon, b.lat, b.lon].map((n) => Number(n).toFixed(4)).join(',');
+    const chave = [a.lat, a.lon, b.lat, b.lon].map((n) => Number(n).toFixed(4)).join(',') + (opcoes.passos ? ':curvas' : '');
     const cached = rotasCache.get(chave);
     if (cached && Date.now() - cached.em < ROTA_CACHE_MS) return cached.rota;
     const reta = distanciaMetros(a, b);
@@ -117,7 +120,7 @@
       const response = await fetch(`${backend}/api/maps/route`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ points: [{ lat: a.lat, lon: a.lon }, { lat: b.lat, lon: b.lon }] }),
+        body: JSON.stringify({ points: [{ lat: a.lat, lon: a.lon }, { lat: b.lat, lon: b.lon }], ...(opcoes.passos ? { passos: true } : {}) }),
         signal: controller.signal
       }).finally(() => clearTimeout(timer));
       const data = await response.json().catch(() => ({}));
@@ -129,6 +132,8 @@
         // costuma chegar um pouco antes, entao usamos o menor dos dois.
         segundos: Math.min(Number(data.durationSeconds) || Infinity, metros / (VELOCIDADE_MOTO_KMH / 3.6) * 1.15),
         geometria: data.geometry,
+        // Curvas da rota (servidor novo): faixa com seta e voz.
+        passos: Array.isArray(data.passos) ? data.passos.filter(pontoValido) : [],
         aproximada: false
       };
       rotasCache.set(chave, { em: Date.now(), rota });
@@ -136,6 +141,209 @@
     } catch (_) {
       return estimada;
     }
+  }
+
+  // ---------- Curvas da rota: faixa com seta e voz ----------
+
+  const SETAS = {
+    direita: '<path d="M7 21v-8a5 5 0 0 1 5-5h7"/><path d="M15 4l4 4-4 4"/>',
+    esquerda: '<path d="M17 21v-8a5 5 0 0 0-5-5H5"/><path d="M9 4L5 8l4 4"/>',
+    'leve-direita': '<path d="M8 21v-6l9-9"/><path d="M11 5h6v6"/>',
+    'leve-esquerda': '<path d="M16 21v-6L7 6"/><path d="M13 5H7v6"/>',
+    frente: '<path d="M12 21V4"/><path d="M6 10l6-6 6 6"/>',
+    retorno: '<path d="M16 21V10a4 4 0 0 0-8 0v7"/><path d="M4 14l4 4 4-4"/>',
+    rotatoria: '<circle cx="11" cy="11" r="4"/><path d="M11 21v-6"/><path d="M14 8l5-5"/><path d="M15 3h4v4"/>'
+  };
+
+  function setaSvg(tipo) {
+    return `<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${SETAS[tipo] || SETAS.frente}</svg>`;
+  }
+
+  // Metros ao longo da linha da rota e onde fica cada curva nela (calcula uma vez por rota).
+  function prepararNavRota(rota) {
+    if (!rota) return null;
+    if (rota.nav !== undefined) return rota.nav;
+    const g = Array.isArray(rota.geometria) ? rota.geometria : [];
+    if (rota.aproximada || g.length < 2) {
+      rota.nav = null;
+      return null;
+    }
+    const ponto = (i) => ({ lat: g[i][0], lon: g[i][1] });
+    const acum = [0];
+    for (let i = 1; i < g.length; i += 1) acum.push(acum[i - 1] + distanciaMetros(ponto(i - 1), ponto(i)));
+    let inicio = 0;
+    const passos = (rota.passos || []).map((p) => {
+      // As curvas vem em ordem: procura sempre dali para frente na linha.
+      let melhor = inicio;
+      let menor = Infinity;
+      for (let i = inicio; i < g.length; i += 1) {
+        const d = distanciaMetros(p, ponto(i));
+        if (d < menor) { menor = d; melhor = i; }
+      }
+      inicio = melhor;
+      return { ...p, ao: acum[melhor] };
+    });
+    rota.nav = { acum, total: acum[acum.length - 1], passos };
+    return rota.nav;
+  }
+
+  // Onde o motoboy esta na linha: metros ja andados e distancia ate a linha.
+  function progressoNaRota(nav, geometria, eu) {
+    const cosLat = Math.cos((eu.lat * Math.PI) / 180);
+    const xy = (p) => [(p[1] - eu.lon) * 111320 * cosLat, (p[0] - eu.lat) * 110540];
+    let melhor = { fora: Infinity, ao: 0 };
+    for (let i = 0; i < geometria.length - 1; i += 1) {
+      const [ax, ay] = xy(geometria[i]);
+      const [bx, by] = xy(geometria[i + 1]);
+      const dx = bx - ax;
+      const dy = by - ay;
+      const len2 = dx * dx + dy * dy;
+      const t = len2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len2)) : 0;
+      const fora = Math.hypot(ax + t * dx, ay + t * dy);
+      if (fora < melhor.fora) melhor = { fora, ao: nav.acum[i] + t * (nav.acum[i + 1] - nav.acum[i]) };
+    }
+    return melhor;
+  }
+
+  function estadoNav(rota) {
+    const nav = prepararNavRota(rota);
+    if (!nav || !pontoValido(ultimaPosicao) || !(nav.total > 0)) return null;
+    const prog = progressoNaRota(nav, rota.geometria, ultimaPosicao);
+    const fracao = Math.max(0, nav.total - prog.ao) / nav.total;
+    const proxima = nav.passos.find((p) => p.ao > prog.ao + 5) || null;
+    return {
+      fora: prog.fora,
+      gpsBom: !(Number(ultimaPosicao.precisao) > 50),
+      restanteMetros: rota.metros * fracao,
+      restanteSegundos: rota.segundos * fracao,
+      proxima,
+      ateProxima: proxima ? proxima.ao - prog.ao : Infinity
+    };
+  }
+
+  function restanteRota(rota, est) {
+    if (est && est.fora <= FORA_DA_ROTA_M + 20) return { metros: est.restanteMetros, segundos: est.restanteSegundos };
+    return rota ? { metros: rota.metros, segundos: rota.segundos } : null;
+  }
+
+  function htmlFaixa(cfg, rota, est) {
+    const alvo = cfg.alvo || {};
+    const destino = `${alvo.rotulo || ''}: ${alvo.titulo || '-'}`;
+    const resta = restanteRota(rota, est);
+    const distancia = resta ? textoKm(resta.metros) : pontoValido(alvo) ? '...' : '-';
+    const p = est?.proxima;
+    if (p && p.tipo !== 'chegada' && est.fora <= FORA_DA_ROTA_M) {
+      return `<div class="mjnav-arrow">${setaSvg(p.tipo)}</div>
+        <div class="mjnav-faixa-txt"><b>${esc(textoKm(est.ateProxima))}</b><span class="mjnav-instr">${esc(p.texto)}</span><small>${esc(distancia)} · ${esc(destino)}</small></div>`;
+    }
+    const recalculando = est && est.gpsBom && est.fora > FORA_DA_ROTA_M;
+    return `<div class="mjnav-arrow">${cfg.etapa === 'levar' ? '🏁' : '📍'}</div>
+      <div class="mjnav-faixa-txt"><b>${esc(distancia)}</b><span>${esc(destino)}</span>${recalculando ? '<small>Fora da rota · recalculando...</small>' : ''}</div>`;
+  }
+
+  function textosEta(cfg, rota, est) {
+    const resta = restanteRota(rota, est);
+    const distancia = resta ? textoKm(resta.metros) : pontoValido(cfg.alvo) ? '...' : '-';
+    const tempo = resta ? textoMin(resta.segundos) : '';
+    return {
+      big: tempo || distancia,
+      meta: `${distancia}${resta ? ` · chegada ${horaChegada(resta.segundos)}` : ''}${rota?.aproximada ? ' · estimado' : ''}`
+    };
+  }
+
+  // Voz: "Em 200 metros, vire à direita na Rua X" e "Agora, vire à direita...".
+  const VOZ_CHAVE = 'mjnav-voz';
+  const avisosFalados = new Map();
+  let vozLiberada = false;
+
+  function temVoz() {
+    return typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance === 'function';
+  }
+
+  function vozLigada() {
+    try { return localStorage.getItem(VOZ_CHAVE) !== 'off'; } catch (_) { return true; }
+  }
+
+  function falar(texto, forcar) {
+    if (!texto || !temVoz() || (!forcar && !vozLigada())) return;
+    try {
+      const fala = new SpeechSynthesisUtterance(texto);
+      fala.lang = 'pt-BR';
+      const voz = window.speechSynthesis.getVoices().find((v) => /^pt[-_]BR/i.test(v.lang));
+      if (voz) fala.voice = voz;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(fala);
+    } catch (_) {}
+  }
+
+  // iPhone so deixa o app falar depois de um toque na tela.
+  function liberarVoz() {
+    if (vozLiberada || !temVoz()) return;
+    vozLiberada = true;
+    try {
+      const silencio = new SpeechSynthesisUtterance(' ');
+      silencio.volume = 0;
+      window.speechSynthesis.speak(silencio);
+    } catch (_) {}
+  }
+
+  function metrosFalados(metros) {
+    return metros < 100 ? `${Math.max(10, Math.round(metros / 10) * 10)} metros` : `${Math.round(metros / 50) * 50} metros`;
+  }
+
+  function avisarPorVoz(cfg, est) {
+    const p = est?.proxima;
+    if (!p || !est.gpsBom || est.fora > FORA_DA_ROTA_M) return;
+    const chave = `${cfg.id}:${Number(p.lat).toFixed(5)},${Number(p.lon).toFixed(5)}`;
+    const ja = avisosFalados.get(chave);
+    if (avisosFalados.size > 300) avisosFalados.clear();
+    const instrucao = p.texto.charAt(0).toLowerCase() + p.texto.slice(1);
+    if (p.tipo === 'chegada') {
+      if (est.ateProxima <= 40 && ja !== 'perto') {
+        avisosFalados.set(chave, 'perto');
+        falar(`Você chegou. ${cfg.alvo?.titulo || ''}`);
+      }
+      return;
+    }
+    if (est.ateProxima <= 45) {
+      if (ja === 'perto') return;
+      avisosFalados.set(chave, 'perto');
+      falar(`Agora, ${instrucao}`);
+    } else if (est.ateProxima <= 300 && !ja) {
+      avisosFalados.set(chave, 'longe');
+      falar(`Em ${metrosFalados(est.ateProxima)}, ${instrucao}`);
+    }
+  }
+
+  // Faixa, aviso e botao de voz ficam um embaixo do outro, qualquer que seja a altura da faixa.
+  function posicionarSobreMapa() {
+    const banner = ui().querySelector('.mjnav-banner');
+    if (!banner) return;
+    let baixo = banner.offsetTop + banner.offsetHeight + 8;
+    const toast = ui().querySelector('.mjnav-toast');
+    if (toast) {
+      toast.style.top = `${baixo}px`;
+      baixo += toast.offsetHeight + 8;
+    }
+    const voz = ui().querySelector('[data-mjnav-voz]');
+    if (voz) voz.style.top = `${baixo}px`;
+  }
+
+  // A cada GPS: atualiza a faixa e o tempo sem redesenhar a tela (nao atrapalha quem digita).
+  function atualizarFaixa(cfg) {
+    const atual = tela;
+    if (!root || !atual || atual.modo !== 'nav' || atual.cfg !== cfg) return;
+    const rota = atual.rota || null;
+    const est = rota ? estadoNav(rota) : null;
+    const faixa = ui().querySelector('[data-mjnav-faixa]');
+    if (faixa) faixa.innerHTML = htmlFaixa(cfg, rota, est);
+    const eta = textosEta(cfg, rota, est);
+    const big = ui().querySelector('.mjnav-eta-big');
+    if (big) big.textContent = eta.big;
+    const meta = ui().querySelector('.mjnav-meta');
+    if (meta) meta.textContent = eta.meta;
+    posicionarSobreMapa();
+    avisarPorVoz(cfg, est);
   }
 
   function garantirRoot() {
@@ -976,8 +1184,8 @@
   function renderNav(cfg, rota) {
     const alvo = cfg.alvo || {};
     const links = linksNavegacao(alvo);
-    const distancia = rota ? textoKm(rota.metros) : pontoValido(alvo) ? '...' : '-';
-    const tempo = rota ? textoMin(rota.segundos) : '';
+    const est = rota ? estadoNav(rota) : null;
+    const eta = textosEta(cfg, rota, est);
     const cliente = cfg.cliente || {};
     const fone = String(cliente.telefone || '').replace(/\D/g, '');
     const avatar = cliente.foto
@@ -989,16 +1197,16 @@
     const botaoNotas = podeRecolher && !lote.aberta;
     ui().innerHTML = `
       <div class="mjnav-banner ${cfg.etapa === 'levar' ? 'levar' : ''}">
-        <div class="mjnav-arrow">${cfg.etapa === 'levar' ? '🏁' : '📍'}</div>
-        <div><b>${esc(distancia)}</b><span>${esc(alvo.rotulo || '')}: ${esc(alvo.titulo || '-')}</span></div>
+        <div class="mjnav-faixa" data-mjnav-faixa aria-live="polite">${htmlFaixa(cfg, rota, est)}</div>
         <button type="button" class="mjnav-round" data-mjnav-fechar aria-label="Minimizar mapa">⌄</button>
       </div>
       ${cfg.aviso ? `<div class="mjnav-toast ${cfg.aviso.tipo === 'alerta' ? 'alerta' : ''}">${esc(cfg.aviso.texto)}</div>` : ''}
       <button type="button" class="mjnav-round mjnav-recenter" data-mjnav-centralizar aria-label="Centralizar no meu GPS">◎</button>
+      ${temVoz() ? `<button type="button" class="mjnav-round mjnav-voz${vozLigada() ? '' : ' desligada'}" data-mjnav-voz aria-pressed="${vozLigada()}" aria-label="${vozLigada() ? 'Desligar a voz das curvas' : 'Ligar a voz das curvas'}">${vozLigada() ? '🔊' : '🔇'}</button>` : ''}
       <section class="mjnav-sheet${lote && !lote.aberta ? ' compacta' : ''}">
         ${podeRecolher ? `<div class="mjnav-grab-zona" data-mjnav-lista role="button" tabindex="0" aria-expanded="${lote.aberta}" aria-label="${lote.aberta ? 'Recolher a lista de endereços' : 'Abrir a lista de endereços'}"><div class="mjnav-grab"></div></div>` : '<div class="mjnav-grab"></div>'}
         <div class="mjnav-eta">
-          <div><div class="mjnav-eta-big">${esc(tempo || distancia)}</div><div class="mjnav-meta">${esc(distancia)}${rota ? ` · chegada ${esc(horaChegada(rota.segundos))}` : ''}${rota?.aproximada ? ' · estimado' : ''}</div></div>
+          <div><div class="mjnav-eta-big">${esc(eta.big)}</div><div class="mjnav-meta">${esc(eta.meta)}</div></div>
           <div class="mjnav-tag verde">● ${esc(cfg.etapaTexto || '')}</div>
         </div>
         <div class="mjnav-client">
@@ -1025,6 +1233,17 @@
     const centralizar = ui().querySelector('[data-mjnav-centralizar]');
     // O ◎ fica logo acima da folha, que muda de altura com a lista aberta ou recolhida.
     centralizar.style.bottom = `${alturaRodape() + 14}px`;
+    posicionarSobreMapa();
+    const botaoVoz = ui().querySelector('[data-mjnav-voz]');
+    if (botaoVoz) botaoVoz.onclick = () => {
+      const ligar = !vozLigada();
+      try { localStorage.setItem(VOZ_CHAVE, ligar ? 'on' : 'off'); } catch (_) {}
+      if (ligar) {
+        liberarVoz();
+        falar('Voz das curvas ligada.', true);
+      } else if (temVoz()) window.speechSynthesis.cancel();
+      renderNav(cfg, tela?.rota || null);
+    };
     const alternarLista = (abrir) => {
       if ((listaAberta === cfg.id) === abrir) return;
       listaAberta = abrir ? cfg.id : '';
@@ -1123,9 +1342,19 @@
     const eu = ultimaPosicao;
     const chave = `${cfg.id}:${cfg.etapa}:${Number(cfg.alvo?.lat || 0).toFixed(5)},${Number(cfg.alvo?.lon || 0).toFixed(5)}`;
     const moveu = distanciaMetros(rotaNav.origem, eu);
-    if (!forcar && rotaNav.chave === chave && moveu < REROTA_METROS && Date.now() - rotaNav.em < REROTA_MS) return;
+    const desde = Date.now() - rotaNav.em;
+    if (!forcar && rotaNav.chave === chave) {
+      const est = tela?.rota ? estadoNav(tela.rota) : null;
+      if (est && est.gpsBom && est.fora <= FORA_DA_ROTA_M) {
+        // Na linha: a faixa e o tempo andam sozinhos com o GPS (menos consultas ao servidor).
+        if (desde < REROTA_NA_ROTA_MS) return;
+      } else if (est && est.gpsBom) {
+        // Saiu da rota: refaz logo, sem esperar andar 60 m.
+        if (desde < 6000 || (moveu < 20 && desde < REROTA_MS)) return;
+      } else if (moveu < REROTA_METROS && desde < REROTA_MS) return;
+    }
     rotaNav = { chave, em: Date.now(), origem: eu };
-    const rota = pontoValido(eu) ? await calcularRota(cfg.backend, eu, cfg.alvo) : null;
+    const rota = pontoValido(eu) ? await calcularRota(cfg.backend, eu, cfg.alvo, { passos: true }) : null;
     // A lista pode ter reaberto a mesma etapa enquanto a rota carregava; o
     // resultado continua valido para a tela atual.
     const atual = tela;
@@ -1146,6 +1375,7 @@
     // Nao redesenha os botoes no meio de uma acao (ex.: "Avisando cliente...")
     // nem enquanto o motoboy digita um endereco de nota.
     if (!atual.ocupado && !atual.editando) renderNav(atual.cfg, rota);
+    atualizarFaixa(atual.cfg);
   }
 
   async function abrirNavegacao(cfg) {
@@ -1157,6 +1387,7 @@
     const rotaAnterior = mesmaEtapa ? tela.rota : null;
     tela = { modo: 'nav', cfg, rota: rotaAnterior };
     mostrar();
+    root.addEventListener('pointerdown', liberarVoz, { once: true });
     root.dataset.modo = 'nav';
     if (!mesmaEtapa) seguirMotoboy = true;
     renderNav(cfg, rotaAnterior);
@@ -1175,6 +1406,7 @@
       if (tela?.cfg !== cfg) return;
       atualizarMarcadorMotoboy(L, pos);
       if (seguirMotoboy) enquadrarNav(cfg);
+      atualizarFaixa(cfg);
       atualizarRotaNav(L, cfg, false);
     });
   }

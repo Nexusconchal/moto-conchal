@@ -26,6 +26,7 @@ import { isUnsentLegacyImport, integrationDeliveryId } from './integration-state
 import { createSupportAutomation, enrichSupportMessage, SUPPORT_PHONE, chooseDriverGroup, brazilPhone } from './support-automation.js';
 import { addressSearchVariants, addressFeatureMatches, streetNumber } from './address-search.js';
 import { createGeocodeSearch } from './geocode-search.js';
+import { osrmRouteSteps } from './route-steps.js';
 
 const searchMapAddress = createGeocodeSearch();
 import { prepareQuickDelivery, quickDeliveryFare, planFare } from './quick-delivery.js';
@@ -763,9 +764,9 @@ async function calculateGeoapifyRoute(points = []) {
   return { km: money(Number(meters) / 1000), durationSeconds: Number(feature.properties?.time) || null, geometry: geoJsonLineToLatLon(feature.geometry), provider: 'geoapify' };
 }
 
-async function calculateOsrmRoute(points = []) {
+async function calculateOsrmRoute(points = [], { passos = false } = {}) {
   const coords = points.map((point) => `${Number(point.lon)},${Number(point.lat)}`).join(';');
-  const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`;
+  const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson${passos ? '&steps=true' : ''}`;
   const response = await fetch(url);
   if (!response.ok) {
     const error = new Error('OSRM nao conseguiu conferir a rota agora.');
@@ -782,11 +783,22 @@ async function calculateOsrmRoute(points = []) {
     error.code = 'osrm_rota_nao_encontrada';
     throw error;
   }
-  return { km: money(Number(meters) / 1000), durationSeconds: Number(route.duration) || null, geometry: geoJsonLineToLatLon(route.geometry), provider: 'osrm' };
+  const result = { km: money(Number(meters) / 1000), durationSeconds: Number(route.duration) || null, geometry: geoJsonLineToLatLon(route.geometry), provider: 'osrm' };
+  return passos ? { ...result, passos: osrmRouteSteps(route) } : result;
 }
 
-async function calculateRoute(points = []) {
+async function calculateRoute(points = [], { passos = false } = {}) {
   ensureRoutePoints(points);
+
+  // Navegacao do motoboy: a linha no mapa e as curvas faladas vem da mesma rota (OSRM).
+  // So cai no Geoapify (sem curvas) se o OSRM falhar; assim nao gasta a cota a cada GPS.
+  if (passos) {
+    try {
+      return await calculateOsrmRoute(points, { passos: true });
+    } catch (_) {
+      return calculateGeoapifyRoute(points);
+    }
+  }
 
   const results = await Promise.allSettled([
     calculateGeoapifyRoute(points),
@@ -4946,7 +4958,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 
 // Versao do servidor no ar (o painel do dono mostra e avisa quando o Render nao atualizou).
 const SERVER_STARTED_AT = Date.now();
-const SERVER_RELEASE = '2026-11-23-sos-perfil';
+const SERVER_RELEASE = '2026-11-24-curvas-voz';
 app.get('/api/version', (_req, res) => {
   res.set('cache-control', 'no-store');
   res.json({ ok: true, release: SERVER_RELEASE, commit: String(process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || 'local', iniciadoEmMs: SERVER_STARTED_AT });
@@ -5198,7 +5210,7 @@ app.get('/api/maps/reverse', mapLimiter, async (req, res, next) => {
 
 app.post('/api/maps/route', mapLimiter, async (req, res, next) => {
   try {
-    const route = await calculateRoute(req.body?.points || []);
+    const route = await calculateRoute(req.body?.points || [], { passos: req.body?.passos === true });
     res.json(route);
   } catch (error) {
     next(error);

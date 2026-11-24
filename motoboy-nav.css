@@ -907,3 +907,46 @@ html.mjnav-aberto body {
   min-height: 44px;
   line-height: 1.2;
 }
+/* Faixa de navegacao com a proxima curva (seta, distancia e instrucao). */
+.mjnav-faixa {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.mjnav-faixa-txt {
+  flex: 1;
+  min-width: 0;
+}
+.mjnav-arrow svg {
+  display: block;
+}
+.mjnav-banner span.mjnav-instr {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.2;
+  margin-top: 2px;
+}
+.mjnav-banner small {
+  display: block;
+  font-size: 12px;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 3px;
+}
+.mjnav-voz {
+  position: absolute;
+  right: 14px;
+  top: calc(96px + env(safe-area-inset-top));
+}
+.mjnav-voz.desligada {
+  opacity: 0.75;
+}

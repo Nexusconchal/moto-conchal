@@ -782,7 +782,7 @@
   }
 
   // Versao do servidor (Render): mostra quando foi atualizado e avisa se esta numa versao antiga.
-  const SITE_RELEASE = "2026-11-23-sos-perfil";
+  const SITE_RELEASE = "2026-11-24-curvas-voz";
   async function checkServerVersion() {
     const el = document.getElementById("ownerServerVersion");
     if (!el) return;
