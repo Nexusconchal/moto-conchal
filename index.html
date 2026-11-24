@@ -4429,7 +4429,8 @@
             Math.min(15000, Math.max(1000, restante)),
           );
         } catch (e) {
-          pedidoTimer = setTimeout(() => verificarPedidoAtivo(false), 15000);
+          // Internet oscilou: tenta de novo logo, para o mapa do cliente nao ficar parado.
+          pedidoTimer = setTimeout(() => verificarPedidoAtivo(false), 6000);
         }
       }
       let instalarAppEvento = null;

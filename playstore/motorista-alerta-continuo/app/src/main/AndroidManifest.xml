@@ -11,6 +11,9 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- GPS da corrida/entrega com o Waze aberto ou a tela apagada (servico em primeiro plano
+         iniciado com o app aberto; nao pede localizacao "o tempo todo"). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <!-- Camera dentro da tela do site (escanear o endereco da nota sem sair do app). -->
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- Microfone para a ligacao pelo app com o cliente (sem mostrar o numero). -->
@@ -83,6 +86,7 @@
         </provider>
 
         <service android:name=".CallAlertService" android:exported="false" android:foregroundServiceType="mediaPlayback" />
+        <service android:name=".GpsService" android:exported="false" android:foregroundServiceType="location" />
 
         <service
             android:name=".PushService"

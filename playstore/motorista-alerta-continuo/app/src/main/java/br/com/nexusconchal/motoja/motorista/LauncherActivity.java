@@ -234,6 +234,8 @@ public class LauncherActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // App na tela: o site manda o GPS; fora da tela, o GpsService assume.
+        GpsService.appVisible = true;
         // Abriu o app: o alarme de reserva ("oferta_...") para; o painel assume o aviso.
         android.app.NotificationManager manager = getSystemService(android.app.NotificationManager.class);
         if (manager != null && Build.VERSION.SDK_INT >= 23) {
@@ -246,6 +248,7 @@ public class LauncherActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        GpsService.appVisible = false;
         CookieManager.getInstance().flush();
     }
 
@@ -443,6 +446,16 @@ public class LauncherActivity extends Activity {
         @JavascriptInterface public void clearCallAlerts() {
             if (!trustedDriverPage) return;
             CallAlertSession.clear(LauncherActivity.this); CallAlertService.stop(LauncherActivity.this);
+        }
+
+        // GPS da corrida/entrega em segundo plano (versao 1.0.10+). O site passa os servicos em
+        // andamento e a sessao do motoboy; sem servico, para.
+        @JavascriptInterface public int gpsVersion() { return trustedDriverPage ? 1 : 0; }
+        @JavascriptInterface public boolean startGps(String json) {
+            return trustedDriverPage && json != null && json.length() <= 8000 && GpsService.start(LauncherActivity.this, json);
+        }
+        @JavascriptInterface public void stopGps() {
+            if (trustedDriverPage) GpsService.stop(LauncherActivity.this);
         }
 
         // Bateria "Sem restrições": sem isso, alguns celulares (Xiaomi, Samsung...) matam o app

@@ -163,11 +163,37 @@
     return 6371000 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
   }
 
+  // App Android 1.0.10+: com o Waze aberto, a tela apagada ou o app fechado, o Android para o GPS
+  // do site. O app nativo assume o envio da posicao fora da tela (dentro do app continua o site).
+  let nativeGpsKey = '';
+  let nativeGpsAt = 0;
+  function syncNativeGps() {
+    const bridge = window.NexusNative;
+    if (!bridge || typeof bridge.startGps !== 'function') return;
+    const lista = [
+      ...[...watches.keys()].map((id) => ({ tipo: 'entrega', id })),
+      ...[...rideWatches.keys()].map((id) => ({ tipo: 'corrida', id }))
+    ];
+    const key = JSON.stringify(lista);
+    if (key === nativeGpsKey && Date.now() - nativeGpsAt < 60 * 60 * 1000) return;
+    try {
+      if (!lista.length) {
+        bridge.stopGps();
+      } else {
+        const { driverCpf, driverToken } = proof();
+        if (!bridge.startGps(JSON.stringify({ backend: BACKEND, driverCpf, driverToken, jobs: lista }))) return;
+      }
+      nativeGpsKey = key;
+      nativeGpsAt = Date.now();
+    } catch (_) {}
+  }
+
   function stopTracking(deliveryId) {
     const current = watches.get(deliveryId);
     if (!current) return;
     unsubscribeGps(current.watchId);
     watches.delete(deliveryId);
+    syncNativeGps();
   }
 
   function startTracking(deliveryId) {
@@ -214,6 +240,7 @@
       setTrackingMessage(deliveryId, message, true);
     });
     watches.set(deliveryId, state);
+    syncNativeGps();
   }
 
   function stopRideTracking(rideId) {
@@ -221,6 +248,7 @@
     if (!current) return;
     unsubscribeGps(current.watchId);
     rideWatches.delete(rideId);
+    syncNativeGps();
   }
 
   function startRideTracking(rideId) {
@@ -266,6 +294,7 @@
       setTrackingMessage(rideId, message, true);
     });
     rideWatches.set(rideId, state);
+    syncNativeGps();
   }
 
   function cardFor(deliveryId) {
@@ -498,6 +527,7 @@
     document.addEventListener('visibilitychange', recoverGps);
     setInterval(() => {
       if (document.visibilityState === 'visible' && navigator.onLine && !gpsDenied && Date.now() - lastGpsAt > 45000) restartGps();
+      if (document.visibilityState === 'visible') syncNativeGps();
     }, 15000);
     // Motoboy parado (farol, esperando o cliente): o GPS do celular quase nao manda posicao nova.
     // Pede uma posicao a cada 15 s para o cliente/loja verem "ao vivo" (e "Parado"), nao "congelado".

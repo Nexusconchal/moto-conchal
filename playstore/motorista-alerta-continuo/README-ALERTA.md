@@ -1,6 +1,17 @@
-# MotoJÁ Motorista 1.0.9 — ligação pelo app e alerta contínuo
+# MotoJÁ Motorista 1.0.10 — GPS da corrida com o app fora da tela
 
-Atualização exclusiva do aplicativo Android do motoboy, pacote `br.com.nexusconchal.motoja.motorista`, versionCode 10 (use um número maior que o da versão que está na Play Store). O projeto anterior permanece preservado.
+Atualização exclusiva do aplicativo Android do motoboy, pacote `br.com.nexusconchal.motoja.motorista`, versionCode 11 (use um número maior que o da versão que está na Play Store). O projeto anterior permanece preservado.
+
+Novidades da 1.0.10:
+- **GPS continua com o Waze/Google Maps aberto, a tela apagada ou o app fechado:** antes, o Android parava o GPS do site quando o app saía da tela, e o cliente e a loja viam o motoboy parado ("Sinal GPS atrasado"). Agora, enquanto há corrida ou entrega em andamento, o site chama `NexusNative.startGps(...)` e o novo `GpsService` (serviço em primeiro plano do tipo localização, com a notificação "MotoJÁ: corrida em andamento") manda a posição para o servidor enquanto o app não está na tela. Com o app na tela, quem manda continua sendo o site, como antes. O serviço para sozinho quando a corrida/entrega acaba (o servidor responde 409), quando o site chama `NexusNative.stopGps()` ou depois de 6 horas.
+- A sessão do motoboy fica cifrada no aparelho (Android Keystore), igual ao alerta de chamadas.
+- Não pede localização "o tempo todo" (`ACCESS_BACKGROUND_LOCATION`): o serviço é iniciado com o app aberto, no aceite, e o Android mantém o GPS enquanto a notificação estiver ativa.
+
+**Play Console (obrigatório para enviar a 1.0.10):** em *Conteúdo do app → Permissões de serviço em primeiro plano*, declare o tipo **Localização**, com a descrição "Enviar a posição do motoboy ao cliente e à loja durante a corrida ou entrega aceita, inclusive com o app de navegação aberto" e um vídeo curto mostrando: aceitar uma corrida, abrir o Waze e a notificação "MotoJÁ: corrida em andamento" ativa.
+
+Validação no aparelho (1.0.10): aceitar uma corrida de teste, abrir o Waze pelo botão do mapa e conferir, no app do cliente, o motoboy andando; apagar a tela e conferir de novo; finalizar e ver a notificação sumir.
+
+## Versões anteriores
 
 Novidades da 1.0.9:
 - **Ligação tocando com o app fechado (igual WhatsApp):** quando a loja (entrega) ou o cliente (corrida) liga pelo app, o servidor manda um push só com dados (`tipo: ligacao_app`). O app mostra a ligação no novo canal `ligacoes`, com o **toque de chamada do próprio celular** em modo insistente: toca até o motoboy abrir o app ou a chamada passar (45 s). Ao abrir o app, o toque para e a tela de ligação do site assume (Atender / Recusar).
