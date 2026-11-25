@@ -64,15 +64,16 @@ function harness({ driver = null, records = new Map() } = {}) {
   return { call, records, writes };
 }
 
-test('o termo diz o que o dono pediu: autonomo, sem horario, sai e volta quando quiser, por fora = banimento e multa', () => {
-  assert.match(page, /<article id="termo" data-versao="2026-11-25">/);
+test('o termo diz o que o dono pediu: autonomo, sem horario, proibido por fora e contato pessoal, sem multa', () => {
+  assert.match(page, /<article id="termo" data-versao="2026-11-25-v2">/);
   assert.equal(page.match(/data-versao="([^"]+)"/)[1], DRIVER_TERMS_VERSION, 'versao da pagina = versao do servidor');
   for (const trecho of [
     /autônomo/, /sem vínculo de emprego/, /Não existe horário obrigatório/, /Recusar uma chamada[^.]*não gera punição/,
-    /outros apps/, /banimento permanente/, /multa de R\$ 500,00 por ocorrência/, /48 horas para se explicar/,
-    /pode parar quando quiser/, /pode voltar quando quiser/, /banido[^.]*não pode voltar/, /6 meses/, /Conchal \(SP\)/,
-    /MP|Medida Provisória 2\.200-2/,
+    /outros apps/, /proibido aceitar corrida ou entrega por fora/, /proibido oferecer o seu contato pessoal/,
+    /Disponível[^.]*guardamos só a cidade/, /Conchal \(SP\)/, /MP|Medida Provisória 2\.200-2/,
   ]) assert.match(page, trecho);
+  // Versão 2: sem multa, banimento ou prazo de 6 meses; seções 6 e 7 antigas saíram.
+  for (const fora of [/multa de R\$/i, /banimento/i, /6 meses/, /<h2>9\./, /<h2>10\./]) assert.doesNotMatch(page, fora);
 });
 
 test('prazo: ate domingo 29/11 quem ja e cadastrado trabalha sem o termo; a partir de segunda, nao', () => {
