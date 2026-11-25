@@ -717,6 +717,14 @@
         background: rgba(255, 114, 0, 0.06);
       }
       .access-code-note { color: #b9bbc4; font-size: 0.78rem; line-height: 1.4; }
+      .termo-check { display: flex; gap: 10px; align-items: flex-start; font-size: 0.82rem; line-height: 1.4; color: #e8e9ed; }
+      .termo-check input { width: 22px; height: 22px; min-height: 0; flex: 0 0 auto; margin: 1px 0 0; accent-color: var(--driver-orange); }
+      .termo-texto h1 { font-size: 1.05rem; color: #ff9a00; margin: 0 0 6px; }
+      .termo-texto h2 { font-size: 0.92rem; color: #ff9a00; margin: 0 0 6px; }
+      .termo-texto section { margin: 10px 0; padding: 10px 12px; border: 1px solid rgba(255,154,0,.22); border-radius: 12px; background: rgba(255,255,255,.04); }
+      .termo-texto p, .termo-texto li { font-size: 0.84rem; line-height: 1.45; color: #e8e8ef; }
+      .termo-texto ol, .termo-texto ul { padding-left: 18px; margin: 0; }
+      .termo-texto a { color: #9be7ff; }
       .grupos-cidade { display: grid; gap: 8px; margin-top: 10px; }
       .grupos-cidade[hidden] { display: none; }
       .grupos-cidade button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -937,6 +945,10 @@
             maxlength="6"
         /></label>
         <p id="codigoCadastroInfo" class="access-code-note" hidden></p>
+        </div>
+        <div class="access-code-box termo-cadastro">
+          <label class="termo-check"><input id="aceiteTermo" type="checkbox" /> <span>Li e aceito o <strong>Termo do Motoboy Parceiro</strong>: sou autônomo, faço meu horário e sei que corrida ou entrega por fora dá banimento e multa.</span></label>
+          <button id="lerTermo" class="secondary" type="button">Ler o termo</button>
         </div>
         <button id="entrar" type="button">
           Receber código no WhatsApp
@@ -2773,6 +2785,10 @@
             removerOfertaEncerrada(id, `Outro motoboy pegou esta ${nomeServico()} primeiro.`);
             throw new Error(`Outro motoboy pegou esta ${nomeServico()} primeiro.`);
           }
+          if (d.error === "termo_motoboy_pendente") {
+            termoMotoboy = { versao: termoMotoboy?.versao || TERMO_VERSAO, aceito: false, url: "motoboy-termo.html" };
+            garantirTermo("Para aceitar chamadas, aceite o Termo do Motoboy Parceiro.");
+          }
           throw new Error(
             d.message ||
               d.error ||
@@ -3765,6 +3781,102 @@
         planosMotoboyTimer = setInterval(carregarPlanosMotoboy, 2 * 60 * 1000);
         planosMotoboyContagem = setInterval(renderPlanosMotoboy, 30 * 1000);
       }
+      // Termo do Motoboy Parceiro (motoboy-termo.html). A versao e a mesma de backend/src/driver-terms.js.
+      // O servidor diz no /me se este motoboy ja aceitou; sem aceite ele nao fica Disponivel.
+      const TERMO_VERSAO = "2026-11-25";
+      let termoMotoboy = null;
+      let termoAceitoNoCadastro = "";
+      let termoJanela = null;
+      async function textoDoTermo() {
+        try {
+          const r = await fetch(`./motoboy-termo.html?v=${TERMO_VERSAO}`, { cache: "no-cache" });
+          if (!r.ok) return "";
+          const artigo = new DOMParser().parseFromString(await r.text(), "text/html").getElementById("termo");
+          return artigo ? artigo.innerHTML : "";
+        } catch {
+          return "";
+        }
+      }
+      // Mostra o termo inteiro. Responde true se o motoboy marcou "Li e aceito" e tocou em Aceitar.
+      function abrirTermo({ aviso = "" } = {}) {
+        if (termoJanela) return termoJanela;
+        termoJanela = new Promise((resolve) => {
+          const back = document.createElement("div");
+          back.style.cssText = "position:fixed;inset:0;z-index:20100;background:rgba(0,0,0,.78);display:flex;align-items:flex-end;justify-content:center;box-sizing:border-box;padding-top:max(12px,env(safe-area-inset-top))";
+          back.innerHTML = `<div role="dialog" aria-modal="true" aria-label="Termo do Motoboy Parceiro" style="width:100%;max-width:560px;max-height:100%;display:flex;flex-direction:column;gap:10px;background:#111319;border:1px solid rgba(255,154,0,.35);border-radius:18px 18px 0 0;padding:16px 16px max(16px,env(safe-area-inset-bottom));box-sizing:border-box;font-family:inherit">
+            <strong style="font-size:1.05rem;color:#fff">📄 Termo do Motoboy Parceiro</strong>
+            <span style="font-size:.82rem;color:#b9bbc4">${aviso || "Leia até o fim. Para receber chamadas, você precisa aceitar."}</span>
+            <div class="termo-texto" data-termo-texto style="flex:1;min-height:180px;overflow:auto;-webkit-overflow-scrolling:touch;padding-right:4px">Carregando o termo...</div>
+            <label class="termo-check"><input type="checkbox" data-termo-check disabled /> <span>Li e aceito o Termo do Motoboy Parceiro</span></label>
+            <button type="button" data-termo-aceitar disabled>Aceitar e continuar</button>
+            <button type="button" class="secondary" data-termo-fechar>Agora não</button>
+          </div>`;
+          const texto = back.querySelector("[data-termo-texto]"),
+            caixa = back.querySelector("[data-termo-check]"),
+            aceitar = back.querySelector("[data-termo-aceitar]");
+          const fechar = (ok) => {
+            back.remove();
+            termoJanela = null;
+            resolve(ok);
+          };
+          aceitar.style.opacity = ".45";
+          caixa.onchange = () => {
+            aceitar.disabled = !caixa.checked;
+            aceitar.style.opacity = caixa.checked ? "1" : ".45";
+          };
+          aceitar.onclick = () => fechar(true);
+          back.querySelector("[data-termo-fechar]").onclick = () => fechar(false);
+          document.body.appendChild(back);
+          textoDoTermo().then((html) => {
+            if (!html) {
+              texto.textContent = "Não consegui carregar o termo. Confira a internet, feche esta janela e tente de novo.";
+              return;
+            }
+            texto.innerHTML = html;
+            texto.querySelectorAll("a").forEach((a) => { a.target = "_blank"; a.rel = "noopener"; });
+            caixa.disabled = false;
+          });
+        });
+        return termoJanela;
+      }
+      // Pede o aceite se o servidor disse que falta. Responde true quando pode trabalhar.
+      async function garantirTermo(aviso = "") {
+        if (!termoMotoboy || termoMotoboy.aceito) return true;
+        if (!(await abrirTermo({ aviso }))) {
+          avisoTopo("Sem aceitar o termo você não recebe chamadas. Toque em Ficar disponível para ler de novo.");
+          return false;
+        }
+        try {
+          const r = await fetchMotoboyComRetry(
+            `${CONFIG.backend}/api/drivers/${motoboyCpf}/termo`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ ...driverProof(), versao: termoMotoboy.versao || TERMO_VERSAO }),
+            },
+            15000,
+          );
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.message || "Não consegui registrar o aceite agora. Tente de novo.");
+          termoMotoboy = d.termo || { ...termoMotoboy, aceito: true };
+          avisoTopo("✅ Termo aceito. Bom trabalho!");
+          return true;
+        } catch (e) {
+          alert(
+            /failed to fetch|load failed|networkerror|abort|timeout/i.test(e.message || "")
+              ? "Não consegui conectar no servidor para registrar o aceite. Confira a internet e tente de novo."
+              : e.message,
+          );
+          return false;
+        }
+      }
+      function avisoTopo(texto) {
+        const t = document.createElement("div");
+        t.textContent = texto;
+        t.style.cssText = "position:fixed;left:12px;right:12px;top:12px;z-index:20110;padding:13px 16px;border-radius:14px;background:#2a2f3c;border:1px solid rgba(255,154,0,.5);color:#fff;font-weight:800;text-align:center;box-shadow:0 12px 30px rgba(0,0,0,.45);font-family:inherit";
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), 4500);
+      }
       async function entrarNoPainel(lembrarLogin) {
         salvarMotoboy(lembrarLogin);
         // App de antes do login seguro: troca a CNH + telefone salvos por uma chave so deste celular.
@@ -3817,6 +3929,7 @@
         crlvFoto = regDados.crlvFoto || crlvFoto;
         cidadesAtivas = normalizarCidadesAtivas(regDados.cidadesAtivas);
         cidadesCarregadasCpf = motoboyCpf;
+        termoMotoboy = regDados.termo || null;
         [
           "nome",
           "cpf",
@@ -3845,7 +3958,7 @@
         $("login").classList.add("hidden");
         $("painel").classList.remove("hidden");
         $("online").textContent = "Online";
-        window.MotojaDriverAvailability?.start({ backend: CONFIG.backend, getProof: driverProof, beforeAvailable: () => confirmarCidadePeloGps(), onChange: () => { limparCache(); atualizarTrabalho(); } });
+        window.MotojaDriverAvailability?.start({ backend: CONFIG.backend, getProof: driverProof, beforeAvailable: async () => (await garantirTermo()) && confirmarCidadePeloGps(), onChange: () => { limparCache(); atualizarTrabalho(); } });
         // Quem abriu o app ja Disponivel confere a cidade em silencio (o GPS pode ter mudado).
         setTimeout(() => { if (window.MotojaDriverAvailability?.canReceive()) confirmarCidadePeloGps({ silencioso: true }); }, 8000);
         iniciarPlanosMotoboy();
@@ -3856,6 +3969,7 @@
         ativarPushNativo(true);
         iniciarAvisoPagamentos();
         ocultarBoot();
+        if (termoMotoboy && !termoMotoboy.aceito) setTimeout(() => garantirTermo("A MotoJá tem um termo novo para os motoboys parceiros. Leia e aceite para continuar recebendo chamadas."), 700);
         renderPerfilMotoboy();
         renderCidadesAtivas();
         $("btn-mp").onclick = async () => {
@@ -4189,6 +4303,14 @@
           botao.disabled = false;
         }
       };
+      // Termo no cadastro: "Ler o termo" abre o texto inteiro; marcar a caixa vale como aceite.
+      $("aceiteTermo").onchange = () => { termoAceitoNoCadastro = $("aceiteTermo").checked ? TERMO_VERSAO : ""; };
+      $("lerTermo").onclick = async () => {
+        if (await abrirTermo({ aviso: "Leia até o fim e marque Li e aceito para se cadastrar." })) {
+          $("aceiteTermo").checked = true;
+          termoAceitoNoCadastro = TERMO_VERSAO;
+        }
+      };
       // Cadastro novo: confirma o WhatsApp digitado com o codigo antes de enviar para o dono.
       let cadastroCodigoPedido = false;
       ["cpf", "telefone"].forEach((id) =>
@@ -4208,6 +4330,12 @@
           return;
         }
         if (!validarCadastroMotoboy()) return;
+        if (!$("aceiteTermo").checked) {
+          if (await abrirTermo({ aviso: "Para se cadastrar, leia e aceite o termo." })) {
+            $("aceiteTermo").checked = true;
+            termoAceitoNoCadastro = TERMO_VERSAO;
+          } else return;
+        }
         botao.disabled = true;
         try {
           if (!cadastroCodigoPedido || !soNumeros($("senha").value)) {
@@ -4241,6 +4369,7 @@
             motoPlaca,
             crlvFoto,
             verificationToken: v.verificationToken,
+            aceiteTermo: termoAceitoNoCadastro,
           });
           if (d.driverToken) {
             motoboyToken = d.driverToken;

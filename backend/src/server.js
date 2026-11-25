@@ -40,6 +40,7 @@ import { GAZETTEER_CITIES, gazetteerCityKey, gazetteerFor } from './conchal-gaze
 import { createWhatsappBooking, BOOKING_CITIES } from './whatsapp-booking.js';
 import { createCustomerCards, repasseUpdate } from './customer-cards.js';
 import { createDriverSessions, driverSessionValid, legacyProofAllowed } from './driver-sessions.js';
+import { DRIVER_TERMS_VERSION, driverTermsError, driverTermsMissing, driverTermsRecord, driverTermsStatus } from './driver-terms.js';
 import { createGeminiReceiptReader, createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
 import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
 import { buscarResumoFood } from './food-summary.js';
@@ -6599,7 +6600,8 @@ function driverAppProfile(driver = {}, cpf = '') {
     motoPlaca: cleanText(driver.motoPlaca, 12),
     crlvFoto: driver.crlvFoto || '',
     cidadesAtivas: driverRideCities(driver),
-    servicosAtivos: driverServices(driver)
+    servicosAtivos: driverServices(driver),
+    termo: driverTermsStatus(driver)
   };
 }
 
@@ -6696,6 +6698,33 @@ app.post('/api/admin/drivers/:cpf/sessions/revoke', assertOwner, async (req, res
     clearDriverProofCache(cpf);
     adminStateCache = null;
     return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Termo do Motoboy Parceiro: grava a prova do aceite (data, versao, IP e aparelho) num documento
+// proprio, que nao muda depois, e marca a versao no cadastro. Duas gravacoes por motoboy por versao.
+async function saveDriverTermsAcceptance(cpf, req, origem) {
+  const prova = driverTermsRecord({ cpf, ip: req.ip, aparelho: req.get('user-agent'), origem });
+  const aceitoEm = admin.firestore.FieldValue.serverTimestamp();
+  await db.collection('termosMotoboy').doc(`${prova.cpf}_${prova.versao}`).set({ ...prova, aceitoEm });
+  return { termoVersao: prova.versao, termoAceitoEm: aceitoEm };
+}
+
+app.post('/api/drivers/:cpf/termo', authLimiter, async (req, res, next) => {
+  try {
+    const cpf = onlyDigits(req.params.cpf);
+    if (cpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
+    const driver = await getDriverWithProof(cpf, req.body, { requireSession: true });
+    if (String(req.body.versao || '') !== DRIVER_TERMS_VERSION) {
+      return res.status(409).json({ error: 'termo_desatualizado', message: 'O termo foi atualizado. Feche e abra o app para ler a versão nova.', termo: driverTermsStatus(driver) });
+    }
+    if (driverTermsStatus(driver).aceito) return res.json({ ok: true, termo: driverTermsStatus(driver) });
+    const marca = await saveDriverTermsAcceptance(cpf, req, 'app');
+    await db.collection('motoboys').doc(cpf).set(marca, { merge: true });
+    clearDriverProofCache(cpf);
+    return res.json({ ok: true, termo: driverTermsStatus({ termoVersao: DRIVER_TERMS_VERSION }) });
   } catch (error) {
     return next(error);
   }
@@ -6821,6 +6850,12 @@ app.post('/api/drivers/register', authLimiter, async (req, res, next) => {
     }
 
     const newDriver = !driverSnap.exists;
+    if (newDriver && String(req.body.aceiteTermo || '') !== DRIVER_TERMS_VERSION) {
+      return res.status(400).json({
+        error: 'termo_obrigatorio',
+        message: 'Para se cadastrar, leia e aceite o Termo do Motoboy Parceiro. Se o app não mostrou o termo, feche e abra de novo.'
+      });
+    }
     const driverData = {
       nome,
       cpf,
@@ -6849,6 +6884,7 @@ app.post('/api/drivers/register', authLimiter, async (req, res, next) => {
 
     // Cadastro novo so com o WhatsApp confirmado pelo codigo (e o mesmo numero do cadastro).
     if (newDriver) await driverSessionsApi.consumeVerification(cpf, req.body.verificationToken, telefone);
+    if (newDriver) Object.assign(driverData, await saveDriverTermsAcceptance(cpf, req, 'cadastro'));
 
     await driverRef.set(driverData, { merge: true });
 
@@ -13863,6 +13899,7 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
 
     const driver = await getDriverWithProof(driverCpf, req.body);
+    if (driverTermsMissing(driver)) throw driverTermsError();
     let acceptedRide = null;
     let alreadyAccepted = false;
     const rideRef = db.collection('corridas').doc(req.params.rideId);
@@ -14262,6 +14299,7 @@ app.post('/api/deliveries/:deliveryId/accept', async (req, res, next) => {
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
 
     const driver = await getDriverWithProof(driverCpf, req.body);
+    if (driverTermsMissing(driver)) throw driverTermsError();
     const deliveryRef = db.collection('entregas').doc(req.params.deliveryId);
 
     let companyId = '';
