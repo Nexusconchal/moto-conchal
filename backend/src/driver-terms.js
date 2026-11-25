@@ -14,13 +14,16 @@ export function driverTermsAccepted(driver = {}) {
 }
 
 export function driverTermsStatus(driver = {}, now = Date.now()) {
-  return {
+  const status = {
     versao: DRIVER_TERMS_VERSION,
     aceito: driverTermsAccepted(driver),
     url: DRIVER_TERMS_URL,
     prazoMs: DRIVER_TERMS_REQUIRED_FROM,
     obrigatorio: now >= DRIVER_TERMS_REQUIRED_FROM
   };
+  // Aceitou uma versao anterior: o app conta o que mudou ao pedir o aceite de novo.
+  if (!status.aceito && driver?.termoVersao) status.aceitouAntigo = true;
+  return status;
 }
 
 export function driverTermsMissing(driver = {}, now = Date.now()) {

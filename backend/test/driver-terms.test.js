@@ -26,6 +26,7 @@ function route(path) {
 function harness({ driver = null, records = new Map() } = {}) {
   if (driver) records.set(`motoboys/${CPF}`, driver);
   const writes = [];
+  const refetch = [];
   const routes = new Map();
   const db = {
     collection: (name) => ({
@@ -50,6 +51,8 @@ function harness({ driver = null, records = new Map() } = {}) {
       return records.get(`motoboys/${cpf}`);
     },
     DRIVER_TERMS_VERSION, driverTermsRecord, driverTermsStatus,
+    adminStateCache: { payload: 'velho' },
+    markAdminRefetch: (name, id) => refetch.push(`${name}/${id}`),
   });
   vm.runInContext(block('async function saveDriverTermsAcceptance('), ctx);
   vm.runInContext(route('/api/drivers/:cpf/termo'), ctx);
@@ -61,7 +64,7 @@ function harness({ driver = null, records = new Map() } = {}) {
     if (failure) { out.status = failure.status || 500; out.data = { error: failure.code }; }
     return out;
   };
-  return { call, records, writes };
+  return { call, records, writes, refetch, ctx };
 }
 
 test('o termo diz o que o dono pediu: autonomo, sem horario, proibido por fora e contato pessoal, sem multa', () => {
@@ -82,6 +85,8 @@ test('prazo: ate domingo 29/11 quem ja e cadastrado trabalha sem o termo; a part
   assert.equal(driverTermsStatus({}, DRIVER_TERMS_REQUIRED_FROM).obrigatorio, true);
   assert.equal(driverTermsStatus({ termoVersao: DRIVER_TERMS_VERSION }).aceito, true);
   assert.equal(driverTermsStatus({ termoVersao: '2020-01-01' }).aceito, false, 'versao antiga pede de novo');
+  assert.equal(driverTermsStatus({ termoVersao: '2026-11-25' }).aceitouAntigo, true, 'quem aceitou a versao 1 ve o que mudou');
+  assert.equal(driverTermsStatus({ termoVersao: DRIVER_TERMS_VERSION }).aceitouAntigo, undefined);
   assert.equal(driverTermsMissing({}, DRIVER_TERMS_REQUIRED_FROM - 1), false);
   assert.equal(driverTermsMissing({}, DRIVER_TERMS_REQUIRED_FROM), true);
   assert.equal(driverTermsMissing({ termoVersao: DRIVER_TERMS_VERSION }, DRIVER_TERMS_REQUIRED_FROM + 1), false);
@@ -104,6 +109,8 @@ test('aceite pelo app: guarda a prova (versao, IP, aparelho) e marca o cadastro'
   assert.equal(h.records.get(`motoboys/${CPF}`).termoVersao, DRIVER_TERMS_VERSION);
   assert.equal(h.records.get(`motoboys/${CPF}`).nome, 'Ze', 'nao apaga o resto do cadastro');
   assert.equal(h.writes.length, 2, 'so duas gravacoes no banco');
+  assert.equal(h.ctx.adminStateCache, null, 'o painel do dono nao fica com o guardado velho');
+  assert.deepEqual(h.refetch, [`motoboys/${CPF}`], 'o painel rele so este motoboy');
   const de_novo = await h.call({ driverToken: 'chave', versao: DRIVER_TERMS_VERSION });
   assert.equal(de_novo.status, 200);
   assert.equal(h.writes.length, 2, 'aceitar de novo nao grava nada');
@@ -149,4 +156,54 @@ test('app do motoboy: pede o termo no cadastro, ao entrar e antes de ficar Dispo
     'mostrarAvisoTermo();\n        if (termoMotoboy && !termoMotoboy.aceito)',
   ]) assert.ok(app.replace(/\r\n/g, '\n').includes(trecho), trecho);
   assert.match(sw, /'\.\/motoboy-termo\.html'/);
+});
+
+const dono = fs.readFileSync(new URL('../../dono.html', import.meta.url), 'utf8');
+function painelTermo({ agora, motoboys = [] }) {
+  const i = dono.indexOf('function termoAceito(');
+  assert.ok(i >= 0, 'painel do dono sem as funcoes do termo');
+  const Relogio = class extends Date { static now() { return agora; } };
+  const ctx = vm.createContext({
+    Date: Relogio, Number, String, encodeURIComponent, motoboys, filtroTermo: 'todos',
+    termoMotoboyAtual: driverTermsStatus({}), dataTxt: () => '25/11/2026, 20:00:00',
+  });
+  vm.runInContext(dono.slice(i, dono.indexOf('function renderMotoboys(', i)), ctx);
+  return ctx;
+}
+
+test('painel do dono: coluna Termo mostra quem aceitou, quem aceitou o antigo e quem falta, com aviso no WhatsApp', () => {
+  const antes = DRIVER_TERMS_REQUIRED_FROM - 60000;
+  const p = painelTermo({ agora: antes, motoboys: [{ termoVersao: DRIVER_TERMS_VERSION }, { termoVersao: '2026-11-25' }, {}] });
+  const aceitou = p.termoCelula({ termoVersao: DRIVER_TERMS_VERSION, termoAceitoEm: { _seconds: 1 } });
+  assert.match(aceitou, /✅ Aceitou/);
+  assert.match(aceitou, /em 25\/11\/2026, 20:00:00/);
+  const antigo = p.termoCelula({ termoVersao: '2026-11-25', nome: 'Zé Silva', telefone: '(19) 99999-0000' });
+  assert.match(antigo, /⚠️ Aceitou o antigo, falta o novo/);
+  const msg = decodeURIComponent(antigo.match(/wa\.me\/5519999990000\?text=([^"]+)"/)[1]);
+  assert.match(msg, /^Oi Zé! Aqui é da MotoJá\. Mudamos o termo do motoboy: tiramos a multa e o banimento\./);
+  assert.match(msg, /Ler e aceitar o termo" até domingo, 29\/11\. Depois disso, só recebe chamadas quem aceitou\.$/);
+  const nunca = p.termoCelula({ nome: 'Ana', telefone: '19988887777' });
+  assert.match(nunca, /❌ Não aceitou/);
+  assert.match(decodeURIComponent(nunca.match(/text=([^"]+)"/)[1]), /autônomo, faz seu horário e pode recusar chamadas/);
+  assert.doesNotMatch(p.termoCelula({ nome: 'Sem fone' }), /wa\.me/);
+  const filtro = p.filtroTermoHtml();
+  for (const t of ['Termo novo (aceitar até domingo, 29/11):', 'Todos (3)', '✅ Aceitaram (1)', '❌ Faltam aceitar (2)', 'data-filtro-termo="falta"']) assert.ok(filtro.includes(t), t);
+  // Depois do prazo o aviso pede o aceite para voltar a receber chamadas.
+  const depois = painelTermo({ agora: DRIVER_TERMS_REQUIRED_FROM + 1 }).termoCelula({ termoVersao: '2026-11-25', telefone: '19999990000' });
+  assert.match(decodeURIComponent(depois.match(/text=([^"]+)"/)[1]), /Ler e aceitar o termo" para voltar a receber chamadas\.$/);
+});
+
+test('painel do dono: servidor manda a versao do termo e a tabela tem a coluna e o filtro', () => {
+  assert.match(source, /const termoMotoboy = driverTermsStatus\(\{\}\);\n    const payload = withoutSecrets\(\{[^}]*, termoMotoboy \}\);/);
+  for (const t of [
+    "termoMotoboyAtual=d.termoMotoboy&&typeof d.termoMotoboy==='object'?d.termoMotoboy:{};",
+    '<th>Mercado Pago</th><th>Termo</th>', '<td>${mpCelula(m)}</td><td>${termoCelula(m)}</td>',
+    "filter(m=>filtroTermo==='todos'||(filtroTermo==='aceitou')===termoAceito(m))", '${filtroTermoHtml()}',
+    "if(ft){filtroTermo=ft.dataset.filtroTermo;renderMotoboys()}",
+  ]) assert.ok(dono.includes(t), t);
+});
+
+test('app do motoboy: quem aceitou a versao antiga ve que sairam a multa e o banimento', () => {
+  assert.match(app, /termoMotoboy\.aceitouAntigo \? "O termo mudou: saíram a multa e o banimento\. " : ""\}Aceite até <strong>/);
+  assert.match(app, /termoMotoboy\.aceitouAntigo\n\s+\? `O termo mudou: saíram a multa e o banimento\. Agora só é proibido pegar corrida ou entrega por fora e passar seu contato pessoal/);
 });
