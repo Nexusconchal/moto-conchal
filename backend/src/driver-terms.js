@@ -1,7 +1,7 @@
 // Termo do Motoboy Parceiro (motoboy-termo.html): versao atual, se o motoboy ja aceitou e o
 // registro do aceite, que serve de prova (data, versao, IP e aparelho).
 // Mudou o texto? Troque a versao aqui e em motoboy-termo.html: todo motoboy aceita de novo.
-export const DRIVER_TERMS_VERSION = '2026-11-25';
+export const DRIVER_TERMS_VERSION = '2026-11-25-v2';
 export const DRIVER_TERMS_URL = 'motoboy-termo.html';
 
 // Prazo para quem ja e cadastrado: aceita ate domingo, 29/11/2026. Ate la ele trabalha normal e o

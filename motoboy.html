@@ -950,7 +950,7 @@
         <p id="codigoCadastroInfo" class="access-code-note" hidden></p>
         </div>
         <div class="access-code-box termo-cadastro">
-          <label class="termo-check"><input id="aceiteTermo" type="checkbox" /> <span>Li e aceito o <strong>Termo do Motoboy Parceiro</strong>: sou autônomo, faço meu horário e sei que corrida ou entrega por fora dá banimento e multa.</span></label>
+          <label class="termo-check"><input id="aceiteTermo" type="checkbox" /> <span>Li e aceito o <strong>Termo do Motoboy Parceiro</strong>: sou autônomo, faço meu horário e não aceito corrida ou entrega por fora nem passo meu contato pessoal a clientes ou lojas do app.</span></label>
           <button id="lerTermo" class="secondary" type="button">Ler o termo</button>
         </div>
         <button id="entrar" type="button">
@@ -3787,7 +3787,7 @@
       }
       // Termo do Motoboy Parceiro (motoboy-termo.html). A versao e a mesma de backend/src/driver-terms.js.
       // O servidor diz no /me se este motoboy ja aceitou; sem aceite ele nao fica Disponivel.
-      const TERMO_VERSAO = "2026-11-25";
+      const TERMO_VERSAO = "2026-11-25-v2";
       let termoMotoboy = null;
       let termoAceitoNoCadastro = "";
       let termoJanela = null;
