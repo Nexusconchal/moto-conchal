@@ -4038,6 +4038,12 @@
           }
         };
       }
+      // Codigo de chegada: o cliente passa ao motoboy no destino quando o GPS nao confirma a
+      // chegada (ou se descer antes). Sem ele, o motoboy nao finaliza uma corrida que nao fez.
+      function htmlCodigoChegada(dados) {
+        if (dados.modalidade === "entrega_avulsa" || !dados.codigoChegada) return "";
+        return `<div id="codigo-chegada-box" style="margin:12px 0;padding:12px 14px;border-radius:14px;background:rgba(255,138,0,.10);border:1px solid rgba(255,138,0,.35);text-align:center"><div class="small" style="font-weight:800;color:#ffd38a">🏁 Código de chegada</div><div style="font-size:26px;font-weight:900;letter-spacing:8px;color:#fff;margin:4px 0">${escHtml(dados.codigoChegada)}</div><div class="small" style="color:#cbd5e1">Só passe ao motoboy quando chegar ao destino (ou se quiser descer antes). Nunca antes da viagem.</div></div>`;
+      }
       function mostrarCorridaAceita(pedido, dados) {
         modal.classList.add("open");
         modal.setAttribute("aria-hidden", "false");
@@ -4089,6 +4095,7 @@
               <div id="driver-contact-box">${driverWaBtn}</div>
             </div>
             ${pagHtml}
+            ${htmlCodigoChegada(dados)}
             ${dados.modalidade === "entrega_avulsa" && dados.codigoEntrega ? `<div style="margin:12px 0;padding:12px 14px;border-radius:14px;background:rgba(255,138,0,.12);border:1px solid rgba(255,138,0,.4);text-align:center"><div class="small" style="font-weight:800;color:#ffd38a">Código de entrega para ${escHtml(dados.nomeRecebedor || "quem recebe")}</div><div style="font-size:28px;font-weight:900;letter-spacing:8px;color:#fff;margin:4px 0">${escHtml(dados.codigoEntrega)}</div><div class="small" style="color:#cbd5e1">Envie esse código para quem vai receber: a pessoa passa o código para o motoboy na hora da entrega.</div></div>` : ""}
             <div id="gps-cliente-status" style="margin:12px 0 8px;padding:12px 14px;border-radius:14px;background:rgba(255,154,0,.12);border:1px solid rgba(255,154,0,.35);font-weight:800;display:flex;align-items:center;justify-content:space-between;gap:8px">
               <span id="gps-status-txt">Aguardando o motoboy iniciar o GPS...</span>
@@ -4122,6 +4129,10 @@
           </div>`;
           resultadoBox.className = "result show";
         } else {
+          // Corrida aceita antes da trava: o codigo aparece quando o motoboy tenta finalizar.
+          if (!$("codigo-chegada-box") && htmlCodigoChegada(dados) && $("gps-cliente-status")) {
+            $("gps-cliente-status").insertAdjacentHTML("beforebegin", htmlCodigoChegada(dados));
+          }
           const existingPag = $("pagamento-cliente-box");
           if (existingPag && pagHtml) {
             existingPag.outerHTML = pagHtml;

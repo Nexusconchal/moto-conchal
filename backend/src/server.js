@@ -27,6 +27,7 @@ import { createSupportAutomation, enrichSupportMessage, SUPPORT_PHONE, chooseDri
 import { addressSearchVariants, addressFeatureMatches, streetNumber } from './address-search.js';
 import { createGeocodeSearch } from './geocode-search.js';
 import { osrmRouteSteps } from './route-steps.js';
+import { provaPorGps, mensagemSemProva, codigoChegada, CODIGO_CHEGADA_TENTATIVAS } from './ride-finish.js';
 
 const searchMapAddress = createGeocodeSearch();
 import { prepareQuickDelivery, quickDeliveryFare, planFare } from './quick-delivery.js';
@@ -1986,6 +1987,8 @@ function publicPendingJob(job = {}) {
   delete copy.clienteDeviceId;
   delete copy.codigoEntrega;
   delete copy.tentativasCodigoEntrega;
+  delete copy.codigoChegada;
+  delete copy.tentativasCodigoChegada;
   delete copy.telefoneCliente;
   delete copy.telefoneEmpresa;
   delete copy.telefoneContato;
@@ -2039,6 +2042,8 @@ function privateDriverJob(job = {}) {
   delete copy.telefoneCliente;
   delete copy.codigoEntrega;
   delete copy.tentativasCodigoEntrega;
+  delete copy.codigoChegada;
+  delete copy.tentativasCodigoChegada;
   // A foto do proprio motoboy ja fica salva no perfil. Repeti-la em cada
   // corrida ou entrega torna a listagem muito pesada em conexoes moveis.
   delete copy.motoboyFoto;
@@ -4958,7 +4963,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 
 // Versao do servidor no ar (o painel do dono mostra e avisa quando o Render nao atualizou).
 const SERVER_STARTED_AT = Date.now();
-const SERVER_RELEASE = '2026-11-24-curvas-voz';
+const SERVER_RELEASE = '2026-11-25-trava-corrida';
 app.get('/api/version', (_req, res) => {
   res.set('cache-control', 'no-store');
   res.json({ ok: true, release: SERVER_RELEASE, commit: String(process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || 'local', iniciadoEmMs: SERVER_STARTED_AT });
@@ -12267,7 +12272,7 @@ app.get('/api/rides/:rideId/status', async (req, res, next) => {
         itemEntrega: ride.itemEntrega || '',
         nomeRecebedor: ride.nomeRecebedor || '',
         codigoEntrega: ride.codigoEntrega || ''
-      } : {}),
+      } : ride.status === 'aceita' && ride.codigoChegada ? { codigoChegada: ride.codigoChegada } : {}),
       rastreamentoAtivo: ride.rastreamentoAtivo === true,
       motoboyLocalizacao: ride.rastreamentoAtivo === true && ride.status === 'aceita'
         ? serializeFirestore(ride.motoboyLocalizacao || null)
@@ -13911,6 +13916,8 @@ app.post('/api/rides/:rideId/accept', async (req, res, next) => {
         clienteAvisadoEm: admin.firestore.FieldValue.serverTimestamp(),
         clienteAvisadoPor: driver.nome || req.body.driverName || '',
         rastreamentoAtivo: true,
+        // So o cliente ve: o motoboy pede no destino quando o GPS nao confirma a chegada.
+        ...(!isStandaloneDelivery(ride) && !ride.codigoChegada ? { codigoChegada: codigoChegada() } : {}),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       });
     });
@@ -14167,7 +14174,8 @@ async function saveTrackedLocation(ref, driverCpf, body, isDelivery) {
       throw error;
     }
     if (result.ignored) return result;
-    // Chegou no embarque: grava na hora (some o "Cancelar motoboy" para o cliente).
+    // Chegou no embarque: grava na hora (some o "Cancelar motoboy" para o cliente e fica a prova
+    // de que o GPS passou no embarque, usada para finalizar).
     const chegou = !isDelivery && !live.chegou && reachedPickup(live.job, result.location);
     if (!chegou) {
       live.location = result.location;
@@ -14199,12 +14207,13 @@ async function saveTrackedLocation(ref, driverCpf, body, isDelivery) {
       motoboyLocalizacao: result.location,
       // Mototaxi: o GPS perto da saida marca que o motoboy chegou (some o "Cancelar motoboy").
       ...(!isDelivery && !job.motoboyChegouEm && reachedPickup(job, result.location) ? { motoboyChegouEm: admin.firestore.FieldValue.serverTimestamp(), motoboyChegouEmMs: Date.now(), motoboyChegouPor: 'gps' } : {}),
+      ...(!isDelivery && !job.embarqueGpsEmMs && reachedPickup(job, result.location) ? { embarqueGpsEmMs: Date.now() } : {}),
       localizacaoAtualizadaEm: admin.firestore.FieldValue.serverTimestamp(),
       atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
     });
     return { ...result, companyId: job.empresaId || job.telefoneEmpresa, motoboy: job.motoboy || '', status: job.status,
       job: { origemLat: job.origemLat, origemLon: job.origemLon },
-      chegou: isDelivery || !!job.motoboyChegouEm || reachedPickup(job, result.location) };
+      chegou: isDelivery || !!job.embarqueGpsEmMs || reachedPickup(job, result.location) };
   });
   if (saved?.location && !saved.ignored) {
     liveLocations.set(path, { driverCpf, location: saved.location, persistedAt: Date.now(), companyId: saved.companyId, motoboy: saved.motoboy, status: saved.status, job: saved.job, chegou: saved.chegou });
@@ -14487,8 +14496,13 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
     const rideRef = db.collection('corridas').doc(req.params.rideId);
     let wrongDeliveryCode = false;
     let attemptsUsed = 0;
+    let arrivalNeeded = null;
+    let wrongArrivalCode = false;
+    let arrivalAttempts = 0;
     await db.runTransaction(async (tx) => {
       wrongDeliveryCode = false;
+      arrivalNeeded = null;
+      wrongArrivalCode = false;
       const rideSnap = await tx.get(rideRef);
       if (!rideSnap.exists) {
         const error = new Error('Corrida nao encontrada.');
@@ -14536,6 +14550,33 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
           return;
         }
       }
+      // Mototaxi: so finaliza a corrida que aconteceu (GPS no embarque e no destino) ou com o
+      // codigo de chegada que so o cliente tem. Sem isso, dava para receber sem levar ninguem.
+      let provaChegada = null;
+      if (!isStandaloneDelivery(ride)) {
+        const prova = provaPorGps(ride, liveLocationFor(rideRef.path, ride.motoboyLocalizacao), Date.now());
+        if (prova.ok) {
+          provaChegada = { finalizadaPor: 'gps', distanciaDestinoFinalM: prova.distanciaM };
+        } else {
+          arrivalAttempts = Number(ride.tentativasCodigoChegada || 0);
+          if (arrivalAttempts >= CODIGO_CHEGADA_TENTATIVAS) {
+            const error = new Error('Codigo de chegada bloqueado por tentativas erradas. Fale com o suporte MotoJa.');
+            error.status = 423;
+            error.code = 'codigo_chegada_bloqueado';
+            throw error;
+          }
+          const digitado = onlyDigits(req.body.codigoChegada);
+          if (!digitado || !ride.codigoChegada) {
+            arrivalNeeded = { prova, gerarCodigo: !ride.codigoChegada };
+            return;
+          }
+          if (digitado !== ride.codigoChegada) {
+            wrongArrivalCode = true;
+            return;
+          }
+          provaChegada = { finalizadaPor: 'codigo_chegada', ...(Number.isFinite(prova.distanciaM) ? { distanciaDestinoFinalM: prova.distanciaM } : {}) };
+        }
+      }
       if (ride.pagamento?.status !== 'approved' || ride.pagamento?.valido === false) {
         const error = new Error(isStandaloneDelivery(ride)
           ? 'Codigo de entrega certo. Falta o pagamento: peca para quem pediu pagar pelo link do Mercado Pago ou pelo cartao salvo no app e toque em Finalizar de novo.'
@@ -14562,9 +14603,39 @@ app.post('/api/rides/:rideId/finish', async (req, res, next) => {
         percentualApp: split.appPercent,
         valorMotoboy: split.driverAmount,
         valorApp: split.appFee,
+        ...(provaChegada || {}),
         atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
     });
+
+    if (arrivalNeeded) {
+      // Corrida aceita antes desta trava: cria o codigo agora (o cliente ve no app em segundos).
+      if (arrivalNeeded.gerarCodigo) {
+        await rideRef.set({ codigoChegada: codigoChegada(), atualizadaEm: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        rideStatusCache.delete(rideRef.id);
+      }
+      return res.status(409).json({
+        error: 'confirme_chegada_no_destino',
+        precisaCodigoChegada: true,
+        motivo: arrivalNeeded.prova.motivo,
+        message: mensagemSemProva(arrivalNeeded.prova)
+      });
+    }
+    if (wrongArrivalCode) {
+      await rideRef.set({
+        tentativasCodigoChegada: admin.firestore.FieldValue.increment(1),
+        atualizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      const restantes = Math.max(0, CODIGO_CHEGADA_TENTATIVAS - arrivalAttempts - 1);
+      return res.status(409).json({
+        error: 'codigo_chegada_invalido',
+        precisaCodigoChegada: true,
+        tentativasRestantes: restantes,
+        message: restantes
+          ? `Código de chegada incorreto. Confira os 4 números no app do cliente (restam ${restantes} tentativa${restantes > 1 ? 's' : ''}).`
+          : 'Código de chegada incorreto. As tentativas acabaram: fale com o suporte MotoJá.'
+      });
+    }
 
     if (wrongDeliveryCode) {
       await rideRef.set({
