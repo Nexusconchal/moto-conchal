@@ -75,8 +75,10 @@ test('o termo diz o que o dono pediu: autonomo, sem horario, sai e volta quando 
   ]) assert.match(page, trecho);
 });
 
-test('a versao e a data: antes de 01/12 o servidor ainda aceita chamada sem o termo; depois, nao', () => {
-  assert.deepEqual(driverTermsStatus({}), { versao: DRIVER_TERMS_VERSION, aceito: false, url: 'motoboy-termo.html' });
+test('prazo: ate domingo 29/11 quem ja e cadastrado trabalha sem o termo; a partir de segunda, nao', () => {
+  const antes = DRIVER_TERMS_REQUIRED_FROM - 1;
+  assert.deepEqual(driverTermsStatus({}, antes), { versao: DRIVER_TERMS_VERSION, aceito: false, url: 'motoboy-termo.html', prazoMs: DRIVER_TERMS_REQUIRED_FROM, obrigatorio: false });
+  assert.equal(driverTermsStatus({}, DRIVER_TERMS_REQUIRED_FROM).obrigatorio, true);
   assert.equal(driverTermsStatus({ termoVersao: DRIVER_TERMS_VERSION }).aceito, true);
   assert.equal(driverTermsStatus({ termoVersao: '2020-01-01' }).aceito, false, 'versao antiga pede de novo');
   assert.equal(driverTermsMissing({}, DRIVER_TERMS_REQUIRED_FROM - 1), false);
@@ -85,7 +87,9 @@ test('a versao e a data: antes de 01/12 o servidor ainda aceita chamada sem o te
   const e = driverTermsError();
   assert.equal(e.status, 428);
   assert.equal(e.code, 'termo_motoboy_pendente');
-  assert.equal(new Date(DRIVER_TERMS_REQUIRED_FROM).toISOString(), '2026-12-01T03:00:00.000Z');
+  assert.equal(new Date(DRIVER_TERMS_REQUIRED_FROM).toISOString(), '2026-11-30T03:00:00.000Z', 'segunda 30/11 00:00 em Brasilia');
+  const ultimoDia = new Date(DRIVER_TERMS_REQUIRED_FROM - 1).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', timeZone: 'America/Sao_Paulo' });
+  assert.equal(ultimoDia, 'domingo, 29/11', 'o aviso do app mostra este dia');
 });
 
 test('aceite pelo app: guarda a prova (versao, IP, aparelho) e marca o cadastro', async () => {
@@ -134,5 +138,14 @@ test('app do motoboy: pede o termo no cadastro, ao entrar e antes de ficar Dispo
   assert.match(app, /\/api\/drivers\/\$\{motoboyCpf\}\/termo/);
   assert.match(app, /beforeAvailable: async \(\) => \(await garantirTermo\(\)\) && confirmarCidadePeloGps\(\)/);
   assert.match(app, /termo_motoboy_pendente/);
+  // Aviso fixo com o prazo; antes do prazo so pergunta (Agora nao deixa trabalhar), depois bloqueia.
+  for (const trecho of [
+    'function mostrarAvisoTermo()',
+    'Aceite até <strong>${diaLimiteTermo()}</strong>. Depois disso, só recebe corridas e entregas quem aceitou o termo.',
+    'if (!obrigatorio && !perguntar) return true;',
+    'return !obrigatorio;',
+    'Date.now() >= prazo',
+    'mostrarAvisoTermo();\n        if (termoMotoboy && !termoMotoboy.aceito)',
+  ]) assert.ok(app.replace(/\r\n/g, '\n').includes(trecho), trecho);
   assert.match(sw, /'\.\/motoboy-termo\.html'/);
 });

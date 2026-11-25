@@ -4,17 +4,23 @@
 export const DRIVER_TERMS_VERSION = '2026-11-25';
 export const DRIVER_TERMS_URL = 'motoboy-termo.html';
 
-// Ate esta data o servidor ainda deixa aceitar chamada sem o termo (so o app pede o aceite),
-// para quem esta com o app aberto na versao antiga nao perder corrida no dia da troca.
-// 01/12/2026 00:00 no horario de Brasilia.
-export const DRIVER_TERMS_REQUIRED_FROM = Date.parse('2026-12-01T03:00:00Z');
+// Prazo para quem ja e cadastrado: aceita ate domingo, 29/11/2026. Ate la ele trabalha normal e o
+// app mostra o aviso com o prazo; a partir de segunda 30/11 00:00 (Brasilia) so trabalha quem aceitou
+// (o app nao deixa ficar Disponivel e o servidor recusa aceitar corrida ou entrega).
+export const DRIVER_TERMS_REQUIRED_FROM = Date.parse('2026-11-30T03:00:00Z');
 
 export function driverTermsAccepted(driver = {}) {
   return String(driver?.termoVersao || '') === DRIVER_TERMS_VERSION;
 }
 
-export function driverTermsStatus(driver = {}) {
-  return { versao: DRIVER_TERMS_VERSION, aceito: driverTermsAccepted(driver), url: DRIVER_TERMS_URL };
+export function driverTermsStatus(driver = {}, now = Date.now()) {
+  return {
+    versao: DRIVER_TERMS_VERSION,
+    aceito: driverTermsAccepted(driver),
+    url: DRIVER_TERMS_URL,
+    prazoMs: DRIVER_TERMS_REQUIRED_FROM,
+    obrigatorio: now >= DRIVER_TERMS_REQUIRED_FROM
+  };
 }
 
 export function driverTermsMissing(driver = {}, now = Date.now()) {

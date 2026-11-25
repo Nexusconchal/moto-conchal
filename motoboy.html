@@ -725,6 +725,9 @@
       .termo-texto p, .termo-texto li { font-size: 0.84rem; line-height: 1.45; color: #e8e8ef; }
       .termo-texto ol, .termo-texto ul { padding-left: 18px; margin: 0; }
       .termo-texto a { color: #9be7ff; }
+      .aviso-termo { margin: 10px 12px 0; padding: 12px 14px; border-radius: 14px; background: rgba(255, 114, 0, 0.14); border: 1px solid rgba(255, 154, 0, 0.55); display: grid; gap: 10px; }
+      .aviso-termo p { margin: 0; color: #fff; font-size: 0.86rem; line-height: 1.4; }
+      .aviso-termo strong { color: #ffb15c; }
       .grupos-cidade { display: grid; gap: 8px; margin-top: 10px; }
       .grupos-cidade[hidden] { display: none; }
       .grupos-cidade button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -2786,8 +2789,9 @@
             throw new Error(`Outro motoboy pegou esta ${nomeServico()} primeiro.`);
           }
           if (d.error === "termo_motoboy_pendente") {
-            termoMotoboy = { versao: termoMotoboy?.versao || TERMO_VERSAO, aceito: false, url: "motoboy-termo.html" };
-            garantirTermo("Para aceitar chamadas, aceite o Termo do Motoboy Parceiro.");
+            termoMotoboy = { versao: termoMotoboy?.versao || TERMO_VERSAO, aceito: false, url: "motoboy-termo.html", prazoMs: termoMotoboy?.prazoMs || 0, obrigatorio: true };
+            mostrarAvisoTermo();
+            garantirTermo("Para aceitar chamadas, aceite o Termo do Motoboy Parceiro.", { perguntar: true });
           }
           throw new Error(
             d.message ||
@@ -3839,12 +3843,52 @@
         });
         return termoJanela;
       }
-      // Pede o aceite se o servidor disse que falta. Responde true quando pode trabalhar.
-      async function garantirTermo(aviso = "") {
+      // Prazo: ate o fim do dia em termoMotoboy.prazoMs (domingo 29/11) quem ja e cadastrado trabalha
+      // normal e ve o aviso; depois do prazo so trabalha quem aceitou.
+      function termoObrigatorioAgora() {
+        if (!termoMotoboy || termoMotoboy.aceito) return false;
+        const prazo = Number(termoMotoboy.prazoMs || 0);
+        return termoMotoboy.obrigatorio === true || !prazo || Date.now() >= prazo;
+      }
+      // Ultimo dia para aceitar (o prazo e a meia-noite do dia seguinte), ex.: "domingo, 29/11".
+      function diaLimiteTermo() {
+        const prazo = Number(termoMotoboy?.prazoMs || 0);
+        if (!prazo) return "o prazo";
+        return new Date(prazo - 1).toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "2-digit", timeZone: "America/Sao_Paulo" });
+      }
+      // Aviso fixo no topo do painel enquanto faltar o aceite.
+      function mostrarAvisoTermo() {
+        let aviso = $("avisoTermo");
+        if (!termoMotoboy || termoMotoboy.aceito) {
+          aviso?.remove();
+          return;
+        }
+        if (!aviso) {
+          aviso = document.createElement("div");
+          aviso.id = "avisoTermo";
+          aviso.className = "aviso-termo";
+          aviso.setAttribute("role", "alert");
+          $("painel").prepend(aviso);
+        }
+        aviso.innerHTML = termoObrigatorioAgora()
+          ? `<p><strong>📄 Termo do Motoboy Parceiro</strong><br>O prazo acabou. Para receber corridas e entregas, leia e aceite o termo.</p><button type="button">Ler e aceitar o termo</button>`
+          : `<p><strong>📄 Termo do Motoboy Parceiro</strong><br>Aceite até <strong>${diaLimiteTermo()}</strong>. Depois disso, só recebe corridas e entregas quem aceitou o termo.</p><button type="button">Ler e aceitar o termo</button>`;
+        aviso.querySelector("button").onclick = () => garantirTermo("", { perguntar: true });
+      }
+      // Pede o aceite se falta. Antes do prazo so abre quando perguntar=true e nao bloqueia.
+      // Responde true quando pode trabalhar.
+      async function garantirTermo(aviso = "", { perguntar = false } = {}) {
         if (!termoMotoboy || termoMotoboy.aceito) return true;
-        if (!(await abrirTermo({ aviso }))) {
-          avisoTopo("Sem aceitar o termo você não recebe chamadas. Toque em Ficar disponível para ler de novo.");
-          return false;
+        const obrigatorio = termoObrigatorioAgora();
+        if (!obrigatorio && !perguntar) return true;
+        const texto = aviso || (obrigatorio
+          ? "O prazo acabou: para receber corridas e entregas, leia e aceite o termo."
+          : `Leia e aceite até ${diaLimiteTermo()}. Depois disso, só recebe corridas e entregas quem aceitou.`);
+        if (!(await abrirTermo({ aviso: texto }))) {
+          avisoTopo(obrigatorio
+            ? "Sem aceitar o termo você não recebe chamadas."
+            : `Você pode trabalhar até ${diaLimiteTermo()}. Depois, só com o termo aceito.`);
+          return !obrigatorio;
         }
         try {
           const r = await fetchMotoboyComRetry(
@@ -3859,6 +3903,7 @@
           const d = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(d.message || "Não consegui registrar o aceite agora. Tente de novo.");
           termoMotoboy = d.termo || { ...termoMotoboy, aceito: true };
+          mostrarAvisoTermo();
           avisoTopo("✅ Termo aceito. Bom trabalho!");
           return true;
         } catch (e) {
@@ -3867,7 +3912,7 @@
               ? "Não consegui conectar no servidor para registrar o aceite. Confira a internet e tente de novo."
               : e.message,
           );
-          return false;
+          return !termoObrigatorioAgora();
         }
       }
       function avisoTopo(texto) {
@@ -3969,7 +4014,9 @@
         ativarPushNativo(true);
         iniciarAvisoPagamentos();
         ocultarBoot();
-        if (termoMotoboy && !termoMotoboy.aceito) setTimeout(() => garantirTermo("A MotoJá tem um termo novo para os motoboys parceiros. Leia e aceite para continuar recebendo chamadas."), 700);
+        mostrarAvisoTermo();
+        if (termoMotoboy && !termoMotoboy.aceito)
+          setTimeout(() => garantirTermo(termoObrigatorioAgora() ? "" : `A MotoJá tem um termo novo para os motoboys parceiros. Aceite até ${diaLimiteTermo()}: depois disso, só recebe chamadas quem aceitou.`, { perguntar: true }), 700);
         renderPerfilMotoboy();
         renderCidadesAtivas();
         $("btn-mp").onclick = async () => {
