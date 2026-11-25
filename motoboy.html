@@ -3872,7 +3872,7 @@
         }
         aviso.innerHTML = termoObrigatorioAgora()
           ? `<p><strong>📄 Termo do Motoboy Parceiro</strong><br>O prazo acabou. Para receber corridas e entregas, leia e aceite o termo.</p><button type="button">Ler e aceitar o termo</button>`
-          : `<p><strong>📄 Termo do Motoboy Parceiro</strong><br>Aceite até <strong>${diaLimiteTermo()}</strong>. Depois disso, só recebe corridas e entregas quem aceitou o termo.</p><button type="button">Ler e aceitar o termo</button>`;
+          : `<p><strong>📄 Termo do Motoboy Parceiro</strong><br>${termoMotoboy.aceitouAntigo ? "O termo mudou: saíram a multa e o banimento. " : ""}Aceite até <strong>${diaLimiteTermo()}</strong>. Depois disso, só recebe corridas e entregas quem aceitou o termo.</p><button type="button">Ler e aceitar o termo</button>`;
         aviso.querySelector("button").onclick = () => garantirTermo("", { perguntar: true });
       }
       // Pede o aceite se falta. Antes do prazo so abre quando perguntar=true e nao bloqueia.
@@ -4016,7 +4016,9 @@
         ocultarBoot();
         mostrarAvisoTermo();
         if (termoMotoboy && !termoMotoboy.aceito)
-          setTimeout(() => garantirTermo(termoObrigatorioAgora() ? "" : `A MotoJá tem um termo novo para os motoboys parceiros. Aceite até ${diaLimiteTermo()}: depois disso, só recebe chamadas quem aceitou.`, { perguntar: true }), 700);
+          setTimeout(() => garantirTermo(termoObrigatorioAgora() ? "" : termoMotoboy.aceitouAntigo
+            ? `O termo mudou: saíram a multa e o banimento. Agora só é proibido pegar corrida ou entrega por fora e passar seu contato pessoal para clientes e lojas do app. Aceite a versão nova até ${diaLimiteTermo()}: depois disso, só recebe chamadas quem aceitou.`
+            : `A MotoJá tem um termo novo para os motoboys parceiros. Aceite até ${diaLimiteTermo()}: depois disso, só recebe chamadas quem aceitou.`, { perguntar: true }), 700);
         renderPerfilMotoboy();
         renderCidadesAtivas();
         $("btn-mp").onclick = async () => {

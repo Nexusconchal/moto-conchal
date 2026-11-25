@@ -6176,7 +6176,9 @@ app.get('/api/admin/state', assertOwner, async (_req, res, next) => {
       .sort((a, b) => timestampMs(b.cadastradaEm) - timestampMs(a.cadastradaEm));
     // O dono ve quem ja conectou o Mercado Pago (so o sim/nao; os tokens nunca saem daqui).
     for (const motoboy of motoboys) motoboy.mercadoPagoConectado = !!motoboy.mercadoPago?.accessToken;
-    const payload = withoutSecrets({ ok: true, corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil, contasSuporte, clientesCadastrados, planosAtivados, avaliacoes, indicacoes });
+    // Versao e prazo do termo do motoboy: o painel mostra quem ja aceitou a versao atual.
+    const termoMotoboy = driverTermsStatus({});
+    const payload = withoutSecrets({ ok: true, corridas, corridasCarro, entregas, motoboys, carroMotoristas, depositos, recuperacoesSenhaEmpresa, empresas, eventosFunil, contasSuporte, clientesCadastrados, planosAtivados, avaliacoes, indicacoes, termoMotoboy });
     adminStateCache = { payload, expiresAt: Date.now() + ADMIN_STATE_CACHE_MS };
     return res.json(payload);
   } catch (error) {
@@ -6724,6 +6726,9 @@ app.post('/api/drivers/:cpf/termo', authLimiter, async (req, res, next) => {
     const marca = await saveDriverTermsAcceptance(cpf, req, 'app');
     await db.collection('motoboys').doc(cpf).set(marca, { merge: true });
     clearDriverProofCache(cpf);
+    // O painel do dono mostra o aceite na proxima carga (rele so este motoboy).
+    adminStateCache = null;
+    markAdminRefetch('motoboys', cpf);
     return res.json({ ok: true, termo: driverTermsStatus({ termoVersao: DRIVER_TERMS_VERSION }) });
   } catch (error) {
     return next(error);
