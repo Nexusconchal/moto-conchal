@@ -1095,7 +1095,7 @@
     <script src="./motoboy-tela-acesa.js?v=1" defer></script>
     <script src="./motoboy-nav.js?v=curvas-1" defer></script>
     <script src="./motoboy-home.js?v=9" defer></script>
-    <script src="./motoboy-food.js?v=5"></script>
+    <script src="./motoboy-food.js?v=6-oferta"></script>
     <script src="./motoboy-perfil.js?v=1"></script>
     <script src="./motoboy-ganhos.js?v=1"></script>
     <script type="module">
@@ -2017,6 +2017,8 @@
       // os dados sao frescos, entao um servico que sumiu fecha na hora.
       function sincronizarTelaMapa(docs, posAcao = false) {
         if (!window.MotoNav) return;
+        // Entrega do MotoJÁ Food: quem cuida da tela é o motoboy-food.js.
+        if (String(window.MotoNav.idAtual?.() || "").startsWith("food-")) return;
         const porId = new Map(docs.map((d) => [d.id, { ...d.data, id: d.id }]));
         if (modoMinhas()) {
           const salva = lerNavAtiva();
@@ -2489,6 +2491,7 @@
         );
       }
       function atualizarAbas() {
+        document.body.dataset.servicosModo = modo;
         $("aba-pendentes").className = modo === "pendentes" ? "" : "secondary";
         $("aba-minhas").className = modo === "minhas" ? "" : "secondary";
         $("aba-entregas").className = modo === "entregas" ? "" : "secondary";
@@ -3462,7 +3465,7 @@
           // cancelou ou expirou): fecha, mesmo se o aviso em tempo real nao chegou.
           if (listas.every(Array.isArray) && window.MotoNav?.modo?.() === "oferta") {
             const idOferta = window.MotoNav.idAtual();
-            if (idOferta && !abertas.some((job) => job.id === idOferta)) removerOfertaEncerrada(idOferta, "Esta chamada não está mais disponível: outro motoboy pegou ou ela foi cancelada.");
+            if (idOferta && !String(idOferta).startsWith("food-") && !abertas.some((job) => job.id === idOferta)) removerOfertaEncerrada(idOferta, "Esta chamada não está mais disponível: outro motoboy pegou ou ela foi cancelada.");
           }
           atualizarContaAbertas(abertas.length);
           const idsAbertos = new Set(abertas.map((job) => job.id));
@@ -3485,6 +3488,7 @@
       window.addEventListener('motoja:call-alert-changed', (event) => {
         const { id, status } = event.detail || {};
         if (status === 'encerrada') removerOfertaEncerrada(id, 'Esta chamada não está mais disponível: outro motoboy pegou ou ela foi cancelada.');
+        if (String(id || '').startsWith('food-')) { window.MotoFood?.refresh(); return; }
         procurarChamadas();
         if (telaAtual === 'servicos') ouvir(true);
       });
@@ -3493,6 +3497,7 @@
       navigator.serviceWorker?.addEventListener("message", (event) => {
         if (event.data?.tipo !== "motoja:push") return;
         if (["nova_corrida", "nova_entrega"].includes(event.data.data?.tipo)) procurarChamadas();
+        if (event.data.data?.tipo === "entrega_food") window.MotoFood?.refresh();
       });
       // Contagem regressiva das chamadas abertas na tela Servicos.
       setInterval(() => {

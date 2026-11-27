@@ -1,5 +1,7 @@
-// Entregas do MotoJÁ Food (app de cardápio) dentro do app do motoboy: lista na tela Serviços,
-// aceitar, "peguei o pedido" e finalizar com o código do cliente. Quem fala com o Food é o backend.
+// Entregas do MotoJÁ Food (app de cardápio) dentro do app do motoboy. Igual às outras chamadas:
+// a entrega nova abre a tela de oferta tocando "MotoJá, bora rodar"; depois de aceitar, a rota até a
+// loja e depois até o cliente aparece no mapa do próprio app (MotoNav). A lista fica em Serviços →
+// Entregas (abertas) e Em andamento → Entregas (a sua). Quem fala com o Food é o backend.
 // Uso: MotoFood.start({ backend, getProof })
 (function () {
   "use strict";
@@ -12,11 +14,21 @@
   let gps = null;
   let acertoEm = 0;
   const ocupado = new Set();
+  // Oferta recusada não volta; a que passou sem resposta volta depois de alguns minutos se ninguém pegou.
+  const naoOferecerAte = new Map();
+  const mapaAberto = new Set();
+  const OFERTA_MS = 90000;
+  const DE_NOVO_MS = 3 * 60000;
+  const RECUSADA_MS = 30 * 60000;
   const $ = (id) => document.getElementById(id);
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const moeda = (centavos) => (Number(centavos || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   const CIDADES = { conchal: "Conchal", aguai: "Aguaí", "engenheiro-coelho": "Engenheiro Coelho" };
   const PAGAMENTO = { dinheiro: "em dinheiro", cartao: "no cartão (maquininha da loja)", vale: "no vale-refeição (maquininha da loja)", app: "" };
+  const idTela = (id) => `food-${id}`;
+  const ponto = (geo, titulo, detalhe) => ({ lat: Number(geo?.lat) || 0, lon: Number(geo?.lon) || 0, titulo: titulo || "-", detalhe: detalhe || "" });
+  const itensTexto = (e) => `${e.items || 1} ${Number(e.items) === 1 ? "item" : "itens"}`;
+  const kmTexto = (km) => (km != null && Number.isFinite(Number(km)) ? `${Number(km).toFixed(1).replace(".", ",")} km` : "-");
 
   function injectStyle() {
     if ($("motofood-style")) return;
@@ -26,6 +38,8 @@
       #foodEntregas{display:grid;gap:10px;margin:4px 0 12px}
       #foodEntregas[hidden],#foodPilula[hidden]{display:none}
       body:not([data-tela="servicos"]) #foodEntregas{display:none}
+      body[data-servicos-modo="pendentes"] #foodEntregas,body[data-servicos-modo="minhas"] #foodEntregas{display:none}
+      body[data-servicos-modo="entregas"] #foodEntregas .mf-card.mine,body[data-servicos-modo="minhas-entregas"] #foodEntregas .mf-card:not(.mine){display:none}
       .mf-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
       .mf-head h3{margin:0;font-size:1.02rem}
       .mf-head small{color:#9aa3b2;font-size:.78rem}
@@ -45,8 +59,6 @@
       .mf-acoes a,.mf-acoes button{flex:1 1 auto;display:flex;align-items:center;justify-content:center;gap:6px;min-height:44px;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:#1a2030;color:#fff;font-weight:800;font-size:.9rem;text-align:center;text-decoration:none;cursor:pointer}
       .mf-acoes .mf-principal{background:#ff8a00;border-color:#ff8a00;color:#111}
       .mf-acoes button:disabled{opacity:.6}
-      .mf-codigo{display:flex;gap:8px}
-      .mf-codigo input{flex:1;min-width:0;min-height:44px;padding:8px 12px;border-radius:12px;border:1px solid #394150;background:#0c0f16;color:#fff;font-size:1.3rem;letter-spacing:6px;text-align:center}
       .mf-aviso{padding:10px 12px;border-radius:12px;background:rgba(255,114,0,.14);color:#ffb27a;font-size:.85rem}
       .mf-vazio{color:#9aa3b2;font-size:.86rem;padding:4px 2px}
       .mf-acerto{display:grid;gap:8px;padding:12px 14px;border-radius:14px;background:rgba(255,180,0,.1);border:1px solid rgba(255,180,0,.35);font-size:.88rem}
@@ -57,8 +69,7 @@
       .mf-gps.off{color:#ffb27a}
       .mf-chegou{padding:8px 10px;border-radius:10px;background:rgba(53,201,121,.12);color:#7ee2a8;font-weight:800;font-size:.85rem}
       .mf-pix{padding:8px 10px;border-radius:10px;background:#0c0f16;border:1px dashed #394150;overflow-wrap:anywhere}
-      #foodPilula{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom));z-index:40;padding:11px 18px;border-radius:999px;border:0;background:#ff8a00;color:#111;font-weight:900;box-shadow:0 8px 24px rgba(0,0,0,.45);cursor:pointer}
-      body:not([data-tela="inicio"]) #foodPilula{display:none}`;
+      #foodPilula{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(96px + env(safe-area-inset-bottom));z-index:40;padding:11px 18px;border-radius:999px;border:0;background:#35c979;color:#0b1a10;font-weight:900;box-shadow:0 8px 24px rgba(0,0,0,.45);cursor:pointer;white-space:nowrap}`;
     document.head.appendChild(style);
   }
 
@@ -69,55 +80,173 @@
     if (!servicos) return;
     servicos.insertAdjacentHTML("afterend", '<section id="foodEntregas" aria-label="Entregas MotoJÁ Food" hidden></section>');
     document.body.insertAdjacentHTML("beforeend", '<button id="foodPilula" type="button" hidden></button>');
-    $("foodPilula").addEventListener("click", () => abrir());
+    $("foodPilula").addEventListener("click", () => {
+      const minha = entregas.find((e) => e.mine);
+      if (!minha || !abrirMapa(minha)) abrirLista();
+    });
     $("foodEntregas").addEventListener("click", (event) => {
       const botao = event.target.closest("[data-mf-acao]");
-      if (botao?.dataset.mfAcao === "paguei") pagueiAcerto();
-      else if (botao) agir(botao.dataset.mfId, botao.dataset.mfAcao, botao);
+      if (!botao) return;
+      const acao = botao.dataset.mfAcao;
+      const e = entregas.find((x) => x.id === botao.dataset.mfId);
+      if (acao === "paguei") pagueiAcerto();
+      else if (acao === "mapa" && e) abrirMapa(e);
+      else if (acao === "oferta" && e) abrirOferta(e, { alarme: false });
+      else agir(botao.dataset.mfId, acao, botao);
     });
     $("nav-servicos")?.addEventListener("click", () => carregar());
   }
 
-  function abrir() {
+  function abrirLista() {
     $("nav-servicos")?.click();
     setTimeout(() => $("foodEntregas")?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
   }
 
-  function rota(geo, endereco, cidade) {
-    const destino = geo && Number.isFinite(geo.lat) ? `${geo.lat},${geo.lon}` : `${endereco}, ${CIDADES[cidade] || ""} - SP`;
-    return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destino)}`;
+  function textoCobrar(e) {
+    if (!e.toCollect) return "Já pago pelo app. Não cobre nada do cliente.";
+    const troco = e.payment === "dinheiro" && e.change ? ` • cliente paga com ${moeda(e.change)}, leve ${moeda(e.change - e.toCollect)} de troco` : "";
+    return `Receber ${moeda(e.toCollect)} ${PAGAMENTO[e.payment] || ""}${troco}`.trim();
   }
 
   function cobrar(e) {
-    if (!e.toCollect) return '<div class="mf-cobrar pago">✓ Já pago pelo app. Não cobre nada.</div>';
-    const troco = e.payment === "dinheiro" && e.change ? ` • cliente paga com ${moeda(e.change)}, leve ${moeda(e.change - e.toCollect)} de troco` : "";
-    return `<div class="mf-cobrar">Receber ${moeda(e.toCollect)} ${PAGAMENTO[e.payment] || ""}${troco}</div>`;
+    return e.toCollect ? `<div class="mf-cobrar">${esc(textoCobrar(e))}</div>` : `<div class="mf-cobrar pago">✓ ${esc(textoCobrar(e))}</div>`;
   }
 
+  // ---------- Tela de oferta (igual às corridas e entregas) ----------
+  function podeOferecer() {
+    if (!window.MotoNav || window.MotoNav.aberto()) return false;
+    // Só para quem está Disponível e livre (sem corrida/entrega em andamento).
+    if (window.MotojaDriverAvailability?.canAlert?.() !== true) return false;
+    return !entregas.some((e) => e.mine);
+  }
+
+  function oferecerNova() {
+    if (!podeOferecer()) return;
+    const agora = Date.now();
+    const nova = entregas.find((e) => !e.mine && e.status === "pronto" && !((naoOferecerAte.get(e.id) || 0) > agora));
+    if (nova) abrirOferta(nova, { alarme: true });
+  }
+
+  function abrirOferta(e, { alarme = true } = {}) {
+    if (!window.MotoNav) return false;
+    naoOferecerAte.set(e.id, Date.now() + DE_NOVO_MS);
+    window.MotoNav.abrirOferta({
+      id: idTela(e.id),
+      backend: options.backend,
+      tipo: "entrega",
+      tag: `🍔 MotoJÁ Food · ${CIDADES[e.city] || "Conchal"}`,
+      topo: "Online",
+      ganhoTexto: moeda(e.earning),
+      ganhoLegenda: e.tip ? `você recebe · inclui gorjeta ${moeda(e.tip)}` : "você recebe",
+      kmViagemTexto: kmTexto(e.distanceKm),
+      extra: { valor: String(e.items || 1), rotulo: Number(e.items) === 1 ? "item" : "itens" },
+      coleta: ponto(e.storeGeo, `Coleta · ${e.storeName}`, e.pickupAddress),
+      destino: ponto(null, `Entrega · bairro ${e.district || "-"}`, "O endereço do cliente aparece depois de aceitar."),
+      observacao: `${e.toCollect ? "💵" : "✓"} ${textoCobrar(e)}`,
+      expiraEmMs: Date.now() + OFERTA_MS,
+      duracaoMs: OFERTA_MS,
+      textoAceitar: "Aceitar entrega",
+      alarme,
+      onRecusar: () => naoOferecerAte.set(e.id, Date.now() + RECUSADA_MS),
+      onExpirar: () => naoOferecerAte.set(e.id, Date.now() + DE_NOVO_MS),
+      onAceitar: async () => {
+        const dados = await post(`/api/food/deliveries/${encodeURIComponent(e.id)}/accept`);
+        entregas = Array.isArray(dados.deliveries) ? dados.deliveries : entregas;
+        aviso = "";
+        render();
+        const minha = entregas.find((x) => x.id === e.id && x.mine);
+        if (!minha || !abrirMapa(minha)) window.MotoNav.fechar();
+      },
+    });
+    return true;
+  }
+
+  // ---------- Mapa dentro do app depois de aceitar ----------
+  function abrirMapa(e) {
+    if (!window.MotoNav || !e?.mine) return false;
+    mapaAberto.add(e.id);
+    const c = e.customer || {};
+    const endereco = [c.street, c.number].filter(Boolean).join(", ");
+    const base = { id: idTela(e.id), backend: options.backend, prova: options.getProof(), tipo: "entrega", onFechar: () => render() };
+    if (e.status === "pronto") {
+      window.MotoNav.abrirNavegacao({
+        ...base,
+        etapa: "buscar",
+        alvo: { ...ponto(e.storeGeo, e.storeName, e.pickupAddress), rotulo: "Retirar pedido" },
+        etapaTexto: "INDO RETIRAR",
+        cliente: { nome: e.storeName || "Loja", linha: e.pickupAddress || `Pedido #${e.code}`, telefone: e.shopPhone || "" },
+        aviso: { tipo: e.toCollect ? "alerta" : "", texto: `Pedido #${e.code} · ${itensTexto(e)}. ${textoCobrar(e)}` },
+        principal: { texto: "Peguei o pedido", textoCarregando: "Confirmando...", acao: () => agirPeloMapa(e.id, "pickup") },
+      });
+      return true;
+    }
+    window.MotoNav.abrirNavegacao({
+      ...base,
+      etapa: "levar",
+      alvo: { ...ponto(e.dropGeo, c.name || "Cliente", [endereco, e.district].filter(Boolean).join(" — ")), rotulo: "Entregar pedido" },
+      etapaTexto: "INDO ENTREGAR",
+      cliente: { nome: c.name || "Cliente", linha: [endereco, e.district, c.reference ? `Ref.: ${c.reference}` : ""].filter(Boolean).join(" · "), telefone: c.phone || "" },
+      aviso: { tipo: e.toCollect ? "alerta" : "", texto: `${e.arrivedAt ? "🛎️ Cliente avisado que você chegou. " : ""}${textoCobrar(e)}` },
+      secundarias: e.arrivedAt ? [] : [{ texto: "🛎️ Cheguei", textoCarregando: "Avisando o cliente...", acao: () => agirPeloMapa(e.id, "arrived") }],
+      principal: { texto: e.toCollect ? "Recebi e entreguei" : "Entreguei", textoCarregando: "Finalizando...", cor: "verde", acao: () => entregarPeloMapa(e) },
+    });
+    return true;
+  }
+
+  async function agirPeloMapa(id, acao, extra = {}) {
+    ocupado.add(id);
+    try {
+      const dados = await post(`/api/food/deliveries/${encodeURIComponent(id)}/${acao}`, extra);
+      entregas = Array.isArray(dados.deliveries) ? dados.deliveries : entregas;
+      aviso = "";
+    } finally {
+      ocupado.delete(id);
+      render();
+    }
+    const atual = entregas.find((x) => x.id === id && x.mine);
+    if (acao === "deliver" || !atual) {
+      if (window.MotoNav?.idAtual?.() === idTela(id)) window.MotoNav.fechar();
+      await carregarAcerto(true);
+      render();
+      return;
+    }
+    abrirMapa(atual);
+  }
+
+  async function entregarPeloMapa(e) {
+    const extra = {};
+    if (e.hasCode) {
+      const codigo = String(prompt("Digite o código de 4 dígitos que aparece no pedido do cliente:") || "").replace(/\D/g, "");
+      if (codigo.length !== 4) throw new Error("Peça ao cliente o código de 4 dígitos do pedido e digite de novo.");
+      extra.code = codigo;
+    }
+    if (e.toCollect && !confirm(`Você recebeu ${moeda(e.toCollect)} ${PAGAMENTO[e.payment] || ""}?`)) throw new Error("Confirme quando receber o pagamento do cliente.");
+    await agirPeloMapa(e.id, "deliver", extra);
+  }
+
+  // ---------- Lista em Serviços ----------
   function cartao(e) {
-    const km = e.distanceKm != null ? ` • ${String(e.distanceKm).replace(".", ",")} km` : "";
-    const topo = `<div class="mf-top"><div><b>🍔 ${esc(e.storeName)}</b><small>Pedido #${esc(e.code)} • ${e.items} ${e.items === 1 ? "item" : "itens"}${km}</small></div><div class="mf-ganho"><strong>${moeda(e.earning)}</strong><small>${e.tip ? `inclui gorjeta ${moeda(e.tip)}` : "você ganha"}</small></div></div>`;
+    const km = e.distanceKm != null ? ` • ${kmTexto(e.distanceKm)}` : "";
+    const topo = `<div class="mf-top"><div><b>🍔 ${esc(e.storeName)}</b><small>Pedido #${esc(e.code)} • ${itensTexto(e)}${km}</small></div><div class="mf-ganho"><strong>${moeda(e.earning)}</strong><small>${e.tip ? `inclui gorjeta ${moeda(e.tip)}` : "você recebe"}</small></div></div>`;
     const retirada = `<div class="mf-linha"><span>Retirada:</span> ${esc(e.pickupAddress || "endereço da loja")}</div>`;
     const id = esc(e.id);
     const espera = ocupado.has(e.id) ? "disabled" : "";
     if (!e.mine) {
       return `<article class="mf-card">${topo}${retirada}<div class="mf-linha"><span>Entrega:</span> bairro ${esc(e.district || "-")}, ${esc(CIDADES[e.city] || "")}</div>${cobrar(e)}
-        <div class="mf-acoes"><button type="button" class="mf-principal" data-mf-acao="accept" data-mf-id="${id}" ${espera}>Aceitar entrega</button></div></article>`;
+        <div class="mf-acoes"><button type="button" data-mf-acao="oferta" data-mf-id="${id}">🗺️ Ver no mapa</button><button type="button" class="mf-principal" data-mf-acao="accept" data-mf-id="${id}" ${espera}>Aceitar entrega</button></div></article>`;
     }
     const c = e.customer || {};
     const endereco = [c.street, c.number].filter(Boolean).join(", ");
     const cliente = `<div class="mf-linha"><span>Cliente:</span> ${esc(c.name)}<br><span>Entregar em:</span> ${esc(endereco)} — ${esc(e.district)}${c.reference ? `<br><span>Referência:</span> ${esc(c.reference)}` : ""}</div>`;
+    const mapa = `<button type="button" class="mf-principal" data-mf-acao="mapa" data-mf-id="${id}">🗺️ Abrir mapa</button>`;
     if (e.status === "pronto") {
       return `<article class="mf-card mine">${topo}<div class="mf-linha"><b>1. Vá até a loja buscar o pedido</b></div>${retirada}${cliente}${cobrar(e)}
-        <div class="mf-acoes"><a href="${rota(e.storeGeo, e.pickupAddress, e.city)}" target="_blank" rel="noopener">🗺️ Rota até a loja</a>${e.shopPhone ? `<a href="tel:${esc(e.shopPhone)}">📞 Loja</a>` : ""}</div>
-        <div class="mf-acoes"><button type="button" class="mf-principal" data-mf-acao="pickup" data-mf-id="${id}" ${espera}>Peguei o pedido</button></div></article>`;
+        <div class="mf-acoes">${mapa}${e.shopPhone ? `<a href="tel:${esc(e.shopPhone)}">📞 Loja</a>` : ""}</div></article>`;
     }
     return `<article class="mf-card mine">${topo}<div class="mf-linha"><b>2. Leve até o cliente</b></div>${cliente}${cobrar(e)}
-      <div class="mf-acoes"><a href="${rota(e.dropGeo, endereco, e.city)}" target="_blank" rel="noopener">🗺️ Rota até o cliente</a>${c.phone ? `<a href="tel:${esc(c.phone)}">📞 Cliente</a>` : ""}</div>
+      <div class="mf-acoes">${mapa}${c.phone ? `<a href="tel:${esc(c.phone)}">📞 Cliente</a>` : ""}</div>
       <small class="mf-gps ${gps?.erro ? "off" : ""}">${gps?.erro ? "📍 " + esc(gps.erro) : gps?.enviadoEm ? "📍 O cliente vê você no mapa (atualizado " + new Date(gps.enviadoEm).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) + ")" : "📍 Ligando a localização para o cliente ver você no mapa…"}</small>
-      ${e.arrivedAt ? `<div class="mf-chegou">🛎️ Cliente avisado que você chegou (${new Date(e.arrivedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })})</div>` : `<div class="mf-acoes"><button type="button" data-mf-acao="arrived" data-mf-id="${id}" ${espera}>🛎️ Cheguei</button></div>`}
-      ${e.hasCode ? `<div class="mf-linha">Peça ao cliente o <b>código de 4 dígitos</b> que aparece no pedido dele.</div><div class="mf-codigo"><input id="mf-codigo-${id}" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="0000" aria-label="Código do cliente"></div>` : ""}
-      <div class="mf-acoes"><button type="button" class="mf-principal" data-mf-acao="deliver" data-mf-id="${id}" ${espera}>${e.toCollect ? "Recebi e entreguei" : "Entreguei"}</button></div></article>`;
+      ${e.arrivedAt ? `<div class="mf-chegou">🛎️ Cliente avisado que você chegou (${new Date(e.arrivedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })})</div>` : ""}</article>`;
   }
 
   // Acerto: em dinheiro, a parte da loja e da MotoJá fica com o motoboy até ele passar por Pix.
@@ -197,19 +326,18 @@
     const abertas = entregas.filter((e) => !e.mine);
     const acertoHtml = cartaoAcerto();
     painel.hidden = !entregas.length && !aviso && !acertoHtml;
-    // O código digitado não pode sumir quando a lista atualiza sozinha.
-    const digitados = {};
-    painel.querySelectorAll(".mf-codigo input").forEach((input) => { digitados[input.id] = input.value; });
     painel.innerHTML = `<div class="mf-head"><h3>🍔 Entregas MotoJÁ Food</h3><small>${abertas.length ? `${abertas.length} disponível${abertas.length > 1 ? "is" : ""}` : "atualiza sozinho"}</small></div>
       ${aviso ? `<div class="mf-aviso">${esc(aviso)}</div>` : ""}
       ${acertoHtml}
       ${minhas.map(cartao).join("")}${abertas.map(cartao).join("")}
       ${!entregas.length ? '<p class="mf-vazio">Nenhuma entrega do Food agora.</p>' : ""}`;
-    Object.entries(digitados).forEach(([id, valor]) => { if ($(id)) $(id).value = valor; });
+    // A pílula só aparece com uma entrega do Food em andamento e o mapa minimizado.
     const pilula = $("foodPilula");
     if (pilula) {
-      pilula.hidden = !entregas.length;
-      pilula.textContent = minhas.length ? `🍔 Sua entrega Food (${minhas.length}) — abrir` : `🍔 ${abertas.length} entrega${abertas.length > 1 ? "s" : ""} MotoJÁ Food — ver`;
+      const minha = minhas[0];
+      const mapaNaTela = minha && window.MotoNav?.aberto?.() && window.MotoNav.idAtual() === idTela(minha.id);
+      pilula.hidden = !minha || !!mapaNaTela;
+      pilula.textContent = minha ? `🍔 Entrega Food em andamento — abrir mapa` : "";
     }
   }
 
@@ -225,40 +353,52 @@
     return dados;
   }
 
+  // Oferta aberta que não está mais livre (outro motoboy pegou ou a loja cancelou): fecha na hora.
+  function fecharOfertaEncerrada() {
+    if (window.MotoNav?.modo?.() !== "oferta") return;
+    const atual = String(window.MotoNav.idAtual() || "");
+    if (!atual.startsWith("food-")) return;
+    const id = atual.slice(5);
+    if (!entregas.some((e) => e.id === id && !e.mine && e.status === "pronto")) {
+      window.MotoNav.fechar();
+      aviso = "Essa entrega do Food não está mais disponível: outro motoboy pegou.";
+    }
+  }
+
   async function carregar() {
     if (!options || carregando || document.hidden) return;
     carregando = true;
+    let ok = false;
     try {
       const [dados] = await Promise.all([post("/api/food/deliveries"), carregarAcerto()]);
       entregas = Array.isArray(dados.deliveries) ? dados.deliveries : [];
       aviso = "";
+      ok = true;
     } catch (erro) {
       // Lista vazia em silêncio quando o Food está fora; o aviso só aparece se havia entrega na tela.
       if (entregas.length) aviso = erro.message;
     } finally {
       carregando = false;
-      render();
     }
+    if (ok) {
+      fecharOfertaEncerrada();
+      // Entrega aceita (por exemplo, em outro aparelho ou antes de fechar o app): abre o mapa uma vez.
+      const minha = entregas.find((e) => e.mine);
+      if (minha && !mapaAberto.has(minha.id) && window.MotoNav && !window.MotoNav.aberto()) abrirMapa(minha);
+      else oferecerNova();
+    }
+    render();
   }
 
   async function agir(id, acao, botao) {
-    const extra = {};
-    if (acao === "deliver") {
-      const e = entregas.find((x) => x.id === id);
-      const campo = $(`mf-codigo-${id}`);
-      if (e?.hasCode) {
-        extra.code = String(campo?.value || "").replace(/\D/g, "");
-        if (extra.code.length !== 4) { aviso = "Digite o código de 4 dígitos do cliente."; render(); campo?.focus(); return; }
-      }
-      if (e?.toCollect && !confirm(`Você recebeu ${moeda(e.toCollect)} ${PAGAMENTO[e.payment] || ""}?`)) return;
-    }
     ocupado.add(id);
     if (botao) botao.disabled = true;
     try {
-      const dados = await post(`/api/food/deliveries/${encodeURIComponent(id)}/${acao}`, extra);
+      const dados = await post(`/api/food/deliveries/${encodeURIComponent(id)}/${acao}`);
       entregas = Array.isArray(dados.deliveries) ? dados.deliveries : [];
       aviso = "";
-      if (acao === "deliver") await carregarAcerto(true);
+      const minha = acao === "accept" ? entregas.find((x) => x.id === id && x.mine) : null;
+      if (minha) abrirMapa(minha);
     } catch (erro) {
       aviso = erro.message;
       if (acao === "accept") carregar();
@@ -273,10 +413,11 @@
     montar();
     carregar();
     clearInterval(timer);
-    timer = setInterval(carregar, 20000);
+    // A cada 15 s; o aviso em tempo real (push e conexão do app) busca na hora.
+    timer = setInterval(carregar, 15000);
     if (!start.ouvindo) document.addEventListener("visibilitychange", () => { if (!document.hidden) carregar(); });
     start.ouvindo = true;
-    if (new URLSearchParams(location.search).get("aba") === "food") setTimeout(abrir, 600);
+    if (new URLSearchParams(location.search).get("aba") === "food") setTimeout(abrirLista, 600);
   }
 
   window.MotoFood = { start, refresh: carregar };

@@ -44,7 +44,7 @@ import { DRIVER_TERMS_VERSION, driverTermsError, driverTermsMissing, driverTerms
 import { createGeminiReceiptReader, createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
 import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
 import { buscarResumoFood } from './food-summary.js';
-import { ACOES_FOOD, FOOD_OFFER_MS, idOfertaFood, pedidoDaOferta, avaliacaoFood, avisoFood, chamarFood, chaveFoodConfere, foodConfigurado, motoboyParaFood, pushEntregaFood } from './food-bridge.js';
+import { ACOES_FOOD, FOOD_OFFER_MS, idOfertaFood, pedidoDaOferta, avaliacaoFood, avisoFood, chamarFood, chaveFoodConfere, foodConfigurado, motoboyParaFood, pushEntregaFood, textoGrupoFood } from './food-bridge.js';
 
 const PORT = Number(process.env.PORT || 10000);
 const DRIVER_PERCENT = Number(process.env.DRIVER_PERCENT || 0.7);
@@ -8666,13 +8666,42 @@ app.post('/api/food/notify', async (req, res, next) => {
     if (!aviso) return res.status(400).json({ error: 'aviso_invalido' });
     const tokens = await availableDriverTokens((data) => driverWantsDeliveryIn(data, aviso.cidade));
     const link = process.env.APP_BASE_URL ? appUrl('/motoboy.html?aba=food') : 'https://nexusmotoja.com.br/motoboy.html?aba=food';
+    // Grupos da cidade (Telegram e WhatsApp), como as outras entregas: vai mesmo sem ninguém Disponível.
+    avisarGruposFood(aviso, link).catch((error) => console.error('food grupos failed', error?.message));
     if (!tokens.length) return res.json({ ok: true, sent: 0 });
-    const r = await callPush.offer(pushEntregaFood(aviso, tokens, link), { kind: 'deliveries', id: idOfertaFood(aviso.orderId), job: { expiraEmMs: Date.now() + FOOD_OFFER_MS } });
+    // Som de chamada ("MotoJá, bora rodar") no Android e no iPhone, igual às outras entregas.
+    const tag = `entrega_${idOfertaFood(aviso.orderId)}`;
+    const push = { ...pushEntregaFood(aviso, tokens, link), android: androidCallConfig(tag), apns: iosAlert(tag) };
+    const r = await callPush.offer(push, { kind: 'deliveries', id: idOfertaFood(aviso.orderId), job: { expiraEmMs: Date.now() + FOOD_OFFER_MS } });
     return res.json({ ok: true, sent: r.successCount });
   } catch (error) {
     return next(error);
   }
 });
+
+// Entrega do Food nos grupos dos motoboys da cidade: uma vez por pedido (o Food pode avisar de novo).
+const foodGruposAvisados = new Map();
+async function avisarGruposFood(aviso, link) {
+  const agora = Date.now();
+  for (const [id, em] of foodGruposAvisados) if (agora - em > 2 * 60 * 60000) foodGruposAvisados.delete(id);
+  if (foodGruposAvisados.has(aviso.orderId)) return;
+  foodGruposAvisados.set(aviso.orderId, agora);
+  const texto = textoGrupoFood(aviso, link);
+  const envios = [];
+  const chat = telegramGroupChat(aviso.cidade);
+  if (process.env.TELEGRAM_BOT_TOKEN && chat) {
+    envios.push(fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: chat, text: texto, disable_web_page_preview: true }), signal: AbortSignal.timeout(10000)
+    }));
+  }
+  const settings = await supportAutomation.config().catch(() => ({}));
+  if (settings.enabled && settings.groupAlerts) {
+    const grupo = await whatsappGroupFor(aviso.cidade, settings).catch(() => '');
+    if (grupo) envios.push(sendEvolutionText(grupo, texto));
+  }
+  await Promise.allSettled(envios);
+}
 
 // O Food pede um WhatsApp para os motoboys da própria loja (números que a loja cadastrou no painel dela).
 // Vai pelo mesmo WhatsApp do MotoJá (Evolution). Até 5 números por aviso e 60 mensagens por minuto.
