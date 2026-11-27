@@ -37,7 +37,9 @@ test('ponte Food: aviso de pedido pronto confere a chave e não leva dados do cl
   assert.equal(chaveFoodConfere('', { FOOD_PLATFORM_KEY: '' }), false);
   assert.equal(avisoFood({ orderId: 'x', city: 'sao-paulo' }), null);
   const aviso = avisoFood({ orderId: 'abc-1', city: 'engenheiro-coelho', storeName: 'Burger', district: 'Centro', fee: 750, earning: 600, distanceKm: 3.4, phone: '19999990000' });
-  assert.deepEqual(aviso, { orderId: 'abc-1', cidade: 'engenheiro_coelho', loja: 'Burger', bairro: 'Centro', frete: 600, km: 3.4 });
+  const { ate, ...semPrazo } = aviso;
+  assert.deepEqual(semPrazo, { orderId: 'abc-1', cidade: 'engenheiro_coelho', loja: 'Burger', bairro: 'Centro', frete: 600, km: 3.4 });
+  assert.ok(ate > Date.now(), 'prazo da chamada');
   const push = pushEntregaFood(aviso, ['t1'], 'https://nexusmotoja.com.br/motoboy.html?aba=food');
   assert.match(push.notification.body, /Burger • Centro • 3,4 km • você ganha R\$\s?6,00/);
   assert.equal(push.data.foodOrderId, 'abc-1');

@@ -66,7 +66,9 @@ export function avisoFood(corpo = {}) {
     loja: String(corpo.storeName || 'Loja').slice(0, 60),
     bairro: String(corpo.district || '').slice(0, 60),
     frete,
-    km: Number.isFinite(corpo.distanceKm) ? corpo.distanceKm : null
+    km: Number.isFinite(corpo.distanceKm) ? corpo.distanceKm : null,
+    // Prazo da chamada (15 min desde o pronto ou desde a loja chamar de novo).
+    ate: Number.isSafeInteger(corpo.callUntil) && corpo.callUntil > Date.now() ? corpo.callUntil : Date.now() + FOOD_OFFER_MS
   };
 }
 

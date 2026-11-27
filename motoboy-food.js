@@ -17,9 +17,12 @@
   // Oferta recusada não volta; a que passou sem resposta volta depois de alguns minutos se ninguém pegou.
   const naoOferecerAte = new Map();
   const mapaAberto = new Set();
-  const OFERTA_MS = 90000;
+  // A chamada do Food fica aberta 15 min (callUntil vem do Food). Se a loja chamar de novo, o prazo muda
+  // e a oferta volta, mesmo para quem tinha recusado.
+  const CHAMADA_MS = 15 * 60000;
   const DE_NOVO_MS = 3 * 60000;
-  const RECUSADA_MS = 30 * 60000;
+  const prazoDe = (e) => (Number(e.callUntil) > 0 ? Number(e.callUntil) : Date.now() + CHAMADA_MS);
+  const chaveOferta = (e) => `${e.id}:${Number(e.callUntil) || 0}`;
   const $ = (id) => document.getElementById(id);
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const moeda = (centavos) => (Number(centavos || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -160,13 +163,14 @@
   function oferecerNova() {
     if (!podeOferecer()) return;
     const agora = Date.now();
-    const nova = entregas.find((e) => !e.mine && e.status === "pronto" && !((naoOferecerAte.get(e.id) || 0) > agora));
+    const nova = entregas.find((e) => !e.mine && e.status === "pronto" && prazoDe(e) > agora + 5000 && !((naoOferecerAte.get(chaveOferta(e)) || 0) > agora));
     if (nova) abrirOferta(nova, { alarme: true });
   }
 
   function abrirOferta(e, { alarme = true } = {}) {
     if (!window.MotoNav) return false;
-    naoOferecerAte.set(e.id, Date.now() + DE_NOVO_MS);
+    const prazo = prazoDe(e);
+    naoOferecerAte.set(chaveOferta(e), Date.now() + DE_NOVO_MS);
     window.MotoNav.abrirOferta({
       id: idTela(e.id),
       backend: options.backend,
@@ -180,12 +184,13 @@
       coleta: ponto(e.storeGeo, `Coleta · ${e.storeName}`, e.pickupAddress),
       destino: ponto(null, `Entrega · bairro ${e.district || "-"}`, "O endereço do cliente aparece depois de aceitar."),
       observacao: `${e.toCollect ? "💵" : "✓"} ${textoCobrar(e)}`,
-      expiraEmMs: Date.now() + OFERTA_MS,
-      duracaoMs: OFERTA_MS,
+      // Cronômetro de 15 min, igual ao tempo que a loja espera antes de chamar de novo.
+      expiraEmMs: prazo,
+      duracaoMs: CHAMADA_MS,
       textoAceitar: "Aceitar entrega",
       alarme,
-      onRecusar: () => naoOferecerAte.set(e.id, Date.now() + RECUSADA_MS),
-      onExpirar: () => naoOferecerAte.set(e.id, Date.now() + DE_NOVO_MS),
+      onRecusar: () => naoOferecerAte.set(chaveOferta(e), prazo + 1000),
+      onExpirar: () => naoOferecerAte.set(chaveOferta(e), prazo + 1000),
       onAceitar: async () => {
         const dados = await post(`/api/food/deliveries/${encodeURIComponent(e.id)}/accept`);
         entregas = Array.isArray(dados.deliveries) ? dados.deliveries : entregas;
