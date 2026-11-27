@@ -10,6 +10,7 @@ const sent = [];
 const ctx = vm.createContext({
   process: { env: { TELEGRAM_BOT_TOKEN: 't', TELEGRAM_CHAT_ID: 'g' } }, JSON, Number, String,
   money: (v) => Math.round(Number(v || 0) * 100) / 100, RIDE_EXPIRE_MINUTES: 10,
+  driverGainText: () => 'R$ 5,00',
   rideOperatingCity: () => 'conchal', rideCityLabel: () => 'Conchal', telegramGroupChat: () => 'g',
   appUrl: (p) => `https://site${p}`, escapeTelegram: (v) => String(v), androidCallConfig: () => ({}), iosAlert,
   fetch: async (_url, init) => { sent.push(JSON.parse(init.body).text); return { ok: true, json: async () => ({ result: { message_id: 1 } }) }; }
@@ -28,6 +29,11 @@ test('entrega avulsa toca como ENTREGA (leve a bag), nao como corrida', async ()
   const push = ctx.rideOfferPush('r1', avulsa, ['tk']);
   assert.match(push.notification.title, /Nova entrega avulsa/);
   assert.match(push.notification.body, /Leve a bag/);
+  // So o ganho do motoboy aparece; o valor cobrado do cliente (R$ 6,50) nao.
+  assert.match(sent.at(-1), /Você recebe:<\/b> R\$ 5,00/);
+  assert.doesNotMatch(sent.at(-1), /6,50/);
+  assert.match(push.notification.body, /você recebe R\$ 5,00/);
+  assert.doesNotMatch(push.notification.body, /6,50/);
   // Corrida normal continua igual.
   await ctx.notifyTelegramAboutRide('r2', { ...avulsa, modalidade: 'corrida' });
   assert.match(sent.at(-1), /NOVA CORRIDA TOCANDO/);

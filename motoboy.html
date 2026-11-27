@@ -1555,17 +1555,11 @@
         if (c.cidadeOperacao === "engenheiro_coelho") return "Engenheiro Coelho";
         return "Conchal";
       }
-      // Total cobrado, taxa do app e quanto o motoboy recebe (lote: por entrega).
-      function contaEntrega(c) {
-        const total = dinheiro(c.valor),
-          app = dinheiro(ganhoApp(c.valor, c)),
-          qtd = Math.max(1, Number(c.paradas || 1)),
-          lote = c.entregaNaNota === true && qtd > 1;
-        return [
-          { rotulo: lote ? `${qtd} entregas × ${moeda(total / qtd)}` : "Valor da entrega", valor: moeda(total) },
-          { rotulo: lote ? `Taxa do app (${qtd} × ${moeda(app / qtd)})` : "Taxa do app", valor: `− ${moeda(app)}`, classe: "app" },
-          { rotulo: "Você recebe", valor: moeda(ganhoMotoboy(c.valor, c)), classe: "total" },
-        ];
+      // Para o motoboy so aparece o que ele ganha (o valor cobrado do cliente fica no app do
+      // cliente/empresa e no painel do dono). Na oferta, no lugar do total, o tempo de viagem.
+      function minutosViagem(km) {
+        const n = Number(km);
+        return n > 0 ? `${Math.max(1, Math.round((n / 28) * 60))} min` : "-";
       }
       function abrirOfertaMapa(c, { alarme = false } = {}) {
         if (!window.MotoNav || !c?.id || servicoExclusivo(c)) return false;
@@ -1600,14 +1594,13 @@
           ganhoTexto: moeda(ganhoMotoboy(c.valor, c)),
           ganhoLegenda: "você recebe",
           kmViagemTexto: kmTexto(c.km),
-          conta: entrega ? contaEntrega(c) : null,
           lote: loteNota ? { total: paradas } : null,
           meio: loteNota ? { valor: String(paradas), rotulo: paradas > 1 ? "entregas" : "entrega" } : null,
           extra: loteNota
             ? { valor: moeda(ganhoMotoboy(c.valor, c) / Math.max(1, paradas)), rotulo: "por entrega" }
             : entrega
               ? { valor: String(paradas), rotulo: paradas > 1 ? "paradas" : "parada" }
-              : { valor: moeda(c.valor), rotulo: avulsa ? "total da entrega" : "total da corrida" },
+              : { valor: minutosViagem(c.km), rotulo: "de viagem" },
           ...pontos,
           observacao: avulsa
             ? [`📦 Levar: ${c.itemEntrega || "encomenda"}`, c.nomeRecebedor ? `Para: ${c.nomeRecebedor}` : "", c.observacaoEntrega || c.observacao || ""].filter(Boolean).join(" · ")
@@ -2576,9 +2569,9 @@
       }
       function detalhes(c) {
         if (servicoExclusivo(c))
-          return `<p><strong>Servico exclusivo:</strong> Motoboy reservado para ${c.empresa || "empresa"}</p><p><strong>Empresa:</strong> ${c.empresa || "-"}</p><p><strong>Valor combinado:</strong> ${moeda(c.valor)}</p><p><strong>Horario:</strong> ${c.horario || c.periodo || "A combinar com o suporte MotoJa"}</p><p class="muted">Aceite somente se voce combinou essa escala com o suporte MotoJa.</p>`;
+          return `<p><strong>Servico exclusivo:</strong> Motoboy reservado para ${c.empresa || "empresa"}</p><p><strong>Empresa:</strong> ${c.empresa || "-"}</p><p><strong>Você recebe:</strong> ${moeda(ganhoMotoboy(c.valor, c))}</p><p><strong>Horario:</strong> ${c.horario || c.periodo || "A combinar com o suporte MotoJa"}</p><p class="muted">Aceite somente se voce combinou essa escala com o suporte MotoJa.</p>`;
         if (modoEntrega() || c.tipo === "entrega_empresarial")
-          return `${c.entregaNaNota ? `<p class="warn"><strong>Lote de ${Number(c.paradas || 1)} entregas — endereços nas notas.</strong> Um motoboy retira todos os pedidos. Finalize após entregar o lote inteiro.</p>` : ""}<p><strong>Empresa:</strong> ${c.empresa || "-"}</p><p><strong>Responsavel:</strong> ${c.responsavel || "-"}</p><p><strong>Tipo:</strong> ${c.tipoEntrega || "Delivery / encomendas"}</p><p><strong>Retirada:</strong> ${c.retirada || "-"}</p><p><strong>Entrega:</strong> ${c.entrega || "-"}</p>${Array.isArray(c.pontosExtras) && c.pontosExtras.length ? `<p><strong>Pontos extras:</strong><br>${c.pontosExtras.map((p) => `${p.ordem || ""}. ${p.digitado || "-"}${p.recebedor ? `<br>Recebe: ${p.recebedor}` : ""}${p.telefoneRecebedor ? `<br>WhatsApp: ${p.telefoneRecebedor}` : ""}${p.mapa ? `<br><a href="${p.mapa}" target="_blank">Abrir ponto no mapa</a>` : ""}`).join("<br><br>")}</p>` : c.enderecosExtras ? `<p><strong>Pontos extras:</strong><br>${String(c.enderecosExtras).replace(/\n/g, "<br>")}</p>` : ""}<p class="muted"><strong>Encontrado:</strong> ${c.entregaEncontrada || c.entrega || "-"}</p>${c.recebedor ? `<p><strong>Recebedor:</strong> ${c.recebedor}</p>` : ""}${c.telefoneRecebedor ? `<p><strong>WhatsApp recebedor:</strong> ${c.telefoneRecebedor}</p>` : ""}${c.dadosNaNota ? '<p class="warn"><strong>Dados do cliente:</strong> conferir na nota impressa.</p>' : ""}<p><strong>WhatsApp empresa:</strong> ${telefoneCliente(c) || "-"}</p><p><strong>Paradas:</strong> ${c.paradas || 1}</p>${c.descricao ? `<p><strong>Pedido:</strong> ${c.descricao}</p>` : ""}<p><strong>Distancia:</strong> ${c.entregaNaNota ? "Rota nas notas" : `${String(c.km || "-").replace(".", ",")} km`}</p><p><strong>Preco:</strong> ${c.precoLabel || "-"}</p>${c.observacao ? `<p><strong>Obs:</strong> ${c.observacao}</p>` : ""}<p><strong>Motoboy recebe:</strong> ${moeda(ganhoMotoboy(c.valor, c))} (${pct(Number(c.valor || 0) ? ganhoMotoboy(c.valor, c) / Number(c.valor) : driverPercent(c))}%)</p><p class="muted"><strong>App fica:</strong> ${moeda(ganhoApp(c.valor, c))} (${pct(Number(c.valor || 0) ? ganhoApp(c.valor, c) / Number(c.valor) : appPercent(c))}%)</p>`;
+          return `${c.entregaNaNota ? `<p class="warn"><strong>Lote de ${Number(c.paradas || 1)} entregas — endereços nas notas.</strong> Um motoboy retira todos os pedidos. Finalize após entregar o lote inteiro.</p>` : ""}<p><strong>Empresa:</strong> ${c.empresa || "-"}</p><p><strong>Responsavel:</strong> ${c.responsavel || "-"}</p><p><strong>Tipo:</strong> ${c.tipoEntrega || "Delivery / encomendas"}</p><p><strong>Retirada:</strong> ${c.retirada || "-"}</p><p><strong>Entrega:</strong> ${c.entrega || "-"}</p>${Array.isArray(c.pontosExtras) && c.pontosExtras.length ? `<p><strong>Pontos extras:</strong><br>${c.pontosExtras.map((p) => `${p.ordem || ""}. ${p.digitado || "-"}${p.recebedor ? `<br>Recebe: ${p.recebedor}` : ""}${p.telefoneRecebedor ? `<br>WhatsApp: ${p.telefoneRecebedor}` : ""}${p.mapa ? `<br><a href="${p.mapa}" target="_blank">Abrir ponto no mapa</a>` : ""}`).join("<br><br>")}</p>` : c.enderecosExtras ? `<p><strong>Pontos extras:</strong><br>${String(c.enderecosExtras).replace(/\n/g, "<br>")}</p>` : ""}<p class="muted"><strong>Encontrado:</strong> ${c.entregaEncontrada || c.entrega || "-"}</p>${c.recebedor ? `<p><strong>Recebedor:</strong> ${c.recebedor}</p>` : ""}${c.telefoneRecebedor ? `<p><strong>WhatsApp recebedor:</strong> ${c.telefoneRecebedor}</p>` : ""}${c.dadosNaNota ? '<p class="warn"><strong>Dados do cliente:</strong> conferir na nota impressa.</p>' : ""}<p><strong>WhatsApp empresa:</strong> ${telefoneCliente(c) || "-"}</p><p><strong>Paradas:</strong> ${c.paradas || 1}</p>${c.descricao ? `<p><strong>Pedido:</strong> ${c.descricao}</p>` : ""}<p><strong>Distancia:</strong> ${c.entregaNaNota ? "Rota nas notas" : `${String(c.km || "-").replace(".", ",")} km`}</p>${c.observacao ? `<p><strong>Obs:</strong> ${c.observacao}</p>` : ""}<p><strong>Você recebe:</strong> ${moeda(ganhoMotoboy(c.valor, c))}</p>`;
         const cidadeCorrida =
           c.cidadeOperacao === "aguai"
             ? "Aguaí"
@@ -2586,8 +2579,8 @@
               ? "Engenheiro Coelho"
               : "Conchal";
         if (entregaAvulsa(c))
-          return `<span class="tag-entrega-avulsa">ENTREGA AVULSA</span><p><strong>Cidade:</strong> ${cidadeCorrida}</p><p><strong>O que levar:</strong> ${c.itemEntrega || "-"}</p><p><strong>Buscar em:</strong> ${c.origem || "-"}</p><p><strong>Entregar em:</strong> ${c.destino || "-"}</p><p class="muted"><strong>Encontrado:</strong> ${c.destinoEncontrado || c.destino || "-"}</p><p><strong>Quem recebe:</strong> ${c.nomeRecebedor || "-"}</p>${c.telefoneRecebedor ? `<p><strong>WhatsApp de quem recebe:</strong> ${c.telefoneRecebedor}</p>` : ""}${c.observacaoEntrega ? `<p><strong>Obs:</strong> ${c.observacaoEntrega}</p>` : ""}<p><strong>WhatsApp de quem pediu:</strong> ${telefoneCliente(c) || "-"}</p><p><strong>Distancia:</strong> ${String(c.km || "-").replace(".", ",")} km</p><p><strong>Preco:</strong> ${c.precoLabel || "-"}</p><p><strong>Motoboy recebe:</strong> ${moeda(ganhoMotoboy(c.valor, c))} (${pct(Number(c.valor || 0) ? ganhoMotoboy(c.valor, c) / Number(c.valor) : driverPercent(c))}%)</p><p class="muted"><strong>App fica:</strong> ${moeda(ganhoApp(c.valor, c))} (${pct(Number(c.valor || 0) ? ganhoApp(c.valor, c) / Number(c.valor) : appPercent(c))}%)</p><p class="warn"><strong>Para finalizar, peca o codigo de 4 numeros para quem receber.</strong></p>`;
-        return `<p><strong>Cidade:</strong> ${cidadeCorrida}</p><p><strong>Origem:</strong> ${c.origem || "-"}</p><p><strong>Destino:</strong> ${c.destino || "-"}</p><p class="muted"><strong>Encontrado:</strong> ${c.destinoEncontrado || c.destino || "-"}</p><p><strong>WhatsApp cliente:</strong> ${telefoneCliente(c) || "-"}</p><p><strong>Distancia:</strong> ${String(c.km || "-").replace(".", ",")} km</p><p><strong>Preco:</strong> ${c.precoLabel || "-"}</p><p><strong>Motoboy recebe:</strong> ${moeda(ganhoMotoboy(c.valor, c))} (${pct(Number(c.valor || 0) ? ganhoMotoboy(c.valor, c) / Number(c.valor) : driverPercent(c))}%)</p><p class="muted"><strong>App fica:</strong> ${moeda(ganhoApp(c.valor, c))} (${pct(Number(c.valor || 0) ? ganhoApp(c.valor, c) / Number(c.valor) : appPercent(c))}%)</p>`;
+          return `<span class="tag-entrega-avulsa">ENTREGA AVULSA</span><p><strong>Cidade:</strong> ${cidadeCorrida}</p><p><strong>O que levar:</strong> ${c.itemEntrega || "-"}</p><p><strong>Buscar em:</strong> ${c.origem || "-"}</p><p><strong>Entregar em:</strong> ${c.destino || "-"}</p><p class="muted"><strong>Encontrado:</strong> ${c.destinoEncontrado || c.destino || "-"}</p><p><strong>Quem recebe:</strong> ${c.nomeRecebedor || "-"}</p>${c.telefoneRecebedor ? `<p><strong>WhatsApp de quem recebe:</strong> ${c.telefoneRecebedor}</p>` : ""}${c.observacaoEntrega ? `<p><strong>Obs:</strong> ${c.observacaoEntrega}</p>` : ""}<p><strong>WhatsApp de quem pediu:</strong> ${telefoneCliente(c) || "-"}</p><p><strong>Distancia:</strong> ${String(c.km || "-").replace(".", ",")} km</p><p><strong>Você recebe:</strong> ${moeda(ganhoMotoboy(c.valor, c))}</p><p class="warn"><strong>Para finalizar, peca o codigo de 4 numeros para quem receber.</strong></p>`;
+        return `<p><strong>Cidade:</strong> ${cidadeCorrida}</p><p><strong>Origem:</strong> ${c.origem || "-"}</p><p><strong>Destino:</strong> ${c.destino || "-"}</p><p class="muted"><strong>Encontrado:</strong> ${c.destinoEncontrado || c.destino || "-"}</p><p><strong>WhatsApp cliente:</strong> ${telefoneCliente(c) || "-"}</p><p><strong>Distancia:</strong> ${String(c.km || "-").replace(".", ",")} km</p><p><strong>Você recebe:</strong> ${moeda(ganhoMotoboy(c.valor, c))}</p>`;
       }
       function cidadeServico(c) {
         return c.cidadeOperacao === "aguai" ? "Aguaí" : c.cidadeOperacao === "engenheiro_coelho" ? "Eng. Coelho" : "Conchal";
@@ -2611,11 +2604,10 @@
           meta = [
             Number(c.km) > 0 ? `${String(Number(c.km).toFixed(1)).replace(".", ",")} km` : "",
             entrega ? `${paradas} ${paradas > 1 ? "paradas" : "parada"}` : "",
-            `Total ${moeda(c.valor)}`,
           ].filter(Boolean),
           cliente = entrega || exclusivo ? "" : cabecalhoCliente(c, c.nome || "Cliente", quando(c.criadaEm)),
           suporte = `<button class="secondary" type="button" onclick="location.href='https://api.whatsapp.com/send?phone=5519992306488&text=${encodeURIComponent("Quero falar sobre a " + nomeServico() + " " + id)}'">Falar com o suporte</button>`;
-        return `<article class="card job-card${entrega ? " job-entrega" : ""}"><div class="job-top"><div><div class="job-tag">${tag}</div><div class="job-price">${moeda(exclusivo ? c.valor : ganhoMotoboy(c.valor, c))}<small>${exclusivo ? "valor combinado" : "você recebe"}</small></div></div>${criadaMs ? `<div class="job-timer" data-expira="${criadaMs + tempoLimiteMs(c)}">⏱ ${tempoRestante(c)}</div>` : ""}</div>${exclusivo ? "" : `<div class="job-meta">${meta.map((m) => `<span>${m}</span>`).join("")}</div>${paradasServico(c, { coleta: { titulo: coleta.titulo, sub: coleta.detalhe }, destino: { titulo: destino.titulo, sub: destino.detalhe } })}`}<details class="job-more"><summary>Ver detalhes</summary>${cliente}<div>${detalhes(c)}</div>${suporte}</details><div class="actions">${exclusivo ? "" : `<button class="secondary" data-ver-mapa="${id}">Ver no mapa</button>`}<button class="ok" data-aceitar="${id}">${exclusivo ? "Aceitar escala" : entregaAvulsa(c) ? "Aceitar entrega" : "Aceitar " + nomeServico()}</button></div></article>`;
+        return `<article class="card job-card${entrega ? " job-entrega" : ""}"><div class="job-top"><div><div class="job-tag">${tag}</div><div class="job-price">${moeda(ganhoMotoboy(c.valor, c))}<small>você recebe</small></div></div>${criadaMs ? `<div class="job-timer" data-expira="${criadaMs + tempoLimiteMs(c)}">⏱ ${tempoRestante(c)}</div>` : ""}</div>${exclusivo ? "" : `<div class="job-meta">${meta.map((m) => `<span>${m}</span>`).join("")}</div>${paradasServico(c, { coleta: { titulo: coleta.titulo, sub: coleta.detalhe }, destino: { titulo: destino.titulo, sub: destino.detalhe } })}`}<details class="job-more"><summary>Ver detalhes</summary>${cliente}<div>${detalhes(c)}</div>${suporte}</details><div class="actions">${exclusivo ? "" : `<button class="secondary" data-ver-mapa="${id}">Ver no mapa</button>`}<button class="ok" data-aceitar="${id}">${exclusivo ? "Aceitar escala" : entregaAvulsa(c) ? "Aceitar entrega" : "Aceitar " + nomeServico()}</button></div></article>`;
       }
       function cardMinha(id, c) {
         const finalizada = c.status === "finalizada",

@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCallPushDispatcher } from '../src/driver-call-alerts.js';
+import fs from 'node:fs';
+import vm from 'node:vm';
 import { harness, companyId, driverCpf } from './financial-harness.js';
+
+const serverSource = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+const gainSource = serverSource.slice(serverSource.indexOf('function driverGainText('), serverSource.indexOf('function telegramOfferText('));
 
 const planDelivery = (extra = {}) => ({
   tipo: 'entrega_empresarial', confirmacaoEmpresaVersao: 1, status: 'pendente', empresaId: companyId, telefoneEmpresa: companyId,
@@ -38,6 +43,7 @@ function setup(delivery = planDelivery(), driver = { nome: 'Joao Pedro', telefon
   h.fn('finishCompanyDelivery');
   h.run('const PLAN_AUTO_FINISH_MS', 'function clientWhatsappNumber(');
   h.fn('notifyTelegramAboutDelivery');
+  vm.runInContext(gainSource, h.context);
   return { ...h, timers, sent };
 }
 
@@ -59,6 +65,11 @@ test('the fixed plan motoboy accepts on his own; he gets WhatsApp and both group
   assert.equal(h.sent.group.length, 1);
   assert.equal(h.sent.group[0].jid, 'motoboys@g.us');
   assert.match(h.sent.group[0].text, /Joao Pedro/);
+  // Grupos so mostram o ganho do motoboy (R$ 3,00), nunca o valor da empresa (R$ 4,00).
+  assert.match(h.sent.group[0].text, /o motoboy recebe R\$\s?3,00/);
+  assert.doesNotMatch(h.sent.group[0].text, /4,00/);
+  assert.match(h.sent.telegram[0], /Ganho do motoboy:<\/b> R\$\s?3,00/);
+  assert.doesNotMatch(h.sent.telegram[0], /4,00/);
   assert.equal(h.sent.whatsapp[0].number, '5519988887777');
   assert.match(h.sent.whatsapp[0].text, /Rua B, 20/);
   assert.match(h.sent.whatsapp[0].text, /Ver ganhos/);

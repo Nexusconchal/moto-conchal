@@ -77,6 +77,14 @@ test('notices exclude accepted, expired and future jobs, and personal addresses'
   assert.equal(pendingNotice({ ...job, criadaEm: NOW + 1 }, 'corridas', 'initial', 300000, NOW), '');
 });
 
+test('group notice shows only what the motoboy earns, never the price the customer pays', () => {
+  const job = { id: 'ride', status: 'pendente', criadaEm: NOW - 1000, valor: 12 };
+  const text = pendingNotice(job, 'corridas', 'initial', 300000, NOW, 'R$ 9,24');
+  assert.match(text, /Corrida disponível: você recebe R\$ 9,24\./);
+  assert.doesNotMatch(text, /12,00/);
+  assert.doesNotMatch(pendingNotice(job, 'corridas', 'initial', 300000, NOW), /12,00/);
+});
+
 test('duplicate and concurrent webhook deliveries generate one reply', async () => {
   const h = harness(); await Promise.all([h.service.handle(message()), h.service.handle(message())]);
   assert.equal(h.sent.length, 1);

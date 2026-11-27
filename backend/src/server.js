@@ -3162,7 +3162,7 @@ async function notifyTelegramAboutRide(rideId, ride) {
   const chatId = telegramGroupChat(city);
   if (!token || !chatId) return { sent: false, skipped: true };
 
-  const value = money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const value = driverGainText('corrida', ride);
   const km = Number(ride.km || 0).toFixed(2).replace('.', ',');
   const appLink = process.env.APP_BASE_URL
     ? appUrl('/motoboy.html')
@@ -3176,7 +3176,7 @@ async function notifyTelegramAboutRide(rideId, ride) {
     `<b>Cidade:</b> ${escapeTelegram(rideCityLabel(city))}`,
     `<b>Cliente:</b> ${escapeTelegram(ride.nome || 'Cliente')}`,
     ...(avulsa ? [`<b>Levar:</b> ${escapeTelegram(ride.itemEntrega || 'encomenda')}`, `<b>Quem recebe:</b> ${escapeTelegram(ride.nomeRecebedor || '-')}`] : []),
-    `<b>Valor:</b> ${escapeTelegram(value)}`,
+    `<b>Você recebe:</b> ${escapeTelegram(value)}`,
     `<b>Distancia:</b> ${escapeTelegram(km)} km`,
     `<b>${avulsa ? 'Buscar em' : 'Origem'}:</b> ${escapeTelegram(ride.origem || '-')}${escapeTelegram(originMap)}`,
     `<b>${avulsa ? 'Entregar em' : 'Destino'}:</b> ${escapeTelegram(ride.destino || '-')}`,
@@ -3220,7 +3220,7 @@ async function notifyTelegramAboutDelivery(deliveryId, delivery) {
   const chatId = telegramGroupChat(deliveryOperatingCity(delivery));
   if (!token || !chatId) return { sent: false, skipped: true };
 
-  const value = money(delivery.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const value = driverGainText('entrega', delivery);
   const km = Number(delivery.km || 0).toFixed(2).replace('.', ',');
   const appLink = process.env.APP_BASE_URL
     ? appUrl('/motoboy.html')
@@ -3232,14 +3232,13 @@ async function notifyTelegramAboutDelivery(deliveryId, delivery) {
     `<b>Empresa:</b> ${escapeTelegram(delivery.empresa || '-')}`,
     `<b>Responsavel:</b> ${escapeTelegram(delivery.responsavel || '-')}`,
     `<b>Tipo:</b> ${escapeTelegram(delivery.tipoEntrega || 'Delivery / encomendas')}`,
-    `<b>Valor:</b> ${escapeTelegram(value)}`,
+    `<b>Você recebe:</b> ${escapeTelegram(value)}`,
     delivery.entregaNaNota ? '<b>Chamada sem endereco:</b> um motoboy retira o lote; enderecos nas notas; rota nao calculada.' : `<b>Distancia:</b> ${escapeTelegram(km)} km`,
     `<b>${delivery.entregaNaNota ? 'Quantidade de entregas' : 'Paradas'}:</b> ${escapeTelegram(delivery.paradas || 1)}`,
     `<b>Retirada:</b> ${escapeTelegram(delivery.retirada || '-')}${escapeTelegram(pickupMap)}`,
     `<b>Entrega:</b> ${escapeTelegram(delivery.entrega || '-')}`,
-    Array.isArray(delivery.pontosExtras) && delivery.pontosExtras.length ? `<b>Pontos extras:</b>\n${delivery.pontosExtras.map((p) => `${escapeTelegram(p.ordem || '')}. ${escapeTelegram(p.digitado || '')}\nRecebe: ${escapeTelegram(p.recebedor || '-')}\nWhatsApp: ${escapeTelegram(p.telefoneRecebedor || '-')}${p.mapa ? `\nMapa: ${escapeTelegram(p.mapa)}` : ''}`).join('\n\n')}` : (delivery.enderecosExtras ? `<b>Pontos extras:</b> ${escapeTelegram(delivery.enderecosExtras)}` : ''),
+    Array.isArray(delivery.pontosExtras) && delivery.pontosExtras.length ? `<b>Pontos extras:</b>\n${delivery.pontosExtras.map((p) => `${escapeTelegram(p.ordem || '')}. ${escapeTelegram(p.digitado || '')}\nRecebe: ${escapeTelegram(p.recebedor || '-')}${p.mapa ? `\nMapa: ${escapeTelegram(p.mapa)}` : ''}`).join('\n\n')}` : (delivery.enderecosExtras ? `<b>Pontos extras:</b> ${escapeTelegram(delivery.enderecosExtras)}` : ''),
     delivery.recebedor ? `<b>Recebedor:</b> ${escapeTelegram(delivery.recebedor)}` : '',
-    delivery.telefoneRecebedor ? `<b>WhatsApp recebedor:</b> ${escapeTelegram(delivery.telefoneRecebedor)}` : '',
     delivery.descricao ? `<b>Pedido:</b> ${escapeTelegram(delivery.descricao)}` : '',
     delivery.observacao ? `<b>Obs:</b> ${escapeTelegram(delivery.observacao)}` : '',
     delivery.dadosNaNota ? '<b>Dados do cliente:</b> conferir na nota impressa' : '',
@@ -4134,7 +4133,7 @@ function rideOfferPush(rideId, ride, tokens, repeticao = 0) {
     tokens,
     notification: {
       title: `${isStandaloneDelivery(ride) ? 'Nova entrega avulsa' : 'Nova corrida'} MotoJa ${rideCityLabel(city)}`,
-      body: `${isStandaloneDelivery(ride) ? '📦 Leve a bag · ' : ''}${ride.nome || 'Cliente'} - ${money(ride.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`
+      body: `${isStandaloneDelivery(ride) ? '📦 Leve a bag · ' : ''}${ride.nome || 'Cliente'} - você recebe ${driverGainText('corrida', ride)}`
     },
     webpush: {
       // Alta prioridade: o celular entrega na hora mesmo economizando bateria.
@@ -4196,8 +4195,18 @@ function telegramReadyDrivers(docs, accepts = () => true) {
   });
 }
 
+// Avisos para motoboys (grupos do WhatsApp e do Telegram, Telegram particular e notificacao do
+// celular) mostram so o que o motoboy ganha. O valor cobrado do cliente e a taxa do app ficam no
+// app do cliente/empresa e no painel do dono.
+function driverGainText(kind, job = {}) {
+  const amount = kind === 'entrega' || kind === 'entregas'
+    ? deliverySplit(job).driverAmount
+    : rideSplitAmounts(job.valor, job.km, timestampMs(job.criadaEm)).driverAmount;
+  return money(amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
 function telegramOfferText(kind, job = {}) {
-  const value = money(job.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const value = `você recebe ${driverGainText(kind, job)}`;
   const link = process.env.APP_BASE_URL ? appUrl(kind === 'entrega' ? '/motoboy.html?aba=entregas' : '/motoboy.html') : `https://nexusmotoja.com.br/motoboy.html${kind === 'entrega' ? '?aba=entregas' : ''}`;
   const lines = kind === 'entrega'
     ? [`📦 NOVA ENTREGA MotoJá — ${value}`, `Empresa: ${job.empresa || '-'}`, job.entregaNaNota ? `Lote de ${job.paradas || 1} entregas` : `Bairro/destino: ${String(job.entrega || '-').slice(0, 80)}`]
@@ -4390,7 +4399,7 @@ async function runCustomerReminderTick(date = new Date()) {
 }
 
 function deliveryOfferPush(deliveryId, delivery, tokens, title, repeticao = 0) {
-  const body = `${delivery.empresa || 'Empresa'}${delivery.entregaNaNota ? ` — lote de ${delivery.paradas} entregas, enderecos nas notas` : ''} - ${money(delivery.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`;
+  const body = `${delivery.empresa || 'Empresa'}${delivery.entregaNaNota ? ` — lote de ${delivery.paradas} entregas, enderecos nas notas` : ''} - você recebe ${driverGainText('entrega', delivery)}`;
   return {
     tokens,
     notification: { title, body },
@@ -4460,14 +4469,14 @@ const PLAN_AUTO_FINISH_MS = 60 * 1000;
 const planAutoFinishTimers = new Map();
 const planAutoFinishRunning = new Set();
 
-function planDeliveryLines(delivery = {}) {
+function planDeliveryLines(delivery = {}, { telefone = true } = {}) {
   const extras = Array.isArray(delivery.pontosExtras) ? delivery.pontosExtras : [];
   return [
     `Retirada: ${delivery.retirada || '-'}`,
     delivery.entregaNaNota ? `Lote de ${delivery.paradas || 1} entregas: enderecos nas notas` : `Entrega: ${delivery.entrega || '-'}`,
     ...extras.map((point) => `Ponto ${point.ordem || ''}: ${point.digitado || '-'}${point.recebedor ? ` (recebe ${point.recebedor})` : ''}`),
     delivery.recebedor ? `Recebe: ${delivery.recebedor}` : '',
-    delivery.telefoneRecebedor ? `WhatsApp recebedor: ${delivery.telefoneRecebedor}` : '',
+    telefone && delivery.telefoneRecebedor ? `WhatsApp recebedor: ${delivery.telefoneRecebedor}` : '',
     delivery.descricao ? `Pedido: ${delivery.descricao}` : '',
     delivery.observacao ? `Obs: ${delivery.observacao}` : ''
   ].filter(Boolean);
@@ -4484,7 +4493,7 @@ async function notifyTelegramAboutPlanDelivery(deliveryId, delivery) {
     `<b>Empresa:</b> ${escapeTelegram(delivery.empresa || '-')}`,
     `<b>Motoboy fixo do plano:</b> ${escapeTelegram(delivery.motoboy || '-')}`,
     `<b>Ganho do motoboy:</b> ${escapeTelegram(ganho)}`,
-    ...planDeliveryLines(delivery).map(escapeTelegram),
+    ...planDeliveryLines(delivery, { telefone: false }).map(escapeTelegram),
     '',
     'Ja foi aceita automaticamente por ele e finaliza sozinha em 1 minuto. Nao precisa aceitar.',
     '',
@@ -4504,10 +4513,10 @@ async function notifyTelegramAboutPlanDelivery(deliveryId, delivery) {
 async function notifyWhatsappGroupAboutPlanDelivery(deliveryId, delivery) {
   const settings = await supportAutomation.config();
   if (!settings.enabled || !settings.groupAlerts || !settings.driverGroupJid) return { sent: false, skipped: true };
-  const value = money(delivery.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const value = driverGainText('entrega', delivery);
   const text = [
     'NOVA ENTREGA NEXUS MOTOJÁ — PLANO',
-    `Entrega do plano da ${delivery.empresa || 'empresa'}: ${value}.`,
+    `Entrega do plano da ${delivery.empresa || 'empresa'}: o motoboy recebe ${value}.`,
     `Já ficou com o motoboy fixo do plano: ${delivery.motoboy || '-'}. Não precisa aceitar.`,
     'Fique disponível no app para pegar as próximas.',
     `Código: ${deliveryId}`
@@ -4964,7 +4973,7 @@ async function releaseDeliveryReservation(deliveryRef, status, extra = {}) {
 
 // Versao do servidor no ar (o painel do dono mostra e avisa quando o Render nao atualizou).
 const SERVER_STARTED_AT = Date.now();
-const SERVER_RELEASE = '2026-11-25-trava-corrida';
+const SERVER_RELEASE = '2026-11-27-so-ganho';
 app.get('/api/version', (_req, res) => {
   res.set('cache-control', 'no-store');
   res.json({ ok: true, release: SERVER_RELEASE, commit: String(process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || 'local', iniciadoEmMs: SERVER_STARTED_AT });
@@ -16069,6 +16078,7 @@ const supportAutomation = createSupportAutomation({
   generateReply: createSupportAiChain({ gemini: geminiSupport, openRouter: openrouterSupport, decrypt: decryptSecretSafe }),
   isSystemOutgoing: event => (automaticWhatsappMessages.get(hashSecret(`${event.phone}:${event.text}`)) || 0) > Date.now(),
   rideExpireMs: RIDE_EXPIRE_MS, deliveryExpireMs: DELIVERY_EXPIRE_MS,
+  driverGain: (job, kind) => driverGainText(kind, job),
   // Mesma lista aberta dos motoboys (espelho ao vivo), em vez de consultar o banco a cada minuto.
   pendingJobs: (kind) => openJobsSnapshot(kind),
   // Fora do espelho = nao esta mais aberta (aceita some da lista de pendentes, mas continua no espelho).

@@ -141,12 +141,12 @@ export function chooseDriverGroup(groups) {
   return matches.length === 1 ? matches[0] : null;
 }
 
-export function pendingNotice(job, kind, stage, expireMs, now = Date.now()) {
+// ganho: o que o motoboy recebe (texto pronto). O valor cobrado do cliente nunca vai para o grupo.
+export function pendingNotice(job, kind, stage, expireMs, now = Date.now(), ganho = '') {
   const age = now - ms(job.criadaEm);
   const reminderMinutes = stage === 'reminder' ? 2 : Number(stage.match(/^reminder-(\d+)m$/)?.[1] || 0);
   if (job.status !== 'pendente' || !ms(job.criadaEm) || age < reminderMinutes * 60000 || (stage === 'initial' && age >= 120000) || age >= expireMs) return '';
-  const value = Number(job.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-  return `${stage === 'customer' ? 'ATENÇÃO, MOTOBOYS: cliente pediu ajuda porque está aguardando aceite' : reminderMinutes ? `ATENÇÃO, MOTOBOYS: solicitação aguardando há pelo menos ${reminderMinutes} minutos` : 'NOVA SOLICITAÇÃO NEXUS MOTOJÁ'}\n${kind === 'corridas' ? 'Corrida' : 'Entrega'} disponível: ${value}.\nQuem estiver disponível, confira e aceite no app:\n${DRIVER_APP}\nCódigo: ${job.id}\nA disponibilidade deve ser conferida no app. Não confirme pelo grupo.`;
+  return `${stage === 'customer' ? 'ATENÇÃO, MOTOBOYS: cliente pediu ajuda porque está aguardando aceite' : reminderMinutes ? `ATENÇÃO, MOTOBOYS: solicitação aguardando há pelo menos ${reminderMinutes} minutos` : 'NOVA SOLICITAÇÃO NEXUS MOTOJÁ'}\n${kind === 'corridas' ? 'Corrida' : 'Entrega'} disponível${ganho ? `: você recebe ${ganho}` : ''}.\nQuem estiver disponível, confira e aceite no app:\n${DRIVER_APP}\nCódigo: ${job.id}\nA disponibilidade deve ser conferida no app. Não confirme pelo grupo.`;
 }
 
 const ACTIVE = ['aceita', 'iniciada', 'em_andamento'];
@@ -173,7 +173,7 @@ export function rideFacts(ride, phoneKnown, looked, expireMs, now = Date.now()) 
 
 // The assistant never changes fares or accepts a job. Ride requests go through `booking`
 // (whatsapp-booking.js), which asks and confirms every detail before the server creates the ride.
-export function createSupportAutomation({ db, sendText, encrypt, decrypt = () => '', generateReply = async () => null, booking = null, instance, rideExpireMs, deliveryExpireMs, sendTelegram, isSystemOutgoing = () => false, markRead = async () => {}, typing = async () => {}, groupFor = async (job, kind, settings) => settings.driverGroupJid || '', pendingJobs = null, loadJob = null, now = () => Date.now() }) {
+export function createSupportAutomation({ db, sendText, encrypt, decrypt = () => '', generateReply = async () => null, booking = null, instance, rideExpireMs, deliveryExpireMs, sendTelegram, isSystemOutgoing = () => false, markRead = async () => {}, typing = async () => {}, groupFor = async (job, kind, settings) => settings.driverGroupJid || '', pendingJobs = null, loadJob = null, driverGain = () => '', now = () => Date.now() }) {
   const configRef = db.collection('configuracoes').doc('atendimentoAutomatico');
   let cache, cacheUntil = 0, ticking = false, lastPrune = 0;
   const completedNotices = new Map(), outgoingEchoes = new Map(), queuedChats = new Set();
@@ -442,7 +442,7 @@ export function createSupportAutomation({ db, sendText, encrypt, decrypt = () =>
     // Confere se ainda esta aberta: pelo espelho ao vivo do servidor quando houver (sem leitura).
     const current = (loadJob && await loadJob(kind, ref.id)) || await ref.get();
     const fresh = { ...current.data(), id: current.id };
-    const text = ms(fresh.criadaEm) === ms(job.criadaEm) && pendingNotice(fresh, kind, stage, expire, now());
+    const text = ms(fresh.criadaEm) === ms(job.criadaEm) && pendingNotice(fresh, kind, stage, expire, now(), driverGain(fresh, kind));
     if (!text) return { channel, status: 'ignored' };
     // At most one attempt: an ambiguous network timeout must not spam a group.
     try {
