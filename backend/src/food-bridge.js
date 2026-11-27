@@ -79,6 +79,43 @@ export function avaliacaoFood(corpo = {}) {
   return { cpf, nota, orderId, comentario: String(corpo.comentario || '').trim().slice(0, 300), loja: String(corpo.loja || '').slice(0, 60), cidade: CIDADE_APP[corpo.city || corpo.cidade] || '' };
 }
 
+// Entrega do Food finalizada vira um ganho no extrato do motoboy, igual às outras entregas.
+// pedido = uma linha do acerto do Food (id, code, storeName, at, share em centavos, payment, collector).
+export function eventoGanhoFood(pedido = {}, dia) {
+  const ganhoCentavos = Math.max(0, Math.round(Number(pedido.share || 0)));
+  const emMs = Date.parse(pedido.at) || Date.now();
+  const dinheiro = pedido.collector === 'motoboy' || pedido.payment === 'dinheiro';
+  const loja = String(pedido.storeName || 'Loja').slice(0, 80);
+  return {
+    serviceId: idOfertaFood(pedido.id),
+    tipo: 'entrega',
+    modalidade: 'entrega',
+    titulo: `${loja} · MotoJÁ Food`,
+    origem: loja,
+    destino: pedido.code ? `Pedido #${String(pedido.code).slice(0, 12)}` : '',
+    quantidadeEntregas: 1,
+    entregaNaNota: false,
+    ganhoCentavos,
+    quilometrosMetros: 0,
+    finalizadaEmMs: emMs,
+    dia,
+    forma: dinheiro ? 'dinheiro' : 'app',
+    recebedor: dinheiro ? '' : 'motoja',
+    valorCobradoCentavos: 0
+  };
+}
+
+// Push de mensagem nova no chat do pedido do Food (sem o texto: ele só aparece no app).
+export function pushChatFood({ orderId, code, from }, tokens, link) {
+  const quem = from === 'loja' ? 'da loja' : 'do cliente';
+  return {
+    tokens,
+    notification: { title: `💬 Mensagem ${quem}${code ? ` · pedido #${code}` : ''}`, body: 'Abra a entrega do MotoJÁ Food para responder.' },
+    webpush: { headers: { Urgency: 'high', TTL: '600' }, fcmOptions: { link } },
+    data: { tipo: 'chat_food', foodOrderId: String(orderId || '') }
+  };
+}
+
 // Texto dos grupos dos motoboys da cidade (Telegram e WhatsApp): só o que o motoboy ganha,
 // a loja e o bairro. Endereço e telefone do cliente só aparecem no app, depois do aceite.
 export function textoGrupoFood(aviso, link) {

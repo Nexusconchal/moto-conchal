@@ -44,7 +44,7 @@ import { DRIVER_TERMS_VERSION, driverTermsError, driverTermsMissing, driverTerms
 import { createGeminiReceiptReader, createGeminiSupport, reserveGeminiQuota, reserveSupportAiQuota, GEMINI_DEFAULT_MODEL, GEMINI_MODELS } from './gemini-support.js';
 import { createOpenRouterSupport, createSupportAiChain, OPENROUTER_FREE_MODEL } from './openrouter-support.js';
 import { buscarResumoFood } from './food-summary.js';
-import { ACOES_FOOD, FOOD_OFFER_MS, idOfertaFood, pedidoDaOferta, avaliacaoFood, avisoFood, chamarFood, chaveFoodConfere, foodConfigurado, motoboyParaFood, pushEntregaFood, textoGrupoFood } from './food-bridge.js';
+import { ACOES_FOOD, FOOD_OFFER_MS, idOfertaFood, pedidoDaOferta, avaliacaoFood, avisoFood, chamarFood, chaveFoodConfere, foodConfigurado, motoboyParaFood, pushEntregaFood, textoGrupoFood, eventoGanhoFood, pushChatFood } from './food-bridge.js';
 
 const PORT = Number(process.env.PORT || 10000);
 const DRIVER_PERCENT = Number(process.env.DRIVER_PERCENT || 0.7);
@@ -7328,8 +7328,12 @@ app.post('/api/drivers/:cpf/earnings/summary', async (req, res, next) => {
   try {
     const driverCpf = onlyDigits(req.params.cpf);
     if (driverCpf.length !== 11) return res.status(400).json({ error: 'driverCpf_invalido' });
-    await getDriverWithProof(driverCpf, req.body);
+    const driverDados = await getDriverWithProof(driverCpf, req.body);
     await initializeDriverEarnings(driverCpf);
+    await Promise.race([
+      sincronizarGanhosFood(driverCpf, driverDados).catch((error) => console.error('food ganho failed', error?.message)),
+      new Promise((ok) => setTimeout(ok, 4000))
+    ]);
     // Saldo com o app so na tela de Ganhos (a tela inicial confere o resumo a cada 2 min).
     const saldoApp = req.body.saldo === true ? await driverDebtSummary(driverCpf).catch(() => null) : undefined;
 
@@ -8577,7 +8581,10 @@ app.post('/api/food/deliveries', async (req, res, next) => {
     res.set('cache-control', 'no-store');
     const motoboy = await motoboyDoFood(req.body);
     if (!foodConfigurado()) return res.json({ configurado: false, deliveries: [] });
-    return res.json({ configurado: true, ...(await chamarFood('deliveries', motoboy)) });
+    const lista = await chamarFood('deliveries', motoboy);
+    // O telefone do cliente nunca vai para o app do motoboy (conversa pelo chat do pedido).
+    (lista.deliveries || []).forEach((entrega) => { if (entrega?.customer) delete entrega.customer.phone; });
+    return res.json({ configurado: true, ...lista });
   } catch (error) {
     return next(error);
   }
@@ -8591,15 +8598,89 @@ app.post('/api/food/deliveries/:orderId/:acao', createRideLimiter, async (req, r
     if (!foodConfigurado()) return res.status(503).json({ error: 'food_desligado', message: 'O MotoJÁ Food ainda não está ligado.' });
     const corpo = { ...motoboy, code: String(req.body.code || '').slice(0, 8) };
     const resultado = await chamarFood(`deliveries/${orderId}/${acao}`, corpo);
+    (resultado.deliveries || []).forEach((entrega) => { if (entrega?.customer) delete entrega.customer.phone; });
     if (acao === 'accept') {
       foodAbertasCache.clear();
       callPush.closed('deliveries', idOfertaFood(orderId)).catch((error) => console.error('call alert close failed', error?.message));
+    }
+    if (acao === 'deliver') {
+      const cpf = onlyDigits(req.body.driverCpf);
+      getDriverWithProof(cpf, req.body)
+        .then((driver) => sincronizarGanhosFood(cpf, driver, { forcar: true }))
+        .catch((error) => console.error('food ganho failed', error?.message));
     }
     return res.json({ configurado: true, ...resultado });
   } catch (error) {
     return next(error);
   }
 });
+
+// Chat do pedido do Food pelo app do motoboy: lista (after = última mensagem vista) ou envia (text).
+// O telefone do cliente nunca vem para o app: a conversa é pelo chat, como no iFood.
+app.post('/api/food/conversa/:orderId', async (req, res, next) => {
+  try {
+    const { orderId } = req.params;
+    if (!/^[a-zA-Z0-9-]{1,64}$/.test(orderId)) return res.status(404).json({ error: 'nao_encontrado' });
+    const motoboy = await motoboyDoFood(req.body);
+    if (!foodConfigurado()) return res.status(503).json({ error: 'food_desligado' });
+    const texto = typeof req.body.text === 'string' ? req.body.text.slice(0, 1200) : '';
+    const corpo = texto ? { ...motoboy, text: texto, requestKey: String(req.body.requestKey || '').slice(0, 100) } : { ...motoboy, after: Number(req.body.after) || 0 };
+    res.set('cache-control', 'no-store');
+    return res.json(await chamarFood(`deliveries/${orderId}/messages`, corpo));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// O Food avisa que o cliente (ou a loja) escreveu no chat de uma entrega de um motoboy MotoJá: push para ele.
+app.post('/api/food/mensagem', async (req, res, next) => {
+  try {
+    if (!chaveFoodConfere(req.get('x-motoja-key'))) return res.status(403).json({ error: 'chave_invalida' });
+    const cpf = onlyDigits(req.body?.cpf);
+    const orderId = String(req.body?.orderId || '');
+    if (cpf.length !== 11 || !/^[a-zA-Z0-9-]{1,64}$/.test(orderId)) return res.status(400).json({ error: 'aviso_invalido' });
+    const snap = await db.collection('motoboys').doc(cpf).get();
+    const tokens = Object.entries(snap.data()?.fcmTokens || {}).filter(([, info]) => info?.ativo !== false).map(([token]) => token);
+    if (!tokens.length) return res.json({ ok: true, sent: 0 });
+    const link = process.env.APP_BASE_URL ? appUrl('/motoboy.html?aba=food') : 'https://nexusmotoja.com.br/motoboy.html?aba=food';
+    const r = await admin.messaging().sendEachForMulticast(pushChatFood({ orderId, code: String(req.body.code || '').slice(0, 12), from: req.body.from === 'loja' ? 'loja' : 'cliente' }, tokens, link));
+    return res.json({ ok: true, sent: r.successCount });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Ganhos do Food em "Meus ganhos" e no "Hoje": as entregas finalizadas no Food entram no mesmo registro
+// das outras entregas (uma vez por pedido). Confere no máximo a cada 10 min por motoboy, ou logo depois
+// de ele finalizar uma entrega do Food. Também recupera entregas feitas antes desta atualização.
+const foodGanhosVistos = new Map();
+const foodGanhosConferidoEm = new Map();
+async function sincronizarGanhosFood(cpf, driver, { forcar = false } = {}) {
+  if (!foodConfigurado() || !driver) return 0;
+  const agora = Date.now();
+  if (!forcar && agora - (foodGanhosConferidoEm.get(cpf) || 0) < 10 * 60000) return 0;
+  foodGanhosConferidoEm.set(cpf, agora);
+  if (foodGanhosConferidoEm.size > 5000) foodGanhosConferidoEm.delete(foodGanhosConferidoEm.keys().next().value);
+  const acerto = await chamarFood('settlement', motoboyParaFood(cpf, driver, { cidade: canonicalRideCity(driver.cidadeGps, 'conchal'), recebeEntregas: driverServices(driver).entrega }));
+  const vistos = foodGanhosVistos.get(cpf) || new Set();
+  foodGanhosVistos.set(cpf, vistos);
+  let novos = 0;
+  for (const pedido of (Array.isArray(acerto.orders) ? acerto.orders : []).slice(0, 30)) {
+    const id = String(pedido?.id || '');
+    if (!/^[a-zA-Z0-9-]{1,64}$/.test(id) || vistos.has(id)) continue;
+    vistos.add(id);
+    const evento = eventoGanhoFood(pedido, dateKeySaoPaulo(new Date(Date.parse(pedido.at) || agora)));
+    if (!evento.ganhoCentavos) continue;
+    try {
+      if (await db.runTransaction((tx) => recordDriverEarning(tx, cpf, evento))) novos += 1;
+    } catch (error) {
+      vistos.delete(id);
+      console.error('food ganho failed', error?.message);
+    }
+  }
+  if (novos) forgetDriverSummary(cpf);
+  return novos;
+}
 
 // GPS do motoboy durante a entrega do Food (a cada 15 s), para o mapa ao vivo do cliente.
 // Fica fora do limite de ações porque chega toda hora; o login do motoboy fica em cache.
