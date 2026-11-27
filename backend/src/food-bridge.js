@@ -79,6 +79,17 @@ export function avaliacaoFood(corpo = {}) {
   return { cpf, nota, orderId, comentario: String(corpo.comentario || '').trim().slice(0, 300), loja: String(corpo.loja || '').slice(0, 60), cidade: CIDADE_APP[corpo.city || corpo.cidade] || '' };
 }
 
+// Texto dos grupos dos motoboys da cidade (Telegram e WhatsApp): só o que o motoboy ganha,
+// a loja e o bairro. Endereço e telefone do cliente só aparecem no app, depois do aceite.
+export function textoGrupoFood(aviso, link) {
+  const valor = (aviso.frete / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const linhas = [`🍔 NOVA ENTREGA MotoJÁ Food — você recebe ${valor}`, `Loja: ${aviso.loja}`];
+  if (aviso.bairro) linhas.push(`Entregar no bairro: ${aviso.bairro}`);
+  if (aviso.km != null) linhas.push(`Distância da entrega: ${String(aviso.km).replace('.', ',')} km`);
+  linhas.push('', `Quem aceitar primeiro leva. Abra o app:\n${link}`);
+  return linhas.join('\n');
+}
+
 export function pushEntregaFood(aviso, tokens, link) {
   const valor = (aviso.frete / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const onde = [aviso.bairro, aviso.km != null ? `${String(aviso.km).replace('.', ',')} km` : ''].filter(Boolean).join(' • ');
