@@ -7480,11 +7480,11 @@ const foodAbertasCache = new Map();
 async function foodAbertasPara(cpf, driver) {
   const cached = foodAbertasCache.get(cpf);
   if (cached && Date.now() - cached.at < 3000) return cached.ids;
-  let ids = new Set();
+  let ids = new Map();
   if (foodConfigurado() && driver.status === 'ativo') {
     try {
       const r = await chamarFood('deliveries', motoboyParaFood(cpf, driver, { cidade: canonicalRideCity(driver.cidadeGps, 'conchal'), recebeEntregas: driverServices(driver).entrega }));
-      ids = new Set((r.deliveries || []).filter((d) => !d.mine && d.status === 'pronto').map((d) => d.id));
+      ids = new Map((r.deliveries || []).filter((d) => !d.mine && d.status === 'pronto').map((d) => [d.id, Number(d.callUntil) > Date.now() ? Number(d.callUntil) : Date.now() + FOOD_OFFER_MS]));
     } catch (error) {
       console.warn('food call alerts failed', error?.message);
     }
@@ -7505,13 +7505,13 @@ app.post('/api/drivers/:cpf/call-alerts', async (req, res, next) => {
     if (!available) return res.json({ ok: true, available: false, offers: [] });
     let offers;
     const temFood = Array.isArray(req.body.offers) && req.body.offers.some((o) => pedidoDaOferta(o?.id));
-    const foodAbertas = temFood ? await foodAbertasPara(cpf, driver) : new Set();
+    const foodAbertas = temFood ? await foodAbertasPara(cpf, driver) : new Map();
     try {
       offers = await reconcileCallOffers(req.body.offers, {
         expiry: driverCallExpiry,
         load: async (kind, id) => {
           const pedidoFood = kind === 'deliveries' ? pedidoDaOferta(id) : null;
-          if (pedidoFood) return foodAbertas.has(pedidoFood) ? { status: 'pendente', expiraEmMs: Date.now() + FOOD_OFFER_MS, food: true } : null;
+          if (pedidoFood) return foodAbertas.has(pedidoFood) ? { status: 'pendente', expiraEmMs: foodAbertas.get(pedidoFood), food: true } : null;
           return offerDoc(kind === 'deliveries' ? 'entregas' : 'corridas', id);
         },
         allowed: (kind, job) => job.food === true || !job.motoboyExclusivoCpf && job.tipo !== 'servico_exclusivo' &&
@@ -8753,7 +8753,7 @@ app.post('/api/food/notify', async (req, res, next) => {
     // Som de chamada ("MotoJá, bora rodar") no Android e no iPhone, igual às outras entregas.
     const tag = `entrega_${idOfertaFood(aviso.orderId)}`;
     const push = { ...pushEntregaFood(aviso, tokens, link), android: androidCallConfig(tag), apns: iosAlert(tag) };
-    const r = await callPush.offer(push, { kind: 'deliveries', id: idOfertaFood(aviso.orderId), job: { expiraEmMs: Date.now() + FOOD_OFFER_MS } });
+    const r = await callPush.offer(push, { kind: 'deliveries', id: idOfertaFood(aviso.orderId), job: { expiraEmMs: aviso.ate } });
     return res.json({ ok: true, sent: r.successCount });
   } catch (error) {
     return next(error);
@@ -8765,8 +8765,10 @@ const foodGruposAvisados = new Map();
 async function avisarGruposFood(aviso, link) {
   const agora = Date.now();
   for (const [id, em] of foodGruposAvisados) if (agora - em > 2 * 60 * 60000) foodGruposAvisados.delete(id);
-  if (foodGruposAvisados.has(aviso.orderId)) return;
-  foodGruposAvisados.set(aviso.orderId, agora);
+  // Uma vez por chamada: se a loja chamar de novo (novo prazo), os grupos recebem de novo.
+  const chave = `${aviso.orderId}:${aviso.ate}`;
+  if (foodGruposAvisados.has(chave)) return;
+  foodGruposAvisados.set(chave, agora);
   const texto = textoGrupoFood(aviso, link);
   const envios = [];
   const chat = telegramGroupChat(aviso.cidade);

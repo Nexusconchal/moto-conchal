@@ -40,9 +40,10 @@ function rotaNotify() {
   return { handler: routes['/api/food/notify'], enviados };
 }
 
+const PRAZO = Date.now() + 15 * 60000;
 test('aviso do Food: toca como chamada e vai aos grupos do Telegram e do WhatsApp uma vez só', async () => {
   const { handler, enviados } = rotaNotify();
-  const chamar = async () => { const out = {}; const res = { status: (c) => { out.status = c; return res; }, json: (d) => { out.data = d; return res; } }; await handler({ get: () => 'chave', body: { orderId: 'ped-1', city: 'conchal', storeName: 'Cantinho da Nana', district: 'Centro', fee: 650, earning: 500 } }, res, (e) => { throw e; }); return out; };
+  const chamar = async () => { const out = {}; const res = { status: (c) => { out.status = c; return res; }, json: (d) => { out.data = d; return res; } }; await handler({ get: () => 'chave', body: { orderId: 'ped-1', city: 'conchal', storeName: 'Cantinho da Nana', district: 'Centro', fee: 650, earning: 500, callUntil: PRAZO } }, res, (e) => { throw e; }); return out; };
   const r = await chamar();
   await new Promise((ok) => setTimeout(ok, 20));
   assert.equal(r.data.sent, 1);

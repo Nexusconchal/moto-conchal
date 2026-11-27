@@ -25,3 +25,13 @@ test('aviso de mensagem do chat do Food não leva o texto nem dados do cliente',
   assert.equal(p.data.foodOrderId, 'ped-1');
   assert.match(pushChatFood({ orderId: 'x', from: 'loja' }, ['t'], '').notification.title, /da loja/);
 });
+
+test('chamada do Food usa o prazo de 15 min que vem do Food; sem prazo, 15 min a partir de agora', async () => {
+  const { avisoFood, FOOD_OFFER_MS } = await import('../src/food-bridge.js');
+  const ate = Date.now() + 12 * 60000;
+  assert.equal(avisoFood({ orderId: 'p1', city: 'conchal', callUntil: ate }).ate, ate);
+  const sem = avisoFood({ orderId: 'p1', city: 'conchal' }).ate;
+  assert.ok(sem > Date.now() + FOOD_OFFER_MS - 2000 && sem <= Date.now() + FOOD_OFFER_MS);
+  const vencido = avisoFood({ orderId: 'p1', city: 'conchal', callUntil: Date.now() - 1000 }).ate;
+  assert.ok(vencido > Date.now(), 'prazo vencido não vira chamada já expirada');
+});
