@@ -512,6 +512,20 @@
     }
   }
 
+  // Entrega aceita que sumiu da lista (a loja cancelou porque o cliente desistiu): fecha o mapa e avisa.
+  function fecharMapaCancelado() {
+    if (window.MotoNav?.modo?.() !== "nav") return;
+    const atual = String(window.MotoNav.idAtual() || "");
+    if (!atual.startsWith("food-")) return;
+    const id = atual.slice(5);
+    // Com uma ação em andamento (entreguei, peguei), quem cuida da tela é a própria ação.
+    if (ocupado.has(id) || entregas.some((e) => e.id === id && e.mine)) return;
+    if (conversa?.id === id) fecharChat(false);
+    window.MotoNav.fechar();
+    aviso = "A loja cancelou essa entrega do Food. Não precisa buscar nem entregar.";
+    setTimeout(() => alert("A loja cancelou essa entrega do MotoJÁ Food. Não precisa buscar nem entregar."), 50);
+  }
+
   async function carregar() {
     if (!options || carregando || document.hidden) return;
     carregando = true;
@@ -529,6 +543,7 @@
     }
     if (ok) {
       fecharOfertaEncerrada();
+      fecharMapaCancelado();
       // Entrega aceita (por exemplo, em outro aparelho ou antes de fechar o app): abre o mapa uma vez.
       const minha = entregas.find((e) => e.mine);
       if (minha && !mapaAberto.has(minha.id) && window.MotoNav && !window.MotoNav.aberto()) abrirMapa(minha);
